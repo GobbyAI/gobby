@@ -24,6 +24,12 @@ from urllib.request import Request, urlopen
 
 import click
 
+from gobby.install.distribution import (
+    HomebrewDistributionError,
+    is_homebrew_distribution,
+    verify_homebrew_managed_bins,
+)
+
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
 from . import install_setup_gloc as _gloc_impl
@@ -282,49 +288,66 @@ def run_daemon_setup(project_path: Path) -> None:
     else:
         click.echo(f"Warning: Failed to configure MCP servers: {mcp_result['error']}")
 
+    homebrew_mode = is_homebrew_distribution()
+    if homebrew_mode:
+        try:
+            statuses = verify_homebrew_managed_bins()
+        except HomebrewDistributionError as exc:
+            raise click.ClickException(str(exc)) from exc
+        helper_versions = ", ".join(f"{status.name} {status.version}" for status in statuses)
+        click.echo(f"Verified Homebrew helper binaries: {helper_versions}")
+        click.echo("Skipping global npm installs in Homebrew distribution mode")
+    else:
+        _run_npm_install("Playwright CLI", "@playwright/cli@latest", project_path)
+        _run_npm_install("ClawHub CLI", "clawhub", project_path)
+
+    if homebrew_mode:
+        click.echo("Using Homebrew-provided native helper binaries")
+    else:
+        _run_managed_native_binary_installs()
+
+    try:
+        from .installers.ide_config import configure_ide_terminal_title
+
+        vscode_result = configure_ide_terminal_title("Code")
+        if vscode_result.get("added"):
+            click.echo("Configured VS Code terminal title for tmux integration")
+    except (ImportError, OSError, PermissionError, ValueError) as e:
+        click.echo(f"Warning: Failed to configure VS Code terminal title: {e}")
+
+
+def _run_npm_install(label: str, package: str, project_path: Path) -> None:
     try:
         npm_result = subprocess.run(
-            ["npm", "install", "-g", "@playwright/cli@latest"],
+            ["npm", "install", "-g", package],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if npm_result.returncode == 0:
-            click.echo("Installed Playwright CLI (@playwright/cli)")
-            legacy_skills = project_path / ".claude" / "skills" / "playwright-cli"
-            if legacy_skills.exists():
-                try:
-                    shutil.rmtree(legacy_skills)
-                    click.echo(
-                        "Removed legacy .claude/skills/playwright-cli/ (now in gobby-skills)"
-                    )
-                except OSError as e:
-                    click.secho(
-                        f"Warning: Could not remove legacy {legacy_skills}: {e}", fg="yellow"
-                    )
+            click.echo(f"Installed {label} ({package.removesuffix('@latest')})")
+            if package == "@playwright/cli@latest":
+                _remove_legacy_playwright_skill(project_path)
         else:
-            click.echo(f"Warning: Failed to install Playwright CLI: {npm_result.stderr.strip()}")
+            click.echo(f"Warning: Failed to install {label}: {npm_result.stderr.strip()}")
     except FileNotFoundError:
-        click.echo("Warning: npm not found — skipping Playwright CLI install")
+        click.echo(f"Warning: npm not found — skipping {label} install")
     except subprocess.TimeoutExpired:
-        click.echo("Warning: Playwright CLI install timed out")
+        click.echo(f"Warning: {label} install timed out")
 
+
+def _remove_legacy_playwright_skill(project_path: Path) -> None:
+    legacy_skills = project_path / ".claude" / "skills" / "playwright-cli"
+    if not legacy_skills.exists():
+        return
     try:
-        npm_result = subprocess.run(
-            ["npm", "install", "-g", "clawhub"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if npm_result.returncode == 0:
-            click.echo("Installed ClawHub CLI (clawhub)")
-        else:
-            click.echo(f"Warning: Failed to install ClawHub CLI: {npm_result.stderr.strip()}")
-    except FileNotFoundError:
-        click.echo("Warning: npm not found — skipping ClawHub CLI install")
-    except subprocess.TimeoutExpired:
-        click.echo("Warning: ClawHub CLI install timed out")
+        shutil.rmtree(legacy_skills)
+        click.echo("Removed legacy .claude/skills/playwright-cli/ (now in gobby-skills)")
+    except OSError as e:
+        click.secho(f"Warning: Could not remove legacy {legacy_skills}: {e}", fg="yellow")
 
+
+def _run_managed_native_binary_installs() -> None:
     try:
         gsqz_result = _install_gsqz()
         if gsqz_result.get("installed"):
@@ -396,15 +419,6 @@ def run_daemon_setup(project_path: Path) -> None:
             click.echo(f"Warning: Failed to install gloc: {reason}")
     except Exception as e:
         click.echo(f"Warning: Failed to install gloc: {e}")
-
-    try:
-        from .installers.ide_config import configure_ide_terminal_title
-
-        vscode_result = configure_ide_terminal_title("Code")
-        if vscode_result.get("added"):
-            click.echo("Configured VS Code terminal title for tmux integration")
-    except (ImportError, OSError, PermissionError, ValueError) as e:
-        click.echo(f"Warning: Failed to configure VS Code terminal title: {e}")
 
 
 _GSQZ_RELEASE_TAG_PREFIX = "gsqz-v"

@@ -8,7 +8,8 @@ this package.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills import (
@@ -52,6 +53,7 @@ def create_skills_registry(
     embedding_api_base: str | None = None,
     embedding_api_key: str | None = None,
     embedding_dim: int | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> SkillsToolRegistry:
     """
     Create a skills management tool registry.
@@ -65,6 +67,7 @@ def create_skills_registry(
         embedding_api_base: API base URL for embedding endpoint
         embedding_api_key: API key for embedding provider
         embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
+        run_db: Optional bounded executor bridge for SQLite storage calls.
 
     Returns:
         SkillsToolRegistry with skill management tools registered
@@ -95,6 +98,7 @@ def create_skills_registry(
         loader=SkillLoader(),
         project_id=project_id,
         hub_manager=hub_manager,
+        run_db=run_db,
     )
 
     # Expose search instance on registry for testing/manual indexing

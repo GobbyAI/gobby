@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
 from gobby.skills.hubs.manager import HubManager
 from gobby.skills.loader import SkillLoader
@@ -14,6 +16,18 @@ from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class RunDb(Protocol):
+    def __call__(
+        self,
+        func: Callable[P, R],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Awaitable[R]: ...
 
 
 @dataclass
@@ -29,3 +43,31 @@ class SkillsContext:
     loader: SkillLoader
     project_id: str | None
     hub_manager: HubManager | None
+    run_db: RunDb | None = None
+
+    async def run_sqlite(
+        self,
+        func: Callable[P, R],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> R:
+        if self.run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self.run_db(func, *args, **kwargs)
+
+    async def get_active_skill_names(self, session_id: str) -> list[str] | None:
+        """Return active skill names recorded for a session, when available."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        def _get_active_names() -> object | None:
+            resolved_id = self.session_manager.resolve_session_reference(
+                session_id, project_id=self.project_id
+            )
+            sv_mgr = SessionVariableManager(self.db)
+            variables = sv_mgr.get_variables(resolved_id)
+            return variables.get("_active_skill_names") if variables else None
+
+        names = await self.run_sqlite(_get_active_names)
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            return None
+        return names

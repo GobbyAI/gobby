@@ -314,6 +314,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 config=runner.config.code_index,
                 embeddings_config=runner.config.embeddings,
                 shutdown_flag=sync_shutdown,
+                run_db=runner.code_indexer.run_db,
             ),
             name="code-index-sync-worker",
         )

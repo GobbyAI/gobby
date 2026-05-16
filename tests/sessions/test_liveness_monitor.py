@@ -238,10 +238,10 @@ class TestCheckSessions:
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
-    async def test_dead_pid_live_tmux_pane_expires(
+    async def test_dead_pid_live_tmux_pane_retained(
         self, monitor, mock_session_storage, mock_dispatch_fn
     ):
-        """Dead parent PID expires even when the tmux pane still exists."""
+        """Live tmux pane keeps a session active even when stored parent PID died."""
         mock_session_storage.db.fetchall.return_value = [
             {
                 "id": "s1",
@@ -259,10 +259,10 @@ class TestCheckSessions:
         ):
             await monitor._check_sessions()
 
-        mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
-        mock_session_storage.touch.assert_not_called()
-        assert "s1" in monitor._recently_handled
+        mock_dispatch_fn.assert_not_called()
+        mock_session_storage.update_status.assert_not_called()
+        mock_session_storage.touch.assert_called_once_with("s1")
+        assert "s1" not in monitor._recently_handled
 
     @pytest.mark.asyncio
     async def test_live_pid_live_tmux_pane_retained(

@@ -645,7 +645,7 @@ describe("TasksTab", () => {
     expect(screen.getAllByText("Agent Delta").length).toBeGreaterThan(0);
     expect(screen.getByText("UI")).toBeTruthy();
     expect(screen.getAllByText("Development: Needs Review").length).toBeGreaterThan(0);
-    expect(screen.getByText("Validation")).toBeTruthy();
+    expect(screen.getByText("Validation criteria")).toBeTruthy();
     expect(screen.queryByText("Ready · Medium · bug")).toBeNull();
   });
 });

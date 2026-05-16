@@ -53,11 +53,85 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_WEB_SRC = _REPO_ROOT / "web"
-_DIST_SRC = _WEB_SRC / "dist"
-_WHEEL_DEST = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
-_WHEEL_UI_INDEX = "gobby/ui/web/dist/index.html"
+_REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+_WEB_SRC: Path = _REPO_ROOT / "web"
+_DIST_SRC: Path = _WEB_SRC / "dist"
+_WHEEL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
+_WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
+
+
+def _parse_npm_build_timeout(raw_value: str | None) -> int:
+    if raw_value is None:
+        return 600
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid GOBBY_NPM_BUILD_TIMEOUT=%r; using default 600 seconds",
+            raw_value,
+        )
+        return 600
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive GOBBY_NPM_BUILD_TIMEOUT=%r; using default 600 seconds",
+            raw_value,
+        )
+        return 600
+    return parsed
+
+
+def _init_npm_build_timeout_seconds() -> int:
+    return _parse_npm_build_timeout(os.environ.get("GOBBY_NPM_BUILD_TIMEOUT"))
+
+
+# Initialized through _parse_npm_build_timeout: default 600s, with invalid or
+# non-positive GOBBY_NPM_BUILD_TIMEOUT values falling back to that default.
+_NPM_BUILD_TIMEOUT_SECONDS: int = _init_npm_build_timeout_seconds()
+
+
+def _run_npm_command(command: list[str]) -> None:
+    command_text = " ".join(command)
+    try:
+        logger.debug(
+            "Running %s in %s with timeout=%s",
+            command_text,
+            _WEB_SRC,
+            _NPM_BUILD_TIMEOUT_SECONDS,
+        )
+        result = subprocess.run(  # nosec B603 B607
+            command,
+            cwd=_WEB_SRC,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_NPM_BUILD_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            logger.error(
+                "Failed %s in %s with return code %s\nstdout:\n%s\nstderr:\n%s",
+                command_text,
+                _WEB_SRC,
+                result.returncode,
+                result.stdout or "",
+                result.stderr or "",
+            )
+            raise RuntimeError(
+                f"Failed running {command_text!r} in {_WEB_SRC} "
+                f"(return code {result.returncode})\n"
+                f"stdout:\n{result.stdout or ''}\n"
+                f"stderr:\n{result.stderr or ''}"
+            )
+        logger.info(
+            "Completed %s in %s with return code %s",
+            command_text,
+            _WEB_SRC,
+            result.returncode,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Timed out running {command_text!r} in {_WEB_SRC} "
+            f"after {_NPM_BUILD_TIMEOUT_SECONDS} seconds"
+        ) from exc
 
 
 def _stage_ui() -> None:
@@ -70,8 +144,8 @@ def _stage_ui() -> None:
 
     if have_source and have_npm:
         logger.info("Building web UI in %s", _WEB_SRC)
-        subprocess.run(["npm", "ci"], cwd=_WEB_SRC, check=True)  # nosec B603 B607
-        subprocess.run(["npm", "run", "build"], cwd=_WEB_SRC, check=True)  # nosec B603 B607
+        _run_npm_command(["npm", "ci"])
+        _run_npm_command(["npm", "run", "build"])
 
     if not _DIST_SRC.exists():
         if _WHEEL_DEST.exists():

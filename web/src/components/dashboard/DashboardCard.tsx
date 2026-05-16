@@ -6,6 +6,7 @@ import {
   dashboardCardHeaderClass,
   dashboardCardTitleClass,
 } from './dashboardStyles'
+import { Heading } from '../shared/Heading'
 
 interface DashboardCardProps {
   title: string
@@ -25,7 +26,7 @@ export function DashboardCard({
   return (
     <section className={cn(dashboardCardClass, className)}>
       <div className={dashboardCardHeaderClass}>
-        <h3 className={dashboardCardTitleClass}>{title}</h3>
+        <Heading level={3} className={dashboardCardTitleClass}>{title}</Heading>
         {action}
       </div>
       <div className={cn(dashboardCardBodyClass, bodyClassName)}>{children}</div>

@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { Artifact } from '../../types/artifacts'
 import { ArtifactPanel } from '../chat/artifacts/ArtifactPanel'
 import { ActivityPanelEmpty, ArtifactsEmptyIcon } from './ActivityPanelEmpty'
+import { Heading } from '../shared/Heading'
 
 interface ArtifactsTabProps {
   artifacts: Map<string, Artifact>
@@ -50,7 +51,7 @@ export const ArtifactsTab = memo(function ArtifactsTab({
     return (
       <div className={`flex flex-col h-full bg-background ${isMini ? 'border-r border-border w-64' : ''}`}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20">
-          <h2 className="text-sm font-semibold truncate">{isMini ? 'History' : 'Artifact History'}</h2>
+          <Heading level={2} className="text-sm font-semibold truncate">{isMini ? 'History' : 'Artifact History'}</Heading>
           <div className="flex items-center gap-2 shrink-0">
             {!isMini && <span className="text-xs text-muted-foreground">{artifactList.length} items</span>}
             {onClearAll && artifactList.length > 0 && (

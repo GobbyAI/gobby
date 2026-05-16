@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityFilterFooter } from "./ActivityFilterFooter";
 import { FilterCheckboxRow, FilterSection } from "./FilterPrimitives";
 import { SegmentedControl } from "../ui/SegmentedControl";
+import { inputFocusCls } from "../shared/focusStyles";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import {
@@ -264,7 +265,7 @@ export function SessionsFilterDropdown({
                 <div className="flex flex-col gap-1 px-2 py-1">
                   <input
                     type="date"
-                    className="w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                    className={`w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground ${inputFocusCls}`}
                     value={filters.dateCustomFrom ?? ""}
                     onChange={(e) =>
                       update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
@@ -273,7 +274,7 @@ export function SessionsFilterDropdown({
                   />
                   <input
                     type="date"
-                    className="w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                    className={`w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground ${inputFocusCls}`}
                     value={filters.dateCustomTo ?? ""}
                     onChange={(e) =>
                       update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
@@ -314,10 +315,10 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `w-[4.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `w-[4.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground ${inputFocusCls} ${
     isInvalid
-      ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
-      : "border-border focus:border-accent"
+      ? "border-[var(--color-error)]"
+      : "border-border"
   }`;
 
   return (

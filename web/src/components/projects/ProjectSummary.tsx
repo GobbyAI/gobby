@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
+import { Heading } from '../shared/Heading'
 
 const SUMMARY_CLS = 'max-w-[800px]'
 const GRID_CLS = 'flex max-w-[900px] flex-col gap-5'
 const STATS_ROW_CLS =
-  'grid gap-4 gap-x-6 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 [grid-template-columns:repeat(auto-fit,minmax(80px,1fr))]'
-const STAT_CLS = 'flex flex-col items-center gap-1'
-const STAT_VALUE_CLS = 'font-[inherit] text-[length:var(--text-2xl)] font-semibold text-[var(--accent)]'
-const STAT_LABEL_CLS = 'text-[length:var(--text-xs)] uppercase text-[var(--text-muted)]'
+  'flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
+const STAT_CLS = 'flex items-baseline gap-2 text-[length:var(--text-base)]'
+const STAT_LABEL_CLS = 'text-[var(--text-muted)]'
+const STAT_VALUE_CLS = 'font-semibold text-[var(--text-primary)] [font-variant-numeric:tabular-nums]'
 
 const SECTION_CLS = 'rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
 const HEADING_CLS = 'm-0 mb-3 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
@@ -146,36 +147,43 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
   const activeStatuses = taskStats
     ? TASK_STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
+  const currentYear = new Date().getFullYear()
+  const lastActivityLabel = project.last_activity_at
+    ? (() => {
+        const dt = new Date(project.last_activity_at)
+        const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
+        if (dt.getFullYear() !== currentYear) {
+          options.year = 'numeric'
+        }
+        return dt.toLocaleDateString(undefined, options)
+      })()
+    : '—'
 
   return (
     <div className={SUMMARY_CLS}>
       <div className={GRID_CLS}>
-        <div className={STATS_ROW_CLS}>
-          <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{project.session_count}</span>
+        <div className={STATS_ROW_CLS} role="group" aria-label="Project summary statistics">
+          <div className={STAT_CLS} role="group" aria-label={`Sessions: ${project.session_count}`}>
             <span className={STAT_LABEL_CLS}>Sessions</span>
+            <span className={STAT_VALUE_CLS}>{project.session_count}</span>
           </div>
-          <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
+          <div className={STAT_CLS} role="group" aria-label={`Open tasks: ${project.open_task_count}`}>
             <span className={STAT_LABEL_CLS}>Open Tasks</span>
+            <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
           </div>
-          <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{taskTotal}</span>
+          <div className={STAT_CLS} role="group" aria-label={`Total tasks: ${taskTotal}`}>
             <span className={STAT_LABEL_CLS}>Total Tasks</span>
+            <span className={STAT_VALUE_CLS}>{taskTotal}</span>
           </div>
-          <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>
-              {project.last_activity_at
-                ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-                : '—'}
-            </span>
+          <div className={STAT_CLS} role="group" aria-label={`Last activity: ${lastActivityLabel}`}>
             <span className={STAT_LABEL_CLS}>Last Activity</span>
+            <span className={STAT_VALUE_CLS}>{lastActivityLabel}</span>
           </div>
         </div>
 
         {taskStats && activeStatuses.length > 0 && (
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Task Breakdown</h3>
+            <Heading level={3} className={HEADING_CLS}>Task Breakdown</Heading>
             <div className={TASK_BAR_CLS}>
               {activeStatuses.map(status => {
                 const count = taskStats[status] || 0
@@ -206,7 +214,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
 
         <div className={TWO_COL_CLS}>
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Details</h3>
+            <Heading level={3} className={HEADING_CLS}>Details</Heading>
             <dl className={DL_CLS}>
               <dt className={DT_CLS}>Name</dt>
               <dd className={DD_CLS}>{project.display_name}</dd>
@@ -223,7 +231,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
           </div>
 
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Integrations</h3>
+            <Heading level={3} className={HEADING_CLS}>Integrations</Heading>
             <dl className={DL_CLS}>
               <dt className={DT_CLS}>GitHub</dt>
               <dd className={DD_CLS}>

@@ -5,10 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
 
@@ -43,6 +47,10 @@ _AGENT_KEYS = (
     "is_spawned_agent",
 )
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
+_ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS = 5.0
+_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES = 256
+_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, set[str]]] = {}
+_ACTIVE_RULE_NAMES_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -60,6 +68,34 @@ class _AgentRunRecovery:
     workflow_name: str | None
     agent_name: str | None
     prompt: str | None
+
+
+def clear_active_rule_names_cache() -> None:
+    """Clear cached active-rule selector resolution."""
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _ACTIVE_RULE_NAMES_CACHE.clear()
+
+
+def _purge_expired_active_rule_names_cache(now: float) -> None:
+    expired = [
+        cache_key
+        for cache_key, (cached_at, _) in _ACTIVE_RULE_NAMES_CACHE.items()
+        if now - cached_at >= _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
+    ]
+    for cache_key in expired:
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+
+
+def _evict_active_rule_names_cache_to_limit(*, incoming: int = 0) -> None:
+    excess_count = len(_ACTIVE_RULE_NAMES_CACHE) + incoming - _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
+    if excess_count <= 0:
+        return
+    oldest = sorted(
+        _ACTIVE_RULE_NAMES_CACHE.items(),
+        key=lambda item: item[1][0],
+    )
+    for cache_key, _ in oldest[:excess_count]:
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
 
 
 def reconcile_session_activation(
@@ -141,6 +177,10 @@ def _reconcile_session_activation(
             missing.extend(step_missing)
 
     updates = _fallback_agent_updates(variables, session)
+    active_rule_updates = _active_rule_name_updates(db, variables, session)
+    if active_rule_updates:
+        updates.update(active_rule_updates)
+        missing.append("_active_rule_names")
     missing.extend(_missing_baseline_keys(variables))
     updates.update(_baseline_updates(event, variables, log))
     updates.update(_step_completion_updates(variables))
@@ -218,6 +258,86 @@ def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str
         "is_spawned_agent": spawned,
     }
     return {key: value for key, value in defaults.items() if key not in variables}
+
+
+def _active_rule_name_updates(db: Any, variables: dict[str, Any], session: Any) -> dict[str, Any]:
+    agent_name = variables.get("_agent_type")
+    if not isinstance(agent_name, str) or not agent_name:
+        return {}
+
+    active_rules = _resolve_active_rule_names(
+        db,
+        agent_name,
+        getattr(session, "project_id", None),
+    )
+    if active_rules is None:
+        return {}
+
+    current = variables.get("_active_rule_names")
+    if isinstance(current, list) and set(current) == active_rules:
+        return {}
+
+    return {"_active_rule_names": sorted(active_rules)}
+
+
+def _resolve_active_rule_names(
+    db: Any,
+    agent_name: str,
+    project_id: str | None,
+) -> set[str] | None:
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.definitions import AgentDefinitionBody
+    from gobby.workflows.selectors import resolve_rules_for_agent
+
+    cache_key = (agent_name, project_id)
+    now = time.monotonic()
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
+        if cached is not None:
+            cached_at, active_rules = cached
+            if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
+                return set(active_rules)
+
+    manager = LocalWorkflowDefinitionManager(db)
+    row = manager.get_by_name(agent_name, project_id=project_id)
+    if row is None or row.workflow_type != "agent" or not row.definition_json:
+        return None
+
+    try:
+        data = json.loads(row.definition_json)
+        if isinstance(data, dict):
+            data.setdefault("name", row.name)
+        agent = AgentDefinitionBody.model_validate(data)
+    except TypeError as exc:
+        # json.loads plus Pydantic validation should report data issues through
+        # JSONDecodeError/ValidationError. TypeError here signals an unexpected
+        # programming or schema regression, so keep it visible while failing open.
+        logger.error(
+            "Unexpected TypeError refreshing active rules for agent %s via "
+            "json.loads/AgentDefinitionBody.model_validate: %s",
+            agent_name,
+            exc,
+            exc_info=True,
+        )
+        return None
+    except (json.JSONDecodeError, KeyError, ValidationError) as exc:
+        logger.debug(
+            "Failed to refresh active rules for agent %s: %s",
+            agent_name,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+    rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
+    active_rules = resolve_rules_for_agent(agent, rules)
+    now = time.monotonic()
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _purge_expired_active_rule_names_cache(now)
+        incoming = 0 if cache_key in _ACTIVE_RULE_NAMES_CACHE else 1
+        _evict_active_rule_names_cache_to_limit(incoming=incoming)
+        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
+    return active_rules
 
 
 def _baseline_updates(
@@ -461,7 +581,7 @@ def _ensure_step_workflow_from_definition(
         return False
     try:
         definition = json.loads(row.definition_json)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return False
     steps = definition.get("steps") or []
     first = steps[0] if steps else {}

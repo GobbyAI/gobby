@@ -10,8 +10,17 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent, RuleTriggerEvent
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    AgentSelector,
+    AgentWorkflows,
+    RuleDefinitionBody,
+    RuleEffect,
+    RuleEvent,
+    RuleTriggerEvent,
+)
 from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -51,6 +60,7 @@ def _insert_rule(
     priority: int = 100,
     enabled: bool = True,
     sources: list[str] | None = None,
+    tags: list[str] | None = None,
 ) -> str:
     """Helper to insert a rule into the database."""
     row = manager.create(
@@ -60,6 +70,33 @@ def _insert_rule(
         priority=priority,
         enabled=enabled,
         sources=sources,
+        tags=tags,
+    )
+    return row.id
+
+
+def _insert_agent(
+    manager: LocalWorkflowDefinitionManager,
+    name: str,
+    *,
+    include: list[str],
+    exclude: list[str] | None = None,
+    rules: list[str] | None = None,
+    project_id: str | None = None,
+) -> str:
+    body = AgentDefinitionBody(
+        name=name,
+        workflows=AgentWorkflows(
+            rules=rules or [],
+            rule_selectors=AgentSelector(include=include, exclude=exclude or []),
+        ),
+    )
+    row = manager.create(
+        name=name,
+        definition_json=body.model_dump_json(),
+        workflow_type="agent",
+        source="custom",
+        project_id=project_id,
     )
     return row.id
 
@@ -1178,7 +1215,7 @@ class TestConsecutiveToolBlocks:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "5 times consecutively" in response.reason
+        assert response.reason is not None and "5 times consecutively" in response.reason
         assert "STOP retrying" in response.reason
         # Rule should NOT have been evaluated — no side effect
         assert variables.get("rule_ran") is None
@@ -1531,7 +1568,7 @@ class TestToolBlockPendingScopeAware:
         await engine.evaluate(fail_event, session_id="sess-1", variables=variables)
         assert variables["tool_block_pending"] is True
         # edit_write_pending should NOT be cleared by a failed edit
-        assert variables["edit_write_pending"] is True
+        assert variables.get("edit_write_pending") is True
 
         # Read succeeds (sibling cancelled call) — edit_write_pending still True
         success_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
@@ -1680,7 +1717,7 @@ class TestEditWritePending:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "edit-write-recovery" in response.reason
+        assert response.reason is not None and "edit-write-recovery" in response.reason
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_stop_allowed_after_success(
@@ -2285,7 +2322,7 @@ class TestUnmappedEventType:
         # Use a custom event type that's not mapped
         event = _make_event(HookEventType.BEFORE_TOOL)
         # Manually set to an unmapped type
-        event.event_type = "custom_unmapped_type"
+        event.event_type = "custom_unmapped_type"  # type: ignore[assignment]
         response = await engine.evaluate(event, session_id="sess-1", variables={})
         assert response.decision == "allow"
 
@@ -2412,6 +2449,261 @@ class TestTurnEndResolution:
         await _assert_evaluation(db, event, "allow", variables=variables)
 
         assert variables.get("raw_after_agent") is not True
+
+
+class TestLiveActiveRuleSelection:
+    """Rules should be selected from the current agent definition at evaluation time."""
+
+    @pytest.mark.asyncio
+    async def test_stale_active_rule_names_do_not_hide_new_default_rule(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Resolve default rules from live selectors even when session names are stale."""
+        _insert_agent(manager, "default", include=["tag:default"])
+        _insert_rule(
+            manager,
+            "new-default-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ),
+            tags=["default"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "_agent_type": "default",
+            "_active_rule_names": ["old-default-rule"],
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("matched") is True
+
+    @pytest.mark.asyncio
+    async def test_non_default_agent_excludes_rules_outside_live_selectors(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Exclude default-only rules when the current live agent selector differs."""
+        _insert_agent(manager, "backend-developer", include=["tag:worker-safety"])
+        _insert_rule(
+            manager,
+            "default-only-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="default_matched", value=True)],
+            ),
+            tags=["default"],
+        )
+        _insert_rule(
+            manager,
+            "worker-safety-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="worker_matched", value=True)],
+            ),
+            tags=["worker-safety"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "_agent_type": "backend-developer",
+            "_active_rule_names": ["default-only-rule", "worker-safety-rule"],
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("worker_matched") is True
+        assert variables.get("default_matched") is None
+
+    @pytest.mark.asyncio
+    async def test_project_scoped_agent_definition_wins_for_event_project(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Resolve live agent rules from the event's project-scoped agent row first."""
+        project = LocalProjectManager(db).create(name="project-one", repo_path="/tmp/project-one")
+        _insert_agent(manager, "default", include=["tag:global"])
+        _insert_agent(manager, "default", include=["tag:project"], project_id=project.id)
+        _insert_rule(
+            manager,
+            "global-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
+            ),
+            tags=["global"],
+        )
+        _insert_rule(
+            manager,
+            "project-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="project_matched", value=True)],
+            ),
+            tags=["project"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "default"}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        event.project_id = project.id
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("project_matched") is True
+        assert variables.get("global_matched") is None
+
+    @pytest.mark.asyncio
+    async def test_global_agent_definition_is_fallback_for_event_project(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Resolve global live agent rules when no project-scoped agent row exists."""
+        project = LocalProjectManager(db).create(name="project-two", repo_path="/tmp/project-two")
+        _insert_agent(manager, "default", include=["tag:global"])
+        _insert_rule(
+            manager,
+            "global-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
+            ),
+            tags=["global"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "default"}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Read", "project_id": project.id},
+        )
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("global_matched") is True
+
+    @pytest.mark.asyncio
+    async def test_agent_definition_cache_refreshes_after_definition_update(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Workflow-definition mutations invalidate per-engine agent selector cache."""
+        agent_id = _insert_agent(manager, "default", include=["tag:old"])
+        _insert_rule(
+            manager,
+            "old-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="old_matched", value=True)],
+            ),
+            tags=["old"],
+        )
+        _insert_rule(
+            manager,
+            "new-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="new_matched", value=True)],
+            ),
+            tags=["new"],
+        )
+        engine = RuleEngine(db)
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        first_variables: dict[str, Any] = {"_agent_type": "default"}
+
+        await engine.evaluate(event, session_id="sess-1", variables=first_variables)
+
+        assert first_variables.get("old_matched") is True
+        assert first_variables.get("new_matched") is None
+
+        updated_agent = AgentDefinitionBody(
+            name="default",
+            workflows=AgentWorkflows(
+                rules=[],
+                rule_selectors=AgentSelector(include=["tag:new"], exclude=[]),
+            ),
+        )
+        manager.update(agent_id, definition_json=updated_agent.model_dump_json())
+        second_variables: dict[str, Any] = {"_agent_type": "default"}
+
+        await engine.evaluate(event, session_id="sess-1", variables=second_variables)
+
+        assert second_variables.get("new_matched") is True
+        assert second_variables.get("old_matched") is None
+
+    @pytest.mark.asyncio
+    async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Fall back to stored active rule names when the live agent is missing."""
+        _insert_rule(
+            manager,
+            "allowed-by-fallback",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="allowed", value=True)],
+            ),
+        )
+        _insert_rule(
+            manager,
+            "blocked-by-fallback",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="blocked", value=True)],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "_agent_type": "missing-agent",
+            "_active_rule_names": ["allowed-by-fallback"],
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("allowed") is True
+        assert variables.get("blocked") is None
+
+    @pytest.mark.asyncio
+    async def test_active_rule_names_remain_fallback_when_agent_json_is_invalid(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Fall back to stored active rule names when the live agent JSON is invalid."""
+        manager.create(
+            name="default",
+            definition_json="{",
+            workflow_type="agent",
+            source="custom",
+        )
+        _insert_rule(
+            manager,
+            "allowed-by-fallback",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="allowed", value=True)],
+            ),
+        )
+        _insert_rule(
+            manager,
+            "blocked-by-fallback",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="blocked", value=True)],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "_agent_type": "default",
+            "_active_rule_names": ["allowed-by-fallback"],
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("allowed") is True
+        assert variables.get("blocked") is None
 
 
 class TestAgentScope:

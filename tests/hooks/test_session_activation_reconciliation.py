@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,12 +16,16 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_activation import (
+    _ACTIVE_RULE_NAMES_CACHE,
+    _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES,
+    _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS,
     MARKER_COMPLETED,
     MARKER_HASH,
     MARKER_VERSION,
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
     _agent_run_from_row,
+    clear_active_rule_names_cache,
     reconcile_session_activation,
 )
 from gobby.storage.agents import LocalAgentRunManager
@@ -31,6 +38,13 @@ from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def clear_rule_cache() -> Iterator[None]:
+    clear_active_rule_names_cache()
+    yield
+    clear_active_rule_names_cache()
 
 
 @pytest.fixture
@@ -51,7 +65,7 @@ def session_manager(db: LocalDatabase) -> SessionManager:
 
 @pytest.fixture
 def handlers(session_manager: SessionManager) -> EventHandlers:
-    return EventHandlers(session_manager=session_manager)
+    return EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
 
 
 def _event(event_type: HookEventType, session_id: str, tmp_path) -> HookEvent:
@@ -92,7 +106,7 @@ def _create_worker_agent(db: LocalDatabase) -> None:
     manager.create(
         name="worker",
         workflow_type="agent",
-        source="test",
+        source="custom",
         definition_json=json.dumps(
             {
                 "name": "worker",
@@ -215,6 +229,273 @@ def test_missing_agent_type_restored_before_rules(
     assert "_agent_type" in result.missing
     assert variables["_agent_type"] == "default"
     assert "is_spawned_agent" in variables
+
+
+def test_reconciliation_refreshes_stale_active_rule_names(
+    db: LocalDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+) -> None:
+    """Refresh stale active rule names from the installed agent definition.
+
+    Reconciliation must replace the session's cached `_active_rule_names` when the
+    agent selector now resolves a different rule set, so stale rules stop firing
+    after bundled/custom workflow changes.
+    """
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="default",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+            }
+        ),
+    )
+    manager.create(
+        name="new-default-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "matched", "value": True}],
+            }
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["stale-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    result = reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, session_id, tmp_path),
+        handlers,
+    )
+
+    variables = _variables(db, session_id)
+    assert result.changed is True
+    assert variables["_active_rule_names"] == ["new-default-rule"]
+
+
+def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
+    db: LocalDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="default",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+            }
+        ),
+    )
+    manager.create(
+        name="cached-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "matched", "value": True}],
+            }
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["stale-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    list_all_calls = 0
+    original_list_all = LocalWorkflowDefinitionManager.list_all
+
+    def counted_list_all(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal list_all_calls
+        list_all_calls += 1
+        return original_list_all(self, *args, **kwargs)
+
+    monkeypatch.setattr(LocalWorkflowDefinitionManager, "list_all", counted_list_all)
+
+    event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
+    reconcile_session_activation(event, handlers)
+    reconcile_session_activation(event, handlers)
+
+    assert _variables(db, session_id)["_active_rule_names"] == ["cached-rule"]
+    assert list_all_calls == 1
+
+
+def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
+    db: LocalDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="default",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+            }
+        ),
+    )
+    manager.create(
+        name="cached-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "matched", "value": True}],
+            }
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["stale-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
+    reconcile_session_activation(event, handlers)
+    assert _variables(db, session_id)["_active_rule_names"] == ["cached-rule"]
+
+    manager.create(
+        name="new-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "new_matched", "value": True}],
+            }
+        ),
+    )
+
+    reconcile_session_activation(event, handlers)
+
+    assert _variables(db, session_id)["_active_rule_names"] == ["cached-rule", "new-rule"]
+
+
+def test_active_rule_names_cache_evicts_oldest_entries(
+    db: LocalDatabase,
+    project_id: str,
+) -> None:
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="new-agent",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "new-agent",
+                "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+            }
+        ),
+    )
+    now = time.monotonic()
+    for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
+        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
+            now - 1 + (index * 0.001),
+            {f"rule-{index}"},
+        )
+
+    from gobby.hooks.session_activation import _resolve_active_rule_names
+
+    assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
+    assert len(_ACTIVE_RULE_NAMES_CACHE) == _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
+    assert ("agent-0", project_id) not in _ACTIVE_RULE_NAMES_CACHE
+
+
+def test_active_rule_names_cache_purges_expired_entries(
+    db: LocalDatabase,
+    project_id: str,
+) -> None:
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="new-agent",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "new-agent",
+                "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+            }
+        ),
+    )
+    now = time.monotonic()
+    _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
+        now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
+        {"stale-rule"},
+    )
+    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (now, {"fresh-rule"})
+
+    from gobby.hooks.session_activation import _resolve_active_rule_names
+
+    assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
+    assert ("stale-agent", project_id) not in _ACTIVE_RULE_NAMES_CACHE
+    assert ("fresh-agent", project_id) in _ACTIVE_RULE_NAMES_CACHE
 
 
 def test_spawned_step_agent_restores_workflow_variable_and_instance(

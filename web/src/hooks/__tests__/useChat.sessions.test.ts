@@ -108,6 +108,76 @@ describe("useChat viewed session state", () => {
     expect(attachMsg?.session_id).toBe("sess-view");
   });
 
+  it("restores a proxy-attached terminal session on mount", async () => {
+    localStorage.setItem("gobby-viewing-session-id", "sess-proxy-restore");
+    localStorage.setItem("gobby-viewing-session-mode", "proxy");
+
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-proxy-restore/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-proxy-restore", {
+      session: {
+        id: "sess-proxy-restore",
+        seq_num: 322,
+        source: "codex",
+        title: "Attached Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "sess-proxy-ext",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await waitFor(() => {
+      const attachMsg = ws.send.mock.calls
+        .map(([raw]) => JSON.parse(raw))
+        .find((msg) => msg.type === "attach_to_session");
+      expect(attachMsg?.session_id).toBe("sess-proxy-restore");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy-restore",
+        external_id: "sess-proxy-ext",
+        source: "codex",
+        title: "Attached Terminal",
+        status: "active",
+        can_proxy_attach: true,
+        model: "gpt-5.4",
+        ref: "#322",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.viewingSessionId).toBe("sess-proxy-restore");
+      expect(result.current.attachedSessionId).toBe("sess-proxy-restore");
+      expect(result.current.sessionInteractionMode).toBe("proxy");
+      expect(localStorage.getItem("gobby-viewing-session-mode")).toBe("proxy");
+    });
+  });
+
   it("upserts rendered session_message events while viewing a session", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
@@ -329,16 +399,20 @@ describe("useChat viewed session state", () => {
     const ws = mockWs.instances[0];
     act(() => ws.simulateOpen());
 
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
     await act(async () => {
       result.current.viewSession("sess-view");
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
 
     const sendCountBeforeAttach = ws.send.mock.calls.length;
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
     act(() => {
       result.current.attachToViewed?.();
     });
+    expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
 
     const attachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeAttach][0]);
     expect(attachMsg).toMatchObject({

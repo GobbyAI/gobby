@@ -71,10 +71,54 @@ class TestMacOSDisable:
         plist = tmp_path / "test.plist"
         plist.write_text("dummy")
         mock_plist.return_value = plist
+        mock_bootout.return_value = {"success": True, "platform": "macos"}
 
         res = disable_service_macos()
         assert res["success"] is True
         mock_bootout.assert_called_once()
+
+    @patch("gobby.cli.installers.service.subprocess.run")
+    @patch("gobby.cli.installers.service._plist_path")
+    def test_disable_macos_reports_real_bootout_failure(
+        self,
+        mock_plist,
+        mock_run,
+        tmp_path: Path,
+    ) -> None:
+        plist = tmp_path / "test.plist"
+        plist.write_text("dummy")
+        mock_plist.return_value = plist
+        mock_run.return_value = MagicMock(
+            returncode=5,
+            stderr="Input/output error",
+            stdout="",
+        )
+
+        res = disable_service_macos()
+
+        assert res["success"] is False
+        assert res["error"] == "launchctl bootout failed: Input/output error"
+
+    @patch("gobby.cli.installers.service.subprocess.run")
+    @patch("gobby.cli.installers.service._plist_path")
+    def test_disable_macos_treats_already_unloaded_as_success(
+        self,
+        mock_plist,
+        mock_run,
+        tmp_path: Path,
+    ) -> None:
+        plist = tmp_path / "test.plist"
+        plist.write_text("dummy")
+        mock_plist.return_value = plist
+        mock_run.return_value = MagicMock(
+            returncode=3,
+            stderr="Boot-out failed: 3: No such process",
+            stdout="",
+        )
+
+        res = disable_service_macos()
+
+        assert res["success"] is True
 
     @patch("gobby.cli.installers.service._plist_path")
     def test_disable_macos_not_installed(self, mock_plist, tmp_path: Path) -> None:

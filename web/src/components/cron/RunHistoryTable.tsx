@@ -47,7 +47,7 @@ const RUN_DETAILS_PRE_CLS =
 const RUN_DETAILS_PRE_EMPTY_CLS =
   'm-0 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-[length:var(--text-sm)] italic text-[var(--text-secondary)]'
 const RUN_DETAILS_COPY_CLS =
-  'absolute right-2 top-2 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]'
+  'absolute right-2 top-2 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] pointer-coarse:h-11 pointer-coarse:w-11'
 const RUN_DETAILS_META_CLS =
   'flex flex-wrap items-center gap-x-4 gap-y-1 text-[length:var(--text-xs)] text-[var(--text-secondary)]'
 const RUN_DETAILS_META_LABEL_CLS = 'uppercase tracking-[0.5px] text-[var(--text-muted)] mr-1'

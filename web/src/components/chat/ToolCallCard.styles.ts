@@ -3,9 +3,17 @@
  * code block so a long Bash/grep run doesn't dominate the chat. Padding
  * and font are tightened via `customStyle`; the gutter geometry comes
  * from the shared `CodeBlock` component.
+ *
+ * `background: transparent` overrides the shared code theme's
+ * `var(--code-bg)` pre fill so the result sits directly on the bordered
+ * tool card rather than painting a second, off-shade slab on top of it.
+ * The theme-aware syntax palette and `textShadow: none` come from
+ * `buildCodeBlockTheme` and are unaffected. File viewers keep the code
+ * surface — they don't use this constant.
  */
 export const TOOL_RESULT_CUSTOM_STYLE = {
   margin: 0,
+  background: 'transparent',
   padding: '0.75rem',
   fontSize: '0.75rem',
   borderRadius: '0.25rem',

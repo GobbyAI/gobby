@@ -147,6 +147,21 @@ class TestSessionManagerMetadata:
         assert updated is None
         assert calls == []
 
+    def test_update_digest_markdown_missing_session_does_not_notify_listener(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """Missing digest updates return None and do not notify session listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        updated = session_manager.update_digest_markdown("missing-session", "## Digest")
+
+        assert updated is None
+        assert calls == []
+
     def test_update_title_listener_failure_does_not_break_update(
         self,
         session_manager: SessionManager,
@@ -304,7 +319,7 @@ class TestSessionManagerMetadata:
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Title, model, summary, and bulk updates notify catalog listeners."""
+        """Title, model, summary, digest, last turn, and bulk updates notify listeners."""
         session = session_manager.register(
             external_id="change-metadata-test",
             machine_id="machine",
@@ -319,9 +334,13 @@ class TestSessionManagerMetadata:
         session_manager.update_title(session.id, "Changed Title")
         session_manager.update_model(session.id, "sonnet")
         session_manager.update_summary(session.id, summary_markdown="# Summary")
+        session_manager.update_digest_markdown(session.id, "## Digest")
+        session_manager.update_last_turn_markdown(session.id, "last turn")
         session_manager.update(session.id, git_branch="feature/session-events")
 
         assert calls == [
+            ("session_updated", session.id),
+            ("session_updated", session.id),
             ("session_updated", session.id),
             ("session_updated", session.id),
             ("session_updated", session.id),

@@ -250,8 +250,9 @@ Applied validation checks that every compiled task stable ID has a created-task
 mapping and that each mapped task still exists.
 
 `validate_plan_file` is separate. It validates a Plan-Coverage Contract plan
-file in draft mode: deliverables, canonical phase headings, and semantic lint
-must pass; a manifest is tolerated absent at draft time.
+file in draft mode: deliverables, canonical phase headings, automated manifest
+categories, and semantic lint must pass; a manifest is tolerated absent at
+draft time.
 
 ---
 
@@ -428,8 +429,8 @@ Rules worth knowing:
 - The phase's `[REF]` task depends on all TDD-eligible implementation tasks in
   that phase.
 - Contract-plan compilation emits `[IMPL]` titles for TDD manifest entries.
-- Non-TDD categories such as `docs`, `refactor`, `test`, `research`,
-  `planning`, and `manual` expand as single tasks.
+- Non-TDD categories such as `docs`, `refactor`, `test`, `research`, and
+  `planning` expand as single tasks.
 - Cross-phase TDD sequencing avoids adding an implicit phase edge when it would
   conflict with explicit manifest dependencies.
 

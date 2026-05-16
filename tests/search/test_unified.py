@@ -9,6 +9,7 @@ import pytest
 
 from gobby.search import (
     EmbeddingBackend,
+    EmbeddingGenerationError,
     FallbackEvent,
     SearchConfig,
     SearchMode,
@@ -495,7 +496,7 @@ class TestEmbeddingBackend:
         mock_client = _make_openai_client(dim=3)
 
         with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with pytest.raises(RuntimeError, match="expected_dim=4"):
+            with pytest.raises(EmbeddingGenerationError, match="expected_dim=4"):
                 await backend.fit_async([("id1", "hello")])
 
     @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_client import ACPClient
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.config.app import deep_merge
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 
@@ -209,10 +209,28 @@ def _gobby_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".gobby"
 
 
-def _model_discovery_cwd() -> Path:
-    cwd = _gobby_home() / _MODEL_DISCOVERY_CWD_NAME
-    cwd.mkdir(parents=True, exist_ok=True)
-    return cwd.resolve()
+def _model_discovery_cwd_path(provider: str) -> Path:
+    provider_dir = provider.strip().lower()
+    if (
+        not provider_dir
+        or provider_dir in {".", ".."}
+        or "/" in provider_dir
+        or "\\" in provider_dir
+    ):
+        raise ValueError(f"Invalid provider model-discovery directory: {provider!r}")
+    return _gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
+
+
+async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
+    cwd = _model_discovery_cwd_path(provider)
+    created = False
+    try:
+        await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=False)
+        created = True
+    except FileExistsError:
+        if not await asyncio.to_thread(cwd.is_dir):
+            raise
+    return cwd.resolve(), created
 
 
 def _short_error(exc: BaseException) -> str:
@@ -745,10 +763,23 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        cwd = _model_discovery_cwd()
-        # Tracked by gobby-#14568: replace this temporary process-wide pre-approval
-        # with provider-scoped model-discovery authorization.
-        pre_approve_directory(client_cls.cli_name, cwd)
+        cwd, created_cwd = await _model_discovery_cwd(client_cls.cli_name)
+        try:
+            await authorize_model_discovery_trust(client_cls.cli_name, cwd)
+        except Exception:
+            if created_cwd:
+                try:
+                    await asyncio.to_thread(shutil.rmtree, cwd)
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "Failed to remove %s model-discovery cwd %s after authorization "
+                        "failure: %s",
+                        client_cls.cli_name,
+                        cwd,
+                        cleanup_exc,
+                        exc_info=True,
+                    )
+            raise
         client = client_cls(
             cwd=os.fspath(cwd),
             purpose="model-discovery",

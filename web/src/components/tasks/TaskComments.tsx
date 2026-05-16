@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { relativeTime } from '../../utils/formatTime'
 import { cn } from '../../lib/utils'
+import { inputFocusCls } from '../shared/focusStyles'
 
 interface Comment {
   id: string
@@ -40,8 +41,10 @@ const REPLIES_CLS = 'mt-1'
 
 const COMPOSE_CLS = 'mt-1 flex items-end gap-1.5'
 const INPUT_WRAPPER_CLS = 'relative flex-1'
+// Comment inputs share the app-wide focus-visible outline so keyboard focus is
+// obvious without adding a persistent ring during mouse editing.
 const TEXTAREA_CLS =
-  'block min-h-9 w-full resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none'
+  `block min-h-9 w-full resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] ${inputFocusCls}`
 const SEND_BTN_CLS =
   'cursor-pointer whitespace-nowrap rounded border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] px-3 py-[5px] font-[inherit] text-[length:var(--text-xs)] text-[var(--color-info)] enabled:hover:bg-[color-mix(in_srgb,var(--color-info)_22%,transparent)] disabled:cursor-default disabled:opacity-40 pointer-coarse:min-h-11'
 

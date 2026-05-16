@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 // Mock the hooks
 vi.mock('../../../hooks/useDashboard', () => ({
@@ -15,7 +15,9 @@ vi.mock('../SystemHealthCard', () => ({
   SystemHealthCard: () => <div data-testid="system-health">Health</div>,
 }))
 vi.mock('../TasksCard', () => ({
-  TasksCard: () => <div data-testid="tasks-card">Tasks</div>,
+  TasksCard: ({ projectId }: { projectId?: string }) => (
+    <div data-testid="tasks-card" data-project-id={projectId ?? 'all'}>Tasks</div>
+  ),
 }))
 vi.mock('../SessionsCard', () => ({
   SessionsCard: () => <div data-testid="sessions-card">Sessions</div>,
@@ -44,6 +46,7 @@ const mockUseDashboard = vi.mocked(useDashboard)
 
 const SAMPLE_DATA: AdminStatus = {
   status: 'running',
+  project_id: 'project-1',
   server: { port: 60887, uptime_seconds: 3600, running: true },
   process: { memory_rss_mb: 100, memory_vms_mb: 200, cpu_percent: 5, num_threads: 10 },
   background_tasks: { active: 0, total: 5, completed: 5, failed: 0 },
@@ -142,5 +145,26 @@ describe('DashboardPage', () => {
     render(<DashboardPage />)
 
     expect(screen.getByText(/Updated/)).toBeTruthy()
+  })
+
+  it('labels the all-projects switch and lets the text toggle it', () => {
+    mockUseDashboard.mockReturnValue({
+      data: SAMPLE_DATA,
+      isLoading: false,
+      error: null,
+      lastUpdated: null,
+      refresh: mockRefresh,
+    })
+
+    render(<DashboardPage />)
+
+    const switchControl = screen.getByRole('switch', { name: 'All Projects' })
+    expect(switchControl).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('tasks-card')).toHaveAttribute('data-project-id', 'all')
+
+    fireEvent.click(screen.getByText('All Projects'))
+
+    expect(switchControl).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('tasks-card')).toHaveAttribute('data-project-id', 'project-1')
   })
 })

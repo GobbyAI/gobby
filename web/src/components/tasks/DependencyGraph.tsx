@@ -32,7 +32,7 @@ const EMPTY_CLS =
 const CONTROLS_CLS =
   'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
 const CTRL_BTN_CLS =
-  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-none bg-transparent text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-none bg-transparent text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const CTRL_LABEL_CLS =
   'min-w-9 px-1 text-center text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
 

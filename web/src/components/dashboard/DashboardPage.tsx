@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useDashboard } from '../../hooks/useDashboard'
 import { cn } from '../../lib/utils'
 import { SystemHealthCard } from './SystemHealthCard'
@@ -21,6 +21,7 @@ import {
   dashboardToolbarControlsClass,
   dashboardToolbarUpdatedClass,
 } from './dashboardStyles'
+import { Heading } from '../shared/Heading'
 
 function formatTime(date: Date | null): string {
   if (!date) return ''
@@ -31,6 +32,7 @@ export function DashboardPage() {
   const { data, isLoading, error, lastUpdated } = useDashboard()
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const [showAllProjects, setShowAllProjects] = useState(true)
+  const allProjectsLabelId = useId()
 
   const hours = rangeToHours(timeRange)
   const projectId = showAllProjects ? undefined : data?.project_id
@@ -39,30 +41,34 @@ export function DashboardPage() {
     <main className={dashboardPageClass}>
       <div className={dashboardToolbarClass}>
         <div className="flex items-center gap-3">
-          <h1 className="m-0 text-lg font-semibold text-foreground">Dashboard</h1>
+          <Heading level={1} className="m-0 text-lg font-semibold text-foreground">Dashboard</Heading>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
           <div className={dashboardToolbarControlsClass}>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <button
-                role="switch"
-                aria-checked={showAllProjects}
-                aria-label="Show all projects"
-                onClick={() => setShowAllProjects(!showAllProjects)}
+            <button
+              type="button"
+              className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground select-none"
+              role="switch"
+              aria-checked={showAllProjects}
+              aria-labelledby={allProjectsLabelId}
+              onClick={() => setShowAllProjects(!showAllProjects)}
+            >
+              <span
+                aria-hidden="true"
                 className={cn(
-                  'relative inline-flex h-4 w-7 shrink-0 rounded-full border border-border transition-colors',
+                  'relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-border transition-colors',
                   showAllProjects ? 'bg-accent' : 'bg-muted',
                 )}
               >
                 <span
                   className={cn(
-                    'pointer-events-none block h-3 w-3 rounded-full bg-white shadow-sm transition-transform',
+                    'pointer-events-none block h-3 w-3 rounded-full bg-[var(--bg-primary)] shadow-sm transition-transform',
                     showAllProjects ? 'translate-x-3' : 'translate-x-0',
                   )}
                 />
-              </button>
-              All Projects
-            </label>
+              </span>
+              <span id={allProjectsLabelId}>All Projects</span>
+            </button>
             <TimeRangePills value={timeRange} onChange={setTimeRange} />
           </div>
           {lastUpdated && (

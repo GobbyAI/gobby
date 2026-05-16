@@ -32,6 +32,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
@@ -652,22 +653,23 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="relative z-[100] flex items-center justify-between gap-4 border-b border-border px-4 py-4">
-        <div className="flex min-w-0 items-center gap-1">
+      <header className="app-header">
+        <div className="app-brand">
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
+            className="app-menu-button"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title="Toggle menu"
             aria-label="Toggle navigation menu"
           >
             <HamburgerIcon />
           </Button>
-          <GobbyLogo size={44} />
-          <span className="min-w-0 truncate text-3xl font-semibold text-foreground">Gobby</span>
+          <GobbyLogo className="app-brand-logo" size={44} />
+          <span className="app-brand-title">Gobby</span>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="app-header-actions">
+          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
           {projectOptions.length > 0 && (
             <ProjectSelector
               projects={projectOptions}
@@ -679,7 +681,7 @@ export default function App() {
           <Badge
             variant={isConnected ? "success" : "error"}
             style={{ height: "var(--control-row-height)" }}
-            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
+            className="app-health-badge gap-2 uppercase tracking-[0.05em]"
           >
             <span
               aria-hidden="true"

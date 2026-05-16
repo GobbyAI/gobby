@@ -63,6 +63,24 @@ const STATUS_MODE_OPTIONS = [
   { value: "expired" as const, label: "Expired" },
 ] as const;
 
+function resolveSessionSummaryMarkdown(
+  ...sessions: Array<
+    Pick<GobbySession, "summary_markdown" | "digest_markdown"> | null | undefined
+  >
+): string | null {
+  for (const session of sessions) {
+    if (session?.summary_markdown?.trim()) {
+      return session.summary_markdown;
+    }
+  }
+  for (const session of sessions) {
+    if (session?.digest_markdown?.trim()) {
+      return session.digest_markdown;
+    }
+  }
+  return null;
+}
+
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
@@ -445,6 +463,8 @@ export const SessionsTab = memo(function SessionsTab({
 
   const {
     session: selectedSessionDetail,
+    sessionError,
+    clearSessionError,
     messages,
     isLoading: isLoadingDetail,
     transcriptStatus,
@@ -477,8 +497,10 @@ export const SessionsTab = memo(function SessionsTab({
     return "No messages yet";
   }, [transcriptStatus]);
 
-  const summaryMarkdown =
-    selectedSession?.summary_markdown ?? selectedSession?.digest_markdown ?? null;
+  const summaryMarkdown = resolveSessionSummaryMarkdown(
+    selectedSessionDetail,
+    selectedCatalogSession,
+  );
   const selectedSessionStatus = selectedSession?.status ?? selectedEntry?.status ?? null;
   const transcriptUnavailable =
     transcriptStatus?.content_state === "missing" ||
@@ -486,7 +508,7 @@ export const SessionsTab = memo(function SessionsTab({
   const hideResumeAndSwap =
     selectedSessionStatus === "expired" && transcriptUnavailable;
   const showSummaryButton =
-    selectedEntry != null && (!hideResumeAndSwap || Boolean(summaryMarkdown));
+    selectedEntry != null && (Boolean(summaryMarkdown) || contentMode === "summary");
   const showResumeButton =
     selectedEntry?.type === "session" &&
     selectedSessionId != null &&
@@ -692,12 +714,14 @@ export const SessionsTab = memo(function SessionsTab({
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <ActivityRowStatusDot
-                    color={
+                    kind={
                       entry.status === "active"
-                        ? "var(--color-success-foreground)"
+                        ? "success"
                         : entry.status === "expired"
-                          ? "var(--text-muted)"
-                          : "var(--color-warning-foreground)"
+                          ? "stopped"
+                          : entry.status === "paused"
+                            ? "paused"
+                            : "warning"
                     }
                     pulse={entry.status === "active"}
                     label={`Session ${entry.status}`}
@@ -820,6 +844,24 @@ export const SessionsTab = memo(function SessionsTab({
               )}
             </div>
           </div>
+
+          {sessionError && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
+            >
+              <span className="min-w-0 flex-1">{sessionError}</span>
+              <button
+                type="button"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]"
+                onClick={clearSessionError}
+                aria-label="Dismiss session error"
+                title="Dismiss"
+              >
+                &times;
+              </button>
+            </div>
+          )}
 
           <ArtifactContext.Provider value={noopArtifactCtx}>
             {contentMode === "summary" ? (

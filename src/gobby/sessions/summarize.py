@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -44,6 +45,49 @@ class LLMServiceProtocol(Protocol):
     def get_default_provider(self) -> Any: ...
 
 
+async def _run_sqlite(
+    run_db: Callable[..., Awaitable[Any]] | None,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if run_db is None:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return await run_db(func, *args, **kwargs)
+
+
+def _resolve_run_db(
+    explicit_run_db: Callable[..., Awaitable[Any]] | None,
+    *,
+    db: DatabaseProtocol | None,
+    session_manager: SessionManagerProtocol,
+) -> Callable[..., Awaitable[Any]] | None:
+    if explicit_run_db is not None:
+        return explicit_run_db
+
+    resolved_db = db or getattr(session_manager, "db", None)
+    if resolved_db is None:
+        return None
+
+    try:
+        from gobby import app_context as app_context_module
+
+        get_app_context = app_context_module.get_app_context
+    except (ImportError, AttributeError) as exc:
+        logger.debug("Unable to resolve app context for run_db reuse: %s", exc)
+        return None
+
+    app_context = get_app_context()
+
+    if (
+        app_context is not None
+        and getattr(app_context, "database", None) is resolved_db
+        and getattr(app_context, "db_executor", None) is not None
+    ):
+        return app_context.run_db
+    return None
+
+
 async def generate_session_summaries(
     session_id: str,
     session_manager: SessionManagerProtocol,
@@ -54,6 +98,7 @@ async def generate_session_summaries(
     set_handoff_ready: bool = True,
     compact_only: bool = False,
     full_only: bool = False,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
     """Generate summary_markdown for a session.
 
@@ -71,6 +116,7 @@ async def generate_session_summaries(
         set_handoff_ready: Update session status to handoff_ready.
         compact_only: Ignored (kept for API compatibility).
         full_only: Ignored (kept for API compatibility).
+        run_db: Optional bounded executor bridge for SQLite storage calls.
 
     Returns:
         Dict with success status, markdown lengths, and context summary.
@@ -78,7 +124,9 @@ async def generate_session_summaries(
     if not session_manager:
         return {"success": False, "error": "Session manager not available"}
 
-    session = await asyncio.to_thread(session_manager.get, session_id)
+    sqlite_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
+
+    session = await _run_sqlite(sqlite_runner, session_manager.get, session_id)
     if not session:
         return {"success": False, "error": "No session found", "session_id": session_id}
 
@@ -123,6 +171,7 @@ async def generate_session_summaries(
         llm_service=llm_service,
         db=db,
         session_manager=session_manager,
+        run_db=sqlite_runner,
     )
 
     if not is_summary_markdown_valid(full_markdown):
@@ -134,13 +183,16 @@ async def generate_session_summaries(
 
     # Persist to database
     if is_summary_markdown_valid(full_markdown):
-        await asyncio.to_thread(
-            session_manager.update_summary, session_id, summary_markdown=full_markdown
+        await _run_sqlite(
+            sqlite_runner,
+            session_manager.update_summary,
+            session_id,
+            summary_markdown=full_markdown,
         )
 
     # Set handoff_ready status
     if set_handoff_ready:
-        await asyncio.to_thread(session_manager.update_status, session_id, "handoff_ready")
+        await _run_sqlite(sqlite_runner, session_manager.update_status, session_id, "handoff_ready")
 
     # Write files if requested
     files_written = await _write_files(
@@ -157,7 +209,8 @@ async def generate_session_summaries(
         try:
             from gobby.savings.discovery import record_discovery_savings
 
-            await asyncio.to_thread(
+            await _run_sqlite(
+                sqlite_runner,
                 record_discovery_savings,
                 resolved_db,
                 session.id,
@@ -347,6 +400,7 @@ async def _generate_full_summary(
     llm_service: LLMServiceProtocol | None,
     db: DatabaseProtocol | None,
     session_manager: SessionManagerProtocol,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> tuple[str | None, str | None]:
     """Generate the full LLM-based archival summary.
 
@@ -424,12 +478,12 @@ async def _generate_full_summary(
         # Enrich with DB context
         resolved_db = db or getattr(session_manager, "db", None)
         claimed_tasks = (
-            await asyncio.to_thread(_get_claimed_tasks, session.id, resolved_db)
+            await _run_sqlite(run_db, _get_claimed_tasks, session.id, resolved_db)
             if resolved_db
             else ""
         )
         session_memories = (
-            await asyncio.to_thread(_get_session_memories, session.id, resolved_db)
+            await _run_sqlite(run_db, _get_session_memories, session.id, resolved_db)
             if resolved_db
             else ""
         )

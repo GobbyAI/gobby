@@ -176,6 +176,21 @@ describe("useChat persisted message helpers", () => {
     });
   });
 
+  it("keeps an intentional fresh draft blank on mount", async () => {
+    localStorage.clear();
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    expect(result.current.conversationId).toBe("");
+    expect(result.current.dbSessionId).toBeNull();
+    expect(result.current.messages).toHaveLength(0);
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) => String(url).includes("/api/chat/")),
+    ).toBe(false);
+  });
+
   it("does not restore persisted web-chat sessions in terminal statuses", async () => {
     mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
       session: {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _run_db(
+    run_db: Callable[..., Awaitable[Any]] | None,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if run_db is None:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return await run_db(func, *args, **kwargs)
+
+
 async def sync_worker_loop(
     storage: CodeIndexStorage,
     vector_store: Any | None,
@@ -29,6 +41,7 @@ async def sync_worker_loop(
     config: CodeIndexConfig,
     embeddings_config: EmbeddingsConfig,
     shutdown_flag: asyncio.Event,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Continuous worker that syncs pending files to Qdrant and Neo4j.
 
@@ -74,6 +87,7 @@ async def sync_worker_loop(
                 embed_model=embed_model,
                 batch_size=batch_size,
                 embedding_dim=embeddings_config.dim,
+                run_db=run_db,
             )
         except Exception as e:
             logger.error(f"Sync worker pass error: {e}", exc_info=True)
@@ -95,15 +109,18 @@ async def _sync_pass(
     embed_model: Any | None,
     batch_size: int,
     embedding_dim: int,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Single sync pass across all indexed projects."""
-    projects = storage.list_indexed_projects()
+    projects = await _run_db(run_db, storage.list_indexed_projects)
 
     for project in projects:
         if not project.root_path:
             continue
 
-        files = storage.get_pending_sync_files(
+        files = await _run_db(
+            run_db,
+            storage.get_pending_sync_files,
             project.id,
             limit=batch_size,
             vectors=config.embedding_enabled,
@@ -127,11 +144,17 @@ async def _sync_pass(
                     root=root,
                     file=file,
                     embedding_dim=embedding_dim,
+                    run_db=run_db,
                 )
                 if did_sync:
                     synced_count += 1
             except Exception as e:
-                logger.warning(f"Sync worker: failed to sync {file.file_path}: {e}")
+                logger.error(
+                    "Sync worker: failed to sync %s: %s",
+                    file.file_path,
+                    e,
+                    exc_info=True,
+                )
 
         if synced_count > 0:
             logger.info(
@@ -149,22 +172,23 @@ async def _sync_file(
     root: Path,
     file: IndexedFile,
     embedding_dim: int,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
-    current = storage.get_file(project_id, file.file_path)
+    current = await _run_db(run_db, storage.get_file, project_id, file.file_path)
     if current is None:
         return False
 
     # Validate: file still exists on disk
-    full_path = root / file.file_path
+    full_path = root / current.file_path
     if not full_path.exists():
         return False
 
     did_work = False
 
     # Vector sync
-    if not file.vectors_synced and config.embedding_enabled:
+    if not current.vectors_synced and config.embedding_enabled:
         if vector_store is not None and embed_model is not None:
             try:
                 await _sync_vectors(
@@ -173,29 +197,41 @@ async def _sync_file(
                     embed_model=embed_model,
                     config=config,
                     project_id=project_id,
-                    file=file,
+                    file=current,
                     embedding_dim=embedding_dim,
+                    run_db=run_db,
                 )
-                storage.mark_vectors_synced(file.id)
+                await _run_db(run_db, storage.mark_vectors_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: vector sync failed for {file.file_path}: {e}")
+                logger.error(
+                    "Sync worker: vector sync failed for %s: %s",
+                    current.file_path,
+                    e,
+                    exc_info=True,
+                )
 
     # Graph sync
-    if not file.graph_synced and config.graph_enabled:
+    if not current.graph_synced and config.graph_enabled:
         if graph is not None and graph.available:
             try:
-                storage.mark_graph_sync_attempted(file.id)
+                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                 await _sync_graph(
                     storage=storage,
                     graph=graph,
                     project_id=project_id,
-                    file=file,
+                    file=current,
+                    run_db=run_db,
                 )
-                storage.mark_graph_synced(file.id)
+                await _run_db(run_db, storage.mark_graph_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: graph sync failed for {file.file_path}: {e}")
+                logger.error(
+                    "Sync worker: graph sync failed for %s: %s",
+                    current.file_path,
+                    e,
+                    exc_info=True,
+                )
 
     return did_work
 
@@ -208,9 +244,10 @@ async def _sync_vectors(
     project_id: str,
     file: IndexedFile,
     embedding_dim: int,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
-    symbols = storage.get_symbols_for_file(project_id, file.file_path)
+    symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
     if not symbols:
         return
 
@@ -267,12 +304,14 @@ async def _sync_graph(
     graph: CodeGraph,
     project_id: str,
     file: IndexedFile,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Write Neo4j edges for a file from SQLite import/call/symbol data."""
     # Read relations from SQLite
-    imports = storage.get_imports_for_file(project_id, file.file_path)
-    calls = storage.get_calls_for_file(project_id, file.file_path)
-    symbols = storage.get_symbols_for_file(project_id, file.file_path)
+    imports = await _run_db(run_db, storage.get_imports_for_file, project_id, file.file_path)
+    calls = await _run_db(run_db, storage.get_calls_for_file, project_id, file.file_path)
+    symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
 
     # Build contains list (for DEFINES edges)
     contains = [

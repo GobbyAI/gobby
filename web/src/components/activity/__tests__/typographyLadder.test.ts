@@ -43,6 +43,30 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(sessionsSource).toContain('activity-panel-status-bar__title')
   })
 
+  it('keeps status-bar controls at desktop visual height on touch devices', () => {
+    const rootSource = readSource('src/styles/index.css')
+    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
+    const inputSource = readSource('src/components/chat/styles/input.css')
+    const layoutSource = readSource('src/components/chat/styles/layout.css')
+
+    expect(rootSource).toContain('--status-bar-control-height: 1.75rem')
+    expect(inputSource).toMatch(
+      /\.agent-status-bar__actions \.btn-sm\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
+    )
+    expect(activitySource).toMatch(
+      /\.activity-panel-close-slot \.btn-sm,\s*\.activity-panel-status-bar__actions \.btn-sm\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
+    )
+    expect(layoutSource).toMatch(
+      /\.command-bar-btn\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
+    )
+    expect(activitySource).toMatch(
+      /\.activity-panel-tabs\s*{[^}]*padding:\s*0 0\.75rem/,
+    )
+    expect(activitySource).toMatch(
+      /\.activity-filter-button\s*{[^}]*margin-left:\s*auto/,
+    )
+  })
+
   it('locks the tasks row title to --text-base / medium', () => {
     const source = readSource('src/components/tasks/task-execution.css')
 

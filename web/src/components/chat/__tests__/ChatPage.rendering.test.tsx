@@ -184,6 +184,26 @@ describe("ChatPage – rendering", () => {
     expect(screen.queryByTestId("voice-status-bar")).toBeNull();
   });
 
+  it("shows the voice status row during PTT recording", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice({
+          sttEnabled: true,
+          voiceInputMode: "ptt",
+          isRecording: true,
+        })}
+      />,
+    );
+
+    const voiceStatus = await screen.findByTestId("voice-status-bar");
+
+    expect(voiceStatus).toHaveTextContent("Recording...");
+    expect(voiceStatus).toHaveAttribute("data-mode", "ptt");
+    expect(voiceStatus).toHaveAttribute("data-recording", "true");
+  });
+
   it("opens the Artifacts tab when a show_file artifact event arrives", async () => {
     let artifactEvent:
       | ((

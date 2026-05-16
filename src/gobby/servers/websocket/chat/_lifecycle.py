@@ -140,7 +140,10 @@ class ChatLifecycleMixin:
             )
             source = SessionSource("claude")
 
-        metadata: dict[str, Any] = {"_platform_session_id": db_session_id}
+        metadata: dict[str, Any] = {
+            "_platform_session_id": db_session_id,
+            "session_type": "web_chat",
+        }
         if project_path:
             metadata["project_path"] = project_path
 
@@ -282,6 +285,9 @@ class ChatLifecycleMixin:
 
             return result
         except Exception as e:
+            # Defensive fail-open for web-chat lifecycle hooks. PreCompact runs
+            # on the SDK compaction path; hook failures must not abort the
+            # compaction itself or strand the active conversation.
             logger.error(f"Lifecycle evaluation failed for {event_type}: {e}", exc_info=True)
             return None
 

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
@@ -32,6 +32,7 @@ class TerminalPromptMonitor:
         get_tmux_config: Callable[[], TmuxConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
         monotonic: Callable[[], float] = time.monotonic,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._get_active_terminal_runs = get_active_terminal_runs
         self._get_tmux = get_tmux
@@ -41,6 +42,12 @@ class TerminalPromptMonitor:
         self._handle_looping_agent = handle_looping_agent
         self._monotonic = monotonic
         self._last_enter_sent_at: dict[str, float] = {}
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     def mark_enter_sent(self, run_id: str) -> None:
         """Record that this run just received an automatic terminal keypress."""
@@ -52,7 +59,7 @@ class TerminalPromptMonitor:
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them."""
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        runs = await self._run_sqlite(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -84,7 +91,7 @@ class TerminalPromptMonitor:
 
     async def check_loop_prompts(self) -> int:
         """Check for loop detection prompts and auto-dismiss them."""
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        runs = await self._run_sqlite(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -128,7 +135,7 @@ class TerminalPromptMonitor:
         if not self._get_tmux_config().auto_enter_approval_prompts:
             return 0
 
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        runs = await self._run_sqlite(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -163,7 +170,7 @@ class TerminalPromptMonitor:
         if not config.auto_enter_agent_terminals:
             return 0
 
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        runs = await self._run_sqlite(self._get_active_terminal_runs)
         now = self._monotonic()
         interval = config.auto_enter_agent_interval_seconds
 

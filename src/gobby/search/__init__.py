@@ -29,6 +29,7 @@ from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
 
 # Embedding utilities
 from gobby.search.embeddings import (
+    EmbeddingGenerationError,
     generate_embedding,
     generate_embeddings,
     is_embedding_configured,
@@ -56,6 +57,7 @@ __all__ = [
     # Unified searcher
     "UnifiedSearcher",
     # Embedding utilities
+    "EmbeddingGenerationError",
     "generate_embedding",
     "generate_embeddings",
     "is_embedding_configured",

@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent } from 'react'
 import { cn } from '../../lib/utils'
+import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 
 export interface SegmentedControlOption<T extends string> {
   value: T
@@ -52,8 +53,19 @@ export function SegmentedControl<T extends string>({
   }
 
   const sizeText = size === 'md' ? 'text-base' : 'text-xs'
-  const sizePad = size === 'md' ? 'px-3' : 'px-2'
+  const sizePad = size === 'md' ? 'segmented-control__option--md' : 'segmented-control__option--sm'
   const heightVar = controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'
+
+  // Light: recessed bg-secondary track + a brighter neutral --surface-selected
+  // well for the active segment (selection by lightness + weight, hue stays
+  // the fourth signal — .impeccable.md). Dark is byte-frozen to the shipped
+  // accent treatment (IMG_3754); CSS can't reach Tailwind classes so this
+  // branches on the same useResolvedTheme() hook the chrome uses.
+  const isLight = useResolvedTheme() === 'light'
+  const trackBg = isLight ? 'bg-[var(--bg-secondary)]' : 'bg-[var(--bg-primary)]'
+  const activeOption = isLight
+    ? 'bg-[var(--surface-selected)] text-[var(--text-primary)] font-semibold'
+    : 'bg-accent/15 text-accent font-semibold'
 
   return (
     <div
@@ -62,7 +74,8 @@ export function SegmentedControl<T extends string>({
       aria-disabled={disabled || undefined}
       style={{ height: heightVar }}
       className={cn(
-        'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-primary)]',
+        'inline-flex items-stretch rounded-md border border-border',
+        trackBg,
         sizeText,
         className,
       )}
@@ -96,7 +109,7 @@ export function SegmentedControl<T extends string>({
               index === 0 && 'rounded-l-md',
               index === options.length - 1 && 'rounded-r-md',
               isActive
-                ? 'bg-accent/15 text-accent'
+                ? activeOption
                 : 'text-muted-foreground hover:bg-muted hover:text-foreground',
               disabled && 'cursor-not-allowed opacity-50',
             )}

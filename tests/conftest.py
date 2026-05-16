@@ -1,8 +1,9 @@
 """Pytest configuration and shared fixtures for Gobby tests."""
 
+import logging
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,6 +44,41 @@ if TYPE_CHECKING:
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
+
+
+_GOBBY_LOGGER_NAMES = ("gobby", "gobby.hooks", "gobby.mcp.server", "gobby.mcp.client")
+
+
+@pytest.fixture(autouse=True)
+def _restore_gobby_logger_state() -> Generator[None]:
+    """Snapshot and restore the gobby logger tree around every test.
+
+    ``setup_otel_logging`` (and ``init_telemetry`` by extension) mutate the
+    ``gobby`` logger and its sub-loggers: they set ``propagate=False``, attach
+    rotating file + OTel handlers, and bump the level. Without teardown, those
+    mutations leak across test modules — most visibly, ``propagate=False``
+    silently hides warnings from pytest's ``caplog`` in downstream tests, which
+    attaches its handler to root and relies on propagation. This must be
+    suite-wide: any test that boots telemetry or a real daemon is a polluter.
+    """
+    snapshots = []
+    for name in _GOBBY_LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        snapshots.append((name, logger.level, logger.propagate, logger.handlers[:]))
+    try:
+        yield
+    finally:
+        for name, level, propagate, original_handlers in snapshots:
+            logger = logging.getLogger(name)
+            for handler in logger.handlers[:]:
+                if handler not in original_handlers:
+                    handler.close()
+                    logger.removeHandler(handler)
+            for handler in original_handlers:
+                if handler not in logger.handlers:
+                    logger.addHandler(handler)
+            logger.setLevel(level)
+            logger.propagate = propagate
 
 
 @pytest.fixture

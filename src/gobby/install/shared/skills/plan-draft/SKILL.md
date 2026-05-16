@@ -385,7 +385,7 @@ criteria and are not substitutes for a sibling TDD wrapper:
 
 ## Task Categories
 
-Canonical category list (enum-backed — `src/gobby/storage/tasks/_models.py::VALID_CATEGORIES`):
+Expansion manifest category list:
 
 | Category | TDD sandwich? | Use for |
 |----------|---------------|---------|
@@ -396,10 +396,11 @@ Canonical category list (enum-backed — `src/gobby/storage/tasks/_models.py::VA
 | `test` | no | Standalone test infrastructure, parity, characterization, or regression suites with their own acceptance criteria |
 | `research` | no | Investigation, no code output expected |
 | `planning` | no | Design, architecture |
-| `manual` | no | Manual verification (observe output) |
 
 Pick the most specific category that applies. A task that only moves code
 around without changing behavior is `refactor`, not `code`.
+`manual` remains valid for direct task creation outside expansion manifests; in
+plans that expand into tasks, live/manual verification belongs in `test`.
 
 ---
 

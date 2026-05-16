@@ -1,6 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { pruneTimeBoundLru } from '../../lib/timeBoundLru'
 import { parseVoiceStatus, type RawVoiceStatus } from '../voiceStatus'
+
+const VOICE_PREPARE_RETRY_MS = 30_000
+const VOICE_PREPARE_CACHE_MAX_ENTRIES = 128
+// Shared across hook instances because chat remounts, reconnects, and
+// conversation switches can recreate the hook while the same WebSocket target is
+// still warming. This only throttles prepare sends: same-tick races may
+// duplicate one prepare, TTL expiry allows retry, and LRU pruning bounds growth.
+const voicePrepareSentAt = new Map<string, number>()
+
+function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {
+  return `${conversationId}:${sttEnabled}:${ttsEnabled}`
+}
+
+function pruneVoicePrepareSentAt(now: number, reserveNewEntry = false) {
+  pruneTimeBoundLru(voicePrepareSentAt, now, {
+    maxEntries: reserveNewEntry
+      ? VOICE_PREPARE_CACHE_MAX_ENTRIES - 1
+      : VOICE_PREPARE_CACHE_MAX_ENTRIES,
+    ttlMs: VOICE_PREPARE_RETRY_MS,
+  })
+}
+
+export function resetVoicePrepareCacheForTests(): void {
+  voicePrepareSentAt.clear()
+}
+
+export function seedVoicePrepareCacheForTests(entries: Array<readonly [string, number]>): void {
+  voicePrepareSentAt.clear()
+  for (const [key, sentAt] of entries) {
+    voicePrepareSentAt.set(key, sentAt)
+  }
+}
+
+export function voicePrepareCacheKeysForTests(): string[] {
+  return Array.from(voicePrepareSentAt.keys())
+}
 
 interface VoiceStatusOptions {
   wsRef: RefObject<WebSocket | null>
@@ -36,7 +73,6 @@ export function useVoiceStatus({
 
   const statusPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollCancelledRef = useRef(false)
-  const warmupKeyRef = useRef<string | null>(null)
 
   const applyVoiceStatus = useCallback((data: RawVoiceStatus | null) => {
     const parsed = parseVoiceStatus(data, window.isSecureContext)
@@ -45,10 +81,6 @@ export function useVoiceStatus({
     setVoiceReady(parsed.voiceReady)
     setVoiceLoading(parsed.voiceLoading)
     setStatusVoiceError(parsed.warmupError)
-
-    if (parsed.voiceReady) {
-      warmupKeyRef.current = null
-    }
   }, [])
 
   const markVoicePreparing = useCallback(() => {
@@ -101,18 +133,20 @@ export function useVoiceStatus({
   useEffect(() => {
     const wantsVoice = sttEnabled || ttsEnabled
     if (!wantsVoice) {
-      warmupKeyRef.current = null
       return
     }
-    if (!socketConnected || voiceReady || voiceLoading) return
+    if (!socketConnected || voiceReady) return
 
-    const warmupKey = `${conversationId}:${socketConnected}:${sttEnabled}:${ttsEnabled}`
-    if (warmupKeyRef.current === warmupKey) return
+    const warmupKey = getVoicePrepareKey(conversationId, sttEnabled, ttsEnabled)
+    const now = Date.now()
+    pruneVoicePrepareSentAt(now, !voicePrepareSentAt.has(warmupKey))
+    const lastSentAt = voicePrepareSentAt.get(warmupKey)
+    if (lastSentAt !== undefined && now - lastSentAt < VOICE_PREPARE_RETRY_MS) return
 
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    warmupKeyRef.current = warmupKey
+    voicePrepareSentAt.set(warmupKey, now)
     setVoiceLoading(true)
     ws.send(JSON.stringify({
       type: 'voice_prepare',
@@ -127,7 +161,6 @@ export function useVoiceStatus({
     startStatusPolling,
     sttEnabled,
     ttsEnabled,
-    voiceLoading,
     voiceReady,
     wsRef,
   ])

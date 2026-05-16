@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG, FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
+import { Heading } from '../shared/Heading'
 
 const OVERLAY_CLS =
   'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fadeIn_0.15s_ease]'
@@ -63,7 +64,7 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
     <div className={OVERLAY_CLS} onClick={onClose}>
       <div ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-import-title" tabIndex={-1} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h2 id="skill-import-title" className={HEADER_TITLE_CLS}>Import Skill</h2>
+          <Heading level={2} id="skill-import-title" className={HEADER_TITLE_CLS}>Import Skill</Heading>
           <button
             type="button"
             className={CLOSE_CLS}
@@ -76,8 +77,9 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
         </div>
 
         <div className={BODY_CLS}>
-          <label className={LABEL_CLS}>Source URL or Path</label>
+          <label className={LABEL_CLS} htmlFor="skill-import-source">Source URL or Path</label>
           <input
+            id="skill-import-source"
             className={INPUT_CLS}
             value={source}
             onChange={e => setSource(e.target.value)}

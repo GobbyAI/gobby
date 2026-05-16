@@ -156,6 +156,17 @@ __all__ = [
     help="Override the embedding provider's API base URL (e.g. for LM Studio on a LAN IP)",
 )
 @click.option(
+    "--embedding-provider",
+    "embedding_provider",
+    type=click.Choice(["lmstudio", "ollama", "openai-compatible"]),
+    default=None,
+    help=(
+        "Compatibility mode for --embedding-url: lmstudio uses LM Studio-compatible "
+        "defaults, ollama uses Ollama-compatible defaults, openai-compatible uses "
+        "generic OpenAI-compatible embedding APIs."
+    ),
+)
+@click.option(
     "--embedding-model",
     "embedding_model",
     default=None,
@@ -164,7 +175,7 @@ __all__ = [
 @click.option(
     "--embedding-dim",
     "embedding_dim",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Override the embedding dimension. Omit to auto-detect via /v1/embeddings probe.",
 )
@@ -195,6 +206,7 @@ def install(
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
+    embedding_provider: str | None,
     embedding_model: str | None,
     embedding_dim: int | None,
     no_interactive_flag: bool,
@@ -207,6 +219,9 @@ def install(
     Use --claude, --gemini, --qwen, --codex, or --droid to install only to specific CLIs.
     Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
     """
+    if embedding_provider and not embedding_url:
+        raise click.UsageError("--embedding-provider requires --embedding-url.")
+
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
 
@@ -335,15 +350,16 @@ def install(
 
         # Embedding provider setup runs only for full installs. Targeted hook installs
         # should not depend on local embedding or Docker service health.
-        embedding_provider = "none"
+        selected_embedding_provider = "none"
         if is_full_install:
-            embedding_provider = _run_embedding_install(
+            selected_embedding_provider = _run_embedding_install(
                 install_embedding,
                 results,
                 no_interactive=no_interactive_flag,
                 api_base_override=embedding_url,
                 model_override=embedding_model,
                 dim_override=embedding_dim,
+                provider_override=embedding_provider,
             )
 
         # Voice chat (optional — installs ~500MB of deps including PyTorch)
@@ -358,10 +374,10 @@ def install(
         # Docker services (Qdrant + Neo4j, installed by default if Docker available)
         # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
         if is_full_install:
-            if not no_ext_services_flag and embedding_provider != "none":
+            if not no_ext_services_flag and selected_embedding_provider != "none":
                 _run_qdrant_install(install_qdrant, results)
                 _run_neo4j_install(install_neo4j, neo4j_password, results)
-            elif embedding_provider == "none":
+            elif selected_embedding_provider == "none":
                 click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
                 click.echo("")
 

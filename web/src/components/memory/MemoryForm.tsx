@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { GobbyMemory } from '../../hooks/useMemory'
+import { inputFocusCls } from '../shared/focusStyles'
+import { Heading } from '../shared/Heading'
 
 interface MemoryFormProps {
   memory: GobbyMemory | null
@@ -17,7 +19,7 @@ export interface MemoryFormData {
 const MEMORY_TYPES = ['fact', 'preference', 'pattern', 'context'] as const
 
 const FIELD_INPUT_CLS =
-  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11'
+  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] ${inputFocusCls} pointer-coarse:min-h-11`
 const FIELD_LABEL_CLS = 'text-[length:var(--text-sm)] font-medium text-[var(--text-muted)]'
 const FIELD_WRAP_CLS = 'flex flex-col gap-1'
 
@@ -28,6 +30,7 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
   const [tags, setTags] = useState<string[]>(memory?.tags ?? [])
   const [tagInput, setTagInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const tagsLabelId = useId()
 
   const isEdit = memory !== null
 
@@ -79,9 +82,9 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
+          <Heading level={2} id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
             {isEdit ? 'Edit Memory' : 'Create Memory'}
-          </h2>
+          </Heading>
           <button
             type="button"
             className="flex h-8 w-8 cursor-pointer items-center justify-center border-0 bg-transparent p-1 text-[length:var(--text-2xl)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11"
@@ -98,8 +101,8 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
           </div>
         )}
 
-        <div className={FIELD_WRAP_CLS}>
-          <label className={FIELD_LABEL_CLS}>Content</label>
+        <label className={FIELD_WRAP_CLS}>
+          <span className={FIELD_LABEL_CLS}>Content</span>
           <textarea
             className={`${FIELD_INPUT_CLS} box-border w-full resize-y`}
             value={content}
@@ -108,11 +111,11 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
             rows={4}
             autoFocus
           />
-        </div>
+        </label>
 
         <div className="flex gap-3">
-          <div className={`${FIELD_WRAP_CLS} flex-1`}>
-            <label className={FIELD_LABEL_CLS}>Type</label>
+          <label className={`${FIELD_WRAP_CLS} flex-1`}>
+            <span className={FIELD_LABEL_CLS}>Type</span>
             <select
               className={FIELD_INPUT_CLS}
               value={memoryType}
@@ -124,7 +127,7 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
           <div className={`${FIELD_WRAP_CLS} flex-1`}>
             <label className={FIELD_LABEL_CLS} htmlFor="memory-importance-slider">
@@ -143,8 +146,8 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
           </div>
         </div>
 
-        <div className={FIELD_WRAP_CLS}>
-          <label className={FIELD_LABEL_CLS}>Tags</label>
+        <div className={FIELD_WRAP_CLS} role="group" aria-labelledby={tagsLabelId}>
+          <span id={tagsLabelId} className={FIELD_LABEL_CLS}>Tags</span>
           <div className="flex min-h-[2rem] flex-wrap items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-1.5">
             {tags.map((tag) => (
               <span

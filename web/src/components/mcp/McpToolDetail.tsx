@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { McpToolSchema } from '../../hooks/useMcp'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 const BACKDROP_CLS =
   'pointer-events-none fixed inset-0 z-[900] bg-[var(--surface-scrim)] opacity-0 transition-opacity duration-200'
@@ -99,7 +100,7 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
         {isOpen && (
           <div className={DETAIL_CLS}>
             <div className={DETAIL_HEADER_CLS}>
-              <h2 id="mcp-tool-detail-title" className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h2>
+              <Heading level={2} id="mcp-tool-detail-title" className={DETAIL_HEADER_TITLE_CLS}>{toolName}</Heading>
               <button className={DETAIL_CLOSE_CLS} onClick={onClose} aria-label="Close tool details">
                 &times;
               </button>
@@ -121,14 +122,14 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
                 </div>
 
                 <div className={DETAIL_SECTION_CLS}>
-                  <h3 className={DETAIL_SECTION_TITLE_CLS}>Input Schema</h3>
+                  <Heading level={3} className={DETAIL_SECTION_TITLE_CLS}>Input Schema</Heading>
                   <pre className={DETAIL_SCHEMA_CLS}>
                     <code>{JSON.stringify(schema.inputSchema, null, 2)}</code>
                   </pre>
                 </div>
 
                 <div className={DETAIL_SECTION_CLS}>
-                  <h3 className={DETAIL_SECTION_TITLE_CLS}>Execute</h3>
+                  <Heading level={3} className={DETAIL_SECTION_TITLE_CLS}>Execute</Heading>
                   <textarea
                     className={EXECUTE_AREA_CLS}
                     value={argsText}

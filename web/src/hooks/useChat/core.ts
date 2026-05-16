@@ -14,6 +14,12 @@ import {
   normalizeChatRole,
 } from "../../lib/chatMessageMapping";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
+import {
+  loadPersistedViewingSessionId,
+  loadPersistedViewingSessionMode,
+  savePersistedViewingSessionId,
+  savePersistedViewingSessionMode,
+} from "../../lib/sessionPersistence";
 
 export interface ContextUsage {
   totalInputTokens: number;
@@ -26,8 +32,6 @@ export interface ContextUsage {
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
-const VIEWING_SESSION_ID_KEY = "gobby-viewing-session-id";
-const VIEWING_SESSION_MODE_KEY = "gobby-viewing-session-mode";
 const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex", "droid"]);
 
 export interface WebSocketMessage {
@@ -190,28 +194,19 @@ export function saveDbSessionId(id: string | null): void {
 }
 
 export function loadViewingSessionId(): string | null {
-  return localStorage.getItem(VIEWING_SESSION_ID_KEY);
+  return loadPersistedViewingSessionId();
 }
 
 export function saveViewingSessionId(id: string | null): void {
-  if (id) {
-    localStorage.setItem(VIEWING_SESSION_ID_KEY, id);
-  } else {
-    localStorage.removeItem(VIEWING_SESSION_ID_KEY);
-  }
+  savePersistedViewingSessionId(id);
 }
 
-export function loadViewingSessionMode(): "none" | "observe" {
-  const persisted = localStorage.getItem(VIEWING_SESSION_MODE_KEY);
-  return persisted === "observe" ? "observe" : "none";
+export function loadViewingSessionMode(): SessionInteractionMode {
+  return loadPersistedViewingSessionMode();
 }
 
-export function saveViewingSessionMode(mode: "none" | "observe"): void {
-  if (mode === "observe") {
-    localStorage.setItem(VIEWING_SESSION_MODE_KEY, mode);
-  } else {
-    localStorage.removeItem(VIEWING_SESSION_MODE_KEY);
-  }
+export function saveViewingSessionMode(mode: SessionInteractionMode): void {
+  savePersistedViewingSessionMode(mode);
 }
 
 export function isChatProvider(value: unknown): value is string {

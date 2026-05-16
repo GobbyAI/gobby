@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { getCategoryColorVar } from './categoryColors'
+import { Heading } from '../shared/Heading'
 
 // =============================================================================
 // Types
@@ -213,7 +214,7 @@ function AgentCard({
           <div className="agent-detail-grid">
             {/* Token usage */}
             <div className="agent-detail-section">
-              <h4 className="agent-detail-title">Token Usage</h4>
+              <Heading level={4} className="agent-detail-title">Token Usage</Heading>
               <div className="agent-detail-row">
                 <span>Input</span>
                 <span className="agent-detail-value">{formatTokens(agent.totalTokensIn)}</span>
@@ -232,7 +233,7 @@ function AgentCard({
 
             {/* Task breakdown */}
             <div className="agent-detail-section">
-              <h4 className="agent-detail-title">Task Breakdown</h4>
+              <Heading level={4} className="agent-detail-title">Task Breakdown</Heading>
               <div className="agent-detail-row">
                 <span>Assigned</span>
                 <span className="agent-detail-value">{agent.tasksAssigned.length}</span>
@@ -257,14 +258,14 @@ function AgentCard({
 
             {/* Domain strengths */}
             <div className="agent-detail-section agent-detail-section--wide">
-              <h4 className="agent-detail-title">Domain Strengths</h4>
+              <Heading level={4} className="agent-detail-title">Domain Strengths</Heading>
               <CategoryChart breakdown={agent.categoryBreakdown} />
             </div>
 
             {/* Failure modes */}
             {agent.failureModes.length > 0 && (
               <div className="agent-detail-section agent-detail-section--wide">
-                <h4 className="agent-detail-title">Common Failure Patterns</h4>
+                <Heading level={4} className="agent-detail-title">Common Failure Patterns</Heading>
                 <div className="agent-failure-list">
                   {agent.failureModes.map((mode, i) => (
                     <span key={i} className="agent-failure-tag">{mode}</span>
@@ -277,7 +278,7 @@ function AgentCard({
           {/* Recent closed tasks */}
           {agent.tasksClosed.length > 0 && (
             <div className="agent-detail-section">
-              <h4 className="agent-detail-title">Recent Completed Tasks</h4>
+              <Heading level={4} className="agent-detail-title">Recent Completed Tasks</Heading>
               <div className="agent-recent-tasks">
                 {agent.tasksClosed.slice(0, 8).map(task => (
                   <div key={task.id} className="agent-recent-task">
@@ -499,7 +500,7 @@ export function AgentPortfolioPage() {
       {/* Toolbar */}
       <div className="agent-toolbar">
         <div className="agent-toolbar-left">
-          <h1 className="agent-page-title">Agent Portfolio</h1>
+          <Heading level={1} className="agent-page-title">Agent Portfolio</Heading>
           <span className="agent-page-count">{agents.length} agents</span>
         </div>
         <div className="agent-toolbar-right">
@@ -524,7 +525,12 @@ export function AgentPortfolioPage() {
             <option value="lastActive">Sort: Last Active</option>
             <option value="name">Sort: Name</option>
           </select>
-          <button className="agent-refresh-btn" onClick={fetchData} title="Refresh">
+          <button
+            type="button"
+            className="agent-refresh-btn"
+            onClick={fetchData}
+            aria-label="Refresh agents"
+          >
             \u21BB
           </button>
         </div>

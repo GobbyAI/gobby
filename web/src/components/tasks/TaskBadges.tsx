@@ -9,6 +9,7 @@ import {
   getTaskStateSummary,
   getTaskStateTokens,
   TASK_STATE_COLORS,
+  TASK_STATE_KIND,
   TASK_STATE_LABELS,
   TASK_STATE_ORDER,
   type TaskDisplayState,
@@ -81,7 +82,7 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
     : TASK_STATE_LABELS[displayState]
   return (
     <ActivityRowStatusDot
-      color={TASK_STATE_COLORS[displayState] || "var(--text-muted)"}
+      kind={TASK_STATE_KIND[displayState]}
       label={`Status: ${label}`}
       title={label}
     />

@@ -35,6 +35,7 @@ import {
   type ProviderModelEntry,
 } from "../../lib/providerModels";
 import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
+import { Heading } from '../shared/Heading'
 
 const VALID_ARTIFACT_TYPES = new Set<string>([
   "code",
@@ -732,13 +733,18 @@ export function ChatPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanel]);
 
+  const voiceInputMode = voice.voiceInputMode ?? "ptt";
   const wantsVoiceStatusSlot = Boolean(
-    voice.ttsEnabled || (voice.sttEnabled && voice.voiceInputMode === "vad"),
+    voice.ttsEnabled || (voice.sttEnabled && voiceInputMode === "vad"),
+  );
+  const isPttRecording = Boolean(
+    voiceInputMode === "ptt" && voice.isRecording,
   );
   const showVoiceStatusBar = Boolean(
     wantsVoiceStatusSlot ||
       voice.voiceLoading ||
       voice.isListening ||
+      isPttRecording ||
       voice.isTranscribing ||
       voice.voiceError,
   );
@@ -752,7 +758,7 @@ export function ChatPage({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
-      <h1 className="sr-only">Chat</h1>
+      <Heading level={1} className="sr-only">Chat</Heading>
       {ConfirmDialogElement}
       {/* Main chat column */}
       <div className="chat-column flex flex-col flex-1 min-w-[320px]">
@@ -806,7 +812,9 @@ export function ChatPage({
               voiceLoading={voiceStatusWarming}
               isListening={voice.isListening ?? false}
               isSpeechDetected={voice.isSpeechDetected ?? false}
+              isRecording={voice.isRecording ?? false}
               isTranscribing={voice.isTranscribing ?? false}
+              voiceInputMode={voiceInputMode}
               voiceError={voice.voiceError}
             />
           )}

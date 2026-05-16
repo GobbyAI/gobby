@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { DiffResult } from '../../hooks/useSourceControl'
+import { Heading } from '../shared/Heading'
 
 interface Props {
   diff: DiffResult
@@ -23,9 +24,9 @@ export function DiffViewer({ diff }: Props) {
     <div className="sc-diff">
       {diff.files.length > 0 && (
         <div className="sc-diff__files">
-          <h4 className="sc-diff__files-title">
+          <Heading level={4} className="sc-diff__files-title">
             {diff.files.length} file{diff.files.length !== 1 ? 's' : ''} changed
-          </h4>
+          </Heading>
           <div className="sc-diff__file-list">
             {diff.files.map((f) => (
               <div key={f.path} className="sc-diff__file">

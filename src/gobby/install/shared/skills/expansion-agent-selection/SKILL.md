@@ -23,10 +23,13 @@ Assign an agent for every automated leaf in these categories:
 - `code`
 - `config`
 - `docs`
+- `planning`
+- `refactor`
+- `research`
 - `test`
 
-Reject `category: planning` leaves. Planning is for epics and stage tasks; a
-planning leaf inside an automated expansion is an expansion bug.
+Reject `category: manual` leaves. Manual is valid for direct task creation, but
+automated expansion manifests must compile to deterministic leaf work.
 
 ## Label Vocabulary
 

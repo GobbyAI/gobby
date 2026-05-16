@@ -14,3 +14,17 @@
   text-indent: -2ch;
   padding-inline-start: 2ch;
 }
+
+/* #14721: call_tool / tool-result code & JSON blocks sit directly on the
+   bordered tool card, not on a second var(--code-bg) slab. react-syntax-
+   highlighter writes the theme's pre background as an inline style, so a
+   scoped !important is the only reliable override. Carrying this only on
+   the chat tool-result CodeBlock/JsonBlock instances keeps file viewers'
+   code surface intact. Syntax token colors and textShadow:none come from
+   buildCodeBlockTheme and are unaffected. Both themes. */
+.tool-code-surface > div,
+.tool-code-surface > pre,
+.tool-code-surface [class*="language-"],
+.tool-code-surface :is(div, pre):has(> code[class*="language-"]) {
+  background: transparent !important;
+}

@@ -28,11 +28,15 @@
   --text-muted: oklch(62% 0.005 125);
 
   --border: oklch(28% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(28% 0.008 125) 55%, transparent);
+  --code-block-bg: var(--bg-deep);
 
   --surface-scrim: oklch(0% 0 0 / 0.7);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.92);
   --surface-tint-subtle: oklch(100% 0 0 / 0.03);
   --surface-tint: oklch(100% 0 0 / 0.05);
   --surface-tint-strong: oklch(100% 0 0 / 0.10);
+  --bg-deep: oklch(8% 0.005 125);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.15);
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.35);
@@ -47,9 +51,9 @@
   --accent-soft: oklch(82% 0.20 125 / 0.18);
   --accent-tint: oklch(82% 0.20 125 / 0.10);
 
-  --color-info: oklch(72% 0.16 250);
+  --color-info: oklch(70% 0.16 250);
   --color-info-bg: oklch(28% 0.08 250);
-  --color-info-soft: oklch(72% 0.16 250 / 0.12);
+  --color-info-soft: oklch(70% 0.16 250 / 0.12);
 
   --color-warning: oklch(30% 0.08 75);
   --color-warning-foreground: oklch(78% 0.16 75);
@@ -58,18 +62,30 @@
 
   --color-destructive: oklch(28% 0.10 350);
   --color-destructive-foreground: oklch(72% 0.20 350);
-  --color-error: oklch(72% 0.20 350);
-  --color-error-soft: oklch(72% 0.20 350 / 0.12);
+  --color-error: oklch(65% 0.20 350);
+  --color-error-soft: oklch(65% 0.20 350 / 0.12);
   --text-on-error: oklch(15% 0 0);
 
+  --color-inactive: oklch(60% 0.04 30);
+
   --color-success: oklch(25% 0.05 125);
-  --color-success-foreground: oklch(82% 0.10 125);
-  --color-success-soft: oklch(82% 0.10 125 / 0.12);
+  --color-success-foreground: oklch(72% 0.10 125);
+  --color-success-soft: oklch(72% 0.10 125 / 0.12);
   --text-on-success: oklch(15% 0 0);
 
   --color-review: oklch(72% 0.14 200);
   --color-review-bg: oklch(28% 0.08 200);
   --color-review-soft: oklch(72% 0.14 200 / 0.12);
+
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Dark theme lightness descends for stable grayscale order. Use these for
+     line/area strokes only with their paired dash pattern, never as hue-only fills. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(72% 0.12 200);
+  --chart-series-6: oklch(68% 0.14 30);
 
   --user-bg: oklch(22% 0.06 125);
   --assistant-bg: oklch(19% 0.006 125);
@@ -115,6 +131,7 @@
   --exec-status-error: oklch(70% 0.20 350);
   --exec-status-timeout: oklch(72% 0.18 50);
   --exec-status-waiting_approval: oklch(78% 0.15 75);
+  --exec-status-skipped: oklch(78% 0.15 75);
   --exec-status-cancelled: oklch(60% 0.005 125);
   --exec-status-interrupted: oklch(70% 0.16 290);
 
@@ -175,11 +192,11 @@
   --code-gutter-text: oklch(45% 0.005 125);
   --code-active-line-bg: oklch(18% 0.005 125);
 
-  --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+  --font-mono: "JetBrains Mono Variable", "SF Mono", "Fira Code", monospace;
   --gobby-logo-image: url("/logo.png");
   /* stylelint-disable value-keyword-case */
   --font-sans:
-    "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   /* stylelint-enable value-keyword-case */
   --sidebar-width: 260px;
@@ -202,6 +219,10 @@
      bars above their desktop siblings. Do not redeclare on inner scopes
      (.activity-panel etc.); the inheritance from :root is load-bearing. */
   --activity-panel-bar-height: 2.75rem;
+
+  /* Status-bar action controls keep desktop visual height on touch devices;
+     the bar supplies the 44px row, the button should not fill it. */
+  --status-bar-control-height: 1.75rem;
 }
 
 @media (pointer: coarse) {
@@ -214,18 +235,31 @@
 [data-theme="light"] {
   --gobby-logo-image: url("/logo-light.png");
 
-  --bg-primary: oklch(99% 0.002 125);
-  --bg-secondary: oklch(96% 0.004 125);
-  --bg-tertiary: oklch(92% 0.006 125);
+  --bg-primary: oklch(96.5% 0.006 125);
+  --bg-secondary: oklch(94% 0.008 125);
+  --bg-tertiary: oklch(90% 0.008 125);
+
+  /* Selected-state well for chrome selectors (segmented active,
+     command-palette active, chat-scope-btn.active, session-item.attached).
+     A brighter neutral lifted ABOVE the bg-secondary track and bg-primary
+     canvas — selection reads via lightness + weight, not hue
+     (.impeccable.md: color is the fourth signal; deutan-safe; chroma in
+     the locked 0.005-0.008 tint band). Light-only: the dark theme keeps
+     its shipped accent treatment and never resolves this token. */
+  --surface-selected: oklch(98.5% 0.005 125);
 
   --text-primary: oklch(20% 0.005 125);
   --text-secondary: oklch(40% 0.005 125);
-  --text-muted: oklch(51% 0.005 125);
+  --text-muted: oklch(48% 0.005 125);
 
-  --border: oklch(86% 0.008 125);
+  --border: oklch(80% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(80% 0.008 125) 55%, transparent);
+  --code-block-bg: var(--surface-tint-subtle);
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
   --surface-tint-subtle: oklch(0% 0 0 / 0.03);
+  --bg-deep: oklch(88% 0.008 125);
   --surface-tint: oklch(0% 0 0 / 0.05);
   --surface-tint-strong: oklch(0% 0 0 / 0.08);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.08);
@@ -256,6 +290,8 @@
   --color-error-soft: oklch(52% 0.22 350 / 0.10);
   --text-on-error: oklch(99% 0 0);
 
+  --color-inactive: oklch(45% 0.06 30);
+
   --color-success: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);
   --color-success-soft: oklch(48% 0.10 125 / 0.10);
@@ -265,12 +301,22 @@
   --color-review-bg: oklch(94% 0.05 200);
   --color-review-soft: oklch(48% 0.16 200 / 0.10);
 
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Light theme values are lowered for WCAG 2.2 AA and stable grayscale order.
+     Use these for line/area strokes only with their paired dash pattern. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(42% 0.13 200);
+  --chart-series-6: oklch(48% 0.16 30);
+
   --user-bg: oklch(95% 0.05 125);
-  --assistant-bg: oklch(96% 0.004 125);
+  --assistant-bg: oklch(94% 0.005 125);
   --system-bg: oklch(95% 0.04 350);
 
   /* Language icon colors — see web/src/lib/languageColors.ts. Lightness
-     tightened to clear WCAG 2.2 AA 4.5:1 against --bg-primary (oklch 99%). */
+     tightened to clear WCAG 2.2 AA 4.5:1 against --bg-primary (oklch 96.5%). */
   --lang-typescript: oklch(42% 0.18 240);
   --lang-javascript: oklch(48% 0.16 95);
   --lang-python: oklch(40% 0.16 250);
@@ -309,6 +355,7 @@
   --exec-status-error: oklch(45% 0.22 350);
   --exec-status-timeout: oklch(48% 0.20 50);
   --exec-status-waiting_approval: oklch(45% 0.18 75);
+  --exec-status-skipped: oklch(45% 0.18 75);
   --exec-status-cancelled: oklch(40% 0.005 125);
   --exec-status-interrupted: oklch(42% 0.18 290);
 
@@ -390,6 +437,14 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   touch-action: manipulation;
+}
+
+/* Light mode recesses the backdrop so content surfaces lift off it
+   (intentional light-depth model). Dark keeps the original near-black
+   canvas — the transparent .app-header reads against this, so dark
+   must stay bg-primary to match the shipped look. */
+[data-theme="light"] body {
+  background: var(--bg-secondary);
 }
 
 .gobby-logo {
@@ -747,6 +802,14 @@ body {
 
 .session-item.attached {
   background: var(--accent-soft);
+}
+
+/* Light: the attached session reads as a brighter neutral well, not an
+   accent wash — selection by lightness + weight, accent reserved for
+   applied filters. Dark keeps the shipped accent-soft (byte-frozen). */
+[data-theme="light"] .session-item.attached {
+  background: var(--surface-selected);
+  color: var(--text-primary);
 }
 
 .session-item-main {

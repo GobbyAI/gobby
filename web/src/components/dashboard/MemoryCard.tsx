@@ -1,4 +1,6 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
+import { chartSeriesAt } from '../../lib/chartSeries'
+import { donutArcs } from '../../lib/donutArc'
 import { cn } from '../../lib/utils'
 import { DashboardCard } from './DashboardCard'
 import {
@@ -24,7 +26,6 @@ const MAX_CATEGORIES = 5
 const SIZE = 120
 const STROKE = 18
 const RADIUS = (SIZE - STROKE) / 2
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 interface Props {
   hours: number
@@ -70,14 +71,7 @@ export function MemoryCard({ hours, projectId }: Props) {
 
   const total = segments.reduce((sum, s) => sum + s.value, 0)
 
-  let offset = 0
-  const arcs = segments.map(s => {
-    const fraction = total > 0 ? s.value / total : 0
-    const dashLen = fraction * CIRCUMFERENCE
-    const arc = { ...s, dashLen, dashOffset: -offset }
-    offset += dashLen
-    return arc
-  })
+  const arcs = donutArcs(segments, SIZE / 2, SIZE / 2, RADIUS)
 
   return (
     <DashboardCard title="Memory" bodyClassName={dashboardCardBodyRowClass}>
@@ -86,12 +80,11 @@ export function MemoryCard({ hours, projectId }: Props) {
             <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
               fill="none" stroke="var(--border)" strokeWidth={STROKE} />
           ) : (
-            arcs.map(a => (
-              <circle key={a.key} cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
-                fill="none" stroke={a.color} strokeWidth={STROKE}
-                strokeDasharray={`${a.dashLen} ${CIRCUMFERENCE - a.dashLen}`}
-                strokeDashoffset={a.dashOffset}
-                transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+            arcs.map(({ segment, pathD }, i) => (
+              <path key={segment.key} d={pathD}
+                fill="none" stroke={segment.color} strokeWidth={STROKE}
+                strokeDasharray={chartSeriesAt(i).dash}
+                strokeLinecap="butt"
               />
             ))
           )}

@@ -9,7 +9,7 @@ send_keys; web_chat sessions go through the daemon-level ChatSession registry.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _send_codex_compaction_command,
     register_terminal_tools,
 )
+from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from tests._timing import drain_asyncio_tasks
 
@@ -47,11 +48,13 @@ def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicM
     return session
 
 
-async def _done_stream():
+async def _done_stream() -> AsyncIterator[DoneEvent]:
     yield DoneEvent(tool_calls_count=0)
 
 
-def _register_compact_self(session: MagicMock, tmux_send_keys_returns: bool = True):
+def _register_compact_self(
+    session: MagicMock, tmux_send_keys_returns: bool = True
+) -> tuple[_TestRegistry, MagicMock]:
     registry = _TestRegistry(name="test", description="test")
     session_manager = MagicMock()
     session_manager.get.return_value = session
@@ -429,7 +432,7 @@ class TestCompactSelfWebChatPath:
             return_value={"decision": "allow", "context": "pipeline output"}
         )
 
-        async def compact_stream(command: str):
+        async def compact_stream(command: str) -> AsyncIterator[DoneEvent]:
             if command == "/compact":
                 precompact_outputs.append(await live_session._on_pre_compact({"trigger": "manual"}))
             yield DoneEvent(tool_calls_count=0)
@@ -479,8 +482,10 @@ class TestCompactSelfWebChatPath:
             call("Continue where you last left off."),
         ]
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_active_web_chat_session_queues_post_turn_compaction(self) -> None:
+        """Active web chat turns queue compaction instead of interrupting the live turn."""
         session = MagicMock()
         session.session_type = "web_chat"
         session.source = "claude"
@@ -552,6 +557,139 @@ class TestCompactSelfWebChatPath:
             call("/compact"),
             call("Continue where you last left off."),
         ]
+
+    @pytest.mark.parametrize("lookup_id", ["db-id", "conv-1"])
+    def test_web_chat_fallback_compacts_live_session_when_db_lookup_missing(
+        self,
+        lookup_id: str,
+    ) -> None:
+        """Missing DB rows can still compact a live web-chat session by either id."""
+        live_session = MagicMock()
+        live_session.db_session_id = "db-id"
+        live_session.conversation_id = "conv-1"
+        live_session.send_message.side_effect = lambda command: _done_stream()
+
+        web_chat_registry = WebChatSessionRegistry()
+        web_chat_registry.register("conv-1", live_session)
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(),
+                web_chat_session_registry=web_chat_registry,
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id=lookup_id))
+
+        assert result == {
+            "compacted": True,
+            "command": "/compact",
+            "via": "web_chat",
+            "queued": False,
+        }
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
+
+    def test_web_chat_fallback_continues_after_registry_lookup_error(self) -> None:
+        """A mocked live-session lookup RuntimeError falls through to resolved DB id."""
+        live_session = MagicMock()
+        live_session.db_session_id = "db-id"
+        live_session.conversation_id = "conv-1"
+        live_session.send_message.side_effect = lambda command: _done_stream()
+
+        class FlakyRegistry(WebChatSessionRegistry):
+            def find_session(
+                self, session_id: str
+            ) -> tuple[str | None, ChatSessionProtocol | None]:
+                if session_id == "#42":
+                    raise RuntimeError("registry lookup failed")
+                return super().find_session(session_id)
+
+        web_chat_registry = FlakyRegistry()
+        web_chat_registry.register("conv-1", live_session)
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        session_manager.resolve_session_reference.return_value = "db-id"
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(),
+                web_chat_session_registry=web_chat_registry,
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="#42"))
+
+        assert result["compacted"] is True
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
+
+    def test_web_chat_fallback_returns_original_error_after_registry_compact_error(
+        self,
+    ) -> None:
+        """Fallback compaction errors preserve the original DB lookup failure response."""
+
+        class BrokenRegistry(WebChatSessionRegistry):
+            def find_session(
+                self, session_id: str
+            ) -> tuple[str | None, ChatSessionProtocol | None]:
+                return session_id, MagicMock()
+
+            async def compact_session(
+                self, session_id: str, command: str = "/compact"
+            ) -> dict[str, Any]:
+                raise RuntimeError("registry compact failed")
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(),
+                web_chat_session_registry=BrokenRegistry(),
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="db-id"))
+
+        assert result == {"compacted": False, "reason": "Session db-id not found"}
 
 
 class TestCompactSelfUnsupportedSessionType:

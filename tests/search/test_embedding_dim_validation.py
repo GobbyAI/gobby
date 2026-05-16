@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import gobby.search.embeddings as embeddings_mod
-from gobby.search.embeddings import clear_cache, generate_embedding
+from gobby.search.embeddings import EmbeddingGenerationError, clear_cache, generate_embedding
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
 def _clean_state() -> Iterator[None]:
-    """Reset global embedding cache and reload cooldown between tests."""
+    """Reset global embedding cache and reload cooldown around client cleanup tests."""
     clear_cache()
     embeddings_mod._last_reload_attempt = 0.0
     yield
@@ -100,7 +100,7 @@ async def test_expected_dim_mismatch_raises() -> None:
     mock_client = _make_mock_client(dim=768)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        with pytest.raises(RuntimeError, match="expected_dim=1024") as exc_info:
+        with pytest.raises(EmbeddingGenerationError, match="expected_dim=1024") as exc_info:
             await generate_embedding(
                 "hello",
                 model="test-model",
@@ -122,7 +122,7 @@ async def test_expected_dim_mismatch_after_reload_raises() -> None:
         patch("openai.AsyncOpenAI", return_value=mock_client),
         patch("gobby.cli.services.try_autoload_embedding_model", return_value=True),
     ):
-        with pytest.raises(RuntimeError, match="actual_dim=768"):
+        with pytest.raises(EmbeddingGenerationError, match="actual_dim=768"):
             await generate_embedding(
                 "hello",
                 model="test-model",
@@ -171,7 +171,7 @@ async def test_expected_dim_none_preserves_back_compat() -> None:
 
 def test_validate_embeddings_dim_checks_every_vector() -> None:
     """Mixed-dimension batches should fail at the first offending vector."""
-    with pytest.raises(RuntimeError, match="index=1") as exc_info:
+    with pytest.raises(EmbeddingGenerationError, match="index=1") as exc_info:
         embeddings_mod._validate_embeddings_dim(
             [[0.1, 0.2], [0.3]],
             expected_dim=2,

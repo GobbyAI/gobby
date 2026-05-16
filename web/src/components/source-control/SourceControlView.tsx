@@ -3,6 +3,7 @@ import type { GitBranch, GitCommit, DiffResult, WorktreeInfo, CloneInfo } from '
 import { BranchDetail } from './BranchDetail'
 import { ResourceCard } from './ResourceCard'
 import { worktreeToFields, cloneToFields } from './resourceCardUtils'
+import { Heading } from '../shared/Heading'
 
 type Filter = 'all' | 'has_worktree' | 'has_clone' | 'local' | 'remote'
 
@@ -312,7 +313,7 @@ export function SourceControlView({
         >
           {selectedWorktrees.length > 0 && (
             <div className="sc-detail-panel__section">
-              <h4 className="sc-detail-panel__subtitle">Worktrees</h4>
+              <Heading level={4} className="sc-detail-panel__subtitle">Worktrees</Heading>
               <div className="sc-detail-panel__cards">
                 {selectedWorktrees.map((wt) => (
                   <ResourceCard
@@ -331,7 +332,7 @@ export function SourceControlView({
 
           {selectedClones.length > 0 && (
             <div className="sc-detail-panel__section">
-              <h4 className="sc-detail-panel__subtitle">Clones</h4>
+              <Heading level={4} className="sc-detail-panel__subtitle">Clones</Heading>
               <div className="sc-detail-panel__cards">
                 {selectedClones.map((c) => (
                   <ResourceCard

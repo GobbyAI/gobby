@@ -12,8 +12,11 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, Protocol
+
+from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,33 @@ _TITLE_LEADING_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 _TITLE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|[:;]\s+|\s+[/-]\s+")
+_TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
+    r"^a previous agent produced the plan below\b",
+    re.IGNORECASE,
+)
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"^\[?\s*(?:"
+    r"\d+\s*-\s*\d+\s+word\s+session\s+title(?:\s+reflecting\s+current\s+work)?|"
+    r"accurate\s+summary\s+of\s+the\s+full\s+turn\s+with\s+user\s+request\s*\+\s*"
+    r"agent\s+response"
+    r")\s*\]?$",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class _TurnRecord:
+    turn_markdown: str
+    title_candidate: str
+
+
+class SessionTitlePolicy(Protocol):
+    title: str | None
+    title_source: str | None
+
+
+class _DigestPersistenceError(RuntimeError):
+    """Raised when digest persistence would leave partial session state."""
 
 
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
@@ -238,11 +268,14 @@ def _get_next_turn_number(previous_digest: str | None) -> int:
 def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
     """Build the turn record prompt inline (fallback when DB prompts unavailable)."""
     return (
-        "Given a conversation turn, produce a detailed, human-readable record.\n\n"
+        "Given a conversation turn, produce a strict JSON object.\n\n"
         f"## User Prompt\n{prompt_text}\n\n"
         f"## Agent Response\n{response_text}\n\n"
         "## Instructions\n"
-        "Produce a structured record of this turn in chronological order:\n"
+        "Return only valid JSON with exactly these string fields:\n"
+        "- turn_markdown: non-empty markdown record of this turn in chronological order\n"
+        "- title_candidate: concise 3-5 word session title candidate\n\n"
+        "turn_markdown must cover:\n"
         "- What the user asked or requested\n"
         "- What the agent found, decided, or accomplished\n"
         "- Each tool used and its purpose (file reads, edits, searches, commands)\n"
@@ -251,7 +284,8 @@ def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
         "- Task operations (created, claimed, closed)\n"
         "- Key technical findings or decisions\n\n"
         "Write in concise past tense. Include specifics (file paths, function names,\n"
-        "task refs like #N, commit SHAs). No filler. Target 200-400 words."
+        "task refs like #N, commit SHAs). No filler. Target 200-400 words.\n\n"
+        'Example: {"turn_markdown":"User asked...","title_candidate":"Digest JSON Titles"}'
     )
 
 
@@ -308,6 +342,20 @@ def _truncate_title(title: str, limit: int = _MAX_SESSION_TITLE_LENGTH) -> str:
     return title[:limit].rstrip()
 
 
+def _extract_markdown_h1_title(text: str) -> str | None:
+    """Extract a markdown H1 title from wrapper prompts when present."""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("# ") or line.startswith("##"):
+            continue
+        candidate = _TITLE_LINK_RE.sub(r"\1", line[2:]).replace("`", " ")
+        candidate = re.sub(r"\s+", " ", candidate).strip(" \t\r\n.,:;!?-")
+        if not candidate or candidate.startswith("/"):
+            return None
+        return _truncate_title(candidate)
+    return None
+
+
 def _build_heuristic_title(prompt_text: Any) -> str | None:
     """Derive a cheap bootstrap title from the first meaningful user prompt."""
     raw_text = _coerce_prompt_text(prompt_text)
@@ -317,6 +365,11 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
     cleaned = _TITLE_CODE_BLOCK_RE.sub(" ", raw_text)
     cleaned = _TITLE_LINK_RE.sub(r"\1", cleaned)
     cleaned = cleaned.replace("`", " ")
+
+    first_nonempty = next((line.strip() for line in cleaned.splitlines() if line.strip()), "")
+    if _TITLE_ORCHESTRATION_BOILERPLATE_RE.match(first_nonempty):
+        h1_title = _extract_markdown_h1_title(cleaned)
+        return h1_title[0].upper() + h1_title[1:] if h1_title else None
 
     lines: list[str] = []
     for raw_line in cleaned.splitlines():
@@ -346,6 +399,37 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
         return None
 
     return candidate[0].upper() + candidate[1:]
+
+
+def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
+    """Return whether digest-owned title generation may update this session title."""
+    existing_title = str(getattr(session, "title", None) or "").strip()
+    raw_source = getattr(session, "title_source", None)
+    title_source = str(raw_source or "").strip().lower()
+
+    if title_source == "manual":
+        return False
+    if existing_title and raw_source is None:
+        return False
+    if not existing_title:
+        return True
+    return title_source in {"heuristic", "llm"} or not title_source
+
+
+def _normalize_title_candidate(value: Any) -> str | None:
+    """Validate and normalize an LLM-proposed title candidate."""
+    if not isinstance(value, str):
+        return None
+    title = value.strip().strip('"').strip("'")
+    title = _truncate_title(title)
+    if _is_template_placeholder(title):
+        return None
+    return title or None
+
+
+def _is_template_placeholder(value: str) -> bool:
+    """Return True for prompt-template placeholders echoed by the LLM."""
+    return bool(_TEMPLATE_PLACEHOLDER_RE.fullmatch(value.strip()))
 
 
 async def bootstrap_session_title(
@@ -434,8 +518,8 @@ async def _build_turn_record(
     model: str | None,
     undigested_pairs: list[tuple[str, str]],
     db: Any | None = None,
-) -> str:
-    """Build turn record markdown via LLM from undigested pairs."""
+) -> _TurnRecord:
+    """Build and validate turn record JSON via LLM from undigested pairs."""
     max_prompt_chars = 4000
     max_response_chars = 8000
 
@@ -462,12 +546,70 @@ async def _build_turn_record(
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
 
-    last_turn = await provider.generate_text(
+    response_text = await provider.generate_text(
         turn_prompt,
         model=model,
         caller="memory.turn_record",
     )
-    return str(last_turn).strip()
+    return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+
+
+def _parse_turn_record_response(response_text: str, exchange_count: int) -> _TurnRecord:
+    """Parse the strict JSON contract for memory.turn_record responses."""
+    data = extract_json_object(response_text)
+    if data is None:
+        _raise_turn_record_contract_error(
+            "invalid or missing JSON object", response_text, exchange_count
+        )
+
+    turn_markdown = data.get("turn_markdown")
+    if not isinstance(turn_markdown, str) or not turn_markdown.strip():
+        _raise_turn_record_contract_error(
+            "missing or empty turn_markdown",
+            response_text,
+            exchange_count,
+        )
+    turn_markdown = turn_markdown.strip()
+    if _is_template_placeholder(turn_markdown):
+        _raise_turn_record_contract_error(
+            "placeholder turn_markdown",
+            response_text,
+            exchange_count,
+        )
+
+    raw_title_candidate = data.get("title_candidate")
+    if not isinstance(raw_title_candidate, str) or not raw_title_candidate.strip():
+        _raise_turn_record_contract_error(
+            "missing or invalid title_candidate",
+            response_text,
+            exchange_count,
+        )
+
+    title_candidate = _normalize_title_candidate(raw_title_candidate)
+    if not title_candidate:
+        _raise_turn_record_contract_error(
+            f"empty normalized title_candidate (raw_title_candidate={raw_title_candidate!r})",
+            response_text,
+            exchange_count,
+        )
+
+    return _TurnRecord(turn_markdown=turn_markdown, title_candidate=title_candidate)
+
+
+def _raise_turn_record_contract_error(
+    reason: str, response_text: str, exchange_count: int
+) -> NoReturn:
+    logger.debug(
+        "memory.turn_record malformed response: %s",
+        response_text,
+    )
+    logger.warning(
+        "memory.turn_record contract failed: %s (response_chars=%d, exchanges=%d)",
+        reason,
+        len(response_text),
+        exchange_count,
+    )
+    raise ValueError(f"memory.turn_record returned invalid JSON contract: {reason}")
 
 
 async def _synthesize_title(
@@ -487,9 +629,7 @@ async def _synthesize_title(
     ``call_feature`` for tier-based fallback.  Otherwise falls back to
     the legacy ``provider.generate_text`` path.
     """
-    existing_title = str(getattr(session, "title", "") or "").strip()
-    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-    if existing_title and title_source != "heuristic":
+    if not _should_update_digest_title(session):
         return None
 
     try:
@@ -528,8 +668,8 @@ async def _synthesize_title(
             llm_timeout,
         )
 
-    title_str = _truncate_title(str(title).strip().strip('"').strip("'"))
-    if title_str and len(title_str) <= _MAX_SESSION_TITLE_LENGTH:
+    title_str = _normalize_title_candidate(title)
+    if title_str:
         updated_session = session_manager.update_title(
             session_id,
             title_str,
@@ -594,10 +734,9 @@ async def build_turn_and_digest(
             logger.warning(f"build_turn_and_digest: Session {session_id} not found")
             return None
 
-        existing_title = str(getattr(session, "title", "") or "").strip()
         title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-        needs_title = not bool(existing_title)
-        needs_title_refinement = needs_title or title_source == "heuristic"
+        needs_title_recovery = not bool(str(getattr(session, "title", "") or "").strip())
+        needs_title_recovery = needs_title_recovery or title_source == "heuristic"
         existing_digest = getattr(session, "digest_markdown", None) or ""
 
         # 2. Resolve undigested pairs
@@ -606,7 +745,7 @@ async def build_turn_and_digest(
         resolved = await _resolve_undigested_pairs(
             session, prompt_text, session_id, max_turns, num_pairs
         )
-        if resolved is None and (not needs_title_refinement or not existing_digest):
+        if resolved is None and (not needs_title_recovery or not existing_digest):
             return None
 
         # 3. Resolve LLM provider/model
@@ -649,19 +788,36 @@ async def build_turn_and_digest(
         undigested_pairs, input_hash = resolved
 
         # 4. Build turn record via LLM
-        last_turn = await _build_turn_record(provider, model, undigested_pairs, db)
+        turn_record = await _build_turn_record(provider, model, undigested_pairs, db)
+        last_turn = turn_record.turn_markdown
 
-        # 5. Persist last_turn_markdown
-        session_manager.update_last_turn_markdown(session_id, last_turn)
-
-        # 6. Append to digest_markdown with turn number
+        # 5. Prepare digest/title state after validating the LLM JSON contract.
         previous_digest = getattr(session, "digest_markdown", None) or ""
         turn_num = _get_next_turn_number(previous_digest)
         entry = f"### Turn {turn_num}\n{last_turn}"
         updated_digest = f"{previous_digest}\n\n{entry}" if previous_digest else entry
-        session_manager.update_digest_markdown(session_id, updated_digest)
 
-        # Persist input hash for idempotency
+        digest_title: str | None = None
+        title_changed = False
+        if turn_record.title_candidate and _should_update_digest_title(session):
+            existing_title = str(getattr(session, "title", "") or "").strip()
+            existing_title_source = str(getattr(session, "title_source", "") or "").strip().lower()
+            digest_title = turn_record.title_candidate
+            title_changed = existing_title != digest_title or existing_title_source != "llm"
+            updated_session = session_manager.update_title(
+                session_id,
+                digest_title,
+                title_source="llm",
+            )
+            if updated_session is None:
+                raise _DigestPersistenceError(
+                    "Failed to update session title while persisting digest for "
+                    f"{session_id}; aborting digest persistence to avoid partial state."
+                )
+
+        # 6. Persist digest state only after contract validation succeeds.
+        session_manager.update_last_turn_markdown(session_id, last_turn)
+        session_manager.update_digest_markdown(session_id, updated_digest)
         session_manager.update_last_digest_input_hash(session_id, input_hash)
 
         logger.info(
@@ -673,28 +829,13 @@ async def build_turn_and_digest(
             "turn_length": len(last_turn),
             "digest_length": len(updated_digest),
         }
-
-        # 7. Synthesize title from updated digest
-        if needs_title_refinement:
-            try:
-                title = await _synthesize_title(
-                    provider,
-                    model,
-                    updated_digest,
-                    session_id,
-                    session_manager,
-                    session,
-                    db,
-                    llm_service=llm_service,
-                    digest_config=digest_config,
-                )
-                if title:
-                    result["title"] = title
-            except Exception as e:
-                logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
+        if digest_title and title_changed:
+            result["title"] = digest_title
 
         return result
 
+    except _DigestPersistenceError:
+        raise
     except Exception as e:
         logger.error(
             f"build_turn_and_digest: Failed for session {session_id}: {e}",

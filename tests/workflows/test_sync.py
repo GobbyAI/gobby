@@ -10,10 +10,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline.renderer import StepRenderer
 
 pytestmark = pytest.mark.unit
 
@@ -235,6 +238,33 @@ rules:
 
 class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
+
+    @pytest.mark.integration
+    def test_expand_task_fails_run_before_validation(self) -> None:
+        """Evaluate expand-task conditions with the runtime step renderer."""
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+
+        path = get_bundled_pipelines_path() / "expand-task.yaml"
+        assert path.is_file(), f"Missing bundled pipeline: {path}"
+        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
+        renderer = StepRenderer(strict_conditions=True)
+        fail_run = pipeline.get_step("fail_run")
+        validate_run = pipeline.get_step("validate_run")
+        assert fail_run is not None
+        assert validate_run is not None
+        assert fail_run.mcp is not None
+        assert validate_run.mcp is not None
+        assert fail_run.mcp.tool == "fail_pipeline"
+        assert validate_run.mcp.tool == "validate_expansion_run"
+
+        for wait_status in ("failed", "timeout", "cancelled"):
+            context = {"steps": {"wait_run": {"output": {"status": wait_status}}}}
+            assert renderer.should_run_step(fail_run, context) is True
+            assert renderer.should_run_step(validate_run, context) is False
+
+        completed_context = {"steps": {"wait_run": {"output": {"status": "completed"}}}}
+        assert renderer.should_run_step(fail_run, completed_context) is False
+        assert renderer.should_run_step(validate_run, completed_context) is True
 
     def test_missing_path_returns_error(self, db: LocalDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

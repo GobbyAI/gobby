@@ -49,6 +49,7 @@ import {
   AGENT_RULES_CHIP_SELECTOR_CLS,
   AGENT_RULES_CHIPS_CLS,
 } from './agents-styles'
+import { Heading } from '../shared/Heading'
 
 export interface AgentFormData {
   name: string
@@ -347,38 +348,38 @@ export function AgentEditForm({
 
           {rd.description && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Description</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Description</Heading>
               <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.description}</pre>
             </div>
           )}
           {rd.role && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Role</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Role</Heading>
               <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.role}</pre>
             </div>
           )}
           {rd.goal && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Goal</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Goal</Heading>
               <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.goal}</pre>
             </div>
           )}
           {rd.personality && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Personality</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Personality</Heading>
               <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.personality}</pre>
             </div>
           )}
           {rd.instructions && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</Heading>
               <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.instructions}</pre>
             </div>
           )}
 
           {workflowEntries.length > 0 && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Workflows</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Workflows</Heading>
               <div className={AGENT_DEF_WORKFLOW_LIST_CLS}>
                 {workflowEntries.map(([wfName, wfRaw]) => {
                   const wf = wfRaw as { type?: string; file?: string; mode?: string; internal?: boolean; step_count?: number; description?: string }
@@ -399,7 +400,7 @@ export function AgentEditForm({
 
           {rd.workflows?.rules && rd.workflows.rules.length > 0 && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</Heading>
               <div className={AGENT_RULES_CHIPS_CLS}>
                 {(rd.workflows.rules as string[]).map(name => (
                   <span key={name} className={AGENT_RULES_CHIP_CLS}>{name}</span>
@@ -410,7 +411,7 @@ export function AgentEditForm({
 
           {rd.workflows?.rule_selectors && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rule Selectors</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rule Selectors</Heading>
               {(() => {
                 const rs = rd.workflows!.rule_selectors as { include?: string[]; exclude?: string[] }
                 return (
@@ -443,7 +444,7 @@ export function AgentEditForm({
 
           {rd.workflows?.variables && Object.keys(rd.workflows.variables as Record<string, unknown>).length > 0 && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</Heading>
               <div className="flex flex-col gap-1">
                 {Object.entries(rd.workflows!.variables as Record<string, unknown>).map(([key, val]) => (
                   <div key={key} className="flex items-center gap-2 text-[length:calc(var(--font-size-base)*0.75)]">
@@ -457,7 +458,7 @@ export function AgentEditForm({
 
           {((rd.blocked_tools && rd.blocked_tools.length > 0) || (rd.blocked_mcp_tools && rd.blocked_mcp_tools.length > 0)) && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</Heading>
               {rd.blocked_tools && rd.blocked_tools.length > 0 && (
                 <div className={AGENT_EDIT_FIELD_CLS}>
                   <span className={AGENT_EDIT_LABEL_CLS}>Blocked Tools</span>
@@ -479,7 +480,7 @@ export function AgentEditForm({
 
           {rd.steps && rd.steps.length > 0 && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps ({rd.steps.length})</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps ({rd.steps.length})</Heading>
               <div className="step-readonly-list">
                 {rd.steps.map((s, i) => (
                   <div key={i} className="step-readonly-item">
@@ -496,19 +497,19 @@ export function AgentEditForm({
 
           {rd.sandbox && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Sandbox</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Sandbox</Heading>
               <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.sandbox, null, 2)}</pre>
             </div>
           )}
           {rd.skill_profile && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Skill Profile</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Skill Profile</Heading>
               <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.skill_profile, null, 2)}</pre>
             </div>
           )}
 
           <div className={AGENT_EDIT_SECTION_CLS}>
-            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Source</h4>
+            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Source</Heading>
             <div className={AGENT_DEF_SOURCE_INFO_CLS}>
               {agentItem.source_path ? (
                 <code>{agentItem.source_path}</code>
@@ -763,7 +764,7 @@ export function AgentEditForm({
 
           {/* Identity */}
           <div className={AGENT_EDIT_SECTION_CLS}>
-            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Identity</h4>
+            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Identity</Heading>
             <FormTextarea label="Description" value={form.description} onChange={v => set('description', v)} placeholder="What this agent does..." />
             <FormTextarea label="Role" value={form.role} onChange={v => set('role', v)} placeholder="e.g. Senior security engineer" />
             <FormTextarea label="Goal" value={form.goal} onChange={v => set('goal', v)} placeholder="What success looks like..." />
@@ -772,7 +773,7 @@ export function AgentEditForm({
 
           {/* Instructions */}
           <div className={AGENT_EDIT_SECTION_CLS}>
-            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</h4>
+            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</Heading>
             <div className={AGENT_EDIT_CODEMIRROR_CLS}>
               <CodeMirrorEditor
                 content={form.instructions}
@@ -785,7 +786,7 @@ export function AgentEditForm({
           {/* Rules */}
           {onRulesChange && rules !== undefined && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</Heading>
               <AgentRulesEditor
                 definitionId={editingId}
                 rules={rules}
@@ -800,7 +801,7 @@ export function AgentEditForm({
           {/* Skills */}
           {onSkillsChange && editSkills !== undefined && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Skills</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Skills</Heading>
               <AgentSkillsEditor
                 skills={editSkills}
                 onSkillsChange={onSkillsChange}
@@ -812,7 +813,7 @@ export function AgentEditForm({
           {/* Variables */}
           {onVariablesChange && variables !== undefined && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</Heading>
               <AgentVariablesEditor
                 definitionId={editingId}
                 variables={variables}
@@ -824,7 +825,7 @@ export function AgentEditForm({
           {/* Tool Restrictions */}
           {(onBlockedToolsChange || onBlockedMcpToolsChange) && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</Heading>
               <AgentToolBlocksEditor
                 blockedTools={blockedTools || []}
                 onBlockedToolsChange={onBlockedToolsChange}
@@ -837,7 +838,7 @@ export function AgentEditForm({
           {/* Steps */}
           {onStepsChange && steps !== undefined && (
             <div className={AGENT_EDIT_SECTION_CLS}>
-              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps</h4>
+              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps</Heading>
               <AgentStepsEditor
                 steps={steps}
                 onChange={onStepsChange}

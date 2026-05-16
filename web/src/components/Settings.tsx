@@ -1,6 +1,8 @@
+import { useId } from 'react'
 import type { Settings, Theme } from '../hooks/useSettings'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
+import { Heading } from './shared/Heading'
 
 interface SettingsProps {
   isOpen: boolean
@@ -23,15 +25,30 @@ export function Settings({
   onPostPlanChatModeChange,
   onReset,
 }: SettingsProps) {
+  const headingId = useId()
+  const themeLabelId = useId()
+  const defaultModeLabelId = useId()
+  const postPlanModeLabelId = useId()
+
   if (!isOpen) return null
 
   return (
     <>
       <div className="settings-overlay" onClick={onClose} />
-      <div className="settings-panel">
+      <div
+        className="settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+      >
         <div className="settings-header">
-          <h2>Settings</h2>
-          <button className="close-button" onClick={onClose}>
+          <Heading id={headingId} level={2}>Settings</Heading>
+          <button
+            type="button"
+            className="close-button"
+            onClick={onClose}
+            aria-label="Close settings"
+          >
             &times;
           </button>
         </div>
@@ -57,14 +74,16 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>Theme</label>
+          <div className="setting-item" role="group" aria-labelledby={themeLabelId}>
+            <span id={themeLabelId}>Theme</span>
             <div className="theme-selector">
               {(['dark', 'light', 'system'] as const).map((t) => (
                 <button
                   key={t}
+                  type="button"
                   className={`theme-option${settings.theme === t ? ' active' : ''}`}
                   onClick={() => onThemeChange(t)}
+                  aria-pressed={settings.theme === t}
                 >
                   {t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>
@@ -72,14 +91,16 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>Default Mode</label>
+          <div className="setting-item" role="group" aria-labelledby={defaultModeLabelId}>
+            <span id={defaultModeLabelId}>Default Mode</span>
             <div className="theme-selector">
               {CHAT_MODES.map((m) => (
                 <button
                   key={m.id}
+                  type="button"
                   className={`theme-option${settings.defaultChatMode === m.id ? ' active' : ''}`}
                   onClick={() => onDefaultChatModeChange(m.id)}
+                  aria-pressed={settings.defaultChatMode === m.id}
                   title={m.description}
                 >
                   {m.label}
@@ -88,14 +109,16 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>After Approved Plan</label>
+          <div className="setting-item" role="group" aria-labelledby={postPlanModeLabelId}>
+            <span id={postPlanModeLabelId}>After Approved Plan</span>
             <div className="theme-selector">
               {CHAT_MODES.filter((m) => m.id === 'normal' || m.id === 'bypass').map((m) => (
                 <button
                   key={m.id}
+                  type="button"
                   className={`theme-option${settings.postPlanChatMode === m.id ? ' active' : ''}`}
                   onClick={() => onPostPlanChatModeChange(m.id as 'normal' | 'bypass')}
+                  aria-pressed={settings.postPlanChatMode === m.id}
                   title={m.description}
                 >
                   {m.label}
@@ -105,7 +128,7 @@ export function Settings({
           </div>
 
           <div className="settings-actions">
-            <button className="reset-button" onClick={onReset}>
+            <button type="button" className="reset-button" onClick={onReset}>
               Reset to Defaults
             </button>
           </div>

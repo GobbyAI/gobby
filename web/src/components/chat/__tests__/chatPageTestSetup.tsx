@@ -229,24 +229,32 @@ export const voiceStatusBarMockFactory = () => ({
   VoiceStatusBar: ({
     voiceLoading,
     isListening,
+    isRecording,
     isTranscribing,
+    voiceInputMode,
     voiceError,
   }: {
     voiceLoading?: boolean;
     isListening?: boolean;
+    isRecording?: boolean;
     isTranscribing?: boolean;
+    voiceInputMode?: "ptt" | "vad";
     voiceError?: string | null;
   }) => (
     <div
       data-testid="voice-status-bar"
       data-loading={String(Boolean(voiceLoading))}
       data-listening={String(Boolean(isListening))}
+      data-recording={String(Boolean(isRecording))}
       data-transcribing={String(Boolean(isTranscribing))}
+      data-mode={voiceInputMode}
     >
       {voiceLoading
         ? "Warming voice..."
         : isTranscribing
           ? "Transcribing..."
+          : voiceInputMode === "ptt" && isRecording
+            ? "Recording..."
           : isListening
             ? "Listening..."
             : voiceError || ""}

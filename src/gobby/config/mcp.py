@@ -12,6 +12,8 @@ with Claude Code's project-level ``.mcp.json`` schema (Claude Code's
 
 import json
 import logging
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,25 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_CONFIG_PATH = "~/.gobby/mcp-servers.json"
 LEGACY_MCP_CONFIG_PATH = "~/.gobby/.mcp.json"
+
+
+def _copy_legacy_config_atomic(legacy: Path, new: Path) -> None:
+    temp = new.with_name(f".{new.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copy2(legacy, temp)
+        os.replace(temp, new)
+    except OSError:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_exc:
+            logger.warning(
+                "Failed to remove temporary MCP config copy %s after migration failure: %s",
+                temp,
+                cleanup_exc,
+            )
+        raise
 
 
 def migrate_legacy_mcp_config(
@@ -60,8 +81,56 @@ def migrate_legacy_mcp_config(
         )
         return False
 
-    new.parent.mkdir(parents=True, exist_ok=True)
-    legacy.replace(new)
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to create MCP config directory %s: %s", new.parent, exc)
+        return False
+
+    try:
+        legacy.replace(new)
+    except OSError as replace_exc:
+        logger.warning(
+            "Failed to move legacy MCP config %s -> %s with replace (%s); "
+            "attempting copy/unlink fallback.",
+            legacy,
+            new,
+            replace_exc,
+        )
+        try:
+            _copy_legacy_config_atomic(legacy, new)
+        except OSError as copy_exc:
+            logger.warning(
+                "Failed to copy legacy MCP config %s -> %s: %s",
+                legacy,
+                new,
+                copy_exc,
+            )
+            return False
+        try:
+            legacy.unlink()
+        except OSError as unlink_exc:
+            logger.warning(
+                "Copied legacy MCP config %s -> %s but failed to remove legacy file: %s. "
+                "Using the copied config; remove the legacy file manually after verifying it.",
+                legacy,
+                new,
+                unlink_exc,
+            )
+
+    try:
+        new.chmod(0o600)
+    except OSError as chmod_exc:
+        logger.warning(
+            "Migrated MCP config %s -> %s but failed to set permissions on %s: %s. "
+            "Verify and fix permissions on %s before using it.",
+            legacy,
+            new,
+            new,
+            chmod_exc,
+            new,
+        )
+
     logger.info("Migrated MCP config %s -> %s", legacy, new)
     return True
 

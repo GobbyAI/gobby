@@ -3,6 +3,7 @@ import type { Issue, IssueDetail } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
 import { GitHubUnavailable } from './GitHubUnavailable'
 import { issueLabelStyle } from './githubLabelStyles'
+import { Heading } from '../shared/Heading'
 
 interface Props {
   issues: Issue[]
@@ -141,7 +142,7 @@ export function IssuesView({ issues, githubAvailable, fetchIssues, fetchIssueDet
       {selectedIssue !== null && issueDetail && (
         <div className="sc-issues__detail">
           <div className="sc-issues__detail-header">
-            <h3>#{selectedIssue}: {issueDetail.title || ''}</h3>
+            <Heading level={3}>#{selectedIssue}: {issueDetail.title || ''}</Heading>
             <button className="sc-issues__detail-close" onClick={() => { setSelectedIssue(null); setIssueDetail(null) }}>Close</button>
           </div>
           <div className="sc-issues__detail-body">

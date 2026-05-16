@@ -341,7 +341,7 @@ describe('ChatInput', () => {
     expect(screen.getByTitle('Attached session owns attachments')).toBeDisabled()
   })
 
-  it('shows a mic button in PTT mode with empty input', () => {
+  it('shows a record button in PTT mode with empty input', () => {
     render(
       <ChatInput
         {...defaultProps}
@@ -353,7 +353,10 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Start push to talk')).toBeTruthy()
+    const button = screen.getByLabelText('Start push to talk')
+    expect(button).toHaveClass('bg-accent', 'text-accent-foreground')
+    expect(button.querySelector('circle[cx="12"][cy="12"][r="5"]')).toBeTruthy()
+    expect(button.querySelector('path[d^="M12 1a3"]')).toBeNull()
   })
 
   it('shows Stop as the only primary action while streaming', () => {
@@ -369,11 +372,13 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Stop generating')).toBeTruthy()
+    const button = screen.getByLabelText('Stop generating')
+    expect(button).toBeTruthy()
+    expect(button.querySelector('rect[x="3"][y="3"][width="10"][height="10"]')).toBeTruthy()
     expect(screen.queryByLabelText('Send message')).toBeNull()
   })
 
-  it('shows Send instead of Mic when there is text input', async () => {
+  it('shows Send instead of PTT record when there is text input', async () => {
     render(
       <ChatInput
         {...defaultProps}
@@ -387,7 +392,10 @@ describe('ChatInput', () => {
 
     await userEvent.type(screen.getByRole('textbox'), 'hello')
 
-    expect(screen.getByLabelText('Send message')).toBeTruthy()
+    const button = screen.getByLabelText('Send message')
+    expect(button).toBeTruthy()
+    expect(button.querySelector('polygon[points="22 2 15 22 11 13 2 9 22 2"]')).toBeTruthy()
+    expect(button.querySelector('circle[cx="12"][cy="12"][r="5"]')).toBeNull()
     expect(screen.queryByLabelText('Start push to talk')).toBeNull()
   })
 

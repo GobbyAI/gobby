@@ -1,6 +1,7 @@
 import { useEffect, useState, type MutableRefObject } from "react";
 import type { GobbySession } from "../../types/sessions";
 import {
+  hasFreshChatDraft,
   loadPersistedConversationId,
   loadPersistedDbSessionId,
 } from "../../lib/sessionPersistence";
@@ -45,6 +46,7 @@ export function useSessionReconciliation({
 
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
+    const hasIntentionalFreshDraft = hasFreshChatDraft();
     // rejectedInitialPersistedSession means initialPersistedDbSessionId saw a
     // persisted session at mount, but persistedDbSessionId, persistedConversationId,
     // and dbSessionId are now all cleared.
@@ -71,7 +73,7 @@ export function useSessionReconciliation({
       return;
     } else if (persistedDbSessionId && webChatSessions.length === 0) {
       return;
-    } else if (persistedConversationId && !persistedDbSessionId) {
+    } else if (hasIntentionalFreshDraft && !persistedDbSessionId) {
       initialReconciliationDoneRef.current = true;
       return;
     } else if (rejectedInitialPersistedSession) {

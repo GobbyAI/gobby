@@ -227,11 +227,29 @@ embeddings:
   api_base: null
   api_key: null
 
-`gobby install` accepts `--embedding-url`, `--embedding-model`, and
-`--embedding-dim` to override the bundled provider defaults. When
-`--embedding-dim` is omitted alongside a custom URL or model, the installer
-probes `/v1/embeddings` on the target endpoint to detect the dim. The setup
-wizard exposes the same three knobs interactively.
+memory:
+  enabled: true
+  backend: local
+  auto_crossref: false
+  crossref_threshold: 0.3
+  crossref_max_links: 5
+  access_debounce_seconds: 60
+```
+
+`gobby install` accepts `--embedding-url`, `--embedding-provider`,
+`--embedding-model`, and `--embedding-dim` to override the bundled provider
+defaults. Custom URL inference uses the endpoint port: `11434` selects Ollama,
+`1234` selects LM Studio, and any other port uses generic
+`openai-compatible` routing. Pass `--embedding-provider` to override that
+inference for custom endpoints.
+
+When `--embedding-dim` is omitted alongside a custom URL or model, the
+installer probes `/v1/embeddings` on the target endpoint to detect the dim. If
+only the endpoint changed and the LM Studio or Ollama default model is still in
+use, a failed probe falls back to that provider's default dim and the health
+check verifies it. Custom models and generic `openai-compatible` endpoints must
+probe successfully or pass `--embedding-dim` explicitly. The setup wizard
+exposes the same override knobs interactively.
 
 The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
 choice for any local hardware. For users with capable local hardware,
@@ -243,15 +261,6 @@ storage and a slower embed step. Example install:
 gobby install --embedding-url http://localhost:1234/v1 \
               --embedding-model text-embedding-qwen3-embedding-4b
 # --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
-```
-
-memory:
-  enabled: true
-  backend: local
-  auto_crossref: false
-  crossref_threshold: 0.3
-  crossref_max_links: 5
-  access_debounce_seconds: 60
 ```
 
 `memory.backend` accepts `local` or `null`. Qdrant and Neo4j connection settings
@@ -494,6 +503,13 @@ dispatch_interval_seconds: 60
 `development`, `holistic_qa`, `pr`, and `merge`. Runtime flags on
 `uv run gobby build` and the `gobby-tasks-ops:build_task` tool override these
 file defaults for the requested build.
+
+### Packaging Diagnostics
+
+`GOBBY_SKIP_UI_BUILD=1` skips rebuilding web assets during `uv build` and uses
+the already staged `src/gobby/ui/web/dist/` files. This is useful for packaging
+diagnostics when the UI assets are known current. It is unsafe for release
+builds unless those staged assets were freshly built and verified.
 
 ## Validation Rules
 

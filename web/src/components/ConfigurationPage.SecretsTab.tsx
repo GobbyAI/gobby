@@ -23,6 +23,7 @@ import {
   TOOLBAR_BTN_PRIMARY_CLS,
   YAML_ERRORS_CLS,
 } from './ConfigurationPage.styles'
+import { Heading } from './shared/Heading'
 
 interface SecretsTabProps {
   secrets: SecretInfo[]
@@ -91,7 +92,7 @@ export function SecretsTab({ secrets, categories, onSave, onDelete, onRefresh }:
   return (
     <div className={SECRETS_CLS}>
       <div className={SECRETS_HEADER_CLS}>
-        <h3 className={SECRETS_HEADER_H3_CLS}>Secrets Store</h3>
+        <Heading level={3} className={SECRETS_HEADER_H3_CLS}>Secrets Store</Heading>
         <button type="button"
           className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)}
           onClick={() => {

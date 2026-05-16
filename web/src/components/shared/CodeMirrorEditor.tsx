@@ -14,6 +14,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { yaml } from '@codemirror/lang-yaml'
 import { StreamLanguage } from '@codemirror/language'
 import { CODE_CHROME_TYPOGRAPHY, CODE_CHROME_VARS } from './codeBlockTheme'
+import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 
@@ -64,6 +65,7 @@ function getLanguageExtension(lang: string) {
 export function CodeMirrorEditor({ content, language, readOnly = false, onChange, onSave, editorViewRef }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const resolvedTheme = useResolvedTheme()
   const onChangeRef = useRef(onChange)
   const onSaveRef = useRef(onSave)
   const contentRef = useRef(content)
@@ -103,8 +105,15 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
       bracketMatching(),
       indentOnInput(),
       highlightSelectionMatches(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      syntaxHighlighting(oneDarkHighlightStyle),
+      // Light mode uses CodeMirror's built-in light-appropriate
+      // defaultHighlightStyle; dark mode keeps One Dark over the default
+      // fallback. One Dark on a light background is unreadable.
+      ...(resolvedTheme === 'dark'
+        ? [
+            syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+            syntaxHighlighting(oneDarkHighlightStyle),
+          ]
+        : [syntaxHighlighting(defaultHighlightStyle)]),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -175,7 +184,7 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
       viewRef.current = null
       if (editorViewRefRef.current) editorViewRefRef.current.current = null
     }
-  }, [language, readOnly, handleSave]) // Recreate on language/readOnly change
+  }, [language, readOnly, handleSave, resolvedTheme]) // Recreate on language/readOnly/theme change
 
   // Update content when it changes externally (e.g., file reload)
   useEffect(() => {

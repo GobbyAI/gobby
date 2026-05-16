@@ -69,7 +69,7 @@ async def _run_maintenance(
     summary_batch_size: int = 20,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
-    projects = await asyncio.to_thread(context.storage.list_indexed_projects)
+    projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
 
     if gcode_bin is None:
@@ -129,7 +129,7 @@ async def _run_maintenance(
 
 async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
     """Remove index data for a project whose root directory is gone."""
-    counts = await asyncio.to_thread(context.storage.delete_project_index, project.id)
+    counts = await context.run_db(context.storage.delete_project_index, project.id)
 
     if context.graph is not None:
         try:
@@ -159,7 +159,7 @@ async def _summarize_unsummarized(
     batch_size: int,
 ) -> None:
     """Generate summaries for symbols that don't have one yet."""
-    symbols = await asyncio.to_thread(
+    symbols = await context.run_db(
         context.storage.get_unsummarized_symbols,
         project.id,
         limit=batch_size,
@@ -199,7 +199,7 @@ async def _update_symbol_summaries(
 
     async def update_one(symbol_id: str, summary: str) -> None:
         async with semaphore:
-            await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
+            await context.run_db(context.storage.update_symbol_summary, symbol_id, summary)
 
     items = list(results.items())
     write_results = await asyncio.gather(

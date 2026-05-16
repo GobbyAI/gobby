@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # CodeRabbit Configuration
 # https://docs.coderabbit.ai/guides/configure-coderabbit
 
@@ -61,28 +62,39 @@ reviews:
         - Check for proper event handling patterns
         - Ensure plugins follow the HookPlugin interface
 
+  # Tool integrations
+  tools:
+    # Enable AST-based analysis
+    ast-grep: {}
+
+    # GitHub Actions feedback
+    github-checks:
+      enabled: true
+
+    # Enable linter integration for context
+    ruff:
+      enabled: true
+
+    # Shell script analysis
+    shellcheck:
+      enabled: true
+
+  # Ignore patterns - files to skip reviewing
+  path_filters:
+    - "!.gobby/plans/completed/**"  # Historical plans, not active guidelines
+    - "!**/*.lock"
+    - "!**/uv.lock"
+    - "!**/.gobby/tasks.jsonl"
+    - "!**/htmlcov/**"
+    - "!**/__pycache__/**"
+    - "!**/.mypy_cache/**"
+    - "!**/build/**"
+    - "!**/dist/**"
+
 # Chat settings
 chat:
   # Enable chat interactions in PR comments
   auto_reply: true
-
-# Tool integrations
-tools:
-  # Enable AST-based analysis
-  ast_grep:
-    enabled: true
-
-  # GitHub Actions feedback
-  github-checks:
-    enabled: true
-
-  # Enable linter integration for context
-  ruff:
-    enabled: true
-
-  # Shell script analysis
-  shellcheck:
-    enabled: true
 
 # Knowledge base
 knowledge_base:
@@ -93,15 +105,3 @@ knowledge_base:
   # Reference issues and discussions
   issues:
     scope: auto
-
-# Ignore patterns - files to skip reviewing
-ignore:
-  - "docs/plans/completed/**"  # Historical plans, not active guidelines
-  - "**/*.lock"
-  - "**/uv.lock"
-  - "**/.gobby/tasks.jsonl"
-  - "**/htmlcov/**"
-  - "**/__pycache__/**"
-  - "**/.mypy_cache/**"
-  - "**/build/**"
-  - "**/dist/**"

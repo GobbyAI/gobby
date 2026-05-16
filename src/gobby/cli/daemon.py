@@ -42,6 +42,8 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
+
 
 def _services_start(gobby_home: Path) -> None:
     """Start Docker services (Qdrant, Neo4j) via unified compose file.
@@ -308,39 +310,22 @@ def _get_running_daemon_pid(service_status: dict[str, Any] | None = None) -> int
     return None
 
 
-def _wait_for_process_exit(
-    pid: int,
-    *,
-    timeout: float = 30.0,
-    interval: float = 0.25,
-) -> float | None:
-    """Wait for a specific process to exit."""
-    start = time.monotonic()
-    deadline = start + timeout
-
-    while time.monotonic() < deadline:
-        if not _is_process_alive(pid):
-            return time.monotonic() - start
-        time.sleep(interval)
-
-    return None
-
-
 def _wait_for_service_stop(
     previous_pid: int | None,
     *,
-    timeout: float = 30.0,
+    http_port: int,
+    timeout: float = SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
     interval: float = 0.25,
 ) -> float | None:
     """Wait for a service-managed daemon stop to complete."""
-    if previous_pid is not None:
-        return _wait_for_process_exit(previous_pid, timeout=timeout, interval=interval)
-
     start = time.monotonic()
     deadline = start + timeout
 
     while time.monotonic() < deadline:
-        if not get_service_status().get("running"):
+        previous_pid_exited = previous_pid is None or not _is_process_alive(previous_pid)
+        service_stopped = not get_service_status().get("running")
+        daemon_unhealthy = not _is_daemon_healthy(http_port)
+        if previous_pid_exited and service_stopped and daemon_unhealthy:
             return time.monotonic() - start
         time.sleep(interval)
 
@@ -553,7 +538,7 @@ def _do_stop(
     shutdown_intent: str = "stop",
 ) -> bool:
     """Stop the daemon and return whether shutdown succeeded."""
-    _ = ctx
+    config = ctx.obj["config"]
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
@@ -567,9 +552,17 @@ def _do_stop(
                 _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
             else:
                 _step("Waiting for service-managed daemon to stop...")
-            elapsed = _wait_for_service_stop(previous_pid)
+            elapsed = _wait_for_service_stop(
+                previous_pid,
+                http_port=config.daemon_port,
+                timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
+            )
             if elapsed is None:
-                _step("Service stop returned, but daemon is still running", error=True)
+                _step(
+                    "Service stop returned, but daemon is still running "
+                    f"after {SERVICE_MANAGED_STOP_TIMEOUT_SECONDS:.0f}s",
+                    error=True,
+                )
                 return False
             _step(f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
         else:

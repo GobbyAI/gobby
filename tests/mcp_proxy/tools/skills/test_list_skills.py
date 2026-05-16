@@ -1,7 +1,10 @@
 """Tests for list_skills MCP tool (TDD - written before implementation)."""
 
-from collections.abc import Iterator
+import asyncio
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +13,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
 from gobby.storage.database import LocalDatabase
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import LocalSkillManager
 
@@ -76,6 +80,30 @@ class TestListSkillsTool:
         assert result["success"] is True
         assert result["count"] == 3
         assert len(result["skills"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_repeated_list_skills_keeps_sqlite_connections_bounded(self, populated_db):
+        """Concurrent list_skills calls use the injected bounded DB runner."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-list-db")
+        original_list_skills = LocalSkillManager.list_skills
+
+        def slow_list_skills(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
+            """Delay storage reads so concurrent connection growth is observable."""
+            time.sleep(0.02)
+            return original_list_skills(self, *args, **kwargs)
+
+        try:
+            with patch.object(LocalSkillManager, "list_skills", new=slow_list_skills):
+                registry = create_skills_registry(populated_db, run_db=executor.run)
+                tool = registry.get_tool("list_skills")
+                results = await asyncio.gather(*(tool() for _ in range(20)))
+
+            assert all(result["success"] is True for result in results)
+            assert populated_db.connection_count <= 1 + executor.max_workers
+        finally:
+            executor.shutdown(wait=True)
 
     @pytest.mark.asyncio
     async def test_list_skills_returns_lightweight_metadata(self, populated_db):
@@ -291,9 +319,16 @@ class TestListSkillsInternalFilter:
 
 
 @pytest.mark.asyncio
-async def test_list_skills_offloads_direct_storage_calls_to_asyncio_to_thread() -> None:
+async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> None:
     storage = MagicMock()
     storage.list_skills.return_value = []
+    run_db_calls: list[Callable[..., Any]] = []
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Record DB calls routed through the injected SQLite runner."""
+        run_db_calls.append(func)
+        return func(*args, **kwargs)
+
     ctx = SkillsContext(
         db=MagicMock(),
         storage=storage,
@@ -304,28 +339,31 @@ async def test_list_skills_offloads_direct_storage_calls_to_asyncio_to_thread() 
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
+        run_db=run_db,
     )
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
     tool = registry.get_tool("list_skills")
     assert tool is not None
 
-    async def fake_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    with patch(
-        "gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread
-    ) as _:
-        result = await tool(include_internal=True)
+    result = await tool(include_internal=True)
 
     assert result["success"] is True
     storage.list_skills.assert_called_once()
+    assert run_db_calls == [storage.list_skills]
 
 
 @pytest.mark.asyncio
-async def test_list_skills_offloads_overfetch_batches_to_asyncio_to_thread() -> None:
+async def test_list_skills_routes_overfetch_batches_through_run_sqlite() -> None:
     storage = MagicMock()
     storage.list_skills.side_effect = [[], []]
+    run_db_calls: list[Callable[..., Any]] = []
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Record overfetch DB calls routed through the injected SQLite runner."""
+        run_db_calls.append(func)
+        return func(*args, **kwargs)
+
     ctx = SkillsContext(
         db=MagicMock(),
         storage=storage,
@@ -336,17 +374,15 @@ async def test_list_skills_offloads_overfetch_batches_to_asyncio_to_thread() -> 
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
+        run_db=run_db,
     )
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
     tool = registry.get_tool("list_skills")
     assert tool is not None
 
-    async def fake_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    with patch("gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread):
-        result = await tool()
+    result = await tool()
 
     assert result["success"] is True
     storage.list_skills.assert_called_once()
+    assert run_db_calls == [storage.list_skills]

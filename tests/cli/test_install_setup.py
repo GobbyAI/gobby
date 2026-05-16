@@ -30,6 +30,7 @@ from gobby.cli.install_setup import (
     run_daemon_setup,
 )
 from gobby.cli.installers.hook_commands import build_hook_command
+from gobby.install.distribution import HomebrewHelperStatus
 
 pytestmark = pytest.mark.unit
 
@@ -201,6 +202,58 @@ class TestRunDaemonSetup:
 
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
         assert "--gobby-owned" in command
+
+    @patch("gobby.cli.utils.init_local_storage")
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.cli.installers.install_default_mcp_servers")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup._install_gsqz")
+    @patch("gobby.cli.install_setup._install_gcode")
+    @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gloc")
+    @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
+    @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
+    def test_homebrew_mode_skips_npm_and_managed_helper_installs(
+        self,
+        mock_verify: MagicMock,
+        mock_ide: MagicMock,
+        mock_gloc: MagicMock,
+        mock_ghook: MagicMock,
+        mock_gcode: MagicMock,
+        mock_gsqz: MagicMock,
+        mock_run: MagicMock,
+        mock_mcp: MagicMock,
+        mock_sync: MagicMock,
+        mock_init: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_DISTRIBUTION", "homebrew")
+        mock_db = MagicMock()
+        mock_init.return_value = mock_db
+        mock_sync.return_value = {"total_synced": 0, "errors": []}
+        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
+        mock_ide.return_value = {"added": False}
+        mock_verify.return_value = [
+            HomebrewHelperStatus(
+                name=name,
+                formula=f"gobby-{name}",
+                minimum_version="1.0.0",
+                path=f"/opt/homebrew/bin/{name}",
+                version="1.0.0",
+                ok=True,
+            )
+            for name in ("gcode", "gsqz", "ghook", "gloc")
+        ]
+
+        run_daemon_setup(tmp_path)
+
+        mock_verify.assert_called_once_with()
+        mock_run.assert_not_called()
+        mock_gsqz.assert_not_called()
+        mock_gcode.assert_not_called()
+        mock_ghook.assert_not_called()
+        mock_gloc.assert_not_called()
 
 
 class TestGsqzHelpers:

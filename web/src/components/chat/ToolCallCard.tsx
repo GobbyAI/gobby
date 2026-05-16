@@ -79,6 +79,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <CodeBlock
           language={language}
           startingLineNumber={1}
+          className="tool-code-surface"
           customStyle={TOOL_RESULT_CUSTOM_STYLE}
         >
           {args.content as string}
@@ -95,7 +96,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} />
+        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} className="tool-code-surface" />
       </div>
     )
   }
@@ -106,7 +107,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
       <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Arguments</div>
       <JsonBlock
         value={args}
-        className="rounded max-h-96"
+        className="rounded max-h-96 tool-code-surface"
         testId="toolcall-json"
       />
     </div>
@@ -191,6 +192,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             language={language}
             startingLineNumber={parsed.startLine}
             wrapLongLines
+            className="tool-code-surface"
             customStyle={{
               ...TOOL_RESULT_CUSTOM_STYLE,
               borderRadius: 0,
@@ -224,6 +226,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
                   language={lang}
                   startingLineNumber={startLine}
                   wrapLongLines
+                  className="tool-code-surface"
                   customStyle={TOOL_RESULT_CUSTOM_STYLE}
                 >
                   {content}
@@ -269,7 +272,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   const toolName = formatToolName(call.tool_name)
   if (toolName === 'Agent' || toolName === 'Task') {
     return (
-      <div className="max-h-96 overflow-y-auto text-xs p-2">
+      <div className="max-h-96 overflow-y-auto text-xs p-2 tool-code-surface">
         <MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />
       </div>
     )
@@ -281,7 +284,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   if (envelope) {
     const wrapper = parseGsqzWrapper(envelope.primary)
     return (
-      <div className="overflow-hidden rounded border border-border/40 bg-muted/30">
+      <div className="overflow-hidden rounded border border-border/40">
         <MetadataStrip meta={envelope.meta} />
         {wrapper ? (
           <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
@@ -652,21 +655,21 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
 function StatusIcon({ status }: { status: string }) {
   if (status === 'calling') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin" aria-label="In flight" role="img">
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (status === 'completed') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
   }
   if (status === 'error') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground" aria-label="Errors" role="img">
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -674,7 +677,7 @@ function StatusIcon({ status }: { status: string }) {
   }
   if (status === 'pending_approval') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground" aria-label="Pending approval" role="img">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
@@ -727,14 +730,14 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
 function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: boolean; allCompleted: boolean; hasInFlight: boolean }) {
   if (hasInFlight) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" className="text-accent animate-spin" aria-label="In flight" role="img">
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (hasErrors) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" className="text-destructive-foreground" aria-label="Errors" role="img">
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -742,7 +745,7 @@ function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: 
   }
   if (allCompleted) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
@@ -760,14 +763,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
-  const accentClass = group.hasErrors
-    ? 'border-destructive-foreground/40'
+  const groupBorderClass = group.hasErrors
+    ? 'border-destructive-foreground/50'
     : group.hasInFlight
-      ? 'border-accent/40'
-      : 'border-border'
+      ? 'border-accent/50'
+      : group.allCompleted
+        ? 'border-success-foreground/40'
+        : 'border-border'
 
   return (
-    <div className={cn('border-l my-1', accentClass)}>
+    <div className={cn('border-l my-1', groupBorderClass)}>
       <div
         className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}

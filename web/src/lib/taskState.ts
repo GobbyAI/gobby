@@ -4,6 +4,7 @@ import {
   type StageState5,
   type StageStateView,
 } from './stageActions'
+import type { StatusKind } from '../components/activity/ActivityRowStatusDot'
 
 export type TaskDisplayState =
   | 'ready'
@@ -82,6 +83,15 @@ export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
   blocked: 'var(--color-error)',
   review_approved: 'var(--color-review)',
   closed: 'var(--text-muted)',
+}
+
+export const TASK_STATE_KIND: Record<TaskDisplayState, StatusKind> = {
+  ready: 'info',
+  in_progress: 'warning',
+  needs_review: 'info',
+  blocked: 'error',
+  review_approved: 'success',
+  closed: 'disabled',
 }
 
 export const TASK_STATE_BG: Record<TaskDisplayState, string> = {

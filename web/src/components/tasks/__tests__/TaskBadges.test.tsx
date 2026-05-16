@@ -33,6 +33,11 @@ describe('StatusDot', () => {
     render(<StatusDot status="needs_review" />)
     expect(screen.getByTitle('Needs Review')).toBeTruthy()
   })
+
+  it('uses the canonical task-state kind without a fallback branch', () => {
+    render(<StatusDot task={{ state: { is_closed: true } }} />)
+    expect(screen.getByLabelText('Status: Closed')).toHaveAttribute('data-kind', 'disabled')
+  })
 })
 
 describe('PriorityBadge', () => {

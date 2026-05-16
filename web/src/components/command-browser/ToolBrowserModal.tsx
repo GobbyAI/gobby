@@ -6,6 +6,7 @@ import { Button } from '../chat/ui/Button'
 import { Badge } from '../chat/ui/Badge'
 import { ScrollArea } from '../chat/ui/ScrollArea'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 interface ToolBrowserModalProps {
   filter: 'internal' | 'external'
@@ -116,9 +117,9 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0 bg-muted/30">
         <div className="flex items-center gap-2">
           <ToolsIcon />
-          <h2 className="text-lg font-semibold text-foreground">
+          <Heading level={2} className="text-lg font-semibold text-foreground">
             {filter === 'internal' ? 'Gobby Tools' : 'MCP Tools'}
-          </h2>
+          </Heading>
           {!isLoading && (
             <span className="text-xs text-muted-foreground">({totalToolCount})</span>
           )}

@@ -5,7 +5,22 @@ import { describe, expect, it, vi } from 'vitest'
 import { ActivityPanel } from '../ActivityPanel'
 
 vi.mock('../../chat/artifacts/ResizeHandle', () => ({
-  ResizeHandle: () => null,
+  ResizeHandle: ({
+    panelWidth,
+    minWidth,
+    maxWidth,
+  }: {
+    panelWidth?: number
+    minWidth?: number
+    maxWidth?: number
+  }) => (
+    <div
+      data-testid="resize-handle"
+      data-panel-width={panelWidth}
+      data-min-width={minWidth}
+      data-max-width={maxWidth}
+    />
+  ),
 }))
 
 vi.mock('../PlansTab', () => ({
@@ -118,6 +133,52 @@ describe('ActivityPanel', () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: /tasks/i }))
 
     expect(onTabChange).toHaveBeenCalledWith('tasks')
+  })
+
+  it('clamps the desktop panel between the activity and chat 320px floors', () => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 960,
+    })
+
+    try {
+      const { container } = render(
+        <ActivityPanel
+          isPinned={true}
+          onPinnedChange={vi.fn()}
+          panelWidth={900}
+          onWidthChange={vi.fn()}
+          activeTab="sessions"
+          onTabChange={vi.fn()}
+          artifacts={new Map()}
+          activeArtifact={null}
+          onOpenArtifact={vi.fn()}
+          onCloseArtifact={vi.fn()}
+          onSetArtifactVersion={vi.fn()}
+          canvasState={null}
+          onCloseCanvas={vi.fn()}
+          isMobile={false}
+        />,
+      )
+
+      const panel = container.querySelector('.activity-panel') as HTMLElement
+      expect(panel.style.width).toBe('640px')
+      expect(panel.style.minWidth).toBe('320px')
+      expect(panel.style.maxWidth).toBe('calc(100vw - 320px)')
+
+      const handle = screen.getByTestId('resize-handle')
+      expect(handle).toHaveAttribute('data-panel-width', '640')
+      expect(handle).toHaveAttribute('data-min-width', '320')
+      expect(handle).toHaveAttribute('data-max-width', '640')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: previousWidth,
+      })
+    }
   })
 
   it('renders generated artifacts under the Artifacts tab', () => {

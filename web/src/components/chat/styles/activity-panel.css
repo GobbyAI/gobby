@@ -44,7 +44,7 @@
   align-items: center;
   gap: 0.5rem;
   min-height: var(--activity-panel-bar-height);
-  padding: 0 0.5rem;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
@@ -297,15 +297,20 @@
   flex-shrink: 0;
 }
 
+.activity-panel-close-slot .btn-sm,
+.activity-panel-status-bar__actions .btn-sm {
+  min-height: var(--status-bar-control-height);
+}
+
 /* ============================================
    Activity Panel — shared search input
    Single authoring site for list-panel search.
    ============================================ */
 .activity-panel-search {
-  flex: 1 1 12rem;
-  min-width: 8rem;
+  flex: 1 1 9rem;
+  min-width: 0;
   min-height: var(--control-row-height-sm);
-  padding: 0 0.65rem;
+  padding: 0 0.55rem;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 0.45rem;
@@ -327,15 +332,19 @@
 
 /* ============================================
    Activity Panel — shared leading status dot
-   Single authoring site for the 8px status indicator that appears at the
-   left of list rows in Tasks, Sessions, Pipelines, Cron, and Traces.
+   Single authoring site for the status indicator that appears at the left
+   of list rows in Tasks, Sessions, Pipelines, Cron, and Traces. The span
+   wraps a local SVG glyph; shape carries state alongside colour so the dot
+   reads in grayscale for deutan viewers.
    ============================================ */
 .activity-row-status-dot {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.75rem;
+  height: 0.75rem;
   flex-shrink: 0;
+  line-height: 0;
 }
 
 .activity-row-status-dot--pulse {
@@ -366,10 +375,12 @@
    Sessions' .chip--* pills.
    ============================================ */
 .activity-panel-toolbar {
+  --control-row-height-sm: var(--status-bar-control-height);
+
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  flex-wrap: nowrap;
+  gap: 0.375rem;
   min-height: var(--activity-panel-bar-height);
   padding: 0 0.75rem;
   background: var(--bg-secondary);
@@ -382,6 +393,19 @@
    only pins option padding so labels stay centered when the row is dense. */
 .activity-panel-toolbar-segmented > .segmented-control__option {
   padding-block: 0;
+  padding-inline: 0.55rem;
+}
+
+.activity-panel-toolbar-segmented {
+  font-size: var(--text-sm);
+}
+
+.activity-filter-button {
+  margin-left: auto;
+}
+
+.activity-panel-toolbar .btn-sm {
+  min-height: var(--status-bar-control-height);
 }
 
 .activity-panel-status-bar {
@@ -452,4 +476,12 @@
 .activity-filter-dropdown__item--active {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
+}
+
+/* Light: a chosen filter is an applied constraint — the one decisive
+   accent moment. Solid accent fill, deutan-tolerant (hue 125),
+   grayscale-distinct as a dark fill. Dark byte-frozen to IMG_3754. */
+[data-theme="light"] .activity-filter-dropdown__item--active {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }

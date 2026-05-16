@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import UUID
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
@@ -10,6 +13,7 @@ from gobby.workflows.condition_helpers import (
     is_task_complete,
     task_needs_human_review,
     task_tree_complete,
+    task_type_in,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,6 +51,9 @@ class TestNormalizeTaskId:
     def test_uuid_passthrough(self) -> None:
         uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         assert _normalize_task_id(uuid) == uuid
+
+    def test_invalid_uuid_bytes_fall_back_to_string(self) -> None:
+        assert _normalize_task_id(b"short") == "b'short'"
 
 
 class TestIsTaskComplete:
@@ -108,6 +115,10 @@ class TestTaskTreeCompleteIntHandling:
         task = _task(manager, sample_project)
 
         assert task_tree_complete(manager, task.seq_num) is False
+
+
+def test_task_needs_human_review_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+    assert task_needs_human_review(_manager(temp_db), b"short") is False
 
 
 class TestTaskTreeCompleteString:
@@ -240,3 +251,74 @@ class TestTaskNeedsHumanReview:
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
+
+
+class TestTaskTypeIn:
+    def test_matches_epic_by_uuid(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, task.id, "epic") is True
+
+    def test_matches_epic_by_uuid_instance(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, UUID(task.id), "epic") is True
+
+    def test_matches_epic_by_raw_uuid_bytes(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, UUID(task.id).bytes, "epic") is True
+
+    def test_matches_epic_by_raw_uuid_bytearray(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, bytearray(UUID(task.id).bytes), "epic") is True
+
+    def test_matches_epic_by_hash_ref(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, _seq_ref(task), "epic") is True
+
+    def test_matches_epic_by_int_seq_ref(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, task.seq_num, "epic") is True
+
+    def test_matches_mixed_list_when_any_task_type_matches(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        normal = _task(manager, sample_project, title="Normal", task_type="task")
+        epic = _task(manager, sample_project, title="Epic", task_type="epic")
+
+        assert task_type_in(manager, [normal.id, epic.seq_num], "epic") is True
+
+    def test_returns_false_for_bytes_ref_without_iterating_bytes(self, temp_db) -> None:
+        assert task_type_in(_manager(temp_db), b"#1", "epic") is False
+
+    def test_returns_false_for_invalid_uuid_bytes_in_list(self, temp_db) -> None:
+        assert task_type_in(_manager(temp_db), [b"#1"], "epic") is False
+
+    def test_returns_false_for_missing_task(self, temp_db) -> None:
+        assert task_type_in(_manager(temp_db), "#999999", "epic") is False
+
+    def test_returns_false_without_task_manager(self) -> None:
+        assert task_type_in(None, "#1", "epic") is False
+
+    def test_returns_false_for_non_matching_type(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="task")
+
+        assert task_type_in(manager, task.id, "epic") is False
+
+    def test_matches_persisted_task_type_with_surrounding_whitespace(self) -> None:
+        manager = SimpleNamespace(
+            db=None,
+            get_task=lambda _task_id: SimpleNamespace(task_type=" Epic "),
+        )
+
+        assert task_type_in(manager, "task-id", "epic") is True

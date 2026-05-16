@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.tasks.state_semantics import is_task_actively_claimed, projected_task_state
 
@@ -37,6 +38,7 @@ class TaskRecoveryHandler:
         agent_run_manager: LocalAgentRunManager,
         stall_classifier: StallClassifier,
         failure_threshold: int | None = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         failure_threshold = (
             get_task_failure_threshold() if failure_threshold is None else failure_threshold
@@ -47,6 +49,12 @@ class TaskRecoveryHandler:
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
         self._failure_threshold = failure_threshold
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, Task] | None:
         """Resolve the task still owned by this run, if any."""
@@ -56,7 +64,7 @@ class TaskRecoveryHandler:
         task_id = db_run.task_id
 
         if not task_id and db_run.child_session_id:
-            tasks = await asyncio.to_thread(
+            tasks = await self._run_sqlite(
                 self._task_manager.list_tasks,
                 claimed_by_session_id=db_run.child_session_id,
                 closed=False,
@@ -67,7 +75,7 @@ class TaskRecoveryHandler:
         if not task_id:
             return None
 
-        task = await asyncio.to_thread(self._task_manager.get_task, task_id)
+        task = await self._run_sqlite(self._task_manager.get_task, task_id)
         expected_owner = db_run.child_session_id or db_run.claimed_session_id
         if not task or not is_task_actively_claimed(task, expected_owner):
             return None
@@ -87,7 +95,7 @@ class TaskRecoveryHandler:
             resolved = await self.resolve_claimed_task_for_run(db_run)
             if resolved is None:
                 if outcome == "cancelled" and db_run.task_id:
-                    await asyncio.to_thread(
+                    await self._run_sqlite(
                         self._clear_claim_session_variables,
                         db_run,
                         db_run.task_id,
@@ -99,11 +107,11 @@ class TaskRecoveryHandler:
             lifecycle_stage = projected_task_state(task)
 
             if outcome == "cancelled":
-                await asyncio.to_thread(
+                await self._run_sqlite(
                     self._task_manager.release_task_claim,
                     task_id,
                 )
-                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
+                await self._run_sqlite(self._clear_claim_session_variables, db_run, task_id)
                 logger.info(
                     "Recovered task %s after agent %s cancelled (status=%s)",
                     task_ref,
@@ -122,8 +130,8 @@ class TaskRecoveryHandler:
                 )
 
             if lifecycle_stage != "in_progress":
-                await asyncio.to_thread(self._task_manager.release_task_claim, task_id)
-                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
+                await self._run_sqlite(self._task_manager.release_task_claim, task_id)
+                await self._run_sqlite(self._clear_claim_session_variables, db_run, task_id)
                 logger.info(
                     "Released stale ownership on task %s after agent %s failed (status=%s)",
                     task_ref,
@@ -137,14 +145,14 @@ class TaskRecoveryHandler:
                 failure_count += 1
 
             if not is_provider and failure_count >= self._failure_threshold:
-                await asyncio.to_thread(
+                await self._run_sqlite(
                     self._task_manager.release_task_claim,
                     task_id,
                     dispatch_failure_count=0,
                     escalated_at=datetime.now(UTC).isoformat(),
                     escalation_reason=f"Failed {failure_count} dispatch attempts",
                 )
-                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
+                await self._run_sqlite(self._clear_claim_session_variables, db_run, task_id)
                 logger.warning(
                     "Task %s escalated after %s dispatch attempts",
                     task_ref,
@@ -152,12 +160,12 @@ class TaskRecoveryHandler:
                 )
                 return
 
-            await asyncio.to_thread(
+            await self._run_sqlite(
                 self._task_manager.release_task_claim,
                 task_id,
                 dispatch_failure_count=failure_count,
             )
-            await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
+            await self._run_sqlite(self._clear_claim_session_variables, db_run, task_id)
             logger.info(
                 "Recovered task %s to open after agent %s failed",
                 task_ref,
@@ -198,7 +206,7 @@ class TaskRecoveryHandler:
 
     async def recover_task_from_failed_agent(self, run_id: str) -> None:
         """Recover task ownership after a failed agent run."""
-        db_run = await asyncio.to_thread(self._agent_run_manager.get, run_id)
+        db_run = await self._run_sqlite(self._agent_run_manager.get, run_id)
         if not db_run:
             return
         await self.recover_task_from_terminal_agent(db_run, outcome="failed")

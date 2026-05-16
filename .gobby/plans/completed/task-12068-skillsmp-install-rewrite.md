@@ -1,6 +1,7 @@
 # Lean SkillsMP Install Rewrite
 
 ## Summary
+
 - Fix `#12068` by treating SkillsMP as a search index over GitHub-hosted skills.
 - Keep the fix inside `SkillsMPProvider` plus focused tests. Preserve existing
   `HubProvider` method signatures, MCP tool schemas, HTTP routes, and storage
@@ -8,6 +9,7 @@
 - Ignore `skillUrl`; it is a SkillsMP detail page, not an install source.
 
 ## Implementation Changes
+
 - In `src/gobby/skills/hubs/skillsmp.py`, add private helpers for auth guard,
   exact search lookup, details mapping, GitHub URL parsing, and directory copy.
 - Rewrite `get_skill_details(slug)` to call `/skills/search?q=<slug>&limit=10`,
@@ -29,6 +31,7 @@
 - Remove the obsolete ZIP download path and imports from `SkillsMPProvider`.
 
 ## Public Interfaces
+
 - No new `HubSkillInfo` or `HubSkillDetails` fields.
 - No MCP, HTTP, config, DB, or storage contract changes.
 - Keep SkillsMP auth behavior aligned with existing provider behavior: search
@@ -36,6 +39,7 @@
   failure as a failed `DownloadResult`.
 
 ## Test Plan
+
 - Update `tests/skills/hubs/test_skillsmp.py` with mocked HTTP/search tests for
   exact details lookup, no exact match, upstream failure, missing auth, missing
   `githubUrl`, unsupported source URL, and successful GitHub directory install.
@@ -51,6 +55,7 @@
   confirm it appears in `list_skills`, then remove the smoke-installed skill.
 
 ## Assumptions
+
 - `githubUrl` is the only install source from SkillsMP records.
 - Branch names with slashes remain unsupported for raw/blob URL parsing unless a
   real SkillsMP record proves the need; current tree URLs from live search use

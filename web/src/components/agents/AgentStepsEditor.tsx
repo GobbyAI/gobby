@@ -34,6 +34,7 @@ import {
   STEP_TRANSITION_TO_CLS,
   STEP_TRANSITION_WHEN_CLS,
 } from './agents-styles'
+import { Heading } from '../shared/Heading'
 
 // ---------------------------------------------------------------------------
 // Types (mirrors WorkflowStep / WorkflowTransition from definitions.py)
@@ -150,7 +151,7 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
 
   return (
     <div className={STEP_SECTION_CLS}>
-      <h5 className={STEP_SECTION_LABEL_CLS}>Tool Gating</h5>
+      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Tool Gating</Heading>
 
       {/* Allowed Tools */}
       <div className={STEP_FIELD_CLS}>
@@ -175,8 +176,8 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
       </div>
 
       {/* Blocked Tools */}
-      <div className={STEP_FIELD_CLS}>
-        <label className={STEP_FIELD_LABEL_CLS}>Blocked Tools</label>
+      <div className={STEP_FIELD_CLS} role="group" aria-label="Blocked Tools">
+        <span className={STEP_FIELD_LABEL_CLS}>Blocked Tools</span>
         <ChipInput
           values={step.blocked_tools || []}
           onChange={v => onChange({ blocked_tools: v })}
@@ -207,8 +208,8 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
       </div>
 
       {/* Blocked MCP Tools */}
-      <div className={STEP_FIELD_CLS}>
-        <label className={STEP_FIELD_LABEL_CLS}>Blocked MCP Tools</label>
+      <div className={STEP_FIELD_CLS} role="group" aria-label="Blocked MCP Tools">
+        <span className={STEP_FIELD_LABEL_CLS}>Blocked MCP Tools</span>
         <ChipInput
           values={step.blocked_mcp_tools || []}
           onChange={v => onChange({ blocked_mcp_tools: v })}
@@ -246,7 +247,7 @@ function TransitionsSection({ step, onChange, allStepNames }: {
 
   return (
     <div className={STEP_SECTION_CLS}>
-      <h5 className={STEP_SECTION_LABEL_CLS}>Transitions</h5>
+      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Transitions</Heading>
       {transitions.map((t, idx) => (
         <div key={idx} className={STEP_TRANSITION_ROW_CLS}>
           <select
@@ -393,8 +394,8 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                 </div>
 
                 {/* Identity */}
-                <div className={STEP_FIELD_CLS}>
-                  <label className={STEP_FIELD_LABEL_CLS}>Name</label>
+                <label className={STEP_FIELD_CLS}>
+                  <span className={STEP_FIELD_LABEL_CLS}>Name</span>
                   <input
                     className={AGENT_EDIT_INPUT_CLS}
                     value={step.name}
@@ -404,9 +405,9 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                       setExpandedName(newName)
                     }}
                   />
-                </div>
-                <div className={STEP_FIELD_CLS}>
-                  <label className={STEP_FIELD_LABEL_CLS}>Description</label>
+                </label>
+                <label className={STEP_FIELD_CLS}>
+                  <span className={STEP_FIELD_LABEL_CLS}>Description</span>
                   <textarea
                     className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
                     value={step.description || ''}
@@ -414,9 +415,9 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                     placeholder="What this step does..."
                     rows={2}
                   />
-                </div>
-                <div className={STEP_FIELD_CLS}>
-                  <label className={STEP_FIELD_LABEL_CLS}>Status Message</label>
+                </label>
+                <label className={STEP_FIELD_CLS}>
+                  <span className={STEP_FIELD_LABEL_CLS}>Status Message</span>
                   <textarea
                     className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
                     value={step.status_message || ''}
@@ -424,7 +425,7 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                     placeholder="Shown while step is active..."
                     rows={2}
                   />
-                </div>
+                </label>
 
                 {/* Tool Gating */}
                 <ToolGatingSection step={step} onChange={updates => updateStep(idx, updates)} />
@@ -437,15 +438,15 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                 />
 
                 {/* Exit When */}
-                <div className={STEP_FIELD_CLS}>
-                  <label className={STEP_FIELD_LABEL_CLS}>Exit When</label>
+                <label className={STEP_FIELD_CLS}>
+                  <span className={STEP_FIELD_LABEL_CLS}>Exit When</span>
                   <input
                     className={AGENT_EDIT_INPUT_CLS}
                     value={step.exit_when || ''}
                     onChange={e => updateStep(idx, { exit_when: e.target.value || null })}
                     placeholder="Expression to auto-exit this step..."
                   />
-                </div>
+                </label>
 
                 {/* Advanced */}
                 <AdvancedSection step={step} onChange={updates => updateStep(idx, updates)} />

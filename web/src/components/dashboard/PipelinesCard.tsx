@@ -1,3 +1,5 @@
+import { chartSeriesAt } from '../../lib/chartSeries'
+import { donutArcs } from '../../lib/donutArc'
 import { DashboardCard } from './DashboardCard'
 import {
   dashboardDonutLayoutClass,
@@ -26,22 +28,14 @@ const SEGMENTS: readonly { key: SegmentKey; label: string; color: string }[] = [
 const RADIUS = 36
 const STROKE = 8
 const SIZE = (RADIUS + STROKE) * 2
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 export function PipelinesCard({ pipelines }: Props) {
   const total = pipelines.total
 
-  const rings = SEGMENTS.map(({ key, color }, index) => {
-    const value = pipelines[key]
-    const ratio = total > 0 ? value / total : 0
-    const length = ratio * CIRCUMFERENCE
-    const offset = SEGMENTS.slice(0, index).reduce((sum, segment) => {
-      const segmentValue = pipelines[segment.key]
-      const segmentRatio = total > 0 ? segmentValue / total : 0
-      return sum + segmentRatio * CIRCUMFERENCE
-    }, 0)
-    return { key, color, length, offset }
-  })
+  const drawSegments = SEGMENTS
+    .map(({ key, color }) => ({ key, color, value: pipelines[key] }))
+    .filter((s) => s.value > 0)
+  const arcs = donutArcs(drawSegments, SIZE / 2, SIZE / 2, RADIUS)
 
   return (
     <DashboardCard title="Pipelines">
@@ -55,22 +49,17 @@ export function PipelinesCard({ pipelines }: Props) {
               stroke="var(--border)"
               strokeWidth={STROKE}
             />
-            {rings.map((ring) =>
-              ring.length > 0 ? (
-                <circle
-                  key={ring.key}
-                  cx={SIZE / 2}
-                  cy={SIZE / 2}
-                  r={RADIUS}
-                  fill="none"
-                  stroke={ring.color}
-                  strokeWidth={STROKE}
-                  strokeDasharray={`${ring.length} ${CIRCUMFERENCE - ring.length}`}
-                  strokeDashoffset={-ring.offset}
-                  transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
-                />
-              ) : null
-            )}
+            {arcs.map(({ segment, pathD }, i) => (
+              <path
+                key={segment.key}
+                d={pathD}
+                fill="none"
+                stroke={segment.color}
+                strokeWidth={STROKE}
+                strokeDasharray={chartSeriesAt(i).dash}
+                strokeLinecap="butt"
+              />
+            ))}
             <text
               x={SIZE / 2}
               y={SIZE / 2}

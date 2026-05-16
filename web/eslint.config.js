@@ -131,6 +131,14 @@ export default defineConfig([
         },
       ],
 
+      "jsx-a11y/label-has-associated-control": [
+        "error",
+        {
+          assert: "either",
+          depth: 5,
+        },
+      ],
+
       // TypeScript already handles unused vars via noUnusedLocals
       "@typescript-eslint/no-unused-vars": [
         "error",

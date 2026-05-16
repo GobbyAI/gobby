@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { Heading } from '../shared/Heading'
 
 const MODAL_OVERLAY_CLS =
   'fixed inset-0 z-[1000] flex items-center justify-center bg-[var(--surface-scrim)]'
@@ -83,13 +84,13 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-add-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h2 id="mcp-add-server-title" className={MODAL_TITLE_CLS}>Add MCP Server</h2>
+        <Heading level={2} id="mcp-add-server-title" className={MODAL_TITLE_CLS}>Add MCP Server</Heading>
 
         {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
         <div className={FORM_ROW_CLS}>
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>Name</label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>Name</span>
             <input
               className={FORM_INPUT_CLS}
               value={name}
@@ -97,50 +98,50 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
               placeholder="my-server"
               autoFocus
             />
-          </div>
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>Transport</label>
+          </label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>Transport</span>
             <select className={FORM_INPUT_CLS} value={transport} onChange={e => setTransport(e.target.value)}>
               <option value="http">HTTP</option>
               <option value="stdio">Stdio</option>
               <option value="websocket">WebSocket</option>
               <option value="sse">SSE</option>
             </select>
-          </div>
+          </label>
         </div>
 
         {needsUrl && (
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>URL</label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>URL</span>
             <input
               className={FORM_INPUT_CLS}
               value={url}
               onChange={e => setUrl(e.target.value)}
               placeholder="http://localhost:8080"
             />
-          </div>
+          </label>
         )}
 
         {needsCommand && (
           <>
-            <div className={FORM_GROUP_CLS}>
-              <label className={FORM_LABEL_CLS}>Command</label>
+            <label className={FORM_GROUP_CLS}>
+              <span className={FORM_LABEL_CLS}>Command</span>
               <input
                 className={FORM_INPUT_CLS}
                 value={command}
                 onChange={e => setCommand(e.target.value)}
                 placeholder="npx"
               />
-            </div>
-            <div className={FORM_GROUP_CLS}>
-              <label className={FORM_LABEL_CLS}>Arguments (space-separated)</label>
+            </label>
+            <label className={FORM_GROUP_CLS}>
+              <span className={FORM_LABEL_CLS}>Arguments (space-separated)</span>
               <input
                 className={FORM_INPUT_CLS}
                 value={args}
                 onChange={e => setArgs(e.target.value)}
                 placeholder="-y @modelcontextprotocol/server-x"
               />
-            </div>
+            </label>
           </>
         )}
 
@@ -209,7 +210,7 @@ export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-import-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h2 id="mcp-import-server-title" className={MODAL_TITLE_CLS}>Import MCP Server</h2>
+        <Heading level={2} id="mcp-import-server-title" className={MODAL_TITLE_CLS}>Import MCP Server</Heading>
 
         <div className={IMPORT_TABS_CLS}>
           <button

@@ -209,36 +209,23 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
 
 function CronStatusDot({ enabled }: { enabled: boolean }) {
   if (enabled) {
-    return (
-      <ActivityRowStatusDot
-        color="var(--accent)"
-        pulse
-        label="Enabled"
-      />
-    )
+    return <ActivityRowStatusDot kind="success" pulse label="Enabled" />
   }
-  return <ActivityRowStatusDot color="var(--text-muted)" label="Disabled" />
+  return <ActivityRowStatusDot kind="disabled" label="Disabled" />
 }
 
 function RunStatusGlyph({ status }: { status: string }) {
   const kind = cronRunStatusKind(status)
   if (kind === 'success') {
-    return (
-      <ActivityRowStatusDot
-        color="var(--color-success-foreground)"
-        label="Success"
-      />
-    )
+    return <ActivityRowStatusDot kind="success" label="Success" />
   }
   if (kind === 'failure') {
-    return <ActivityRowStatusDot color="var(--color-error)" label="Failure" />
+    return <ActivityRowStatusDot kind="error" label="Failure" />
   }
   if (kind === 'running') {
-    return (
-      <ActivityRowStatusDot color="var(--accent)" pulse label="Running" />
-    )
+    return <ActivityRowStatusDot kind="info" pulse label="Running" />
   }
-  return <ActivityRowStatusDot color="var(--text-muted)" label={status} />
+  return <ActivityRowStatusDot kind="disabled" label={status} />
 }
 
 function formatNextFiring(job: CronJob, now: number): string {

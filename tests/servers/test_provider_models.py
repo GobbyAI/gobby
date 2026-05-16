@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,10 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-from gobby.servers.provider_models import ProviderModelCatalog
+from gobby.servers.provider_models import (
+    ProviderModelCatalog,
+    _model_discovery_cwd_path,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -18,6 +22,7 @@ pytestmark = pytest.mark.unit
 class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
+        """Claude probes should preserve the user alias and record canonical IDs."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -53,6 +58,7 @@ class TestProviderModelCatalog:
     async def test_discover_claude_models_keeps_successful_alias_probes(
         self, temp_dir: Path
     ) -> None:
+        """Claude discovery should keep successful aliases when one probe fails."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -77,6 +83,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_refresh_falls_back_to_cached_models_per_provider(self, temp_dir: Path) -> None:
+        """Refresh should use cached models for only the provider that fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
         catalog._providers = {
@@ -122,6 +129,7 @@ class TestProviderModelCatalog:
         assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
 
     def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
+        """Cache loading should preserve known lengths and fill missing defaults."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps(
@@ -156,6 +164,7 @@ class TestProviderModelCatalog:
         assert gemini["context_length"] == 123_456
 
     def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
+        """Cache loading should accept legacy payloads with null version."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps(
@@ -186,6 +195,7 @@ class TestProviderModelCatalog:
     def test_get_context_window_matches_aliases_suffixes_and_droid_core(
         self, temp_dir: Path
     ) -> None:
+        """Context lookup should match aliases, dated IDs, and Droid core fallbacks."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -234,6 +244,7 @@ class TestProviderModelCatalog:
     def test_configured_models_precede_live_snapshot_and_keep_metadata(
         self, temp_dir: Path
     ) -> None:
+        """Configured models should sort first while retaining live metadata."""
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
                 codex=LLMProviderConfig(models="gpt-5.5,gpt-5.4"),
@@ -267,6 +278,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:
+        """Providers without cache should be marked failed when discovery fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
 
@@ -288,6 +300,7 @@ class TestProviderModelCatalog:
     async def test_discover_acp_models_marks_client_as_model_discovery(
         self, temp_dir: Path
     ) -> None:
+        """ACP discovery clients should run from the trusted model-discovery cwd."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -310,18 +323,19 @@ class TestProviderModelCatalog:
         client_cls = MagicMock(return_value=client)
         client_cls.cli_name = "gemini"
         gobby_home = temp_dir / "gobby-home"
-        expected_cwd = (gobby_home / "provider-model-discovery").resolve()
+        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
 
-        def record_trust(_cli: str, _cwd: Path) -> None:
+        async def record_trust(_cli: str, _cwd: Path) -> None:
             order.append("trust")
 
         with (
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
             patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
             patch(
-                "gobby.servers.provider_models.pre_approve_directory",
-                side_effect=record_trust,
-            ) as pre_approve,
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=record_trust),
+            ) as authorize_trust,
+            patch("gobby.agents.trust.pre_approve_directory") as pre_approve,
         ):
             models = await catalog._discover_acp_models(client_cls=client_cls)
 
@@ -331,7 +345,8 @@ class TestProviderModelCatalog:
         assert Path(kwargs["cwd"]) == expected_cwd
         assert Path(kwargs["cwd"]).is_absolute()
         assert kwargs["request_timeout"] > 30.0
-        pre_approve.assert_called_once_with("gemini", expected_cwd)
+        authorize_trust.assert_awaited_once_with("gemini", expected_cwd)
+        pre_approve.assert_not_called()
         assert order == ["trust", "start"]
         assert client_cls.call_count == 1
         assert client_cls.call_args is not None
@@ -343,7 +358,95 @@ class TestProviderModelCatalog:
         assert client.stop.await_args is not None
         assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
 
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_removes_created_cwd_when_trust_fails(
+        self, temp_dir: Path
+    ) -> None:
+        """A newly created discovery cwd should be removed when trust fails."""
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client_cls = MagicMock()
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+
+        with (
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=PermissionError("not trusted")),
+            ),
+        ):
+            with pytest.raises(PermissionError, match="not trusted"):
+                await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert not expected_cwd.exists()
+        client_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_logs_cleanup_failure_and_reraises_auth_error(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Cleanup failures are logged while the authorization error remains primary."""
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client_cls = MagicMock()
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+
+        def fail_rmtree(_path: Path) -> None:
+            raise OSError("cleanup failed")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.servers.provider_models"),
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=PermissionError("not trusted")),
+            ),
+            patch("gobby.servers.provider_models.shutil.rmtree", side_effect=fail_rmtree),
+        ):
+            with pytest.raises(PermissionError, match="not trusted") as exc_info:
+                await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert exc_info.value.__cause__ is None
+        assert "Failed to remove gemini model-discovery cwd" in caplog.text
+        client_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_preserves_existing_cwd_when_trust_fails(
+        self, temp_dir: Path
+    ) -> None:
+        """Existing discovery cwd directories should survive trust failures."""
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client_cls = MagicMock()
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+        expected_cwd.mkdir(parents=True)
+
+        with (
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=PermissionError("not trusted")),
+            ),
+        ):
+            with pytest.raises(PermissionError, match="not trusted"):
+                await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert expected_cwd.exists()
+        client_cls.assert_not_called()
+
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:
+        """Unsupported cache versions should be ignored instead of loaded."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps({"version": 99, "providers": {"codex": {"models": [{"value": "gpt-5.4"}]}}}),
@@ -358,6 +461,7 @@ class TestProviderModelCatalog:
     async def test_discover_qwen_models_merges_acp_and_configured_models(
         self, temp_dir: Path
     ) -> None:
+        """Qwen discovery should merge ACP models with configured settings models."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -398,6 +502,7 @@ class TestProviderModelCatalog:
     def test_normalize_qwen_model_labels_only_disambiguates_duplicate_base_ids(
         self, temp_dir: Path
     ) -> None:
+        """Qwen labels should add provider suffixes only for duplicate base IDs."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -420,6 +525,7 @@ class TestProviderModelCatalog:
     async def test_discover_qwen_models_can_fall_back_to_settings_catalog(
         self, temp_dir: Path
     ) -> None:
+        """Qwen discovery should fall back to configured settings when ACP fails."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -444,6 +550,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
+        """Droid provider discovery should return the bundled static model catalog."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -487,6 +594,7 @@ class TestProviderModelCatalog:
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
+        """Qwen settings should merge global providers with project overrides."""
         global_settings = temp_dir / ".qwen" / "settings.json"
         global_settings.parent.mkdir(parents=True)
         global_settings.write_text(
@@ -529,3 +637,25 @@ class TestProviderModelCatalog:
         assert settings["security"]["auth"]["selectedType"] == "anthropic"
         assert settings["modelProviders"]["openai"][0]["id"] == "gpt-5"
         assert settings["modelProviders"]["anthropic"][0]["id"] == "claude-sonnet-4-5"
+
+
+class TestModelDiscoveryCwdPath:
+    """Path-traversal prevention for provider-scoped model-discovery dirs."""
+
+    @pytest.mark.parametrize(
+        "provider",
+        ["", "   ", ".", "..", " .. ", "/", "\\", "../escape", "/abs/path", "a/b", "a\\b"],
+    )
+    def test_rejects_traversal_and_empty_inputs(self, provider: str) -> None:
+        with pytest.raises(ValueError, match="Invalid provider model-discovery directory"):
+            _model_discovery_cwd_path(provider)
+
+    @pytest.mark.parametrize(
+        ("provider", "expected_dir"),
+        [("gemini", "gemini"), ("Qwen", "qwen"), ("  GEMINI  ", "gemini")],
+    )
+    def test_accepts_valid_provider_and_normalizes(self, provider: str, expected_dir: str) -> None:
+        result = _model_discovery_cwd_path(provider)
+
+        assert result.name == expected_dir
+        assert ".." not in result.parts

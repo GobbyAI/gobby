@@ -320,7 +320,7 @@ describe("App wiring", () => {
     });
   });
 
-  it("preserves an explicit fresh local conversation instead of restoring the most recent session", async () => {
+  it("preserves an explicit fresh draft instead of restoring the most recent session", async () => {
     const switchConversation = vi.fn();
     const startNewChat = vi.fn();
 
@@ -363,7 +363,119 @@ describe("App wiring", () => {
       ],
     } as never);
 
-    localStorage.setItem("gobby-conversation-id", "local-new-chat");
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalled();
+    });
+
+    expect(switchConversation).not.toHaveBeenCalled();
+    expect(startNewChat).not.toHaveBeenCalled();
+  });
+
+  it("restores a valid persisted DB session even when a fresh draft marker exists", async () => {
+    const switchConversation = vi.fn();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      switchConversation,
+    } as never);
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
+        {
+          id: "db-session-1",
+          ref: "#101",
+          external_id: "server-session-1",
+          source: "claude",
+          project_id: "repo-project",
+          title: "Existing chat",
+          status: "active",
+          model: "sonnet",
+          message_count: 1,
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:01:00Z",
+          seq_num: 101,
+          summary_markdown: null,
+          digest_markdown: null,
+          git_branch: "main",
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          had_edits: false,
+          agent_depth: 0,
+          chat_mode: null,
+          agent_run_id: null,
+          parent_session_id: null,
+          session_type: "web_chat",
+          terminal_context: null,
+        },
+      ],
+    } as never);
+
+    localStorage.setItem("gobby-db-session-id", "db-session-1");
+    localStorage.setItem("gobby-conversation-id", "db-session-1");
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(switchConversation).toHaveBeenCalledWith("db-session-1", {
+        preserveViewing: false,
+      });
+    });
+  });
+
+  it("does not fallback to a recent web chat while a viewed session is active", async () => {
+    const switchConversation = vi.fn();
+    const startNewChat = vi.fn();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      viewingSessionId: "terminal-1",
+      switchConversation,
+      startNewChat,
+    } as never);
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
+        {
+          id: "db-session-1",
+          ref: "#101",
+          external_id: "server-session-1",
+          source: "claude",
+          project_id: "repo-project",
+          title: "Existing chat",
+          status: "active",
+          model: "sonnet",
+          message_count: 1,
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:01:00Z",
+          seq_num: 101,
+          summary_markdown: null,
+          digest_markdown: null,
+          git_branch: "main",
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          had_edits: false,
+          agent_depth: 0,
+          chat_mode: null,
+          agent_run_id: null,
+          parent_session_id: null,
+          session_type: "web_chat",
+          terminal_context: null,
+        },
+      ],
+    } as never);
+
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
 
     await act(async () => {
       render(<App />);

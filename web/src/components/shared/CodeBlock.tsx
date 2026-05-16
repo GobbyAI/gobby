@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 
+import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 import {
   CODE_CHROME_TYPOGRAPHY,
   CODE_CHROME_VARS,
-  codeBlockTheme,
+  getCodeBlockTheme,
   lineNumberStyle as DEFAULT_LINE_NUMBER_STYLE,
 } from './codeBlockTheme'
 
@@ -94,6 +95,7 @@ export function CodeBlock({
     ...DEFAULT_LINE_NUMBER_STYLE,
     ...(lineNumberMinWidth ? { minWidth: lineNumberMinWidth } : {}),
   }
+  const resolvedTheme = useResolvedTheme()
   const resolvedLineNumberStyle = lineNumberStyleFn
     ? (n: number) => ({ ...baseLineNumberStyle, ...lineNumberStyleFn(n) })
     : baseLineNumberStyle
@@ -122,7 +124,7 @@ export function CodeBlock({
 
   const wrapper = (
     <SyntaxHighlighter
-      style={codeBlockTheme}
+      style={getCodeBlockTheme(resolvedTheme)}
       language={language || 'text'}
       PreTag="div"
       showLineNumbers={showLineNumbers}

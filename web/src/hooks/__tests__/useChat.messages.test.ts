@@ -282,6 +282,7 @@ describe("useChat message and conversation state", () => {
   });
 
   it("continueSessionInChat forwards fallback_context when requested", async () => {
+    localStorage.setItem("gobby-fresh-chat-draft", "1");
     mockFetch.mockJsonResponse("/api/sessions/source-session", {
       session: {
         id: "source-session",
@@ -318,6 +319,7 @@ describe("useChat message and conversation state", () => {
       .map(([raw]) => JSON.parse(raw))
       .find((msg) => msg.type === "continue_in_chat");
     expect(continueMsg?.fallback_context).toBe("auto");
+    expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
   });
 
   it("switchProvider creates a new server-owned session with the requested provider for an existing chat", async () => {
@@ -437,12 +439,52 @@ describe("useChat message and conversation state", () => {
     expect(result.current.messages).toHaveLength(0);
     expect(result.current.conversationId).not.toBe(oldId);
     expect(result.current.dbSessionId).toBeNull();
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(localStorage.getItem("gobby-fresh-chat-draft")).toBe("1");
 
     const sessionCalls = mockFetch.fn.mock.calls.filter(
       ([url]) =>
         typeof url === "string" && url.includes("/api/sessions/web-chat"),
     );
     expect(sessionCalls).toHaveLength(0);
+  });
+
+  it("first send after a fresh draft persists the new web-chat session", async () => {
+    localStorage.clear();
+    mockFetch.mockJsonResponse("/api/sessions/web-chat", {
+      session: {
+        id: "fresh-db-session",
+        source: "claude",
+        model: null,
+        chat_mode: "plan",
+        seq_num: 501,
+        title: null,
+        status: "active",
+        session_type: "web_chat",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => result.current.startNewChat());
+    expect(localStorage.getItem("gobby-fresh-chat-draft")).toBe("1");
+
+    act(() => result.current.sendMessage("Hello from draft"));
+
+    await waitFor(() => {
+      expect(result.current.dbSessionId).toBe("fresh-db-session");
+      expect(localStorage.getItem("gobby-db-session-id")).toBe(
+        "fresh-db-session",
+      );
+      expect(localStorage.getItem("gobby-conversation-id")).toBe(
+        "fresh-db-session",
+      );
+      expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
+    });
   });
 
   it("startNewChat clears viewed-session chrome and queued proxy notices", async () => {

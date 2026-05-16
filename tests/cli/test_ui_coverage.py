@@ -126,10 +126,41 @@ class TestUiStart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.logging.client = "~/.gobby/logs/gobby.log"
+        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "1234" in result.output
+
+    @patch("gobby.cli.ui.spawn_ui_server", return_value=1234)
+    @patch("gobby.cli.ui._get_ui_pid", return_value=None)
+    def test_start_dev_resolves_source_only_web_dir(
+        self,
+        _mock_pid: MagicMock,
+        mock_spawn: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text("{}")
+
+        config = MagicMock()
+        config.ui.enabled = True
+        config.ui.mode = "dev"
+        config.ui.web_dir = str(web_dir)
+        config.ui.host = "localhost"
+        config.ui.port = 60889
+        config.telemetry.log_file = str(tmp_path / "logs" / "gobby.log")
+
+        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+
+        assert result.exit_code == 0
+        mock_spawn.assert_called_once_with(
+            "localhost",
+            60889,
+            web_dir,
+            tmp_path / "logs" / "ui.log",
+        )
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     @patch("gobby.cli.ui._get_ui_pid", return_value=None)
@@ -157,7 +188,7 @@ class TestUiStart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.logging.client = "~/.gobby/logs/gobby.log"
+        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code != 0
         assert "Failed to start UI server" in result.output
@@ -216,7 +247,7 @@ class TestUiRestart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.logging.client = "~/.gobby/logs/gobby.log"
+        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "UI dev server started" in result.output
@@ -322,10 +353,11 @@ class TestUiDev:
         (web_dir / "package.json").write_text("{}")
         mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
-        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
+        config = MagicMock()
+        result = runner.invoke(ui, ["dev"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Starting dev server" in result.output
-        mock_find.assert_called_with(mock_find.call_args.args[0], require_source=True)
+        mock_find.assert_called_once_with(config, require_source=True)
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_dev_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:

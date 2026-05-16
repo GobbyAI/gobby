@@ -26,6 +26,26 @@ _WARMUP_IDLE = "idle"
 _WARMUP_LOADING = "loading"
 _WARMUP_READY = "ready"
 _WARMUP_ERROR = "error"
+VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
+
+
+def _voice_status_payload(
+    conversation_id: str,
+    request_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "voice_status",
+        "conversation_id": conversation_id,
+        "status": status,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    if error:
+        payload["error"] = error
+    return payload
 
 
 async def _broadcast_tts_status(
@@ -345,11 +365,11 @@ class VoiceMixin:
         *,
         want_stt: bool | None = None,
         want_tts: bool | None = None,
-    ) -> None:
+    ) -> bool:
         """Begin best-effort background warmup for requested voice models."""
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled:
-            return
+            return False
 
         warm_stt, warm_tts = self._resolve_voice_warmup_targets(
             voice_config,
@@ -367,16 +387,17 @@ class VoiceMixin:
             should_warm = True
 
         if not should_warm:
-            return
+            return False
 
         if self._voice_warmup_task is not None and not self._voice_warmup_task.done():
-            return
+            return False
 
         self._voice_warmup_task = asyncio.create_task(
             self._warm_voice_models(),
             name="voice-model-warmup",
         )
         self._voice_warmup_task.add_done_callback(self._on_voice_warmup_done)
+        return True
 
     async def stop_voice_warmup(self) -> None:
         """Cancel background voice warmup if it is still in progress."""
@@ -453,7 +474,11 @@ class VoiceMixin:
             "voice_loading": voice_loading,
         }
 
-        tts_status = get_tts_status_for_config(voice_config)
+        tts_status = (
+            self._tts_provider.get_status()
+            if self._tts_provider is not None
+            else get_tts_status_for_config(voice_config)
+        )
         result.update(tts_status.as_status_fields())
 
         return result
@@ -496,6 +521,15 @@ class VoiceMixin:
         """Warm the Whisper STT model."""
         started_at = time.perf_counter()
         try:
+            voice_config = self._get_voice_config()
+            if voice_config is None:
+                raise RuntimeError("Voice config not found")
+            deps_ready = await self._ensure_stt_deps(voice_config)
+            self._stt_deps_checked = True
+            if not deps_ready:
+                available, reason = self._get_stt_availability()
+                raise RuntimeError(reason if not available else "STT dependency setup failed")
+
             stt = self._get_stt()
             if stt is None:
                 available, reason = self._get_stt_availability()
@@ -516,6 +550,15 @@ class VoiceMixin:
         """Warm the configured TTS model."""
         started_at = time.perf_counter()
         try:
+            voice_config = self._get_voice_config()
+            if voice_config is None:
+                raise RuntimeError("Voice config not found")
+            deps_ready = await self._ensure_tts_deps(voice_config)
+            self._tts_deps_checked = True
+            if not deps_ready:
+                available, reason = self._get_tts_availability()
+                raise RuntimeError(reason if not available else "TTS dependency setup failed")
+
             tts = self._get_tts()
             if tts is None:
                 available, reason = self._get_tts_availability()
@@ -530,23 +573,25 @@ class VoiceMixin:
             self._tts_warmup_error = str(exc)
             logger.error("TTS warmup failed", exc_info=True)
 
-    async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> None:
+    async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
         """Auto-install STT dependencies if missing."""
         try:
             from gobby.voice.dep_check import ensure_stt_deps
 
-            await ensure_stt_deps(voice_config)
+            return await ensure_stt_deps(voice_config)
         except Exception:
             logger.debug("STT dep check failed", exc_info=True)
+            return False
 
-    async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> None:
+    async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> bool:
         """Auto-install TTS dependencies if missing."""
         try:
             from gobby.voice.dep_check import ensure_tts_deps
 
-            await ensure_tts_deps(voice_config)
+            return await ensure_tts_deps(voice_config)
         except Exception:
             logger.debug("TTS dep check failed", exc_info=True)
+            return False
 
     def _is_voice_mode(self, conversation_id: str) -> bool:
         """Check if voice mode is active for a conversation."""
@@ -622,7 +667,8 @@ class VoiceMixin:
         conversation_id = data.get("conversation_id", "")
         audio_data_b64 = data.get("audio_data", "")
         mime_type = data.get("mime_type", "audio/webm")
-        request_id = data.get("request_id", "")
+        request_id_raw = data.get("request_id", "")
+        request_id = request_id_raw if isinstance(request_id_raw, str) else ""
         project_id = data.get("project_id")
 
         logger.info(
@@ -636,12 +682,12 @@ class VoiceMixin:
         if not audio_data_b64:
             await websocket.send(
                 json.dumps(
-                    {
-                        "type": "voice_status",
-                        "conversation_id": conversation_id,
-                        "status": "error",
-                        "error": "No audio data provided",
-                    }
+                    _voice_status_payload(
+                        conversation_id,
+                        request_id,
+                        "error",
+                        error="No audio data provided",
+                    )
                 )
             )
             return
@@ -660,32 +706,28 @@ class VoiceMixin:
                 )
             await websocket.send(
                 json.dumps(
-                    {
-                        "type": "voice_status",
-                        "conversation_id": conversation_id,
-                        "status": "error",
-                        "error": error_msg,
-                    }
+                    _voice_status_payload(
+                        conversation_id,
+                        request_id,
+                        "error",
+                        error=error_msg,
+                    )
                 )
             )
             return
 
         # Send transcribing status
         await websocket.send(
-            json.dumps(
-                {
-                    "type": "voice_status",
-                    "conversation_id": conversation_id,
-                    "request_id": request_id,
-                    "status": "transcribing",
-                }
-            )
+            json.dumps(_voice_status_payload(conversation_id, request_id, "transcribing"))
         )
 
         try:
             start = time.monotonic()
             audio_bytes = base64.b64decode(audio_data_b64)
-            text = await stt.transcribe(audio_bytes, mime_type)
+            text = await asyncio.wait_for(
+                stt.transcribe(audio_bytes, mime_type),
+                timeout=VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+            )
             duration_ms = int((time.monotonic() - start) * 1000)
 
             if not text.strip():
@@ -693,14 +735,7 @@ class VoiceMixin:
                     f"Voice transcription empty for {conversation_id[:8]}... ({duration_ms}ms)"
                 )
                 await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "voice_status",
-                            "conversation_id": conversation_id,
-                            "request_id": request_id,
-                            "status": "empty",
-                        }
-                    )
+                    json.dumps(_voice_status_payload(conversation_id, request_id, "empty"))
                 )
                 return
 
@@ -728,18 +763,36 @@ class VoiceMixin:
                 chat_data["project_id"] = project_id
             await self._handle_chat_message(websocket, chat_data)
 
+        except TimeoutError:
+            logger.error(
+                "Voice transcription timed out after %.1fs for %s...",
+                VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+                conversation_id[:8],
+            )
+            try:
+                await websocket.send(
+                    json.dumps(
+                        _voice_status_payload(
+                            conversation_id,
+                            request_id,
+                            "error",
+                            error="Speech-to-text timed out",
+                        )
+                    )
+                )
+            except (ConnectionClosed, ConnectionClosedError):
+                pass
         except Exception as e:
             logger.error(f"Voice transcription error: {e}", exc_info=True)
             try:
                 await websocket.send(
                     json.dumps(
-                        {
-                            "type": "voice_status",
-                            "conversation_id": conversation_id,
-                            "request_id": request_id,
-                            "status": "error",
-                            "error": str(e),
-                        }
+                        _voice_status_payload(
+                            conversation_id,
+                            request_id,
+                            "error",
+                            error=str(e),
+                        )
                     )
                 )
             except (ConnectionClosed, ConnectionClosedError):
@@ -794,7 +847,7 @@ class VoiceMixin:
         want_tts = tts_enabled if isinstance(tts_enabled, bool) else None
         if want_tts is True:
             self._voice_enabled[conversation_id] = True
-        self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
+        warmup_started = self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
 
         await websocket.send(
             json.dumps(
@@ -806,7 +859,15 @@ class VoiceMixin:
                 }
             )
         )
-        logger.info("Voice model warmup triggered by client")
+        if warmup_started:
+            logger.info("Voice model warmup triggered by client")
+        else:
+            logger.debug(
+                "Voice prepare did not start warmup for %s (want_stt=%s, want_tts=%s)",
+                conversation_id[:8],
+                want_stt,
+                want_tts,
+            )
 
     async def _unload_voice_models(self) -> None:
         """Release voice models to reclaim memory.

@@ -21,7 +21,7 @@ The system automatically applies TDD sandwich pattern after expansion:
 | `test` | No - stays as single task | Test infrastructure tasks |
 | `research` | No - stays as single task | Investigation/exploration |
 | `planning` | No - stays as single task | Design/architecture work |
-| `manual` | No - stays as single task | Manual verification |
+| `refactor` | No - stays as single task | Behavior-preserving code restructuring |
 
 ## DO NOT Use These Prefixes
 

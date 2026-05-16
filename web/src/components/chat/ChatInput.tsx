@@ -9,7 +9,7 @@ import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
-import { MicIcon, PaperclipIcon, SendIcon, StopIcon } from './ChatInputIcons'
+import { PaperclipIcon, RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
 import { ModeSelector } from './ModeSelector'
@@ -588,7 +588,7 @@ export function ChatInput({
 
   return (
     <div
-      className={`border-t border-border bg-background px-4 py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
+      className={`chat-input-footer border-t border-border bg-background py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('application/x-gobby-file')) {
           e.preventDefault()
@@ -658,7 +658,7 @@ export function ChatInput({
                 <button
                   type="button"
                   aria-label={`Remove ${qf.file.name}`}
-                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+                  className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
                   onClick={() => removeFile(qf.id)}
                 >
                   &times;
@@ -804,7 +804,7 @@ export function ChatInput({
                 aria-pressed={primaryButtonKind === 'mic-recording' ? true : undefined}
                 disabled={primaryButtonDisabled}
               >
-                {primaryButtonKind === 'stop' ? <StopIcon /> : primaryButtonKind === 'send' ? <SendIcon /> : <MicIcon />}
+                {primaryButtonKind === 'stop' ? <StopIcon /> : primaryButtonKind === 'send' ? <SendIcon /> : <RecordIcon />}
               </button>
             </div>
           </div>

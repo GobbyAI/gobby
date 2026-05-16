@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -51,14 +50,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             active_names = None
             if session_id:
                 try:
-                    from gobby.workflows.state_manager import SessionVariableManager
-
-                    resolved_id = ctx.session_manager.resolve_session_reference(
-                        session_id, project_id=ctx.project_id
-                    )
-                    sv_mgr = SessionVariableManager(ctx.db)
-                    sv = sv_mgr.get_variables(resolved_id)
-                    active_names = sv.get("_active_skill_names") if sv else None
+                    active_names = await ctx.get_active_skill_names(session_id)
                 except Exception:
                     logger.debug(f"Failed to resolve active skill names for session {session_id}")
 
@@ -86,7 +78,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 limit_value: int,
                 offset_value: int = 0,
             ) -> list[Skill]:
-                return await asyncio.to_thread(
+                return await ctx.run_sqlite(
                     ctx.storage.list_skills,
                     project_id=ctx.project_id,
                     category=category,

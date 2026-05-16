@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 import psutil
 
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig, UIConfig, load_config
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -499,24 +499,31 @@ def find_web_dir(
     Args:
         config: DaemonConfig instance (optional).
         require_source: When True, only accept directories with ``package.json``
-            (i.e., npm-driven dev/build workflows). Production daemon callers
-            should leave this False so dist-only wheel installs are accepted.
+            (i.e., npm-driven dev/build workflows). ``config.ui.mode == "dev"``
+            also requires source. Production daemon callers should leave this
+            False so dist-only wheel installs are accepted.
 
     Returns:
         Path to the web/ directory, or None if not found.
     """
+
+    ui_config: UIConfig | object | None = (
+        getattr(config, "ui", None) if config is not None else None
+    )
+    source_required = require_source or getattr(ui_config, "mode", None) == "dev"
 
     def _qualifies(p: Path) -> bool:
         if not p.exists():
             return False
         if (p / "package.json").exists():
             return True
-        if not require_source and (p / "dist" / "index.html").exists():
+        if not source_required and (p / "dist" / "index.html").exists():
             return True
         return False
 
-    if config and hasattr(config, "ui") and config.ui.web_dir:
-        p = Path(config.ui.web_dir).expanduser()
+    web_dir = getattr(ui_config, "web_dir", None)
+    if web_dir and isinstance(web_dir, (str, os.PathLike)):
+        p = Path(web_dir).expanduser()
         if _qualifies(p):
             return p
 

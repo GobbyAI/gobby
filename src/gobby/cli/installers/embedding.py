@@ -36,6 +36,11 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
         "api_base": None,  # uses OpenAI default
         "dim": 1536,
     },
+    "openai-compatible": {
+        "model": "text-embedding-3-small",
+        "api_base": None,
+        "dim": 0,  # Sentinel: requires explicit dim_override or successful probe
+    },
     "none": {
         "model": None,
         "api_base": None,
@@ -60,7 +65,7 @@ def install_embedding(
     """Set up an embedding provider and persist config to config_store.
 
     Args:
-        provider: One of "lmstudio", "ollama", "openai", "none"
+        provider: One of "lmstudio", "ollama", "openai", "openai-compatible", "none"
         openai_api_key: Required when provider="openai"
         model_override: Override the provider's default model id
         api_base_override: Override the provider's default ``api_base`` URL
@@ -92,6 +97,11 @@ def install_embedding(
 
     if provider == "openai" and not openai_api_key:
         return {"success": False, "error": "OpenAI API key required for openai provider"}
+    if provider == "openai-compatible" and not api_base_override:
+        return {
+            "success": False,
+            "error": "Custom OpenAI-compatible embedding provider requires --embedding-url",
+        }
 
     # Provider-specific setup: ensure model is downloaded and loaded.
     # Skip bundled local setup when the user points at their own model or endpoint.
@@ -114,7 +124,23 @@ def install_embedding(
         dim = dim_override
     elif model_override is not None or api_base_override is not None:
         probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=openai_api_key)
-        if probed is None:
+        if probed is not None:
+            dim = probed
+        use_provider_default_fallback = (
+            api_base_override is not None
+            and model_override is None
+            and provider != "openai-compatible"
+        )
+        if probed is None and use_provider_default_fallback:
+            dim = cfg["dim"]
+            logger.warning(
+                "Embedding dim probe failed for provider-default model %s at %s; "
+                "falling back to default dim %s before health check",
+                model,
+                api_base,
+                dim,
+            )
+        elif probed is None:
             return {
                 "success": False,
                 "error": (
@@ -122,7 +148,6 @@ def install_embedding(
                     f"for model {model}. Pass --embedding-dim explicitly."
                 ),
             }
-        dim = probed
     else:
         dim = cfg["dim"]
 
@@ -363,7 +388,7 @@ def _probe_embedding_dim(
     Used to auto-detect the dim when the user supplied a custom model or
     endpoint without passing ``--embedding-dim``.
     """
-    from gobby.search.embeddings import generate_embedding
+    from gobby.search.embeddings import EmbeddingGenerationError, generate_embedding
 
     async def _probe() -> int | None:
         try:
@@ -374,18 +399,19 @@ def _probe_embedding_dim(
                 api_key=api_key,
                 max_retries=1,
             )
-            return len(result) if result else None
-        except Exception as e:
+            if not result:
+                raise EmbeddingGenerationError("Embedding API returned empty probe result")
+            return len(result)
+        except EmbeddingGenerationError as e:
             logger.warning(f"Embedding dim probe failed: {e}")
             return None
 
     try:
+        asyncio.get_running_loop()
+    except RuntimeError:
         return asyncio.run(_probe())
-    except RuntimeError as e:
-        if "cannot be called from a running event loop" in str(e):
-            logger.warning("Cannot run dim probe: already in event loop")
-            return None
-        raise
+    logger.warning("Cannot run dim probe: already in event loop")
+    return None
 
 
 def _health_check_embedding(
@@ -413,9 +439,8 @@ def _health_check_embedding(
             return False
 
     try:
+        asyncio.get_running_loop()
+    except RuntimeError:
         return asyncio.run(_check())
-    except RuntimeError as e:
-        if "cannot be called from a running event loop" in str(e):
-            logger.warning("Cannot run health check: already in event loop")
-            return False
-        raise
+    logger.warning("Cannot run health check: already in event loop")
+    return False

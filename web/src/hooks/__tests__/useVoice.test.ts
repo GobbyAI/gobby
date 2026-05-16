@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useVoice } from '../useVoice'
+import { parseVoiceStatus } from '../voiceStatus'
+import { VOICE_TRANSCRIPTION_WATCHDOG_MS } from '../voice/useVoiceCapture'
+import {
+  resetVoicePrepareCacheForTests,
+  seedVoicePrepareCacheForTests,
+  useVoiceStatus,
+  voicePrepareCacheKeysForTests,
+} from '../voice/useVoiceStatus'
 
 const voiceMocks = vi.hoisted(() => ({
   mockMicVADNew: vi.fn(),
@@ -148,6 +156,7 @@ describe('useVoice', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    resetVoicePrepareCacheForTests()
     lastVADConfig = null
     lastWorkletNode = null
     startedSources = []
@@ -209,7 +218,255 @@ describe('useVoice', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  const sentPayloads = () => wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw)) ?? []
+  const voicePreparePayloads = () => (
+    sentPayloads().filter((payload) => payload.type === 'voice_prepare')
+  )
+  const voiceAudioPayloads = () => (
+    sentPayloads().filter((payload) => payload.type === 'voice_audio')
+  )
+
+  const submitPttAudio = async (result: { current: ReturnType<typeof useVoice> }) => {
+    await act(async () => {
+      await result.current.startRecording()
+    })
+
+    act(() => {
+      lastWorkletNode?.port.onmessage?.(workletMessage(new Float32Array(16_000).fill(0.25)))
+    })
+
+    await act(async () => {
+      await result.current.stopRecording()
+    })
+  }
+
+  it('preserves voice loading before a configured TTS provider is available', () => {
+    const parsed = parseVoiceStatus({
+      enabled: true,
+      stt_enabled: false,
+      tts_enabled: true,
+      stt_available: false,
+      tts_available: false,
+      voice_ready: false,
+      voice_loading: true,
+    }, true)
+
+    expect(parsed.ttsConfigEnabled).toBe(true)
+    expect(parsed.ttsAvailable).toBe(false)
+    expect(parsed.voiceAvailable).toBe(true)
+    expect(parsed.voiceLoading).toBe(true)
+  })
+
+  it('throttles same-target voice_prepare sends across rerender and remount', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const renderStatus = () => renderHook(() => useVoiceStatus({
+      wsRef: wsRef as any,
+      conversationId: 'conv-throttle',
+      socketConnected: true,
+      sttEnabled: true,
+      ttsEnabled: true,
+    }))
+
+    const first = renderStatus()
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    first.rerender()
+    expect(voicePreparePayloads()).toHaveLength(1)
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+    const fetchCallsBeforeRemount = fetchMock.mock.calls.length
+
+    first.unmount()
+    renderStatus()
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(fetchCallsBeforeRemount)
+    })
+    expect(voicePreparePayloads()).toHaveLength(1)
+  })
+
+  it('prunes warmup cache by oldest send timestamp', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(20_000)
+    seedVoicePrepareCacheForTests([
+      ['conv-refreshed:true:true', 10_000],
+      ...Array.from({ length: 127 }, (_, index) => [
+        `conv-filler-${index}:true:true`,
+        index,
+      ] as const),
+    ])
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    renderHook(() => useVoiceStatus({
+      wsRef: wsRef as any,
+      conversationId: 'conv-extra',
+      socketConnected: true,
+      sttEnabled: true,
+      ttsEnabled: true,
+    }))
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    const cacheKeys = voicePrepareCacheKeysForTests()
+    expect(cacheKeys).toContain('conv-refreshed:true:true')
+    expect(cacheKeys).toContain('conv-extra:true:true')
+    expect(cacheKeys).not.toContain('conv-filler-0:true:true')
+    expect(cacheKeys).toHaveLength(128)
+    nowSpy.mockRestore()
+  })
+
+  it('sends voice_prepare immediately when requested voice targets change', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { rerender } = renderHook(
+      ({ ttsEnabled }) => useVoiceStatus({
+        wsRef: wsRef as any,
+        conversationId: 'conv-target-change',
+        socketConnected: true,
+        sttEnabled: true,
+        ttsEnabled,
+      }),
+      { initialProps: { ttsEnabled: false } },
+    )
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    rerender({ ttsEnabled: true })
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(2)
+    })
+    expect(voicePreparePayloads()[1]).toEqual(expect.objectContaining({
+      conversation_id: 'conv-target-change',
+      stt_enabled: true,
+      tts_enabled: true,
+    }))
+  })
+
+  it('sends voice_prepare immediately when conversationId changes', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { rerender } = renderHook(
+      ({ conversationId }) => useVoiceStatus({
+        wsRef: wsRef as any,
+        conversationId,
+        socketConnected: true,
+        sttEnabled: true,
+        ttsEnabled: true,
+      }),
+      { initialProps: { conversationId: 'conv-first' } },
+    )
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    rerender({ conversationId: 'conv-second' })
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(2)
+    })
+    expect(voicePreparePayloads()[1]).toEqual(expect.objectContaining({
+      conversation_id: 'conv-second',
+      stt_enabled: true,
+      tts_enabled: true,
+    }))
+  })
+
+  it('does not mark preparing messages without voice_loading as locally loading', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: false,
+        stt_enabled: false,
+        tts_enabled: false,
+        stt_available: false,
+        tts_available: false,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-preparing-no-loading',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled()
+    })
+    expect(result.current.voiceLoading).toBe(false)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        status: 'preparing',
+      })
+    })
+
+    expect(result.current.voiceLoading).toBe(false)
   })
 
   it('warms voice and resends TTS state when the socket reconnects', async () => {
@@ -376,6 +633,161 @@ describe('useVoice', () => {
         project_id: 'project-ptt',
       }),
     ]))
+  })
+
+  it('clears PTT transcribing state when transcription succeeds', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-success',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    const voiceAudio = voiceAudioPayloads()[0]
+    expect(voiceAudio.request_id).toEqual(expect.any(String))
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_transcription',
+        conversation_id: 'conv-transcribe-success',
+        request_id: voiceAudio.request_id,
+        text: 'hello',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it.each([
+    ['empty', undefined],
+    ['error', 'STT failed'],
+  ])('clears PTT transcribing state on voice_status:%s', async (status, error) => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      `conv-transcribe-${status}`,
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    const voiceAudio = voiceAudioPayloads()[0]
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        conversation_id: `conv-transcribe-${status}`,
+        request_id: voiceAudio.request_id,
+        status,
+        error,
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it('does not clear a newer transcription from a stale terminal event', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-stale',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+    const firstRequestId = voiceAudioPayloads()[0].request_id
+
+    await submitPttAudio(result)
+    const secondRequestId = voiceAudioPayloads()[1].request_id
+    expect(secondRequestId).not.toBe(firstRequestId)
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        request_id: firstRequestId,
+        status: 'error',
+        error: 'old failure',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_transcription',
+        request_id: secondRequestId,
+        text: 'fresh result',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it('does not leave PTT transcribing state stuck for local send failures', async () => {
+    const missingConversation = renderHook(() => useVoice(
+      wsRef as any,
+      '',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(missingConversation.result)
+    expect(missingConversation.result.current.isTranscribing).toBe(false)
+    expect(voiceAudioPayloads()).toHaveLength(0)
+
+    missingConversation.unmount()
+    wsRef.current!.readyState = 3
+
+    const closedSocket = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-closed-socket',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(closedSocket.result)
+    expect(closedSocket.result.current.isTranscribing).toBe(false)
+    expect(voiceAudioPayloads()).toHaveLength(0)
+  })
+
+  it('clears stale PTT transcribing state after the watchdog timeout', async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-watchdog',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+    expect(result.current.isTranscribing).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(VOICE_TRANSCRIPTION_WATCHDOG_MS - 1)
+    })
+    expect(result.current.isTranscribing).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(result.current.isTranscribing).toBe(false)
   })
 
   it('discards short PTT captures without sending audio', async () => {

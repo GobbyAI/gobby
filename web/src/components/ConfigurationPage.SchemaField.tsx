@@ -40,14 +40,16 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
   const description = fieldSchema.description as string | undefined
   const enumValues = fieldSchema.enum as string[] | undefined
   const fullPath = path ? `${path}.${name}` : name
+  const fieldId = `config-field-${fullPath.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 
   if (enumValues) {
     const hasEnumValues = enumValues.length > 0
     return (
       <div className={FORM_FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>{formatFieldName(name)}</label>
+        <label className={FIELD_LABEL_CLS} htmlFor={fieldId}>{formatFieldName(name)}</label>
         {description && <span className={FIELD_HELP_CLS}>{description}</span>}
         <select
+          id={fieldId}
           className={SELECT_CLS}
           value={String(value ?? '')}
           disabled={!hasEnumValues}
@@ -88,9 +90,10 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
     const max = fieldSchema.maximum as number | undefined
     return (
       <div className={FORM_FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>{formatFieldName(name)}</label>
+        <label className={FIELD_LABEL_CLS} htmlFor={fieldId}>{formatFieldName(name)}</label>
         {description && <span className={FIELD_HELP_CLS}>{description}</span>}
         <input
+          id={fieldId}
           type="number"
           className={INPUT_CLS}
           value={value != null ? String(value) : ''}
@@ -115,12 +118,13 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
   const isMasked = secret && value === BACKEND_SECRET_MASK
   return (
     <div className={FORM_FIELD_CLS}>
-      <label className={FIELD_LABEL_CLS}>
+      <label className={FIELD_LABEL_CLS} htmlFor={fieldId}>
         {formatFieldName(name)}
         {secret && <span className={SECRET_BADGE_CLS}>encrypted</span>}
       </label>
       {description && <span className={FIELD_HELP_CLS}>{description}</span>}
       <input
+        id={fieldId}
         type={secret ? 'password' : 'text'}
         className={INPUT_CLS}
         value={String(value ?? '')}

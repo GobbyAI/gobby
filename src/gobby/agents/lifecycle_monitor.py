@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.agent_health import AgentHealthMonitor
@@ -70,9 +70,11 @@ class AgentLifecycleMonitor:
         checkpoint_storage: LocalCheckpointManager | None = None,
         worktree_storage: LocalWorktreeManager | None = None,
         project_manager: LocalProjectManager | None = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
+        self._run_db = run_db
         self._session_manager = session_manager
         self._session_coordinator = session_coordinator
         self._clone_storage = clone_storage
@@ -93,6 +95,7 @@ class AgentLifecycleMonitor:
             task_manager=task_manager,
             agent_run_manager=agent_run_manager,
             stall_classifier=self._stall_classifier,
+            run_db=run_db,
         )
         self._terminal_prompt_monitor = TerminalPromptMonitor(
             get_active_terminal_runs=self._get_active_terminal_runs,
@@ -101,6 +104,7 @@ class AgentLifecycleMonitor:
             loop_tracker=self._loop_tracker,
             get_tmux_config=lambda: self._tmux_config,
             handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
+            run_db=run_db,
         )
         self._cleanup_handler = AgentCleanupHandler(
             agent_run_manager=agent_run_manager,
@@ -115,6 +119,7 @@ class AgentLifecycleMonitor:
             stall_classifier=self._stall_classifier,
             loop_tracker=self._loop_tracker,
             master_fds=self._master_fds,
+            run_db=run_db,
         )
         self._health_monitor = AgentHealthMonitor(
             agent_run_manager=agent_run_manager,
@@ -124,6 +129,7 @@ class AgentLifecycleMonitor:
             stall_classifier=self._stall_classifier,
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
+            run_db=run_db,
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -132,6 +138,7 @@ class AgentLifecycleMonitor:
             idle_detector=self._idle_detector,
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
+            run_db=run_db,
         )
 
         self._checkpoint_manager = (
@@ -141,6 +148,11 @@ class AgentLifecycleMonitor:
         self._project_manager = project_manager
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     def set_session_coordinator(self, coordinator: SessionCoordinator) -> None:
         """Inject session coordinator after construction (avoids circular init ordering)."""
@@ -209,9 +221,7 @@ class AgentLifecycleMonitor:
 
                 if iteration > 0 and iteration % 10 == 0:
                     try:
-                        cleaned = await asyncio.to_thread(
-                            self._agent_run_manager.cleanup_stale_runs
-                        )
+                        cleaned = await self._run_sqlite(self._agent_run_manager.cleanup_stale_runs)
                         if cleaned:
                             logger.info(f"Cleaned up {cleaned} stale agent runs")
                     except Exception as e:
@@ -301,9 +311,9 @@ class AgentLifecycleMonitor:
         """Resolve the working directory for an agent run."""
         if run.worktree_id and self._worktree_storage:
             try:
-                wt = await asyncio.to_thread(self._worktree_storage.get, run.worktree_id)
+                wt = await self._run_sqlite(self._worktree_storage.get, run.worktree_id)
                 if wt and wt.worktree_path:
-                    return wt.worktree_path
+                    return cast(str, wt.worktree_path)
             except Exception:
                 logger.debug(
                     f"Failed to resolve worktree {run.worktree_id} for run {run.id}", exc_info=True
@@ -311,9 +321,9 @@ class AgentLifecycleMonitor:
 
         if run.clone_id and self._clone_storage:
             try:
-                clone = await asyncio.to_thread(self._clone_storage.get, run.clone_id)
+                clone = await self._run_sqlite(self._clone_storage.get, run.clone_id)
                 if clone and clone.clone_path:
-                    return clone.clone_path
+                    return cast(str, clone.clone_path)
             except Exception:
                 logger.debug(
                     f"Failed to resolve clone {run.clone_id} for run {run.id}", exc_info=True
@@ -321,7 +331,7 @@ class AgentLifecycleMonitor:
 
         if run.child_session_id and self._session_manager:
             try:
-                session = await asyncio.to_thread(self._session_manager.get, run.child_session_id)
+                session = await self._run_sqlite(self._session_manager.get, run.child_session_id)
                 if session and session.project_id:
                     pm = self._project_manager
                     if pm is None:
@@ -329,7 +339,7 @@ class AgentLifecycleMonitor:
 
                         pm = LocalProjectManager(self._db)
                         self._project_manager = pm
-                    project = await asyncio.to_thread(pm.get, session.project_id)
+                    project = await self._run_sqlite(pm.get, session.project_id)
                     if project and project.repo_path:
                         return str(project.repo_path)
             except Exception:

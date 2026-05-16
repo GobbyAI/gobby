@@ -45,6 +45,7 @@ import {
   WORKFLOWS_MODAL_CANCEL_CLS,
   WORKFLOWS_MODAL_SUBMIT_CLS,
 } from "./workflows-styles";
+import { Heading } from '../shared/Heading'
 
 type ActiveTab = "pipelines" | "agents" | "rules" | "stages" | "profiles";
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
@@ -207,7 +208,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
       {/* Title row */}
       <div className={WORKFLOWS_TOOLBAR_CLS}>
         <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
-          <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Workflows</h1>
+          <Heading level={1} className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Workflows</Heading>
         </div>
       </div>
 
@@ -588,7 +589,10 @@ function FilterPopover({
         <div
           className={`${WORKFLOWS_FILTER_POPOVER_SECTION_CLS} ${WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS}`}
         >
-          <label
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hideGobby}
             className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
             onClick={() => onHideGobbyChange(!hideGobby)}
           >
@@ -600,9 +604,12 @@ function FilterPopover({
               />
             </div>
             <span>Hide Built-in</span>
-          </label>
+          </button>
           {sourceFilter === "templates" && (
-            <label
+            <button
+              type="button"
+              role="switch"
+              aria-checked={hideInstalled}
               className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
               onClick={() => onHideInstalledChange(!hideInstalled)}
             >
@@ -614,7 +621,7 @@ function FilterPopover({
                 />
               </div>
               <span>Hide Installed</span>
-            </label>
+            </button>
           )}
         </div>
       )}
@@ -692,12 +699,12 @@ export function YamlEditorModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className={WORKFLOWS_YAML_HEADER_CLS}>
-          <h2
+          <Heading level={2}
             id="workflows-yaml-title"
             className={WORKFLOWS_YAML_HEADER_HEADING_CLS}
           >
             Edit YAML — {workflowName}
-          </h2>
+          </Heading>
           <div className={WORKFLOWS_YAML_HEADER_ACTIONS_CLS}>
             {error && <span className={WORKFLOWS_YAML_ERROR_CLS}>{error}</span>}
             <button

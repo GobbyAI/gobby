@@ -19,6 +19,7 @@ import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
+import { Heading } from '../shared/Heading'
 
 export type ActivityTab =
   | "sessions"
@@ -340,6 +341,10 @@ export function ActivityPanel({
     PANEL_MIN_WIDTH,
     viewportWidth - CHAT_MIN_WIDTH - LAYOUT_BUFFER,
   );
+  const effectivePanelWidth = Math.min(
+    Math.max(panelWidth, PANEL_MIN_WIDTH),
+    effectivePanelMaxWidth,
+  );
   useEffect(() => {
     if (!showMobileTabMenu) {
       return;
@@ -461,7 +466,7 @@ export function ActivityPanel({
     return (
       <div className="activity-panel-mobile-overlay">
         <aside className="activity-panel" aria-labelledby="activity-panel-title">
-          <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
+          <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
           <div className="activity-panel-tabs">
             <ActivityDropdown
               tabs={TABS}
@@ -510,7 +515,7 @@ export function ActivityPanel({
     <>
       <ResizeHandle
         onResize={onWidthChange}
-        panelWidth={panelWidth}
+        panelWidth={effectivePanelWidth}
         minWidth={PANEL_MIN_WIDTH}
         maxWidth={effectivePanelMaxWidth}
       />
@@ -518,13 +523,13 @@ export function ActivityPanel({
         className="activity-panel"
         aria-labelledby="activity-panel-title"
         style={{
-          width: panelWidth,
+          width: effectivePanelWidth,
           minWidth: PANEL_MIN_WIDTH,
           maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
           flexShrink: 1,
         }}
       >
-        <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
+        <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
         <div className="activity-panel-tabs">
           <ActivityDropdown
             tabs={TABS}

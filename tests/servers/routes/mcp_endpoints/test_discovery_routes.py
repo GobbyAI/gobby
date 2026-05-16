@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 
@@ -132,7 +134,7 @@ class TestMCPDiscoveryRoutes:
         assert tools[0]["name"] == "ext_tool"
 
     def test_list_tools_with_server_filter_external_connection_error(
-        self, client: TestClient, mock_server: MagicMock
+        self, client: TestClient, mock_server: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         """External server with filter, ensure_connected raises."""
         mock_server._internal_manager = MagicMock()
@@ -146,11 +148,75 @@ class TestMCPDiscoveryRoutes:
             side_effect=RuntimeError("Connection refused")
         )
 
-        response = client.get("/api/mcp/tools?server_filter=ext-server")
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/api/mcp/tools?server_filter=ext-server")
+
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["ext-server"] == []
+        assert "RuntimeError" in caplog.text
+        assert "Connection refused" in caplog.text
+
+    def test_list_tools_with_server_filter_external_unhealthy_cached_tools(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Unhealthy filtered external servers return cached tool briefs without reconnecting."""
+        mock_server._internal_manager = MagicMock()
+        mock_server._internal_manager.is_internal.return_value = False
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.has_server.return_value = True
+        config = MagicMock()
+        config.enabled = True
+        config.tools = [{"name": "cached_tool", "description": "Cached tool description"}]
+        mock_server.mcp_manager._configs = {"ext-server": config}
+        mock_server.mcp_manager.health = {
+            "ext-server": MCPConnectionHealth(
+                name="ext-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
+        }
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["ext-server"] == [
+            {"name": "cached_tool", "brief": "Cached tool description"},
+        ]
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+
+    def test_list_tools_with_server_filter_external_unhealthy_empty_cache(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Unhealthy filtered external servers with no cache return empty without reconnecting."""
+        mock_server._internal_manager = MagicMock()
+        mock_server._internal_manager.is_internal.return_value = False
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.has_server.return_value = True
+        config = MagicMock()
+        config.enabled = True
+        config.tools = []
+        mock_server.mcp_manager._configs = {"ext-server": config}
+        mock_server.mcp_manager.health = {
+            "ext-server": MCPConnectionHealth(
+                name="ext-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
+        }
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["ext-server"] == []
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
 
     def test_list_tools_with_server_filter_external_no_config(
         self, client: TestClient, mock_server: MagicMock
@@ -221,6 +287,64 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["broken-server"] == []
+
+    def test_list_tools_external_server_unhealthy_cached_tools_all(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Unhealthy external servers use cached tools in all-server listing."""
+        ext_config = MagicMock()
+        ext_config.name = "cached-server"
+        ext_config.enabled = True
+        ext_config.tools = [
+            {"name": "cached_tool", "brief": "Cached brief"},
+        ]
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = [ext_config]
+        mock_server.mcp_manager.health = {
+            "cached-server": MCPConnectionHealth(
+                name="cached-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
+        }
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["cached-server"] == [
+            {"name": "cached_tool", "brief": "Cached brief"},
+        ]
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+
+    def test_list_tools_external_server_unhealthy_empty_cache_all(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Unhealthy external servers with no cached tools return empty without reconnecting."""
+        ext_config = MagicMock()
+        ext_config.name = "empty-cache-server"
+        ext_config.enabled = True
+        ext_config.tools = []
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = [ext_config]
+        mock_server.mcp_manager.health = {
+            "empty-cache-server": MCPConnectionHealth(
+                name="empty-cache-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
+        }
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["empty-cache-server"] == []
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
 
     def test_list_tools_external_disabled_skipped(
         self, client: TestClient, mock_server: MagicMock

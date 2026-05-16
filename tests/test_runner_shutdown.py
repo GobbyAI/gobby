@@ -377,10 +377,17 @@ class TestGobbyRunnerShutdown:
 
             runner = GobbyRunner()
 
-            async def stop_after_mcp_connect() -> None:
+            # Request shutdown from the message processor's own start(), not from
+            # connect_all(). connect_all runs several awaited init steps before
+            # _start_core_services reaches message_processor.start(); triggering
+            # shutdown at connect_all races the subsystem-init task against the
+            # run loop's 0.5s poll and is lost under 3.13 asyncio scheduling when
+            # the suite is loaded. Driving shutdown from start() guarantees the
+            # call happened before the loop exits, independent of scheduling.
+            async def stop_after_processor_start() -> None:
                 runner._shutdown_requested = True
 
-            mock_mcp_manager.connect_all.side_effect = stop_after_mcp_connect
+            mock_message_processor.start.side_effect = stop_after_processor_start
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()

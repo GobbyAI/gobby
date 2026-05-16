@@ -4,6 +4,8 @@ Gobby CLI entry point.
 
 import click
 
+from gobby.utils.version import get_version
+
 from .agents import agents
 from .auth import auth
 from .build import build_command
@@ -45,11 +47,26 @@ from .workflows import workflows
 from .worktrees import worktrees
 
 
+def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(f"gobby, version {get_version()}")
+    ctx.exit()
+
+
 @click.group()
 @click.option(
     "--config",
     type=click.Path(exists=True),
     help="Path to custom configuration file",
+)
+@click.option(
+    "--version",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_version_callback,
+    help="Show the version and exit.",
 )
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:

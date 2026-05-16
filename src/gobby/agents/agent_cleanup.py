@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -43,6 +43,7 @@ class AgentCleanupHandler:
         stall_classifier: StallClassifier,
         loop_tracker: LoopTracker,
         master_fds: dict[str, int],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -56,6 +57,12 @@ class AgentCleanupHandler:
         self._stall_classifier = stall_classifier
         self._loop_tracker = loop_tracker
         self._master_fds = master_fds
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def notify_terminal_completion(
         self,
@@ -100,18 +107,18 @@ class AgentCleanupHandler:
 
         if self._clone_storage and run.clone_id:
             try:
-                await asyncio.to_thread(self._clone_storage.release, run.clone_id)
+                await self._run_sqlite(self._clone_storage.release, run.clone_id)
             except Exception as e:
                 logger.warning(f"Failed to release clone for agent {run.id}: {e}")
 
         if session_manager and session_id:
             try:
-                await asyncio.to_thread(session_manager.update_status, session_id, "expired")
+                await self._run_sqlite(session_manager.update_status, session_id, "expired")
                 logger.debug(f"Expired session {session_id} for agent {run.id}")
             except Exception as e:
                 logger.warning(f"Failed to expire session for agent {run.id}: {e}")
 
-        cleanup = await asyncio.to_thread(
+        cleanup = await self._run_sqlite(
             cleanup_agent_runtime_state,
             self._db,
             run_id=run.id,
@@ -132,13 +139,13 @@ class AgentCleanupHandler:
         terminal_reason: AgentRunTerminalReason,
     ) -> bool:
         """Mark an active run cancelled, recover ownership, and notify waiters."""
-        db_run = await asyncio.to_thread(
+        db_run = await self._run_sqlite(
             self._agent_run_manager.cancel,
             run_id,
             terminal_reason=terminal_reason,
         )
         if db_run is None:
-            current = await asyncio.to_thread(self._agent_run_manager.get, run_id)
+            current = await self._run_sqlite(self._agent_run_manager.get, run_id)
             logger.debug(
                 "Cancelled terminalization no-op for run %s; current status=%s",
                 run_id,
@@ -161,14 +168,17 @@ class AgentCleanupHandler:
 
     async def expire_terminal_run_sessions(self) -> int:
         """Expire sessions whose agent run is already in a terminal state."""
-        expired = await asyncio.to_thread(self._agent_run_manager.expire_sessions_for_terminal_runs)
+        expired = await self._run_sqlite(self._agent_run_manager.expire_sessions_for_terminal_runs)
         if expired:
             logger.info("Expired %s session(s) for terminal agent runs", expired)
-        return expired
+        return cast(int, expired)
 
     async def cleanup_stale_pending_runs(self) -> int:
         """Clean up agent runs stuck in pending status after daemon restart."""
-        return await asyncio.to_thread(self._agent_run_manager.cleanup_stale_pending_runs)
+        return cast(
+            int,
+            await self._run_sqlite(self._agent_run_manager.cleanup_stale_pending_runs),
+        )
 
     async def cleanup_agent(
         self,
@@ -187,7 +197,7 @@ class AgentCleanupHandler:
 
         if run.status in ("pending", "running"):
             if is_success:
-                updated = await asyncio.to_thread(
+                updated = await self._run_sqlite(
                     self._agent_run_manager.complete,
                     run.id,
                     result=terminal_payload,
@@ -196,7 +206,7 @@ class AgentCleanupHandler:
                     terminal_run = updated
                     transitioned = True
             elif is_timeout:
-                updated = await asyncio.to_thread(
+                updated = await self._run_sqlite(
                     self._agent_run_manager.timeout,
                     run.id,
                     error=terminal_payload,
@@ -210,7 +220,7 @@ class AgentCleanupHandler:
                         terminal_payload,
                     )
             else:
-                updated = await asyncio.to_thread(
+                updated = await self._run_sqlite(
                     self._agent_run_manager.fail,
                     run.id,
                     error=terminal_payload,
@@ -241,7 +251,7 @@ class AgentCleanupHandler:
                 message=f"Agent {run.id} {'completed' if is_success else 'failed'}",
             )
         else:
-            current = await asyncio.to_thread(self._agent_run_manager.get, run.id)
+            current = await self._run_sqlite(self._agent_run_manager.get, run.id)
             logger.debug(
                 "Terminal cleanup no-op for run %s; current status=%s",
                 run.id,

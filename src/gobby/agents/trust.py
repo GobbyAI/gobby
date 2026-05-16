@@ -15,6 +15,7 @@ Each CLI has a different trust mechanism:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
 _GEMINI_COMPATIBLE_CLIS = frozenset({"gemini", "qwen"})
+_MODEL_DISCOVERY_TRUST_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCK_DICT_LOCK = asyncio.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 type PathValue = str | os.PathLike[str]
@@ -139,6 +142,37 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
     """
     home = gobby_home if gobby_home is not None else get_gobby_home()
     return seed_cli_trust(cli, home, respect_folder_trust_setting=True).as_dict()
+
+
+async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
+    """Authorize provider-owned ACP model discovery paths.
+
+    Model discovery only needs Gemini-compatible trust stores. Runtime workspace
+    trust stays on ``pre_approve_directory`` so these authorization paths remain
+    separate.
+    """
+    if cli not in _GEMINI_COMPATIBLE_CLIS:
+        result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
+        result.skipped = True
+        supported = ", ".join(sorted(_GEMINI_COMPATIBLE_CLIS))
+        result.reason = (
+            f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: {supported}"
+        )
+        return result
+
+    async with _LOCK_DICT_LOCK:
+        lock = _MODEL_DISCOVERY_TRUST_LOCKS.setdefault(cli, asyncio.Lock())
+        await lock.acquire()
+
+    try:
+        return await asyncio.to_thread(
+            seed_cli_trust,
+            cli,
+            directory,
+            respect_folder_trust_setting=True,
+        )
+    finally:
+        lock.release()
 
 
 def seed_cli_trust(

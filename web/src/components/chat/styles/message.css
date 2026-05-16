@@ -345,7 +345,7 @@
   }
 }
 
-/* Thinking spinner — used by SessionDetail's "Generating summary…" UI. */
+/* Thinking spinner for summary-generation UI. */
 .thinking-spinner {
   display: inline-block;
   width: 0.875rem;

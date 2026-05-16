@@ -32,11 +32,39 @@ export interface TranscriptStatus {
   parsed_message_count: number
 }
 
+interface MessageLoadResult {
+  mapped: SessionMessage[]
+  totalCount: number
+  ok: boolean
+}
+
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
 
 const CHAT_MESSAGES_POLL_MS = 2000
+const SESSION_METADATA_UNAVAILABLE_MESSAGE =
+  'Session metadata is unavailable. It may have expired or been deleted.'
+
+async function sessionMetadataFetchError(response: Response): Promise<Error> {
+  const body = await response.text().catch(() => '')
+  const detail = body.trim() ? `: ${body.trim()}` : ''
+  return new Error(`Session metadata fetch failed (${response.status} ${response.statusText})${detail}`)
+}
+
+async function fetchSessionMetadata(sessionId: string): Promise<GobbySession | null> {
+  const baseUrl = getBaseUrl()
+  const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
+  if (!sessionRes.ok) {
+    console.warn(`Session fetch returned ${sessionRes.status}`)
+    if (sessionRes.status === 404) {
+      return null
+    }
+    throw await sessionMetadataFetchError(sessionRes)
+  }
+  const data = await sessionRes.json()
+  return (data.session || null) as GobbySession | null
+}
 
 function mapRenderedRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
   return {
@@ -81,165 +109,226 @@ function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): Ses
   }
 }
 
+async function fetchRenderedSessionMessages(sessionId: string): Promise<MessageLoadResult> {
+  const baseUrl = getBaseUrl()
+  const messagesRes = await fetch(
+    `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
+  )
+  if (!messagesRes.ok) {
+    console.warn(`Messages fetch returned ${messagesRes.status}`)
+    return { mapped: [], totalCount: 0, ok: false }
+  }
+  const messageData = await messagesRes.json()
+  const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
+  return {
+    mapped: rawMessages.map((m: Record<string, unknown>) =>
+      mapRenderedRecordToSessionMessage(m),
+    ),
+    totalCount: messageData.total_count || rawMessages.length,
+    ok: true,
+  }
+}
+
+async function fetchChatSessionMessages(sessionId: string): Promise<MessageLoadResult> {
+  const baseUrl = getBaseUrl()
+  const chatRes = await fetch(`${baseUrl}/api/chat/${sessionId}/messages`)
+  if (!chatRes.ok) {
+    console.warn(`Web chat messages fetch returned ${chatRes.status}`)
+    return { mapped: [], totalCount: 0, ok: false }
+  }
+  const chatData = await chatRes.json()
+  const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
+  return {
+    mapped: rawMessages.map((m: Record<string, unknown>) =>
+      mapWebChatRecordToSessionMessage(m),
+    ),
+    totalCount: rawMessages.length,
+    ok: true,
+  }
+}
+
+async function fetchTranscriptStatus(sessionId: string): Promise<TranscriptStatus | null> {
+  const baseUrl = getBaseUrl()
+  const statusRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/transcript/status`)
+  if (!statusRes.ok) {
+    console.warn(`Transcript status fetch returned ${statusRes.status}`)
+    return null
+  }
+  return (await statusRes.json()) as TranscriptStatus
+}
+
 export function useSessionDetail(sessionId: string | null) {
   const [session, setSession] = useState<GobbySession | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
+  const sessionIdRef = useRef(sessionId)
+  const detailPollCleanupRef = useRef<(() => void) | null>(null)
+  const detailLoadVersionRef = useRef(0)
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
+
+  const clearDetailPolling = useCallback(() => {
+    detailPollCleanupRef.current?.()
+    detailPollCleanupRef.current = null
+  }, [])
+
+  const applyClearedDetail = useCallback((error: string | null) => {
+    setSession(null)
+    setMessages([])
+    setTranscriptStatus(null)
+    setSessionError(error)
+    setTotalMessages(0)
+    setIsLoading(false)
+    messageSourceRef.current = null
+  }, [])
+
+  const resetSessionDetail = useCallback((error: string | null) => {
+    detailLoadVersionRef.current += 1
+    clearDetailPolling()
+    applyClearedDetail(error)
+  }, [applyClearedDetail, clearDetailPolling])
+
+  const clearSessionError = useCallback(() => {
+    setSessionError(null)
+  }, [])
+
+  const loadSessionDetail = useCallback(async (
+    activeSessionId: string,
+    {
+      showLoading = true,
+      clearOnError = true,
+      errorMessage = 'Failed to load session detail',
+    }: {
+      showLoading?: boolean
+      clearOnError?: boolean
+      errorMessage?: string
+    } = {},
+  ) => {
+    const loadVersion = detailLoadVersionRef.current + 1
+    detailLoadVersionRef.current = loadVersion
+    const isCurrent = () =>
+      sessionIdRef.current === activeSessionId && detailLoadVersionRef.current === loadVersion
+
+    if (showLoading) {
+      setIsLoading(true)
+    }
+    setSessionError(null)
+
+    try {
+      const sessionData = await fetchSessionMetadata(activeSessionId)
+      if (!isCurrent()) return
+
+      clearDetailPolling()
+
+      if (!sessionData) {
+        applyClearedDetail(SESSION_METADATA_UNAVAILABLE_MESSAGE)
+        return
+      }
+
+      setSession(sessionData)
+      setSessionError(null)
+      setTranscriptStatus(null)
+
+      const renderedResult = await fetchRenderedSessionMessages(activeSessionId)
+      if (!isCurrent()) return
+
+      const shouldUseChatMessages =
+        sessionData.session_type === 'web_chat' &&
+        !sessionData.transcript_path &&
+        renderedResult.mapped.length === 0
+
+      if (shouldUseChatMessages) {
+        const chatResult = await fetchChatSessionMessages(activeSessionId)
+        if (!isCurrent()) return
+
+        messageSourceRef.current = 'chat'
+        setTranscriptStatus(null)
+        setMessages(chatResult.mapped)
+        setTotalMessages(chatResult.totalCount)
+
+        let cancelled = false
+        let pollTimeoutId: number | null = null
+        const pollChatMessages = async () => {
+          if (cancelled || !isCurrent() || messageSourceRef.current !== 'chat') return
+          try {
+            const nextChatResult = await fetchChatSessionMessages(activeSessionId)
+            if (
+              cancelled ||
+              !isCurrent() ||
+              messageSourceRef.current !== 'chat' ||
+              !nextChatResult.ok
+            ) {
+              return
+            }
+            setMessages(nextChatResult.mapped)
+            setTotalMessages(nextChatResult.totalCount)
+          } catch (error) {
+            console.warn('Failed to poll web chat messages:', error)
+          } finally {
+            if (!cancelled && isCurrent() && messageSourceRef.current === 'chat') {
+              pollTimeoutId = window.setTimeout(() => {
+                void pollChatMessages()
+              }, CHAT_MESSAGES_POLL_MS)
+            }
+          }
+        }
+        pollTimeoutId = window.setTimeout(() => {
+          void pollChatMessages()
+        }, CHAT_MESSAGES_POLL_MS)
+        detailPollCleanupRef.current = () => {
+          cancelled = true
+          if (pollTimeoutId !== null) {
+            window.clearTimeout(pollTimeoutId)
+          }
+        }
+        return
+      }
+
+      messageSourceRef.current = 'session'
+      setMessages(renderedResult.mapped)
+      setTotalMessages(renderedResult.totalCount)
+      if (renderedResult.mapped.length === 0) {
+        const nextTranscriptStatus = await fetchTranscriptStatus(activeSessionId)
+        if (isCurrent()) {
+          setTranscriptStatus(nextTranscriptStatus)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch session detail:', e)
+      if (!isCurrent()) return
+      if (clearOnError) {
+        clearDetailPolling()
+        applyClearedDetail(errorMessage)
+      } else {
+        setSessionError(errorMessage)
+      }
+    } finally {
+      if (showLoading && isCurrent()) {
+        setIsLoading(false)
+      }
+    }
+  }, [applyClearedDetail, clearDetailPolling])
 
   // Fetch session detail and all messages
   useEffect(() => {
     if (!sessionId) {
-      setSession(null)
-      setMessages([])
-      setTranscriptStatus(null)
-      setTotalMessages(0)
-      messageSourceRef.current = null
+      resetSessionDetail(null)
       return
     }
 
-    let cancelled = false
-    setIsLoading(true)
-
-    async function fetchDetail() {
-      const baseUrl = getBaseUrl()
-      try {
-        const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
-
-        if (cancelled) return
-
-        if (sessionRes.ok) {
-          const data = await sessionRes.json()
-          const sessionData = data.session || null
-          setSession(sessionData)
-          setTranscriptStatus(null)
-
-          const loadRenderedMessages = async (): Promise<{
-            mapped: SessionMessage[]
-            totalCount: number
-            ok: boolean
-          }> => {
-            const messagesRes = await fetch(
-              `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
-            )
-            if (!messagesRes.ok) {
-              console.warn(`Messages fetch returned ${messagesRes.status}`)
-              return { mapped: [], totalCount: 0, ok: false }
-            }
-            const messageData = await messagesRes.json()
-            const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
-            return {
-              mapped: rawMessages.map((m: Record<string, unknown>) =>
-                mapRenderedRecordToSessionMessage(m),
-              ),
-              totalCount: messageData.total_count || rawMessages.length,
-              ok: true,
-            }
-          }
-
-          const loadChatMessages = async (): Promise<{
-            mapped: SessionMessage[]
-            totalCount: number
-            ok: boolean
-          }> => {
-            if (!sessionId) {
-              return { mapped: [], totalCount: 0, ok: false }
-            }
-            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionId}/messages`)
-            if (!chatRes.ok) {
-              console.warn(`Web chat messages fetch returned ${chatRes.status}`)
-              return { mapped: [], totalCount: 0, ok: false }
-            }
-            const chatData = await chatRes.json()
-            const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
-            return {
-              mapped: rawMessages.map((m: Record<string, unknown>) =>
-                mapWebChatRecordToSessionMessage(m),
-              ),
-              totalCount: rawMessages.length,
-              ok: true,
-            }
-          }
-
-          const loadTranscriptStatus = async (): Promise<TranscriptStatus | null> => {
-            const statusRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/transcript/status`)
-            if (!statusRes.ok) {
-              console.warn(`Transcript status fetch returned ${statusRes.status}`)
-              return null
-            }
-            return (await statusRes.json()) as TranscriptStatus
-          }
-
-          const renderedResult = await loadRenderedMessages()
-          if (cancelled) return
-
-          const shouldUseChatMessages =
-            sessionData?.session_type === 'web_chat' &&
-            !sessionData?.transcript_path &&
-            renderedResult.mapped.length === 0
-
-          if (shouldUseChatMessages) {
-            const chatResult = await loadChatMessages()
-            if (cancelled) return
-
-            messageSourceRef.current = 'chat'
-            setTranscriptStatus(null)
-            setMessages(chatResult.mapped)
-            setTotalMessages(chatResult.totalCount)
-
-            const pollId = window.setInterval(async () => {
-              if (cancelled || messageSourceRef.current !== 'chat') return
-              const nextChatResult = await loadChatMessages()
-              if (cancelled || messageSourceRef.current !== 'chat' || !nextChatResult.ok) return
-              setMessages(nextChatResult.mapped)
-              setTotalMessages(nextChatResult.totalCount)
-            }, CHAT_MESSAGES_POLL_MS)
-
-            return () => window.clearInterval(pollId)
-          }
-
-          messageSourceRef.current = 'session'
-          setMessages(renderedResult.mapped)
-          setTotalMessages(renderedResult.totalCount)
-          if (renderedResult.mapped.length === 0) {
-            const nextTranscriptStatus = await loadTranscriptStatus()
-            if (!cancelled) {
-              setTranscriptStatus(nextTranscriptStatus)
-            }
-          }
-        } else {
-          console.warn(`Session fetch returned ${sessionRes.status}`)
-        }
-      } catch (e) {
-        console.error('Failed to fetch session detail:', e)
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    let cleanup: (() => void) | undefined
-
-    fetchDetail().then((teardown) => {
-      if (cancelled) {
-        teardown?.()
-        return
-      }
-      cleanup = teardown
-    })
+    void loadSessionDetail(sessionId)
 
     return () => {
-      cancelled = true
-      cleanup?.()
+      detailLoadVersionRef.current += 1
+      clearDetailPolling()
     }
-  }, [sessionId])
-
-  // Track current sessionId in a ref for the WebSocket handler
-  const sessionIdRef = useRef(sessionId)
-  useEffect(() => {
-    sessionIdRef.current = sessionId
-  }, [sessionId])
+  }, [clearDetailPolling, loadSessionDetail, resetSessionDetail, sessionId])
 
   // Subscribe to real-time session_message events via WebSocket
   // Broadcasts are now RenderedMessage-shaped with content_blocks.
@@ -302,6 +391,25 @@ export function useSessionDetail(sessionId: string | null) {
     )
   }, []))
 
+  useWebSocketEvent('session_event', useCallback((data: Record<string, unknown>) => {
+    const event = typeof data.event === 'string' ? data.event : null
+    const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
+    if (!updatedSessionId || updatedSessionId !== sessionIdRef.current) return
+
+    if (event === 'session_deleted') {
+      resetSessionDetail(SESSION_METADATA_UNAVAILABLE_MESSAGE)
+      return
+    }
+
+    if (event === 'session_updated' || event === 'session_expired') {
+      void loadSessionDetail(updatedSessionId, {
+        showLoading: false,
+        clearOnError: false,
+        errorMessage: 'Failed to refresh session metadata',
+      })
+    }
+  }, [loadSessionDetail, resetSessionDetail]))
+
   const hasMore = false
 
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
@@ -338,6 +446,8 @@ export function useSessionDetail(sessionId: string | null) {
 
   return {
     session,
+    sessionError,
+    clearSessionError,
     messages,
     transcriptStatus,
     isLoading,

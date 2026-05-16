@@ -508,7 +508,7 @@ class TestTaskValidatorTestStrategy:
 
     @pytest.mark.asyncio
     async def test_validate_with_manual_category(self, config, mock_llm):
-        """Test validation with category='manual' (lines 524-530)."""
+        """Manual category uses the normal test strategy prompt section."""
         validator = TaskValidator(config, mock_llm)
         mock_provider = mock_llm.get_provider.return_value
         mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
@@ -522,16 +522,15 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        # Verify manual test strategy note is in prompt
         call_args = mock_provider.generate_text.call_args
         prompt = call_args.kwargs["prompt"]
         assert "Test Strategy: manual" in prompt
-        assert "MANUAL testing" in prompt
-        assert "Do NOT require automated test files" in prompt
+        assert "MANUAL testing" not in prompt
+        assert "Do NOT require automated test files" not in prompt
 
     @pytest.mark.asyncio
     async def test_validate_with_manual_category_uppercase(self, config, mock_llm):
-        """Test validation with category='MANUAL' (case insensitive)."""
+        """Uppercase manual category does not trigger a special prompt branch."""
         validator = TaskValidator(config, mock_llm)
         mock_provider = mock_llm.get_provider.return_value
         mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
@@ -547,7 +546,9 @@ class TestTaskValidatorTestStrategy:
         assert result.status == "valid"
         call_args = mock_provider.generate_text.call_args
         prompt = call_args.kwargs["prompt"]
-        assert "MANUAL testing" in prompt
+        assert "Test Strategy: MANUAL" in prompt
+        assert "MANUAL testing" not in prompt
+        assert "Do NOT require automated test files" not in prompt
 
     @pytest.mark.asyncio
     async def test_validate_with_automated_category(self, config, mock_llm):
@@ -568,7 +569,7 @@ class TestTaskValidatorTestStrategy:
         call_args = mock_provider.generate_text.call_args
         prompt = call_args.kwargs["prompt"]
         assert "Test Strategy: automated" in prompt
-        # Should NOT have manual testing note
+        # Should not have obsolete manual-specific guidance
         assert "MANUAL testing" not in prompt
 
     @pytest.mark.asyncio
@@ -610,7 +611,7 @@ class TestTaskValidatorTestStrategy:
         call_args = mock_provider.generate_text.call_args
         prompt = call_args.kwargs["prompt"]
         assert "Test Strategy: integration" in prompt
-        # Should NOT have manual testing note (not "manual")
+        # Should not have obsolete manual-specific guidance
         assert "MANUAL testing" not in prompt
 
 

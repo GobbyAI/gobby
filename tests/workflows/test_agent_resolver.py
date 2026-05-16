@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -99,6 +100,27 @@ class TestResolveAgentLookup:
         )
         result = resolve_agent("my-rule", db)
         assert result is None
+
+    def test_invalid_agent_definition_logs_warning_with_traceback(
+        self,
+        db: LocalDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Invalid persisted agent JSON logs a warning with traceback context."""
+        manager.create(
+            name="broken-agent",
+            workflow_type="agent",
+            definition_json="{not json",
+            source="test",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.agent_resolver"):
+            result = resolve_agent("broken-agent", db)
+
+        assert result is None
+        assert "Failed to parse agent definition for broken-agent" in caplog.text
+        assert any(record.exc_info for record in caplog.records)
 
 
 class TestProviderNormalization:

@@ -22,6 +22,8 @@ import {
   TASK_STATE_ORDER,
   type TaskDisplayState,
 } from '../../lib/taskState'
+import { inputFocusCls } from '../shared/focusStyles'
+import { Heading } from '../shared/Heading'
 
 // =============================================================================
 // Tailwind class constants
@@ -40,7 +42,7 @@ const VIEW_TOGGLE_CLS = 'flex overflow-hidden rounded-md border border-[var(--bo
 const VIEW_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center border-0 border-r border-[var(--border)] bg-transparent text-[var(--text-muted)] transition-colors duration-150 last:border-r-0 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const VIEW_BTN_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] text-[var(--accent)]'
 
-const SEARCH_CLS = 'w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11'
+const SEARCH_CLS = `w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11`
 const REFRESH_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-transparent text-[length:calc(var(--font-size-base)*1.1)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const NEW_BTN_CLS = 'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 
@@ -49,7 +51,7 @@ const FILTER_CHIPS_CLS = 'flex flex-wrap items-center gap-1.5 max-md:flex-nowrap
 const FILTER_DROPDOWNS_CLS = 'flex flex-wrap items-center gap-1.5 max-md:w-full'
 const STAT_CHIP_CLS = 'inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-transparent px-2.5 py-0.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
 const STAT_CHIP_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] border-[var(--accent)] text-[var(--text-primary)]'
-const FILTER_SELECT_CLS = 'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11'
+const FILTER_SELECT_CLS = `cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] ${inputFocusCls} max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11`
 const FILTER_CLEAR_CLS = 'cursor-pointer rounded-md border border-[var(--border)] bg-transparent px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 
 const STATE_CONTENT_LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:calc(var(--font-size-base)*0.9)] text-[var(--text-muted)]'
@@ -452,7 +454,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h1 className={TITLE_CLS}>Tasks</h1>
+          <Heading level={1} className={TITLE_CLS}>Tasks</Heading>
           <div className={GROUP_TABS_CLS}>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'all' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('all')}>All Tasks</button>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'agent' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('agent')}>By Agent</button>
@@ -480,7 +482,12 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             value={filters.search}
             onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           />
-          <button className={REFRESH_BTN_CLS} onClick={refreshTasks} title="Refresh">
+          <button
+            type="button"
+            className={REFRESH_BTN_CLS}
+            onClick={refreshTasks}
+            title="Refresh"
+          >
             ↻
           </button>
           <button className={NEW_BTN_CLS} title="New Task" onClick={() => setShowCreateForm(true)}>

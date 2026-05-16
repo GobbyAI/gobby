@@ -221,7 +221,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0 0.5rem;
+  padding: 0 0.75rem;
   min-height: var(--activity-panel-bar-height);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
@@ -250,6 +250,7 @@
    off the right edge of the command bar. */
 .command-bar-btn {
   flex-shrink: 0;
+  min-height: var(--status-bar-control-height);
 }
 
 .command-bar-session {
@@ -410,6 +411,15 @@
 .command-palette-item.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-primary);
+}
+
+/* Light: brighter neutral well + semibold, no accent wash — selection by
+   lightness + weight. Dark keeps the shipped accent-tint (byte-frozen to
+   IMG_3754). */
+[data-theme="light"] .command-palette-item.active {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .command-palette-item-dot {

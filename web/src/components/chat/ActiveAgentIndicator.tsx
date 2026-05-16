@@ -34,7 +34,7 @@ export function ActiveAgentIndicator({
     <>
       <button
         type="button"
-        className={`p-1.5 rounded transition-colors ${
+        className={`chat-input-agent-button rounded transition-colors ${
           disabled
             ? "cursor-not-allowed text-muted-foreground/50"
             : "text-muted-foreground hover:text-foreground hover:bg-muted"

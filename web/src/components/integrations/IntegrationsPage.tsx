@@ -19,6 +19,7 @@ import {
   TABS_CLS,
 } from './styles'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 const CHANNEL_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', 'email', 'sms', 'gobby_chat']
 
@@ -131,7 +132,7 @@ export function IntegrationsPage() {
       {/* Toolbar */}
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h1 className={TOOLBAR_TITLE_CLS}>Integrations</h1>
+          <Heading level={1} className={TOOLBAR_TITLE_CLS}>Integrations</Heading>
         </div>
         <div className={TOOLBAR_RIGHT_CLS}>
           <input
@@ -210,7 +211,7 @@ export function IntegrationsPage() {
               </div>
             ) : channels.length === 0 ? (
               <div className={EMPTY_STATE_CLS}>
-                <h3 className={EMPTY_TITLE_CLS}>No integrations configured</h3>
+                <Heading level={3} className={EMPTY_TITLE_CLS}>No integrations configured</Heading>
                 <p className={EMPTY_SUBTITLE_CLS}>Connect a messaging platform to get started</p>
                 <div className={EMPTY_CARDS_CLS}>
                   {CHANNEL_TYPES.filter(t => t !== 'gobby_chat').map(type => (

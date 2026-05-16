@@ -1,0 +1,39 @@
+tags: [context-handoff, context, handoff, lifecycle, gobby, default]
+
+rules:
+  auto-compact-after-task-close:
+    description: "Compact or nudge context handoff after closing one task while substantial claimed work remains"
+    # after_tool is required here because the rule depends on close_task's result
+    # and tool_call_succeeded() to avoid compacting after failed close attempts.
+    event: after_tool
+    enabled: true
+    priority: 12
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') == 'close_task'
+      and tool_call_succeeded()
+      and variables.get('claimed_tasks')
+      and (
+        len(variables.get('claimed_tasks', {})) > 1
+        or task_type_in(variables.get('claimed_tasks'), 'epic')
+      )
+      and variables.get('_auto_compact_after_task_close_queued_for') != str(tool_input.get('task_id') or event.session_id)
+    effects:
+      - type: mcp_call
+        server: gobby-sessions
+        tool: compact_self
+        arguments:
+          session_id: "{{ event.session_id }}"
+        background: true
+      - type: set_variable
+        variable: _auto_compact_after_task_close_queued_for
+        value: "{{ tool_input.get('task_id') or event.session_id }}"
+      # `compact_call_queue_failed` means the background compact_self MCP call
+      # could not be queued, usually because the queue was contended or timed
+      # out, or retries were exhausted/blocked. The injected instruction asks
+      # the agent to call `gobby-sessions:compact_self` manually.
+      - type: inject_context
+        when: "event.metadata.get('compact_call_queue_failed') is True"
+        template: |
+          You closed a task, but this session still has multiple claimed tasks or a claimed epic.
+          Call `gobby-sessions:compact_self` for this session before continuing.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,7 +20,9 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -2003,6 +2006,61 @@ class TestSetSessionCoordinator:
         mock_coordinator = MagicMock()
         monitor.set_session_coordinator(mock_coordinator)
         assert monitor._session_coordinator is mock_coordinator
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict,
+    sample_session: dict,
+    temp_db: LocalDatabase,
+) -> None:
+    """Repeated lifecycle DB reads and task recovery do not grow SQLite handles."""
+    executor = DatabaseExecutor(max_workers=2, thread_name_prefix="lifecycle-db")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Lifecycle bounded DB task",
+        claimed_by_session_id=sample_session["id"],
+    )
+    run = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        child_session_id=sample_session["id"],
+        claimed_session_id=sample_session["id"],
+        provider="claude",
+        prompt="test",
+        run_id="run-bounded-db",
+        task_id=task.id,
+    )
+    agent_run_manager.start(run.id)
+    agent_run_manager.update_runtime(run.id, tmux_session_name="gobby-bounded-db")
+
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        session_manager=session_manager,
+        task_manager=task_manager,
+        run_db=executor.run,
+    )
+    original_list_active = agent_run_manager.list_active
+
+    def slow_list_active() -> list[AgentRun]:
+        time.sleep(0.02)
+        return original_list_active()
+
+    try:
+        with (
+            patch.object(agent_run_manager, "list_active", side_effect=slow_list_active),
+            patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
+        ):
+            await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
+
+        await monitor._recover_task_from_failed_agent(run.id)
+
+        assert temp_db.connection_count <= 1 + executor.max_workers
+    finally:
+        executor.shutdown(wait=True)
 
 
 class TestCleanupStalePendingRuns:

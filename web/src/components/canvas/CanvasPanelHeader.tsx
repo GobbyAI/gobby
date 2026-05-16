@@ -20,7 +20,7 @@ export const CanvasPanelHeader: React.FC<Props> = ({ title, onClose, isMobile = 
       <Button
         variant={isMobile ? "outline" : "ghost"}
         size="icon"
-        className={isMobile ? "h-10 w-10 shrink-0" : "h-6 w-6 shrink-0"}
+        className={isMobile ? "h-11 w-11 shrink-0" : "h-6 w-6 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11"}
         onClick={onClose}
         aria-label="Close Canvas"
       >

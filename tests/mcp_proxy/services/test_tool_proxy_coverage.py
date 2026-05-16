@@ -34,8 +34,12 @@ class TestSafeTruncate:
         """Test long text is truncated with ellipsis."""
         long_text = "a" * 150
         result = safe_truncate(long_text, 100)
-        assert len(result) == 103  # 100 chars + "..."
+        assert len(result) == 100
         assert result.endswith("...")
+
+    def test_safe_truncate_tiny_limit(self) -> None:
+        """Tiny limits still return no more than the requested length."""
+        assert safe_truncate("abcdef", 2) == ".."
 
     def test_safe_truncate_unicode_bytes(self) -> None:
         """Test truncating bytes with unicode chars."""

@@ -11,6 +11,7 @@ import pytest
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
+    MAX_PAYLOAD_DEPTH,
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
@@ -108,6 +109,24 @@ class TestTaskTreeComplete:
         ev = _build_evaluator(ctx, task_manager=None)
         # Without task_manager, should return True (no-op, matches ConditionEvaluator behavior)
         assert ev.evaluate("task_tree_complete('task-123')") is True
+
+
+class TestTaskTypeIn:
+    def test_task_type_in_helper_is_available(self, mock_task_manager: MagicMock) -> None:
+        task = _make_task()
+        task.task_type = "epic"
+        mock_task_manager.get_task.return_value = task
+
+        ctx: dict[str, Any] = {"variables": {}}
+        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
+
+        assert ev.evaluate("task_type_in(['task-123'], 'epic')") is True
+
+    def test_task_type_in_without_manager_returns_false(self) -> None:
+        ctx: dict[str, Any] = {"variables": {}}
+        ev = _build_evaluator(ctx, task_manager=None)
+
+        assert ev.evaluate("task_type_in(['task-123'], 'epic')") is False
 
 
 # --- has_stop_signal tests ---
@@ -240,6 +259,105 @@ class TestMcpFailed:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx)
         assert ev.evaluate("mcp_failed('gobby-agents', 'spawn_agent')") is False
+
+
+class TestToolCallSucceeded:
+    def _eval(
+        self,
+        data: dict[str, Any],
+        metadata: Any = None,
+    ) -> SafeExpressionEvaluator:
+        ctx: dict[str, Any] = {
+            "variables": {},
+            "event": SimpleNamespace(data=data, metadata=metadata or {}),
+        }
+        return _build_evaluator(ctx)
+
+    def test_returns_true_for_successful_tool_call(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"id": "ok"}}})
+
+        assert ev.evaluate("tool_call_succeeded()") is True
+
+    def test_rejects_top_level_is_error(self) -> None:
+        ev = self._eval({"is_error": True, "tool_output": {"success": True}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_top_level_error(self) -> None:
+        ev = self._eval({"error": "tool failed", "tool_output": {"success": True}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_failure_metadata(self) -> None:
+        ev = self._eval({"tool_output": {"success": True}}, metadata={"is_failure": True})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_object_failure_metadata(self) -> None:
+        ev = self._eval(
+            {"tool_output": {"success": True}},
+            metadata=SimpleNamespace(is_failure=True),
+        )
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_handles_dict_event_shape(self) -> None:
+        ctx: dict[str, Any] = {
+            "variables": {},
+            "event": {"data": {"tool_output": {"success": True}}, "metadata": {}},
+        }
+        ev = _build_evaluator(ctx)
+
+        assert ev.evaluate("tool_call_succeeded()") is True
+
+    def test_handles_missing_or_malformed_event_safely(self) -> None:
+        class BrokenEvent:
+            @property
+            def data(self) -> dict[str, Any]:
+                raise AttributeError("bad event")
+
+        assert (
+            _build_evaluator({"variables": {}, "event": None}).evaluate("tool_call_succeeded()")
+            is False
+        )
+        assert (
+            _build_evaluator({"variables": {}, "event": BrokenEvent()}).evaluate(
+                "tool_call_succeeded()"
+            )
+            is False
+        )
+
+    def test_rejects_nested_mcp_error_result(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"error": "nested"}}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_nested_mcp_success_false(self) -> None:
+        ev = self._eval(
+            {"tool_output": {"success": True, "result": {"success": False, "error": "bad"}}}
+        )
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_nested_error_before_payload_depth_limit(self) -> None:
+        payload: dict[str, Any] = {"error": "nested"}
+        for _ in range(MAX_PAYLOAD_DEPTH - 1):
+            payload = {"result": payload}
+        ev = self._eval({"tool_output": payload})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_payload_depth_limit_fails_open(self, caplog: pytest.LogCaptureFixture) -> None:
+        payload: dict[str, Any] = {"error": "too deep"}
+        for _ in range(MAX_PAYLOAD_DEPTH):
+            payload = {"result": payload}
+        ev = self._eval({"tool_output": payload})
+
+        with caplog.at_level("WARNING", logger="gobby.workflows.safe_evaluator"):
+            assert ev.evaluate("tool_call_succeeded()") is True
+
+        assert f"MAX_PAYLOAD_DEPTH={MAX_PAYLOAD_DEPTH}" in caplog.text
+        assert "too deep" in caplog.text
 
 
 # --- mcp_result_has tests ---

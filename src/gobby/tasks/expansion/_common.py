@@ -20,12 +20,9 @@ from gobby.plans.parser import (
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.tasks import Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
 
 _TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
-AUTOMATED_LEAF_CATEGORIES = frozenset(
-    {"code", "config", "docs", "planning", "refactor", "research", "test"}
-)
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "holistic_qa", "pr"})

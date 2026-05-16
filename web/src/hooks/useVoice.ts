@@ -101,11 +101,13 @@ export function useVoice(
   } = playback
   const {
     cancelRecording,
+    finishTranscriptionRequest,
     isListening,
     isRecording,
     isSpeechDetected,
     isTranscribing,
-    setIsTranscribing,
+    markTranscriptionInProgress,
+    resetTranscriptionRequest,
     startRecording,
     stopRecording,
   } = capture
@@ -125,8 +127,13 @@ export function useVoice(
       prevSwitchKeyRef.current = conversationSwitchKey
       stopTTS()
       cancelRecording()
+      resetTranscriptionRequest()
     }
-  }, [cancelRecording, conversationSwitchKey, stopTTS])
+  }, [cancelRecording, conversationSwitchKey, resetTranscriptionRequest, stopTTS])
+
+  useEffect(() => {
+    if (!socketConnected) resetTranscriptionRequest()
+  }, [resetTranscriptionRequest, socketConnected])
 
   useEffect(() => {
     return () => {
@@ -138,22 +145,28 @@ export function useVoice(
     const type = data.type as string
 
     if (type === 'voice_transcription') {
-      setIsTranscribing(false)
-      clearTransientError()
+      if (finishTranscriptionRequest(data.request_id)) {
+        clearTransientError()
+      }
     } else if (type === 'voice_status') {
       const voiceStatus = data.status as string
       if (voiceStatus === 'error') {
-        clearTransientError()
-        setVoiceError(data.error as string || 'Voice error')
-        setIsTranscribing(false)
+        if (finishTranscriptionRequest(data.request_id)) {
+          clearTransientError()
+          setVoiceError(data.error as string || 'Voice error')
+        }
       } else if (voiceStatus === 'empty') {
-        setIsTranscribing(false)
-        setTransientError('No speech detected — try speaking louder or closer to the mic')
+        if (finishTranscriptionRequest(data.request_id)) {
+          setTransientError('No speech detected — try speaking louder or closer to the mic')
+        }
       } else if (voiceStatus === 'transcribing') {
-        setIsTranscribing(true)
-        clearTransientError()
+        if (markTranscriptionInProgress(data.request_id)) {
+          clearTransientError()
+        }
       } else if (voiceStatus === 'preparing') {
-        markVoicePreparing()
+        if (data.voice_loading === true && data.voice_ready !== true) {
+          markVoicePreparing()
+        }
         clearTransientError()
         startStatusPolling()
       }
@@ -173,9 +186,10 @@ export function useVoice(
     applyVoiceStatus,
     clearPendingTTSMeta,
     clearTransientError,
+    finishTranscriptionRequest,
     handleTTSAudioMeta,
+    markTranscriptionInProgress,
     markVoicePreparing,
-    setIsTranscribing,
     setTransientError,
     startStatusPolling,
     ttsEnabled,

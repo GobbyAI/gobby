@@ -31,7 +31,21 @@ def _require_project_id(project_id: str | None) -> str:
 
 
 async def _run_db(server: HTTPServer, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Run SQLite work through the daemon executor when the server exposes it."""
+    """Run database work through the server bridge.
+
+    Args:
+        server: HTTP server that may expose an async ``run_db`` executor for SQLite work.
+        func: Synchronous callable to execute.
+        *args: Positional arguments passed to ``func``.
+        **kwargs: Keyword arguments passed to ``func``.
+
+    Returns:
+        The value returned by ``func``.
+
+    If a custom ``server.run_db`` coroutine is available, it owns the sync/async
+    handoff. Otherwise the callable runs in a worker thread so route handlers do
+    not block the event loop.
+    """
     runner = getattr(server, "run_db", None)
     if inspect.iscoroutinefunction(runner):
         return await runner(func, *args, **kwargs)
