@@ -784,7 +784,7 @@ body {
 }
 
 .session-item.attached {
-  background: var(--accent-soft);
+  background: var(--bg-tertiary);
 }
 
 .session-item-main {
