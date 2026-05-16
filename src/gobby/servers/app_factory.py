@@ -81,6 +81,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
             "database": server.services.database,
             "session_manager": server.services.session_manager,
         }
+        if server.services.agent_runner is not None:
+            server.services.agent_runner.agent_lifecycle_monitor = (
+                server.services.agent_lifecycle_monitor
+            )
 
         # Create code index trigger for post-edit incremental indexing
         code_indexer = getattr(server.services, "code_indexer", None)

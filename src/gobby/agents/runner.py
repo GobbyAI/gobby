@@ -61,6 +61,7 @@ class AgentRunner:
 
         # Workflow handler for hook evaluation on spawned agent tool calls
         self._workflow_handler: WorkflowHookHandler | None = None
+        self.agent_lifecycle_monitor: Any | None = None
 
     @property
     def workflow_handler(self) -> WorkflowHookHandler | None:

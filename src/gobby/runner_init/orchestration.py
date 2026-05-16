@@ -140,6 +140,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
     except Exception as e:
         logger.warning(f"Failed to initialize AgentLifecycleMonitor: {e}")
         runner.agent_lifecycle_monitor = None
+    if runner.agent_runner is not None:
+        runner.agent_runner.agent_lifecycle_monitor = runner.agent_lifecycle_monitor
 
     runner.lifecycle_manager = SessionLifecycleManager(
         db=runner.database,

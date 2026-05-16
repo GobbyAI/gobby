@@ -5,14 +5,19 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
@@ -150,11 +155,16 @@ def _after_tool_event(
 
 class TestAgentWorkflowCompletion:
     @pytest.mark.asyncio
-    async def test_exit_condition_completes_agent_run_and_notifies(self, db: LocalDatabase) -> None:
+    async def test_exit_condition_terminalizes_agent_run_through_lifecycle_cleanup(
+        self, db: LocalDatabase
+    ) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()
         runner.run_storage = MagicMock()
         runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.agent_lifecycle_monitor = SimpleNamespace(
+            terminalize_successful_run=AsyncMock(return_value=True)
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -166,12 +176,10 @@ class TestAgentWorkflowCompletion:
         await engine.evaluate(_after_tool_event(), session_id="agent-session", variables=variables)
 
         assert variables["step_workflow_complete"] is True
-        runner.complete_run.assert_called_once_with("run-123", result=None)
-        assert runner.complete_run.call_count == 1
-        assert runner.complete_run.call_args is not None
-        completion_registry.notify.assert_awaited_once_with(
+        runner.complete_run.assert_not_called()
+        runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
             "run-123",
-            {
+            notify_result={
                 "status": "success",
                 "run_id": "run-123",
                 "via": "workflow_terminate",
@@ -179,8 +187,7 @@ class TestAgentWorkflowCompletion:
             },
             message="Agent run-123 completed via workflow terminate",
         )
-        assert completion_registry.notify.await_count == 1
-        assert completion_registry.notify.await_args is not None
+        completion_registry.notify.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_holistic_review_complete_stage_success_transitions_to_terminate(
@@ -389,6 +396,89 @@ class TestAgentWorkflowCompletion:
         assert result["status"] == "success"
         assert result["via"] == "workflow_terminate"
         assert result["workflow"] == "plan-adversary-steps"
+
+    @pytest.mark.asyncio
+    async def test_workflow_termination_cleans_child_not_dispatcher_launcher(
+        self, db: LocalDatabase
+    ) -> None:
+        db.execute(
+            "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+            ("project-1", "test-project"),
+        )
+        sessions = SessionManager(db)
+        parent = sessions.register(
+            external_id="dispatcher-launcher-project-1",
+            machine_id="machine-1",
+            source="dispatcher_launcher",
+            project_id="project-1",
+            title="Dispatcher Launcher",
+        )
+        child = sessions.register(
+            external_id="child-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id="project-1",
+            parent_session_id=parent.id,
+            agent_depth=1,
+        )
+        task = LocalTaskManager(db).create_task(
+            project_id="project-1",
+            title="Workflow-owned task",
+        )
+        mutex = TaskDispatchMutexManager(db)
+        mutex.acquire_mutex(
+            task.id,
+            holder="dispatcher",
+            kind="spawn_agent",
+            run_id="run-123",
+            ttl_seconds=300,
+        )
+        _register_agent_workflow(db, session_id=child.id)
+
+        run_manager = LocalAgentRunManager(db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            provider="codex",
+            prompt="do work",
+            run_id="run-123",
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+        completion_registry = CompletionEventRegistry()
+        completion_registry.register(run.id, subscribers=[])
+        runner = MagicMock()
+        runner.run_storage = run_manager
+        runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
+            agent_run_manager=run_manager,
+            db=db,
+            session_manager=sessions,
+            completion_registry=completion_registry,
+            task_manager=LocalTaskManager(db),
+        )
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+
+        await engine.evaluate(
+            _after_tool_event(session_id=child.id),
+            session_id=child.id,
+            variables={},
+        )
+
+        result = await completion_registry.wait(run.id, timeout=0.1)
+        completed = run_manager.get(run.id)
+        assert result == {
+            "status": "success",
+            "run_id": run.id,
+            "via": "workflow_terminate",
+            "workflow": "plan-adversary-steps",
+        }
+        assert completed is not None
+        assert completed.status == "success"
+        assert completed.parent_session_id == parent.id
+        assert sessions.get(parent.id).status == "active"
+        assert sessions.get(child.id).status == "expired"
+        assert mutex.get_mutex(task.id) is None
+        assert WorkflowInstanceManager(db).get_active_instances(child.id) == []
 
     @pytest.mark.asyncio
     async def test_on_mcp_success_when_condition_checks_tool_argument(

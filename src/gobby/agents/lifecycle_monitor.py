@@ -177,6 +177,22 @@ class AgentLifecycleMonitor:
             run_id, terminal_reason=terminal_reason
         )
 
+    async def terminalize_successful_run(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        completion_result: str | None = None,
+    ) -> bool:
+        """Mark an active run successful, notify waiters, and clean child-owned state."""
+        return await self._cleanup_handler.terminalize_successful_run(
+            run_id,
+            notify_result=notify_result,
+            message=message,
+            completion_result=completion_result,
+        )
+
     async def start(self) -> None:
         """Start the monitoring loop."""
         if self._running:

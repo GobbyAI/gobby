@@ -4,6 +4,7 @@ Handles tool allow/block lists at the agent and step workflow levels,
 MCP tool matching, and step workflow transition processing.
 """
 
+import inspect
 import json
 import logging
 from datetime import UTC, datetime
@@ -650,22 +651,42 @@ class EnforcementMixin:
             )
             return
 
+        notify_result = {
+            "status": "success",
+            "run_id": run_id,
+            "via": "workflow_terminate",
+            "workflow": workflow_name,
+        }
+        message = f"Agent {run_id} completed via workflow terminate"
+
+        lifecycle_monitor = getattr(self._runner, "agent_lifecycle_monitor", None)
+        terminalize_successful_run = getattr(
+            lifecycle_monitor,
+            "terminalize_successful_run",
+            None,
+        )
+        if inspect.iscoroutinefunction(terminalize_successful_run):
+            await terminalize_successful_run(
+                run_id,
+                notify_result=notify_result,
+                message=message,
+            )
+            return
+
         await complete_and_notify_agent_run(
             self._runner,
             run_id,
             completion_registry=self._completion_registry,
-            notify_result={
-                "status": "success",
-                "run_id": run_id,
-                "via": "workflow_terminate",
-                "workflow": workflow_name,
-            },
-            message=f"Agent {run_id} completed via workflow terminate",
+            notify_result=notify_result,
+            message=message,
         )
+        cleanup_session_id = getattr(db_agent, "child_session_id", None) if db_agent else None
+        if not isinstance(cleanup_session_id, str) or not cleanup_session_id:
+            cleanup_session_id = session_id
         cleanup_agent_runtime_state(
             self.db,
             run_id=run_id,
-            child_session_id=session_id,
+            child_session_id=cleanup_session_id,
         )
 
     async def _process_step_after_tool(
