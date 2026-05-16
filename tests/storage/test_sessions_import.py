@@ -81,6 +81,10 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "mark_session_expired": "(self, session_id: 'str') -> 'bool'",
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
+    "persist_digest_state": "(self, session_id: 'str', *, last_turn_markdown: "
+    "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
+    "title: 'str | None' = None, title_source: 'str | None' = None) -> "
+    "'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "recalculate_stats": "(self, session_id: 'str') -> 'Session | None'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",

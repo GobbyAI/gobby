@@ -270,7 +270,10 @@ class TestWebChatLifecycle:
             {
                 "server": "gobby-sessions",
                 "tool": "compact_self",
-                "arguments": {"session_id": "db-id"},
+                "arguments": {
+                    "session_id": "db-id",
+                    "rule_name": "auto-compact-after-task-close",
+                },
                 "background": True,
                 "inject_result": False,
                 "block_on_failure": False,
