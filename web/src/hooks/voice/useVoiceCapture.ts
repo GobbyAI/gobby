@@ -4,6 +4,8 @@ import { MicVAD, utils } from '@ricky0123/vad-web'
 import type { VoiceInputMode } from '../useSettings'
 
 const MIN_PTT_DURATION_MS = 250
+const VOICE_TRANSCRIPTION_BACKEND_TIMEOUT_MS = 120_000
+export const VOICE_TRANSCRIPTION_WATCHDOG_MS = VOICE_TRANSCRIPTION_BACKEND_TIMEOUT_MS + 5_000
 const VOICE_CAPTURE_WORKLET_URL = '/audio-worklets/voice-capture-processor.js'
 const DEFAULT_ONNX_WASM_BASE_PATH = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/'
 const ONNX_WASM_BASE_PATH =
@@ -35,7 +37,9 @@ interface VoiceCaptureReturn {
   isSpeechDetected: boolean
   isRecording: boolean
   isTranscribing: boolean
-  setIsTranscribing: (value: boolean) => void
+  markTranscriptionInProgress: (requestId?: unknown) => boolean
+  finishTranscriptionRequest: (requestId?: unknown) => boolean
+  resetTranscriptionRequest: () => void
   startRecording: () => Promise<void>
   stopRecording: () => Promise<void>
   cancelRecording: () => void
@@ -61,6 +65,10 @@ function createVoiceRequestId(): string {
   return `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+function requestIdFrom(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
 export function useVoiceCapture({
   wsRef,
   conversationIdRef,
@@ -82,7 +90,58 @@ export function useVoiceCapture({
   const recCtxRef = useRef<RecordingContext | null>(null)
   const samplesRef = useRef<Float32Array[]>([])
   const recordingStartRef = useRef<number | null>(null)
+  const activeTranscriptionRequestRef = useRef<string | null>(null)
+  const transcriptionWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+
+  const clearTranscriptionWatchdog = useCallback(() => {
+    if (transcriptionWatchdogRef.current) {
+      clearTimeout(transcriptionWatchdogRef.current)
+      transcriptionWatchdogRef.current = null
+    }
+  }, [])
+
+  const resetTranscriptionRequest = useCallback(() => {
+    activeTranscriptionRequestRef.current = null
+    clearTranscriptionWatchdog()
+    if (mountedRef.current) setIsTranscribing(false)
+  }, [clearTranscriptionWatchdog])
+
+  const startTranscriptionRequest = useCallback((requestId: string) => {
+    activeTranscriptionRequestRef.current = requestId
+    clearTranscriptionWatchdog()
+    if (mountedRef.current) setIsTranscribing(true)
+
+    transcriptionWatchdogRef.current = setTimeout(() => {
+      if (activeTranscriptionRequestRef.current !== requestId) return
+      activeTranscriptionRequestRef.current = null
+      transcriptionWatchdogRef.current = null
+      if (mountedRef.current) setIsTranscribing(false)
+      setTransientError('Transcription timed out — try again')
+    }, VOICE_TRANSCRIPTION_WATCHDOG_MS)
+  }, [clearTranscriptionWatchdog, setTransientError])
+
+  const markTranscriptionInProgress = useCallback((requestId?: unknown) => {
+    const incomingRequestId = requestIdFrom(requestId)
+    const activeRequestId = activeTranscriptionRequestRef.current
+    if (incomingRequestId && activeRequestId && incomingRequestId !== activeRequestId) {
+      return false
+    }
+
+    startTranscriptionRequest(activeRequestId ?? incomingRequestId ?? createVoiceRequestId())
+    return true
+  }, [startTranscriptionRequest])
+
+  const finishTranscriptionRequest = useCallback((requestId?: unknown) => {
+    const incomingRequestId = requestIdFrom(requestId)
+    const activeRequestId = activeTranscriptionRequestRef.current
+    if (incomingRequestId && activeRequestId && incomingRequestId !== activeRequestId) {
+      return false
+    }
+
+    resetTranscriptionRequest()
+    return true
+  }, [resetTranscriptionRequest])
 
   const tearDownRecording = useCallback(() => {
     const rec = recCtxRef.current
@@ -121,29 +180,32 @@ export function useVoiceCapture({
   }, [tearDownRecording])
 
   const sendVoiceAudio = useCallback((audio: Float32Array, sampleRate: number) => {
+    const requestId = createVoiceRequestId()
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn('Voice: WebSocket not open, discarding audio')
+      resetTranscriptionRequest()
       setTransientError('Connection lost — try again')
       return false
     }
 
     try {
-      if (mountedRef.current) setIsTranscribing(true)
       const conversationId = conversationIdRef.current
       if (!conversationId) {
+        resetTranscriptionRequest()
         setTransientError('Missing conversation')
         return false
       }
       const wavBuffer = utils.encodeWAV(audio, 1, sampleRate, 1, 16)
       const base64 = utils.arrayBufferToBase64(wavBuffer)
 
+      startTranscriptionRequest(requestId)
       const payload: VoiceAudioPayload = {
         type: 'voice_audio',
         conversation_id: conversationId,
         audio_data: base64,
         mime_type: 'audio/wav',
-        request_id: createVoiceRequestId(),
+        request_id: requestId,
       }
       if (projectIdRef?.current) {
         payload.project_id = projectIdRef.current
@@ -153,11 +215,18 @@ export function useVoiceCapture({
       return true
     } catch (err) {
       console.error('Voice: Failed to encode/send audio:', err)
-      if (mountedRef.current) setIsTranscribing(false)
+      resetTranscriptionRequest()
       setTransientError('Failed to process audio')
       return false
     }
-  }, [conversationIdRef, projectIdRef, setTransientError, wsRef])
+  }, [
+    conversationIdRef,
+    projectIdRef,
+    resetTranscriptionRequest,
+    setTransientError,
+    startTranscriptionRequest,
+    wsRef,
+  ])
 
   const stopRecording = useCallback(async () => {
     const rec = recCtxRef.current
@@ -344,20 +413,23 @@ export function useVoiceCapture({
   useEffect(() => {
     return () => {
       mountedRef.current = false
+      clearTranscriptionWatchdog()
       cancelRecording()
       if (vadRef.current) {
         vadRef.current.destroy()
         vadRef.current = null
       }
     }
-  }, [cancelRecording])
+  }, [cancelRecording, clearTranscriptionWatchdog])
 
   return {
     isListening,
     isSpeechDetected,
     isRecording,
     isTranscribing,
-    setIsTranscribing,
+    markTranscriptionInProgress,
+    finishTranscriptionRequest,
+    resetTranscriptionRequest,
     startRecording,
     stopRecording,
     cancelRecording,

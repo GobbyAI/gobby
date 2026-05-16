@@ -500,3 +500,92 @@ class TestVoiceWarmup:
         mixin._handle_chat_message.assert_awaited_once()
         chat_data = mixin._handle_chat_message.await_args.args[1]
         assert "project_id" not in chat_data
+
+    @pytest.mark.asyncio
+    async def test_voice_audio_timeout_sends_error_with_request_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Hung STT transcription should time out without forwarding chat."""
+        monkeypatch.setattr(
+            "gobby.servers.websocket.voice.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS", 0.01
+        )
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        stt = MagicMock()
+
+        async def transcribe_forever(_audio_bytes: bytes, _mime_type: str) -> str:
+            await wait_forever()
+            return ""
+
+        stt.transcribe = AsyncMock(side_effect=transcribe_forever)
+        mixin._get_stt = MagicMock(return_value=stt)
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-timeout",
+                "audio_data": "YXVkaW8=",
+                "mime_type": "audio/wav",
+                "request_id": "req-timeout",
+            },
+        )
+
+        payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert payloads[-1] == {
+            "type": "voice_status",
+            "conversation_id": "conv-timeout",
+            "status": "error",
+            "request_id": "req-timeout",
+            "error": "Speech-to-text timed out",
+        }
+        mixin._handle_chat_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_voice_audio_no_audio_error_includes_request_id(self) -> None:
+        """No-audio errors should echo the client request_id."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-empty-audio",
+                "audio_data": "",
+                "mime_type": "audio/wav",
+                "request_id": "req-no-audio",
+            },
+        )
+
+        payload = json.loads(websocket.send.await_args.args[0])
+        assert payload == {
+            "type": "voice_status",
+            "conversation_id": "conv-empty-audio",
+            "status": "error",
+            "request_id": "req-no-audio",
+            "error": "No audio data provided",
+        }
+
+    @pytest.mark.asyncio
+    async def test_voice_audio_stt_unavailable_error_includes_request_id(self) -> None:
+        """STT-unavailable errors should echo the client request_id."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        mixin._get_stt = MagicMock(return_value=None)
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-no-stt",
+                "audio_data": "YXVkaW8=",
+                "mime_type": "audio/wav",
+                "request_id": "req-no-stt",
+            },
+        )
+
+        payload = json.loads(websocket.send.await_args.args[0])
+        assert payload["type"] == "voice_status"
+        assert payload["conversation_id"] == "conv-no-stt"
+        assert payload["status"] == "error"
+        assert payload["request_id"] == "req-no-stt"
+        assert "Speech-to-text" in payload["error"]

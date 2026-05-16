@@ -26,6 +26,26 @@ _WARMUP_IDLE = "idle"
 _WARMUP_LOADING = "loading"
 _WARMUP_READY = "ready"
 _WARMUP_ERROR = "error"
+VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
+
+
+def _voice_status_payload(
+    conversation_id: str,
+    request_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "voice_status",
+        "conversation_id": conversation_id,
+        "status": status,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    if error:
+        payload["error"] = error
+    return payload
 
 
 async def _broadcast_tts_status(
@@ -647,7 +667,8 @@ class VoiceMixin:
         conversation_id = data.get("conversation_id", "")
         audio_data_b64 = data.get("audio_data", "")
         mime_type = data.get("mime_type", "audio/webm")
-        request_id = data.get("request_id", "")
+        request_id_raw = data.get("request_id", "")
+        request_id = request_id_raw if isinstance(request_id_raw, str) else ""
         project_id = data.get("project_id")
 
         logger.info(
@@ -661,12 +682,12 @@ class VoiceMixin:
         if not audio_data_b64:
             await websocket.send(
                 json.dumps(
-                    {
-                        "type": "voice_status",
-                        "conversation_id": conversation_id,
-                        "status": "error",
-                        "error": "No audio data provided",
-                    }
+                    _voice_status_payload(
+                        conversation_id,
+                        request_id,
+                        "error",
+                        error="No audio data provided",
+                    )
                 )
             )
             return
@@ -685,32 +706,28 @@ class VoiceMixin:
                 )
             await websocket.send(
                 json.dumps(
-                    {
-                        "type": "voice_status",
-                        "conversation_id": conversation_id,
-                        "status": "error",
-                        "error": error_msg,
-                    }
+                    _voice_status_payload(
+                        conversation_id,
+                        request_id,
+                        "error",
+                        error=error_msg,
+                    )
                 )
             )
             return
 
         # Send transcribing status
         await websocket.send(
-            json.dumps(
-                {
-                    "type": "voice_status",
-                    "conversation_id": conversation_id,
-                    "request_id": request_id,
-                    "status": "transcribing",
-                }
-            )
+            json.dumps(_voice_status_payload(conversation_id, request_id, "transcribing"))
         )
 
         try:
             start = time.monotonic()
             audio_bytes = base64.b64decode(audio_data_b64)
-            text = await stt.transcribe(audio_bytes, mime_type)
+            text = await asyncio.wait_for(
+                stt.transcribe(audio_bytes, mime_type),
+                timeout=VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+            )
             duration_ms = int((time.monotonic() - start) * 1000)
 
             if not text.strip():
@@ -718,14 +735,7 @@ class VoiceMixin:
                     f"Voice transcription empty for {conversation_id[:8]}... ({duration_ms}ms)"
                 )
                 await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "voice_status",
-                            "conversation_id": conversation_id,
-                            "request_id": request_id,
-                            "status": "empty",
-                        }
-                    )
+                    json.dumps(_voice_status_payload(conversation_id, request_id, "empty"))
                 )
                 return
 
@@ -753,18 +763,36 @@ class VoiceMixin:
                 chat_data["project_id"] = project_id
             await self._handle_chat_message(websocket, chat_data)
 
+        except TimeoutError:
+            logger.error(
+                "Voice transcription timed out after %.1fs for %s...",
+                VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+                conversation_id[:8],
+            )
+            try:
+                await websocket.send(
+                    json.dumps(
+                        _voice_status_payload(
+                            conversation_id,
+                            request_id,
+                            "error",
+                            error="Speech-to-text timed out",
+                        )
+                    )
+                )
+            except (ConnectionClosed, ConnectionClosedError):
+                pass
         except Exception as e:
             logger.error(f"Voice transcription error: {e}", exc_info=True)
             try:
                 await websocket.send(
                     json.dumps(
-                        {
-                            "type": "voice_status",
-                            "conversation_id": conversation_id,
-                            "request_id": request_id,
-                            "status": "error",
-                            "error": str(e),
-                        }
+                        _voice_status_payload(
+                            conversation_id,
+                            request_id,
+                            "error",
+                            error=str(e),
+                        )
                     )
                 )
             except (ConnectionClosed, ConnectionClosedError):

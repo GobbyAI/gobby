@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useVoice } from '../useVoice'
 import { parseVoiceStatus } from '../voiceStatus'
+import { VOICE_TRANSCRIPTION_WATCHDOG_MS } from '../voice/useVoiceCapture'
 import {
   resetVoicePrepareCacheForTests,
   seedVoicePrepareCacheForTests,
@@ -217,6 +218,7 @@ describe('useVoice', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -224,6 +226,23 @@ describe('useVoice', () => {
   const voicePreparePayloads = () => (
     sentPayloads().filter((payload) => payload.type === 'voice_prepare')
   )
+  const voiceAudioPayloads = () => (
+    sentPayloads().filter((payload) => payload.type === 'voice_audio')
+  )
+
+  const submitPttAudio = async (result: { current: ReturnType<typeof useVoice> }) => {
+    await act(async () => {
+      await result.current.startRecording()
+    })
+
+    act(() => {
+      lastWorkletNode?.port.onmessage?.(workletMessage(new Float32Array(16_000).fill(0.25)))
+    })
+
+    await act(async () => {
+      await result.current.stopRecording()
+    })
+  }
 
   it('preserves voice loading before a configured TTS provider is available', () => {
     const parsed = parseVoiceStatus({
@@ -614,6 +633,161 @@ describe('useVoice', () => {
         project_id: 'project-ptt',
       }),
     ]))
+  })
+
+  it('clears PTT transcribing state when transcription succeeds', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-success',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    const voiceAudio = voiceAudioPayloads()[0]
+    expect(voiceAudio.request_id).toEqual(expect.any(String))
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_transcription',
+        conversation_id: 'conv-transcribe-success',
+        request_id: voiceAudio.request_id,
+        text: 'hello',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it.each([
+    ['empty', undefined],
+    ['error', 'STT failed'],
+  ])('clears PTT transcribing state on voice_status:%s', async (status, error) => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      `conv-transcribe-${status}`,
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    const voiceAudio = voiceAudioPayloads()[0]
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        conversation_id: `conv-transcribe-${status}`,
+        request_id: voiceAudio.request_id,
+        status,
+        error,
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it('does not clear a newer transcription from a stale terminal event', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-stale',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+    const firstRequestId = voiceAudioPayloads()[0].request_id
+
+    await submitPttAudio(result)
+    const secondRequestId = voiceAudioPayloads()[1].request_id
+    expect(secondRequestId).not.toBe(firstRequestId)
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        request_id: firstRequestId,
+        status: 'error',
+        error: 'old failure',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(true)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_transcription',
+        request_id: secondRequestId,
+        text: 'fresh result',
+      })
+    })
+
+    expect(result.current.isTranscribing).toBe(false)
+  })
+
+  it('does not leave PTT transcribing state stuck for local send failures', async () => {
+    const missingConversation = renderHook(() => useVoice(
+      wsRef as any,
+      '',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(missingConversation.result)
+    expect(missingConversation.result.current.isTranscribing).toBe(false)
+    expect(voiceAudioPayloads()).toHaveLength(0)
+
+    missingConversation.unmount()
+    wsRef.current!.readyState = 3
+
+    const closedSocket = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-closed-socket',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(closedSocket.result)
+    expect(closedSocket.result.current.isTranscribing).toBe(false)
+    expect(voiceAudioPayloads()).toHaveLength(0)
+  })
+
+  it('clears stale PTT transcribing state after the watchdog timeout', async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-transcribe-watchdog',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+    expect(result.current.isTranscribing).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(VOICE_TRANSCRIPTION_WATCHDOG_MS - 1)
+    })
+    expect(result.current.isTranscribing).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(result.current.isTranscribing).toBe(false)
   })
 
   it('discards short PTT captures without sending audio', async () => {
