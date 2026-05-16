@@ -427,18 +427,17 @@ class TestBuildTurnAndDigest:
         assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
-    async def test_title_update_failure_still_persists_digest(
+    async def test_title_update_failure_aborts_digest_persistence(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
-        caplog: pytest.LogCaptureFixture,
     ):
-        """Digest persistence continues when title storage rejects the update."""
+        """Digest persistence fails fast when title storage rejects the update."""
         mock_session_manager.update_title.return_value = None
 
-        with caplog.at_level("WARNING", logger="gobby.memory.digest"):
-            result = await build_turn_and_digest(
+        with pytest.raises(RuntimeError, match="Failed to update session title"):
+            await build_turn_and_digest(
                 memory_manager=mock_memory_manager,
                 session_manager=mock_session_manager,
                 session_id="session-123",
@@ -446,18 +445,14 @@ class TestBuildTurnAndDigest:
                 llm_service=mock_llm_service,
             )
 
-        assert result is not None
-        assert result["turn_num"] == 1
-        assert "title" not in result
         mock_session_manager.update_title.assert_called_once_with(
             "session-123",
             "Fix Auth Bug",
             title_source="llm",
         )
-        mock_session_manager.update_last_turn_markdown.assert_called_once()
-        mock_session_manager.update_digest_markdown.assert_called_once()
-        mock_session_manager.update_last_digest_input_hash.assert_called_once()
-        assert "Failed to update session title" in caplog.text
+        mock_session_manager.update_last_turn_markdown.assert_not_called()
+        mock_session_manager.update_digest_markdown.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invalid_turn_record_json_returns_error_without_persistence(

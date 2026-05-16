@@ -138,13 +138,43 @@ gobby install [OPTIONS]
 gobby uninstall [OPTIONS]
 ```
 
-`gobby install` supports `--claude`, `--gemini`, `--codex`, `--droid`,
-`--qwen`, `--hooks`, `--git-hooks`, `--all`, `--no-ext-services`,
-`--neo4j-password`, `--project`, `--voice`, `--embedding-url`,
-`--embedding-provider`, `--embedding-model`, `--embedding-dim`,
-`--no-interactive`, and `-C, --path PATH`. `gobby uninstall` supports
-`--claude`, `--gemini`, `--codex`, `--droid`, `--qwen`, `--all`, `--neo4j`,
-`--volumes`, `--project`, and `-C, --path PATH`.
+`gobby install` options:
+
+| Option | Purpose |
+| --- | --- |
+| `--claude` | Install Claude Code integration assets. |
+| `--gemini` | Install Gemini integration assets. |
+| `--codex` | Install Codex integration assets. |
+| `--droid` | Install Droid integration assets. |
+| `--qwen` | Install QwenCode integration assets. |
+| `--hooks` | Install CLI hook configuration. |
+| `--git-hooks` | Install repository git hooks. |
+| `--all` | Install all supported integrations. |
+| `--no-ext-services` | Skip external service setup. |
+| `--neo4j-password PASSWORD` | Configure Neo4j with a specific password. |
+| `--project` | Install project-scoped configuration. |
+| `--voice` | Install voice support assets. |
+| `--embedding-url URL` | Use a custom embedding API endpoint. |
+| `--embedding-provider PROVIDER` | Force embedding provider compatibility mode. |
+| `--embedding-model MODEL` | Override the embedding model. |
+| `--embedding-dim N` | Override the embedding dimension. |
+| `--no-interactive` | Run without prompts. |
+| `-C`, `--path PATH` | Install against a specific path. |
+
+`gobby uninstall` options:
+
+| Option | Purpose |
+| --- | --- |
+| `--claude` | Remove Claude Code integration assets. |
+| `--gemini` | Remove Gemini integration assets. |
+| `--codex` | Remove Codex integration assets. |
+| `--droid` | Remove Droid integration assets. |
+| `--qwen` | Remove QwenCode integration assets. |
+| `--all` | Remove all supported integration assets. |
+| `--neo4j` | Remove Neo4j integration data. |
+| `--volumes` | Remove service volumes where supported. |
+| `--project` | Remove project-scoped configuration. |
+| `-C`, `--path PATH` | Uninstall from a specific path. |
 
 ### `gobby mcp-server`
 

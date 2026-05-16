@@ -10,6 +10,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -81,6 +82,7 @@ def _insert_agent(
     include: list[str],
     exclude: list[str] | None = None,
     rules: list[str] | None = None,
+    project_id: str | None = None,
 ) -> str:
     body = AgentDefinitionBody(
         name=name,
@@ -94,6 +96,7 @@ def _insert_agent(
         definition_json=body.model_dump_json(),
         workflow_type="agent",
         source="custom",
+        project_id=project_id,
     )
     return row.id
 
@@ -2514,6 +2517,71 @@ class TestLiveActiveRuleSelection:
 
         assert variables.get("worker_matched") is True
         assert variables.get("default_matched") is None
+
+    @pytest.mark.asyncio
+    async def test_project_scoped_agent_definition_wins_for_event_project(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Resolve live agent rules from the event's project-scoped agent row first."""
+        project = LocalProjectManager(db).create(name="project-one", repo_path="/tmp/project-one")
+        _insert_agent(manager, "default", include=["tag:global"])
+        _insert_agent(manager, "default", include=["tag:project"], project_id=project.id)
+        _insert_rule(
+            manager,
+            "global-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
+            ),
+            tags=["global"],
+        )
+        _insert_rule(
+            manager,
+            "project-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="project_matched", value=True)],
+            ),
+            tags=["project"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "default"}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        event.project_id = project.id
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("project_matched") is True
+        assert variables.get("global_matched") is None
+
+    @pytest.mark.asyncio
+    async def test_global_agent_definition_is_fallback_for_event_project(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Resolve global live agent rules when no project-scoped agent row exists."""
+        project = LocalProjectManager(db).create(name="project-two", repo_path="/tmp/project-two")
+        _insert_agent(manager, "default", include=["tag:global"])
+        _insert_rule(
+            manager,
+            "global-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
+            ),
+            tags=["global"],
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "default"}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Read", "project_id": project.id},
+        )
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("global_matched") is True
 
     @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(

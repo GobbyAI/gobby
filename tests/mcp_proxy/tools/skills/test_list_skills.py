@@ -2,8 +2,9 @@
 
 import asyncio
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -88,7 +89,8 @@ class TestListSkillsTool:
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-list-db")
         original_list_skills = LocalSkillManager.list_skills
 
-        def slow_list_skills(self, *args, **kwargs):
+        def slow_list_skills(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
+            """Delay storage reads so concurrent connection growth is observable."""
             time.sleep(0.02)
             return original_list_skills(self, *args, **kwargs)
 
@@ -320,9 +322,10 @@ class TestListSkillsInternalFilter:
 async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> None:
     storage = MagicMock()
     storage.list_skills.return_value = []
-    run_db_calls = []
+    run_db_calls: list[Callable[..., Any]] = []
 
-    async def run_db(func, *args, **kwargs):
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Record DB calls routed through the injected SQLite runner."""
         run_db_calls.append(func)
         return func(*args, **kwargs)
 
@@ -354,9 +357,10 @@ async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> N
 async def test_list_skills_routes_overfetch_batches_through_run_sqlite() -> None:
     storage = MagicMock()
     storage.list_skills.side_effect = [[], []]
-    run_db_calls = []
+    run_db_calls: list[Callable[..., Any]] = []
 
-    async def run_db(func, *args, **kwargs):
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Record overfetch DB calls routed through the injected SQLite runner."""
         run_db_calls.append(func)
         return func(*args, **kwargs)
 

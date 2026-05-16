@@ -19,7 +19,7 @@ function resolveWebPackageRoot(): string {
   throw new Error(`Unable to resolve web package root from cwd=${current}`)
 }
 
-const cwd = resolveWebPackageRoot()
+let webPackageRoot: string | undefined
 
 interface CssParent {
   type: string
@@ -29,7 +29,8 @@ interface CssParent {
 }
 
 function readSource(rel: string): string {
-  return readFileSync(join(cwd, rel), 'utf8')
+  webPackageRoot ??= resolveWebPackageRoot()
+  return readFileSync(join(webPackageRoot, rel), 'utf8')
 }
 
 function importSpecifiers(source: string): string[] {
@@ -45,6 +46,86 @@ function importSpecifiers(source: string): string[] {
     .map(statement => statement.moduleSpecifier)
     .filter(ts.isStringLiteral)
     .map(specifier => specifier.text)
+}
+
+function jsxAttributeTextParts(attribute: ts.JsxAttribute): string[] {
+  const initializer = attribute.initializer
+  if (!initializer) return []
+  if (ts.isStringLiteral(initializer)) return [initializer.text]
+  if (ts.isJsxExpression(initializer) && initializer.expression) {
+    return expressionTextParts(initializer.expression)
+  }
+  return []
+}
+
+function expressionTextParts(expression: ts.Expression): string[] {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return [expression.text]
+  }
+  if (ts.isTemplateExpression(expression)) {
+    return [
+      expression.head.text,
+      ...expression.templateSpans.map(span => span.literal.text),
+    ]
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return [
+      ...expressionTextParts(expression.whenTrue),
+      ...expressionTextParts(expression.whenFalse),
+    ]
+  }
+  if (ts.isParenthesizedExpression(expression)) {
+    return expressionTextParts(expression.expression)
+  }
+  if (ts.isCallExpression(expression)) {
+    return expression.arguments.flatMap(argument => expressionTextParts(argument))
+  }
+  return []
+}
+
+function jsxAttributeValues(source: string, attrName: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    'component.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const values: string[] = []
+
+  function visit(node: ts.Node): void {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      for (const prop of node.attributes.properties) {
+        if (!ts.isJsxAttribute(prop) || !ts.isIdentifier(prop.name)) continue
+        if (prop.name.text !== attrName) continue
+        values.push(...jsxAttributeTextParts(prop))
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return values
+}
+
+function jsxClassTokens(source: string): Set<string> {
+  return new Set(
+    jsxAttributeValues(source, 'className')
+      .flatMap(value => value.split(/\s+/))
+      .filter(Boolean),
+  )
+}
+
+function expectClassToken(source: string, token: string): void {
+  expect(jsxClassTokens(source).has(token), `Expected JSX class token ${token}`).toBe(true)
+}
+
+function expectNoClassToken(source: string, token: string): void {
+  expect(jsxClassTokens(source).has(token), `Unexpected JSX class token ${token}`).toBe(false)
+}
+
+function expectStringAttribute(source: string, attrName: string, value: string): void {
+  expect(jsxAttributeValues(source, attrName)).toContain(value)
 }
 
 function parseCss(rel: string): Root {
@@ -152,26 +233,29 @@ describe('mobile chrome CSS', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
     const buttonsIndex = imports.indexOf('./styles/buttons.css')
+    const segmentedControlIndex = imports.indexOf('./styles/segmented-control.css')
     const appShellIndex = imports.indexOf('./styles/app-shell.css')
 
     expect(buttonsIndex).toBeGreaterThanOrEqual(0)
+    expect(segmentedControlIndex).toBeGreaterThanOrEqual(0)
     expect(appShellIndex).toBeGreaterThanOrEqual(0)
-    expect(buttonsIndex).toBeLessThan(appShellIndex)
+    expect(buttonsIndex).toBeLessThan(segmentedControlIndex)
+    expect(segmentedControlIndex).toBeLessThan(appShellIndex)
   })
 
   it('keeps the top app chrome compact on mobile touch viewports', () => {
     const appSource = readSource('src/App.tsx')
-    const buttonCss = parseCss('src/styles/buttons.css')
+    const segmentedControlCss = parseCss('src/styles/segmented-control.css')
     const shellCss = parseCss('src/styles/app-shell.css')
 
-    expect(appSource).toContain('className="app-header"')
-    expect(appSource).toContain('className="app-brand"')
-    expect(appSource).toContain('variant="ghost"')
-    expect(appSource).toContain('className="app-menu-button"')
-    expect(appSource).toContain('className="app-brand-logo"')
-    expect(appSource).toContain('className="app-brand-title"')
-    expect(appSource).toContain('className="app-header-actions"')
-    expect(appSource).toMatch(/className="[^"]*\bapp-health-badge\b[^"]*"/)
+    expectClassToken(appSource, 'app-header')
+    expectClassToken(appSource, 'app-brand')
+    expectStringAttribute(appSource, 'variant', 'ghost')
+    expectClassToken(appSource, 'app-menu-button')
+    expectClassToken(appSource, 'app-brand-logo')
+    expectClassToken(appSource, 'app-brand-title')
+    expectClassToken(appSource, 'app-header-actions')
+    expectClassToken(appSource, 'app-health-badge')
 
     expectDeclarations(
       shellCss,
@@ -201,10 +285,10 @@ describe('mobile chrome CSS', () => {
       background: 'var(--accent-soft)',
       color: 'var(--accent)',
     })
-    expectDeclarations(buttonCss, '.segmented-control__option--sm', {
+    expectDeclarations(segmentedControlCss, '.segmented-control__option--sm', {
       'padding-inline': '0.5rem',
     })
-    expectDeclarations(buttonCss, '.segmented-control__option--md', {
+    expectDeclarations(segmentedControlCss, '.segmented-control__option--md', {
       'padding-inline': '0.75rem',
     })
     expectDeclarations(shellCss, '.app-header-actions', {
@@ -284,14 +368,14 @@ describe('mobile chrome CSS', () => {
     const agentIndicatorSource = readSource('src/components/chat/ActiveAgentIndicator.tsx')
     const narrowChatColumn = 'chat-column (max-width: 360px)'
 
-    expect(chatInputSource).toContain('chat-input-footer border-t border-border bg-background py-3')
-    expect(chatInputSource).not.toContain(
-      'chat-input-footer border-t border-border bg-background px-4 py-3',
-    )
-    expect(segmentedControlSource).not.toContain("'px-2'")
-    expect(segmentedControlSource).not.toContain("'px-3'")
-    expect(agentIndicatorSource).toContain('chat-input-agent-button rounded')
-    expect(agentIndicatorSource).not.toContain('chat-input-agent-button p-1.5')
+    expectClassToken(chatInputSource, 'chat-input-footer')
+    expectClassToken(chatInputSource, 'py-3')
+    expectNoClassToken(chatInputSource, 'px-4')
+    expectNoClassToken(segmentedControlSource, 'px-2')
+    expectNoClassToken(segmentedControlSource, 'px-3')
+    expectClassToken(agentIndicatorSource, 'chat-input-agent-button')
+    expectClassToken(agentIndicatorSource, 'rounded')
+    expectNoClassToken(agentIndicatorSource, 'p-1.5')
     expectDeclarations(inputCss, '.chat-input-footer', {
       'padding-inline': '1rem',
     })

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { useState, useCallback, useMemo, forwardRef, useImperativeHandle, useId } from 'react'
 import type { WorkflowDetail } from '../../hooks/useWorkflows'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { cn } from '../../lib/utils'
@@ -544,6 +544,7 @@ function PromptFields({ step, onChange }: { step: PipelineStep; onChange: (u: Pa
 }
 
 function McpFields({ step, onChange }: { step: PipelineStep; onChange: (u: Partial<PipelineStep>) => void }) {
+  const argumentsLabelId = useId()
   const mcp = (step.mcp as Record<string, unknown>) ?? {}
   const args = (mcp.arguments as Record<string, string>) ?? {}
 
@@ -579,8 +580,8 @@ function McpFields({ step, onChange }: { step: PipelineStep; onChange: (u: Parti
           onChange={(e) => setMcpField('tool', e.target.value)}
         />
       </label>
-      <div className={FIELD_CLS} role="group" aria-label="Arguments">
-        <span className={FIELD_LABEL_CLS}>Arguments</span>
+      <div className={FIELD_CLS} role="group" aria-labelledby={argumentsLabelId}>
+        <span id={argumentsLabelId} className={FIELD_LABEL_CLS}>Arguments</span>
         <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
       </div>
     </>
@@ -588,6 +589,7 @@ function McpFields({ step, onChange }: { step: PipelineStep; onChange: (u: Parti
 }
 
 function InvokePipelineFields({ step, onChange }: { step: PipelineStep; onChange: (u: Partial<PipelineStep>) => void }) {
+  const argumentsLabelId = useId()
   const raw = step.invoke_pipeline
   const isObject = typeof raw === 'object' && raw !== null
   const name = isObject ? ((raw as Record<string, unknown>).name as string) ?? '' : (raw as string) ?? ''
@@ -617,8 +619,8 @@ function InvokePipelineFields({ step, onChange }: { step: PipelineStep; onChange
         <span className={FIELD_LABEL_CLS}>Pipeline Name</span>
         <input type="text" className={FIELD_INPUT_CLS} value={name} onChange={(e) => setName(e.target.value)} placeholder="pipeline-name" />
       </label>
-      <div className={FIELD_CLS} role="group" aria-label="Arguments">
-        <span className={FIELD_LABEL_CLS}>Arguments</span>
+      <div className={FIELD_CLS} role="group" aria-labelledby={argumentsLabelId}>
+        <span id={argumentsLabelId} className={FIELD_LABEL_CLS}>Arguments</span>
         <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
       </div>
     </>

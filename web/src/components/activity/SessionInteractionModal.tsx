@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useId, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -107,6 +107,7 @@ export function SessionInteractionModal({
   entry,
   fromSessionId,
 }: SessionInteractionModalProps) {
+  const argumentsLabelId = useId();
   const [text, setText] = useState("");
   const [literal, setLiteral] = useState(true);
   const [paneOutput, setPaneOutput] = useState<string | null>(null);
@@ -388,8 +389,11 @@ export function SessionInteractionModal({
 
             {/* Dynamic args form */}
             {toolSchema && !schemaLoading && (
-              <div role="group" aria-label="Arguments">
-                <span className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              <div role="group" aria-labelledby={argumentsLabelId}>
+                <span
+                  id={argumentsLabelId}
+                  className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2"
+                >
                   Arguments
                 </span>
                 <ToolArgumentForm

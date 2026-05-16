@@ -39,6 +39,10 @@ const EXPECTED_DEFAULT_LIGHTNESS: Array<[string, number]> = [
 ]
 
 function defaultThemeTokens(): string {
+  // Intentional dependency: ActivityRowStatusDot binds directly to app-level
+  // design tokens, and the app-level defaults live in styles/index.css :root.
+  // This test reads that block rather than generating CSS so it catches drift
+  // between the component token map and the shipped default theme.
   const testDir = dirname(fileURLToPath(import.meta.url))
   const css = readFileSync(join(testDir, '../../../styles/index.css'), 'utf8')
   const match = css.match(/^:root\s*{([\s\S]*?)^}/m)
@@ -47,6 +51,9 @@ function defaultThemeTokens(): string {
 }
 
 function tokenLightness(block: string, token: string): number {
+  // Expected format is `--token-name: oklch(<lightness>% ...);`.
+  // The lightness ladder is the accessibility contract under grayscale
+  // rendering; changing token syntax should update this assertion deliberately.
   const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = block.match(new RegExp(`${escapedToken}:\\s*oklch\\((\\d+(?:\\.\\d+)?)%`))
   if (!match) throw new Error(`Unable to find OKLCH token ${token}`)

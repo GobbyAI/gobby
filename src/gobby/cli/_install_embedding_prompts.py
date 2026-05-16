@@ -112,7 +112,7 @@ def _select_embedding_provider(
             try:
                 result = installer(provider="none")
                 _record_embedding_install_result(results, result)
-            except (OSError, RuntimeError, ValueError, sqlite3.Error) as e:
+            except _EMBEDDING_INSTALLER_EXCEPTIONS as e:
                 logger.warning(
                     "Failed to persist 'none' embedding config: %s",
                     e,

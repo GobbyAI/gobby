@@ -30,7 +30,19 @@ function patchFile(path, original, replacement) {
   return 'patched'
 }
 
-const packageJson = JSON.parse(readText(packageJsonPath))
+let packageJson
+try {
+  packageJson = JSON.parse(readText(packageJsonPath))
+} catch (error) {
+  if (error instanceof SyntaxError) {
+    console.warn(
+      `Skipping @tailwindcss/node DEP0205 patch because ${packageJsonPath} is malformed: ${error.message}`,
+    )
+    process.exit(0)
+  }
+  throw error
+}
+
 if (packageJson.version !== targetVersion) {
   console.log(
     `Skipping @tailwindcss/node DEP0205 patch for version ${packageJson.version}; expected ${targetVersion}.`,

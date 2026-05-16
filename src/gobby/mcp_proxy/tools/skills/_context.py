@@ -54,3 +54,20 @@ class SkillsContext:
         if self.run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self.run_db(func, *args, **kwargs)
+
+    async def get_active_skill_names(self, session_id: str) -> list[str] | None:
+        """Return active skill names recorded for a session, when available."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        def _get_active_names() -> object | None:
+            resolved_id = self.session_manager.resolve_session_reference(
+                session_id, project_id=self.project_id
+            )
+            sv_mgr = SessionVariableManager(self.db)
+            variables = sv_mgr.get_variables(resolved_id)
+            return variables.get("_active_skill_names") if variables else None
+
+        names = await self.run_sqlite(_get_active_names)
+        if not isinstance(names, list):
+            return None
+        return [name for name in names if isinstance(name, str)]

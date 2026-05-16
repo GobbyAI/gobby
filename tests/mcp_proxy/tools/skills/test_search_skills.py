@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -118,7 +119,8 @@ class TestSearchSkillsTool:
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-search-db")
         original_get_skills_by_ids = LocalSkillManager.get_skills_by_ids
 
-        def slow_get_skills_by_ids(self, *args, **kwargs):
+        def slow_get_skills_by_ids(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
+            """Delay result hydration so bounded DB runner behavior is observable."""
             time.sleep(0.02)
             return original_get_skills_by_ids(self, *args, **kwargs)
 

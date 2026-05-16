@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
@@ -50,17 +50,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             active_names = None
             if session_id:
                 try:
-                    from gobby.workflows.state_manager import SessionVariableManager
-
-                    def _get_active_names() -> Any:
-                        resolved_id = ctx.session_manager.resolve_session_reference(
-                            session_id, project_id=ctx.project_id
-                        )
-                        sv_mgr = SessionVariableManager(ctx.db)
-                        sv = sv_mgr.get_variables(resolved_id)
-                        return sv.get("_active_skill_names") if sv else None
-
-                    active_names = await ctx.run_sqlite(_get_active_names)
+                    active_names = await ctx.get_active_skill_names(session_id)
                 except Exception:
                     logger.debug(f"Failed to resolve active skill names for session {session_id}")
 
@@ -88,17 +78,14 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 limit_value: int,
                 offset_value: int = 0,
             ) -> list[Skill]:
-                return cast(
-                    list[Skill],
-                    await ctx.run_sqlite(
-                        ctx.storage.list_skills,
-                        project_id=ctx.project_id,
-                        category=category,
-                        enabled=enabled,
-                        limit=limit_value,
-                        offset=offset_value,
-                        include_global=True,
-                    ),
+                return await ctx.run_sqlite(
+                    ctx.storage.list_skills,
+                    project_id=ctx.project_id,
+                    category=category,
+                    enabled=enabled,
+                    limit=limit_value,
+                    offset=offset_value,
+                    include_global=True,
                 )
 
             skills: list[Skill] = []

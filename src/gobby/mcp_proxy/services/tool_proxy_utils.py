@@ -5,8 +5,12 @@ def safe_truncate(text: str | bytes | None, length: int = 100) -> str:
     """Safely truncate text to length by unicode code points."""
     if text is None:
         return ""
+    if length <= 0:
+        return ""
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
     if len(text) <= length:
         return text
-    return text[:length] + "..."
+    if length <= 3:
+        return "." * length
+    return text[: length - 3] + "..."

@@ -66,9 +66,13 @@ def _object_attr(value: object, attr: str) -> object | None:
 def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
     if not text:
         return ""
+    if max_chars <= 0:
+        return ""
     if len(text) <= max_chars:
         return text
-    return f"{text[:max_chars]}…"
+    if max_chars == 1:
+        return "…"
+    return f"{text[: max_chars - 1]}…"
 
 
 def _external_server_is_unhealthy(mcp_manager: HealthAwareMCPManager, server_name: str) -> bool:

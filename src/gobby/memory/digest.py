@@ -58,6 +58,10 @@ class SessionTitlePolicy(Protocol):
     title_source: str | None
 
 
+class _DigestPersistenceError(RuntimeError):
+    """Raised when digest persistence would leave partial session state."""
+
+
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
     """Import memories from filesystem.
 
@@ -806,13 +810,10 @@ async def build_turn_and_digest(
                 title_source="llm",
             )
             if updated_session is None:
-                logger.warning(
-                    "build_turn_and_digest: Failed to update session title for %s; "
-                    "continuing digest persistence",
-                    session_id,
+                raise _DigestPersistenceError(
+                    "Failed to update session title while persisting digest for "
+                    f"{session_id}; aborting digest persistence to avoid partial state."
                 )
-                digest_title = None
-                title_changed = False
 
         # 6. Persist digest state only after contract validation succeeds.
         session_manager.update_last_turn_markdown(session_id, last_turn)
@@ -833,6 +834,8 @@ async def build_turn_and_digest(
 
         return result
 
+    except _DigestPersistenceError:
+        raise
     except Exception as e:
         logger.error(
             f"build_turn_and_digest: Failed for session {session_id}: {e}",

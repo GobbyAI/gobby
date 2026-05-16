@@ -37,6 +37,28 @@ describe('Settings voice section', () => {
     expect(screen.queryByText('Claude Opus')).toBeNull()
   })
 
+  it('labels setting groups and marks selected options as pressed', () => {
+    render(
+      <Settings
+        isOpen={true}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Theme' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dark', pressed: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Light', pressed: false })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Default Mode' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'After Approved Plan' })).toBeInTheDocument()
+  })
+
   it('does not render voice controls from Settings', () => {
     render(
       <Settings

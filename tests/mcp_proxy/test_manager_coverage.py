@@ -147,7 +147,7 @@ class TestMCPClientManagerDatabaseInit:
         assert len(config.tools) == 2
         assert config.tools[0]["name"] == "tool1"
         assert config.tools[0]["brief"] == "A tool for testing"
-        assert config.tools[1]["brief"] == f"{long_description[:100]}…"
+        assert config.tools[1]["brief"] == f"{long_description[:99]}…"
 
 
 class TestLoadToolsFromDB:

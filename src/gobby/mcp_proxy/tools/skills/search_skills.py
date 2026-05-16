@@ -107,17 +107,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             active_names = None
             if session_id:
                 try:
-                    from gobby.workflows.state_manager import SessionVariableManager
-
-                    def _get_active_names() -> Any:
-                        resolved_id = ctx.session_manager.resolve_session_reference(
-                            session_id, project_id=ctx.project_id
-                        )
-                        sv_mgr = SessionVariableManager(ctx.db)
-                        sv = sv_mgr.get_variables(resolved_id)
-                        return sv.get("_active_skill_names") if sv else None
-
-                    active_names = await ctx.run_sqlite(_get_active_names)
+                    active_names = await ctx.get_active_skill_names(session_id)
                 except Exception as sv_err:
                     logger.warning(
                         f"Failed to resolve session variables for {session_id}: {sv_err}"

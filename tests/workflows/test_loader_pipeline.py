@@ -16,7 +16,10 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.loader_validation import _validate_pipeline_references
+from gobby.workflows.loader_validation import (
+    _validate_fail_pipeline_completion_order,
+    _validate_pipeline_references,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -652,6 +655,50 @@ class TestValidatePipelineReferences:
         }
 
         assert _validate_pipeline_references(data) is None
+
+    def test_fail_pipeline_completion_order_helper_rejects_matching_prior_success(self) -> None:
+        """Direct helper rejects fail_pipeline after the matching completed branch."""
+        steps = [
+            {"id": "wait_run", "exec": "echo wait"},
+            {
+                "id": "completed-path",
+                "condition": "${{ steps.wait_run.output.status == 'completed' }}",
+                "exec": "echo ok",
+            },
+            {
+                "id": "fail-run",
+                "condition": "${{ steps.wait_run.output.status != 'completed' }}",
+                "mcp": {
+                    "server": "gobby-workflows",
+                    "tool": "fail_pipeline",
+                    "arguments": {"message": "run failed"},
+                },
+            },
+        ]
+
+        with pytest.raises(ValueError, match="fail-run"):
+            _validate_fail_pipeline_completion_order(steps)
+
+    def test_fail_pipeline_completion_order_helper_ignores_unmatched_output(self) -> None:
+        """Direct helper allows fail_pipeline for a different output field."""
+        steps = [
+            {
+                "id": "completed-path",
+                "condition": "${{ steps.wait_run.output.status == 'completed' }}",
+                "exec": "echo ok",
+            },
+            {
+                "id": "fail-run",
+                "condition": "${{ steps.wait_run.output.result != 'completed' }}",
+                "mcp": {
+                    "server": "gobby-workflows",
+                    "tool": "fail_pipeline",
+                    "arguments": {"message": "run failed"},
+                },
+            },
+        ]
+
+        assert _validate_fail_pipeline_completion_order(steps) is None
 
 
 class TestLoadWorkflowPipelineIntegration:

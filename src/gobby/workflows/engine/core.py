@@ -91,6 +91,14 @@ def _event_value(event_type: HookEventType | str) -> str:
     return str(event_type)
 
 
+def _project_id_from_event(event: HookEvent) -> str | None:
+    """Return project_id from the normalized event or its data payload."""
+    if event.project_id:
+        return event.project_id
+    project_id = event.data.get("project_id") if isinstance(event.data, dict) else None
+    return project_id if isinstance(project_id, str) and project_id else None
+
+
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
     return _event_value(event_type) in _TURN_START_EVENT_VALUES
 
@@ -438,7 +446,11 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 rules = self._filter_by_audience(rules, variables)
 
                 # 5. Filter by active rules (selector-based)
-                rules = self._filter_by_active_rules(rules, variables)
+                rules = self._filter_by_active_rules(
+                    rules,
+                    variables,
+                    project_id=_project_id_from_event(event),
+                )
 
                 if span.is_recording():
                     span.set_attribute("rule_count", len(rules))
@@ -904,9 +916,14 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self,
         rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
+        *,
+        project_id: str | None = None,
     ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
         """Filter rules using the current agent definition, falling back to session metadata."""
-        agent = self._load_active_agent_definition(variables.get("_agent_type"))
+        agent = self._load_active_agent_definition(
+            variables.get("_agent_type"),
+            project_id=project_id,
+        )
         if agent is not None:
             return [(row, body) for row, body in rules if rule_matches_agent(agent, row)]
 
@@ -916,11 +933,16 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         active_set = set(active_names)
         return [(row, body) for row, body in rules if row.name in active_set]
 
-    def _load_active_agent_definition(self, agent_type: Any) -> AgentDefinitionBody | None:
+    def _load_active_agent_definition(
+        self,
+        agent_type: Any,
+        *,
+        project_id: str | None = None,
+    ) -> AgentDefinitionBody | None:
         if not isinstance(agent_type, str) or not agent_type:
             return None
 
-        row = self.definition_manager.get_by_name(agent_type)
+        row = self.definition_manager.get_by_name(agent_type, project_id=project_id)
         if row is None or row.workflow_type != "agent" or not row.definition_json:
             return None
 
@@ -929,7 +951,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             if isinstance(data, dict):
                 data.setdefault("name", row.name)
             return AgentDefinitionBody.model_validate(data)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
             return None
         except ValidationError as exc:
