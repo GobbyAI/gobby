@@ -117,6 +117,58 @@ describe('stageActions shared helper contract', () => {
     expect(currentStage(lifecycleTask)).toEqual(lifecycleTask.stages[0])
   })
 
+  it('test_optimistic_move_matches_backend_row_rules', async () => {
+    const { canonicalBoardStage, optimisticMoveTaskToStage } = await loadStageActions()
+    const lifecycleTask = {
+      id: 'task-1',
+      title: 'Build task',
+      task_type: 'feature',
+      stages: [
+        {
+          name: 'build',
+          display_name: 'Build',
+          category: 'delivery',
+          state: 'done',
+          review_policy: 'required',
+          position: 0,
+          updated_at: '2026-05-02T00:00:00Z',
+        },
+        {
+          name: 'deploy',
+          display_name: 'Deploy',
+          category: 'release',
+          state: 'done',
+          review_policy: 'optional',
+          position: 1,
+          completed_commit_sha: 'abc123',
+          artifact_refs: { result: 'stale' },
+          notes: 'stale',
+          updated_at: '2026-05-02T00:00:00Z',
+        },
+      ],
+    }
+
+    const moved = optimisticMoveTaskToStage(
+      lifecycleTask,
+      'deploy',
+      '2026-05-03T00:00:00Z',
+    )
+
+    expect(
+      moved.stages.map((stage: { name: string; state: string }) => [stage.name, stage.state]),
+    ).toEqual([
+      ['build', 'done'],
+      ['deploy', 'ready'],
+    ])
+    expect(moved.stages[1]).toMatchObject({
+      completed_commit_sha: null,
+      artifact_refs: null,
+      notes: null,
+      updated_at: '2026-05-03T00:00:00Z',
+    })
+    expect(canonicalBoardStage(moved)?.name).toBe('deploy')
+  })
+
   it('test_module_is_only_authoring_site', () => {
     readStageActionsSource()
 

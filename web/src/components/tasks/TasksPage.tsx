@@ -24,6 +24,8 @@ import {
 } from '../../lib/taskState'
 import { inputFocusCls } from '../shared/focusStyles'
 import { Heading } from '../shared/Heading'
+import { Button } from '../shared/Button'
+import { SegmentedControl } from '../ui/SegmentedControl'
 
 // =============================================================================
 // Tailwind class constants
@@ -34,14 +36,6 @@ const TOOLBAR_CLS = 'flex flex-wrap items-center justify-between gap-4 border-b 
 const TOOLBAR_LEFT_CLS = 'flex flex-wrap items-center gap-2 max-md:w-full'
 const TOOLBAR_RIGHT_CLS = 'flex items-center gap-2 max-md:w-full max-md:flex-wrap'
 const TITLE_CLS = 'mr-1 text-[length:calc(var(--font-size-base)*1.1)] font-semibold'
-const GROUP_TABS_CLS = 'flex items-center gap-px ml-2 rounded-md bg-[var(--bg-secondary)] p-0.5'
-const GROUP_TAB_CLS = 'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.7)] font-medium text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
-const GROUP_TAB_ACTIVE_CLS = 'bg-[var(--bg-primary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
-
-const VIEW_TOGGLE_CLS = 'flex overflow-hidden rounded-md border border-[var(--border)]'
-const VIEW_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center border-0 border-r border-[var(--border)] bg-transparent text-[var(--text-muted)] transition-colors duration-150 last:border-r-0 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:h-11 pointer-coarse:w-11'
-const VIEW_BTN_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] text-[var(--accent)]'
-
 const SEARCH_CLS = `w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11`
 const REFRESH_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-transparent text-[length:calc(var(--font-size-base)*1.1)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const NEW_BTN_CLS = 'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
@@ -357,6 +351,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     deEscalateTask,
     advanceStage,
     failStage,
+    moveTaskToStage,
     closeTask,
     reopenTask,
     getDependencies,
@@ -450,31 +445,44 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     return defaults
   }, [filters.taskType, filters.priority, selectedTaskId, allTasks, cloneDefaults])
 
+  const groupOptions = useMemo(() => [
+    { value: 'all' as const, label: 'All Tasks' },
+    { value: 'agent' as const, label: 'By Agent' },
+  ], [])
+
+  const viewOptions = useMemo(() => [
+    { value: 'list' as const, label: <ListIcon />, ariaLabel: 'List view', title: 'List view' },
+    { value: 'tree' as const, label: <TreeIcon />, ariaLabel: 'Tree view', title: 'Tree view' },
+    { value: 'kanban' as const, label: <KanbanIcon />, ariaLabel: 'Kanban view', title: 'Kanban view' },
+    { value: 'priority' as const, label: <PriorityIcon />, ariaLabel: 'Priority view', title: 'Priority view' },
+    { value: 'audit' as const, label: <AuditIcon />, ariaLabel: 'Audit view', title: 'Audit view' },
+    { value: 'gantt' as const, label: <GanttIcon />, ariaLabel: 'Gantt view', title: 'Gantt view' },
+    { value: 'digest' as const, label: <DigestIcon />, ariaLabel: 'Digest view', title: 'Digest view' },
+    { value: 'graph' as const, label: <GraphIcon />, ariaLabel: 'Graph view', title: 'Graph view' },
+  ], [])
+
   return (
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
           <Heading level={1} className={TITLE_CLS}>Tasks</Heading>
-          <div className={GROUP_TABS_CLS}>
-            <button className={cn(GROUP_TAB_CLS, groupBy === 'all' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('all')}>All Tasks</button>
-            <button className={cn(GROUP_TAB_CLS, groupBy === 'agent' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('agent')}>By Agent</button>
-          </div>
+          <SegmentedControl
+            value={groupBy}
+            onChange={setGroupBy}
+            options={groupOptions}
+            ariaLabel="Task grouping"
+            controlHeight="sm"
+            className="ml-2"
+          />
         </div>
         <div className={TOOLBAR_RIGHT_CLS}>
-          <div className={VIEW_TOGGLE_CLS}>
-            {([['list', ListIcon], ['tree', TreeIcon], ['kanban', KanbanIcon], ['priority', PriorityIcon], ['audit', AuditIcon], ['gantt', GanttIcon], ['digest', DigestIcon], ['graph', GraphIcon]] as const).map(
-              ([mode, Icon]) => (
-                <button
-                  key={mode}
-                  className={cn(VIEW_BTN_CLS, viewMode === mode && VIEW_BTN_ACTIVE_CLS)}
-                  onClick={() => setViewMode(mode as ViewMode)}
-                  title={`${mode.charAt(0).toUpperCase() + mode.slice(1)} view`}
-                >
-                  <Icon />
-                </button>
-              )
-            )}
-          </div>
+          <SegmentedControl
+            value={viewMode}
+            onChange={setViewMode}
+            options={viewOptions}
+            ariaLabel="Task view"
+            controlHeight="sm"
+          />
           <input
             type="text"
             className={SEARCH_CLS}
@@ -482,26 +490,38 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             value={filters.search}
             onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           />
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             className={REFRESH_BTN_CLS}
             onClick={refreshTasks}
             title="Refresh"
           >
             ↻
-          </button>
-          <button className={NEW_BTN_CLS} title="New Task" onClick={() => setShowCreateForm(true)}>
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className={NEW_BTN_CLS}
+            title="New Task"
+            onClick={() => setShowCreateForm(true)}
+          >
             <PlusIcon />
             <span>New Task</span>
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className={FILTER_BAR_CLS}>
         <div className={FILTER_CHIPS_CLS}>
           {STATE_FILTER_OPTIONS.filter(bucket => (stats[bucket] || 0) > 0).map(bucket => (
-              <button
+              <Button
                 key={bucket}
+                type="button"
+                variant="ghost"
+                size="sm"
                 className={cn(STAT_CHIP_CLS, filters.status === bucket && STAT_CHIP_ACTIVE_CLS)}
                 onClick={() =>
                   setFilters(f => ({ ...f, status: f.status === bucket ? null : bucket }))
@@ -509,7 +529,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               >
                 <StatusDot status={FILTER_DOT_STATUS[bucket]} />
                 {TASK_STATE_LABELS[bucket]} ({stats[bucket] || 0})
-              </button>
+              </Button>
           ))}
         </div>
         <div className={FILTER_DROPDOWNS_CLS}>
@@ -553,7 +573,10 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             ))}
           </select>
           {hasActiveFilters && (
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
               className={FILTER_CLEAR_CLS}
               onClick={() =>
                 setFilters(f => ({
@@ -566,7 +589,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               }
             >
               Clear filters
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -614,9 +637,15 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
                 {'▦'} Subtree of <strong>{subtreeRoot.ref}</strong> {subtreeRoot.title}
               </span>
               <span className={SUBTREE_COUNT_CLS}>{kanbanTasks.length} leaf task{kanbanTasks.length !== 1 ? 's' : ''}</span>
-              <button className={SUBTREE_CLEAR_CLS} onClick={() => setSubtreeRootId(null)}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={SUBTREE_CLEAR_CLS}
+                onClick={() => setSubtreeRootId(null)}
+              >
                 {'✕'} Show all
-              </button>
+              </Button>
             </div>
           )}
           <LifecycleBoard
@@ -625,6 +654,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             onSelectTask={setSelectedTaskId}
             onAdvanceStage={advanceStage}
             onFailStage={failStage}
+            onMoveTaskToStage={moveTaskToStage}
           />
         </>
       ) : viewMode === 'tree' ? (
@@ -682,14 +712,17 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           )}
           {hasMore && groupBy !== 'agent' && (
             <div className={LOAD_MORE_WRAP_CLS}>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 className={LOAD_MORE_BTN_CLS}
                 onClick={() => { void loadMore() }}
                 disabled={isLoadingMore}
+                loading={isLoadingMore}
               >
-                {isLoadingMore ? 'Loading…' : 'Load more'}
-              </button>
+                Load more
+              </Button>
             </div>
           )}
         </div>

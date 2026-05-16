@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import type { GobbySkill } from '../../hooks/useSkills'
 import { Input } from '../chat/ui/Input'
-import { Button } from '../chat/ui/Button'
+import { Button } from '../shared/Button'
 import { Badge } from '../chat/ui/Badge'
 import { ScrollArea } from '../chat/ui/ScrollArea'
 import { cn } from '../../lib/utils'

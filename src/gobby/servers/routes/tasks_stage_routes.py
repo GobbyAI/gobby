@@ -32,6 +32,7 @@ class StagePatchRequest(BaseModel):
         "reject_review",
         "complete",
         "fail",
+        "move_to",
         "add",
         "remove",
     ]
@@ -183,6 +184,13 @@ def register_task_stage_routes(
                     stage_name,
                     reason=request_data.reason,
                     needs_human=request_data.needs_human,
+                    by_session_id=None,
+                )
+                event = "stage_changed"
+            elif request_data.action == "move_to":
+                stage_row = manager.move_to_stage(
+                    task.id,
+                    stage_name,
                     by_session_id=None,
                 )
                 event = "stage_changed"

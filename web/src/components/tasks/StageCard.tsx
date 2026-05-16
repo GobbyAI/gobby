@@ -7,6 +7,10 @@ import {
   type StageAdvanceAction,
   type StageRowState,
 } from '../../lib/stageActions'
+import { cn } from '../../lib/utils'
+import { Button } from '../shared/Button'
+import { lifecycleBoardStyles } from './lifecycleBoardStyles'
+import type { StageRegistryEntry } from './StageColumn'
 
 interface StageCardProps {
   task: LifecycleTask
@@ -19,6 +23,8 @@ interface StageCardProps {
     stageName: string,
     action: StageAdvanceAction,
   ) => void | Promise<void>
+  onMoveTaskToStage?: (taskId: string, targetStageName: string) => void | Promise<void>
+  availableStages?: ReadonlyArray<StageRegistryEntry>
 }
 
 function blockedReason(task: LifecycleTask): string {
@@ -46,35 +52,48 @@ export function StageCard({
   reviewPolicy,
   onSelectTask,
   onAdvanceStage,
+  onMoveTaskToStage,
+  availableStages = [],
 }: StageCardProps) {
-  const ref = useRef<HTMLButtonElement | null>(null)
-  const dragStartX = useRef<number | null>(null)
+  const ref = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [tooltip, setTooltip] = useState<string | null>(null)
   const isBlocked = Boolean(task.is_blocked ?? task.state?.is_blocked)
   const action = resolveAdvanceAction(state, reviewPolicy)
   const disabledReason = isBlocked ? blockedReason(task) : null
-  const isDisabled = isBlocked || action === null || !onAdvanceStage
+  const canMove = Boolean(onMoveTaskToStage && availableStages.length > 1)
+  const canAdvance = Boolean(action && onAdvanceStage && !isBlocked)
 
   useEffect(() => {
     const el = ref.current
-    if (!el || isDisabled) return
+    if (!el || !canMove) return
     return draggable({
       element: el,
       getInitialData: () => ({
         type: 'lifecycle-stage-card',
         taskId: task.id,
-        stageName,
+        sourceStageName: stageName,
         state,
         reviewPolicy,
       }),
       onDragStart: () => setIsDragging(true),
       onDrop: () => setIsDragging(false),
     })
-  }, [action, isDisabled, reviewPolicy, stageName, state, task.id])
+  }, [canMove, reviewPolicy, stageName, state, task.id])
 
   const showTooltip = (message: string) => {
     setTooltip(message)
+  }
+
+  const runAction = (callback: () => void | Promise<void>) => {
+    try {
+      const result = callback()
+      if (result && typeof result === 'object' && 'catch' in result) {
+        ;(result as Promise<void>).catch(error => showTooltip(transitionReason(error)))
+      }
+    } catch (error) {
+      showTooltip(transitionReason(error))
+    }
   }
 
   const advance = () => {
@@ -84,40 +103,25 @@ export function StageCard({
     }
     if (!action || !onAdvanceStage) return
 
-    try {
-      const result = onAdvanceStage(task.id, stageName, action)
-      if (result && typeof result === 'object' && 'catch' in result) {
-        ;(result as Promise<void>).catch(error => showTooltip(transitionReason(error)))
-      }
-    } catch (error) {
-      showTooltip(transitionReason(error))
-    }
+    runAction(() => onAdvanceStage(task.id, stageName, action))
+  }
+
+  const moveToStage = (targetStageName: string) => {
+    if (!onMoveTaskToStage || targetStageName === stageName) return
+    runAction(() => onMoveTaskToStage(task.id, targetStageName))
   }
 
   return (
-    <button
+    <article
       ref={ref}
-      type="button"
-      className={[
-        'lifecycle-card',
-        isDragging ? 'lifecycle-card--dragging' : '',
-        isBlocked ? 'lifecycle-card--blocked' : '',
-      ].filter(Boolean).join(' ')}
-      aria-disabled={isDisabled ? 'true' : 'false'}
-      onClick={() => onSelectTask(task.id)}
-      onPointerDown={event => {
-        dragStartX.current = event.clientX
-        setTooltip(null)
-      }}
-      onPointerUp={event => {
-        const startX = dragStartX.current
-        dragStartX.current = null
-        if (startX === null) return
-        if (event.clientX - startX >= 80) {
-          event.preventDefault()
-          advance()
-        }
-      }}
+      className={cn(
+        lifecycleBoardStyles.card,
+        isDragging && lifecycleBoardStyles.cardDragging,
+        isBlocked && lifecycleBoardStyles.cardBlocked,
+      )}
+      data-testid={`lifecycle-card-${task.id}`}
+      data-task-id={task.id}
+      draggable={canMove || undefined}
       onMouseEnter={() => {
         if (disabledReason) setTooltip(disabledReason)
       }}
@@ -125,11 +129,19 @@ export function StageCard({
         if (disabledReason) setTooltip(null)
       }}
     >
-      <span className="lifecycle-card__topline">
-        <span className="lifecycle-card__title">{task.title}</span>
+      <span className={lifecycleBoardStyles.cardTopline}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={lifecycleBoardStyles.cardOpenButton}
+          onClick={() => onSelectTask(task.id)}
+        >
+          <span className={lifecycleBoardStyles.cardTitle}>{task.title}</span>
+        </Button>
         {isBlocked && (
           <span
-            className="lifecycle-card__blocked-badge"
+            className={lifecycleBoardStyles.blockedBadge}
             aria-label="Blocked"
             onMouseEnter={() => showTooltip(blockedReason(task))}
           >
@@ -137,16 +149,43 @@ export function StageCard({
           </span>
         )}
       </span>
-      <span className="lifecycle-card__meta">
+      <span className={lifecycleBoardStyles.cardMeta}>
         <span>{task.ref ?? task.id}</span>
         <span>{task.task_type}</span>
         <span>{state.replace(/_/g, ' ')}</span>
       </span>
+      <span className={lifecycleBoardStyles.cardActions}>
+        <select
+          className={lifecycleBoardStyles.moveSelect}
+          value={stageName}
+          aria-label={`Move ${task.title} to stage`}
+          title="Move to stage"
+          disabled={!onMoveTaskToStage || availableStages.length === 0}
+          onChange={event => moveToStage(event.currentTarget.value)}
+        >
+          {availableStages.map(stage => (
+            <option key={stage.name} value={stage.name}>
+              {stage.display_name}
+            </option>
+          ))}
+        </select>
+        {action && onAdvanceStage && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canAdvance}
+            onClick={advance}
+          >
+            Advance
+          </Button>
+        )}
+      </span>
       {tooltip && (
-        <span className="lifecycle-card__tooltip" role="tooltip" aria-label={tooltip}>
+        <span className={lifecycleBoardStyles.tooltip} role="tooltip" aria-label={tooltip}>
           {tooltip}
         </span>
       )}
-    </button>
+    </article>
   )
 }

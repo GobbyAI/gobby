@@ -1,6 +1,6 @@
 import { useState, useCallback, memo } from 'react'
 import type { Artifact } from '../../../types/artifacts'
-import { Button } from '../ui/Button'
+import { Button } from '../../shared/Button'
 import { Badge } from '../ui/Badge'
 import { ArtifactCodeView } from './ArtifactCodeView'
 import { ArtifactTextView } from './ArtifactTextView'

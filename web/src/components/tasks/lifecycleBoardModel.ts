@@ -1,5 +1,5 @@
 import {
-  taskAtStage,
+  canonicalBoardStage,
   type LifecycleTask,
 } from '../../lib/stageActions'
 import { isRetiredStageName } from '../../lib/taskNormalization'
@@ -73,9 +73,8 @@ export function groupIntoSwimlanes(tasks: LifecycleTask[]): Swimlane[] {
 export function stageNamesForTasks(tasks: LifecycleTask[]): Set<string> {
   const names = new Set<string>()
   for (const task of tasks) {
-    for (const row of task.stages ?? []) {
-      if (!isRetiredStageName(row.name)) names.add(row.name)
-    }
+    const stage = canonicalBoardStage(task)
+    if (stage && !isRetiredStageName(stage.name)) names.add(stage.name)
   }
   return names
 }
@@ -99,14 +98,12 @@ export function activeStageCategories(
 
 export function visibleStagesForTasks(
   stages: ReadonlyArray<StageRegistryEntry>,
-  tasks: LifecycleTask[],
+  _tasks: LifecycleTask[],
   activeCategories: Set<string>,
 ): StageRegistryEntry[] {
-  const visibleStageNames = stageNamesForTasks(tasks)
   return stages
     .map((stage, index) => ({ stage, index }))
     .filter(({ stage }) => !isRetiredStageName(stage.name))
-    .filter(({ stage }) => visibleStageNames.has(stage.name))
     .filter(({ stage }) => activeCategories.has(stage.category))
     .sort((a, b) => stageOrder(a.stage, a.index) - stageOrder(b.stage, b.index))
     .map(({ stage }) => stage)
@@ -114,5 +111,5 @@ export function visibleStagesForTasks(
 
 export function tasksForStage(tasks: LifecycleTask[], stageName: string): LifecycleTask[] {
   if (isRetiredStageName(stageName)) return []
-  return tasks.filter(task => taskAtStage(task, stageName))
+  return tasks.filter(task => canonicalBoardStage(task)?.name === stageName)
 }

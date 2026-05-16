@@ -1,6 +1,6 @@
 import React from 'react';
 import { A2UIComponentProps, resolveBoundValue, resolveActionContext } from '../types';
-import { Button } from '../../chat/ui/Button';
+import { Button } from '../../shared/Button';
 
 export const A2UIButton: React.FC<A2UIComponentProps> = ({ def, componentId, dataModel, onAction, completed }) => {
   const label = resolveBoundValue(def.label, dataModel) || 'Button';

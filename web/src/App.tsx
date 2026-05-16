@@ -37,7 +37,7 @@ import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
-import { Button } from "./components/chat/ui/Button";
+import { Button } from "./components/shared/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {

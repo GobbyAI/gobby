@@ -102,6 +102,7 @@ function useTasksResult(tasks = [baseTask()]) {
     escalateTask: vi.fn(),
     deEscalateTask: vi.fn(),
     failStage: vi.fn(),
+    moveTaskToStage: vi.fn(),
     startStage: vi.fn(),
     closeTask: vi.fn(),
     reopenTask: vi.fn(),
@@ -159,5 +160,19 @@ describe('TasksPage lifecycle board integration', () => {
       node?.textContent === 'Reviewer #abcdefgh (1)'
     )
     expect(duplicateLabelGroups).toHaveLength(2)
+  })
+
+  it('uses shared Button loading state for load more', () => {
+    useTasksMock.mockReturnValue({
+      ...useTasksResult(),
+      hasMore: true,
+      isLoadingMore: true,
+    })
+
+    render(<TasksPage />)
+
+    const button = screen.getByRole('button', { name: /load more/i })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('aria-busy', 'true')
   })
 })

@@ -1,10 +1,11 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '../../lib/utils'
 import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 
 export interface SegmentedControlOption<T extends string> {
   value: T
-  label: string
+  label: ReactNode
+  ariaLabel?: string
   title?: string
   onClick?: () => void
 }
@@ -93,6 +94,7 @@ export function SegmentedControl<T extends string>({
             aria-checked={isActive}
             tabIndex={isActive ? 0 : -1}
             disabled={disabled}
+            aria-label={option.ariaLabel}
             title={option.title}
             onClick={() => {
               if (disabled) return

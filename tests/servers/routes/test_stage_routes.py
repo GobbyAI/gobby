@@ -63,6 +63,49 @@ def test_patch_start_stage(
     assert response.json()["stage"]["state"] == "in_progress"
 
 
+def test_patch_move_to_stage_resets_manifest_to_target(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "in_progress")
+
+    response = stage_client.patch(f"/api/tasks/{task.id}/stages/pr", json={"action": "move_to"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"]["stage_name"] == "pr"
+    assert payload["stage"]["state"] == "ready"
+    assert [(row["stage_name"], row["state"]) for row in payload["stages"]] == [
+        ("development", "done"),
+        ("pr", "ready"),
+        ("merge", "ready"),
+    ]
+
+
+def test_patch_move_to_unknown_stage_returns_400(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/merge",
+        json={"action": "move_to"},
+    )
+
+    assert response.status_code == 400
+    assert "Stage 'merge' is not in task manifest" in response.json()["detail"]
+
+
 def test_list_filter_by_stage_state(
     temp_db,
     sample_project,
@@ -424,3 +467,42 @@ def test_stage_transition_broadcasts(
     assert websocket_server.broadcast_task_event.await_args.kwargs["task"]["state"] == (
         "in_progress"
     )
+    assert websocket_server.broadcast_task_event.await_args.kwargs["task"]["stages"][0][
+        "stage_name"
+    ] == "development"
+
+
+def test_move_to_stage_broadcasts_full_stage_payload(
+    temp_db,
+    sample_project,
+    task_manager: LocalTaskManager,
+) -> None:
+    websocket_server = MagicMock()
+    websocket_server.broadcast_task_event = AsyncMock()
+    server = create_http_server(task_manager=task_manager, websocket_server=websocket_server)
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "in_progress")
+    with patch("gobby.servers.app_factory.HookManager") as hook_manager:
+        hook_manager.return_value._stop_registry = MagicMock()
+        hook_manager.return_value.shutdown = MagicMock()
+        with TestClient(server.app) as client:
+            response = client.patch(
+                f"/api/tasks/{task.id}/stages/development",
+                json={"action": "move_to"},
+            )
+
+    assert response.status_code == 200
+    websocket_server.broadcast_task_event.assert_awaited_once()
+    assert websocket_server.broadcast_task_event.await_args.args[:2] == ("stage_changed",)
+    task_payload = websocket_server.broadcast_task_event.await_args.kwargs["task"]
+    assert task_payload["stage_name"] == "development"
+    assert task_payload["state"] == "ready"
+    assert [(row["stage_name"], row["state"]) for row in task_payload["stages"]] == [
+        ("development", "ready"),
+        ("pr", "ready"),
+    ]

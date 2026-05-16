@@ -1,5 +1,5 @@
 import type { Artifact } from '../../../types/artifacts'
-import { Button } from '../ui/Button'
+import { Button } from '../../shared/Button'
 
 interface ArtifactVersionBarProps {
   artifact: Artifact

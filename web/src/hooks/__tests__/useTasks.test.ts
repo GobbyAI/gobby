@@ -25,6 +25,7 @@ type Phase6TasksApi = ReturnType<typeof useTasks> & {
   ) => Promise<unknown>
   failStage: (taskId: string, stageName: string, reason: string) => Promise<unknown>
   startStage: (taskId: string, stageName: string) => Promise<unknown>
+  moveTaskToStage: (taskId: string, targetStageName: string) => Promise<unknown>
 }
 
 function installFetchSpy(
@@ -55,13 +56,17 @@ function createDeferred<T>() {
 
 function stageState(
   state: 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done' = 'ready',
+  name = 'build',
+  position = 0,
+  reviewPolicy: 'required' | 'none' | 'optional' = 'required',
 ) {
   return {
-    name: 'build',
-    display_name: 'Build',
-    category: 'delivery',
+    name,
+    display_name: name === 'deploy' ? 'Deploy' : 'Build',
+    category: name === 'deploy' ? 'release' : 'delivery',
     state,
-    review_policy: 'required',
+    review_policy: reviewPolicy,
+    position,
     updated_at: '2026-05-02T00:00:00Z',
   }
 }
@@ -766,6 +771,92 @@ describe('useTasks', () => {
     expect(stageRequest?.url).toContain('/api/tasks/task-1/stages/build')
     expect(stageRequest?.init?.method).toBe('PATCH')
     expect(JSON.parse(String(stageRequest?.init?.body))).toEqual({ action: 'start' })
+  })
+
+  it('test_move_task_to_stage_optimistic_success', async () => {
+    const build = stageState('ready', 'build', 0)
+    const deploy = stageState('ready', 'deploy', 1, 'optional')
+    const stagedTask = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready', { current_stage: build }),
+      current_stage: build,
+      stages: [build, deploy],
+    }
+    const movedStages = [
+      { ...build, state: 'done' },
+      deploy,
+    ]
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) {
+        return jsonResponse({ ...TASK_LIST_RESPONSE, tasks: [stagedTask], total: 1 })
+      }
+      if (url.includes('/api/tasks/task-1/stages/deploy')) {
+        stageRequests.push({ url, init })
+        return jsonResponse({ task_id: 'task-1', stages: movedStages })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).moveTaskToStage('task-1', 'deploy')
+    })
+
+    expect(stageRequests[0]?.url).toContain('/api/tasks/task-1/stages/deploy')
+    expect(stageRequests[0]?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(stageRequests[0]?.init?.body))).toEqual({ action: 'move_to' })
+    expect(result.current.tasks[0]?.current_stage?.name).toBe('deploy')
+    expect(result.current.tasks[0]?.stages.map(stage => [stage.name, stage.state])).toEqual([
+      ['build', 'done'],
+      ['deploy', 'ready'],
+    ])
+  })
+
+  it('test_move_task_to_stage_failure_refetches_and_rethrows', async () => {
+    const build = stageState('ready', 'build', 0)
+    const deploy = stageState('ready', 'deploy', 1, 'optional')
+    const stagedTask = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready', { current_stage: build }),
+      current_stage: build,
+      stages: [build, deploy],
+    }
+    const payload = { error: 'illegal_stage_transition', reason: 'target stage is unavailable' }
+    installFetchSpy(async (input) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) {
+        return jsonResponse({ ...TASK_LIST_RESPONSE, tasks: [stagedTask], total: 1 })
+      }
+      if (url.includes('/api/tasks/task-1/stages/deploy')) {
+        return new Response(JSON.stringify(payload), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    let thrown: unknown
+    await act(async () => {
+      try {
+        await (result.current as Phase6TasksApi).moveTaskToStage('task-1', 'deploy')
+      } catch (error) {
+        thrown = error
+      }
+    })
+    expect(thrown).toMatchObject(payload)
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('target stage is unavailable')
+      expect(result.current.tasks[0]?.current_stage?.name).toBe('build')
+    })
   })
 
   it('test_ws_stage_changed_refetches', async () => {

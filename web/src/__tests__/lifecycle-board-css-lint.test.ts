@@ -1,33 +1,30 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const stylesDir = join(process.cwd(), 'src/styles')
-const lifecycleStylesheet = join(stylesDir, 'lifecycle-board.css')
-const rawColorPattern =
-  /#[0-9a-fA-F]{3,8}\b|(?:rgb|rgba|hsl|hsla)\(\s*\d+(?:\s|,|\))/
+const lifecycleStylesheet = join(process.cwd(), 'src/styles/lifecycle-board.css')
+const lifecycleSources = [
+  join(process.cwd(), 'src/components/tasks/LifecycleBoard.tsx'),
+  join(process.cwd(), 'src/components/tasks/LifecycleLane.tsx'),
+  join(process.cwd(), 'src/components/tasks/StageColumn.tsx'),
+  join(process.cwd(), 'src/components/tasks/StageCard.tsx'),
+  join(process.cwd(), 'src/components/tasks/lifecycleBoardStyles.ts'),
+]
 
-function stylesheetFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap(entry => {
-    const path = join(dir, entry)
-    if (statSync(path).isDirectory()) return stylesheetFiles(path)
-    return /lifecycle-board.*\.css$/.test(entry) ? [path] : []
-  })
-}
+describe('Lifecycle board Tailwind contract', () => {
+  it('test_no_legacy_lifecycle_stylesheet_or_import', () => {
+    expect(existsSync(lifecycleStylesheet)).toBe(false)
 
-describe('Lifecycle board stylesheet token lint', () => {
-  it('test_no_raw_color_literals', () => {
-    expect(existsSync(lifecycleStylesheet)).toBe(true)
-
-    const offenders = stylesheetFiles(stylesDir).flatMap(file => {
-      const lines = readFileSync(file, 'utf8').split('\n')
-      return lines.flatMap((line, index) => {
-        const withoutInlineComments = line.replace(/\/\*.*?\*\//g, '')
-        if (!rawColorPattern.test(withoutInlineComments)) return []
-        return [`${relative(process.cwd(), file)}:${index + 1}`]
-      })
-    })
-
+    const offenders = lifecycleSources.filter(file =>
+      readFileSync(file, 'utf8').includes('styles/lifecycle-board.css'),
+    )
     expect(offenders).toEqual([])
+  })
+
+  it('test_no_accent_stripes_or_gradient_text', () => {
+    const source = lifecycleSources.map(file => readFileSync(file, 'utf8')).join('\n')
+
+    expect(source).not.toMatch(/border-(left|right)|border(L|R)eft/)
+    expect(source).not.toMatch(/gradient|bg-clip-text|text-transparent/)
   })
 })

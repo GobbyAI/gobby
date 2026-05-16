@@ -25,6 +25,12 @@ export interface StageStateView {
   max_work_attempts?: number | null
   max_review_rounds?: number | null
   artifact_refs?: Record<string, string> | null
+  entered_at?: string | null
+  entered_by_session_id?: string | null
+  completed_at?: string | null
+  completed_by_session_id?: string | null
+  completed_commit_sha?: string | null
+  notes?: string | null
 }
 
 export interface LifecycleTask {
@@ -75,4 +81,62 @@ export function currentStage(task: LifecycleTask): StageStateView | null {
       return aPosition - bPosition
     })
   return sorted.find(({ row }) => row.state !== 'done')?.row ?? null
+}
+
+function sortedStages(task: LifecycleTask): StageStateView[] {
+  return [...(task.stages ?? [])].sort((a, b) => {
+    const aPosition = a.position ?? 0
+    const bPosition = b.position ?? 0
+    return aPosition - bPosition || a.name.localeCompare(b.name)
+  })
+}
+
+export function terminalStage(task: LifecycleTask): StageStateView | null {
+  const stages = sortedStages(task)
+  return stages.length ? stages[stages.length - 1] : null
+}
+
+export function canonicalBoardStage(task: LifecycleTask): StageStateView | null {
+  return currentStage(task) ?? terminalStage(task)
+}
+
+export function optimisticMoveTaskToStage<T extends LifecycleTask>(
+  task: T,
+  targetStageName: string,
+  updatedAt: string = new Date().toISOString(),
+): T {
+  const target = task.stages.find(row => row.name === targetStageName)
+  if (!target) return task
+  const targetPosition = target.position ?? task.stages.indexOf(target)
+  const stages = task.stages.map((row, index) => {
+    const position = row.position ?? index
+    if (position < targetPosition) {
+      return {
+        ...row,
+        state: 'done' as const,
+        updated_at: updatedAt,
+      }
+    }
+    return {
+      ...row,
+      state: 'ready' as const,
+      entered_at: null,
+      entered_by_session_id: null,
+      completed_at: null,
+      completed_by_session_id: null,
+      completed_commit_sha: null,
+      artifact_refs: null,
+      notes: null,
+      updated_at: updatedAt,
+    }
+  })
+  const current_stage = stages.find(row => row.name === targetStageName) ?? null
+  return {
+    ...task,
+    current_stage,
+    state: task.state ? { ...task.state, escalation_reason: null } : task.state,
+    closed_at: null,
+    escalated_at: null,
+    stages,
+  } as T
 }

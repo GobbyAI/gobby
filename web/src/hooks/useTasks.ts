@@ -7,11 +7,13 @@ import type {
   StageState5,
   StageStateView,
 } from '../lib/stageActions'
+import { optimisticMoveTaskToStage } from '../lib/stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
 import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
 import {
   normalizeTaskPayload,
   normalizeTaskPayloads,
+  type RawStagePayload,
   type RawTaskPayload,
 } from '../lib/taskNormalization'
 
@@ -217,6 +219,26 @@ function applyTaskEvent(
   return tasks.map(task =>
     task.id === taskId ? normalizeTask({ ...task, ...updated }) : task
   )
+}
+
+function stageMutationErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error !== null) {
+    const record = error as { detail?: unknown; reason?: unknown; error?: unknown }
+    for (const value of [record.detail, record.reason, record.error]) {
+      if (typeof value === 'string' && value.trim()) return value
+    }
+  }
+  if (error instanceof Error && error.message.trim()) return error.message
+  return fallback
+}
+
+function normalizeTaskWithStageRows(task: GobbyTask, stages: RawStagePayload[]): GobbyTask {
+  return normalizeTask({
+    ...task,
+    current_stage: null,
+    state: task.state ? { ...task.state, current_stage: null } : null,
+    stages,
+  } as unknown as RawTaskPayload)
 }
 
 // =============================================================================
@@ -460,6 +482,53 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     [patchStage]
   )
 
+  const moveTaskToStage = useCallback(
+    async (taskId: string, targetStageName: string): Promise<void> => {
+      setError(null)
+      setAllTasks(prev =>
+        prev.map(task =>
+          task.id === taskId
+            ? normalizeTask(optimisticMoveTaskToStage(task, targetStageName) as unknown as RawTaskPayload)
+            : task
+        )
+      )
+
+      try {
+        const baseUrl = getBaseUrl()
+        const response = await fetch(
+          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(targetStageName)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'move_to' }),
+          }
+        )
+        if (!response.ok) {
+          let payload: unknown
+          try {
+            payload = await response.json()
+          } catch {
+            payload = { status: response.status, detail: response.statusText }
+          }
+          throw payload
+        }
+        const payload = await response.json() as { stages?: RawStagePayload[] }
+        if (payload.stages) {
+          setAllTasks(prev =>
+            prev.map(task =>
+              task.id === taskId ? normalizeTaskWithStageRows(task, payload.stages ?? []) : task
+            )
+          )
+        }
+      } catch (errorPayload) {
+        await fetchTasks()
+        setError(stageMutationErrorMessage(errorPayload, 'Failed to move task'))
+        throw errorPayload
+      }
+    },
+    [fetchTasks]
+  )
+
   const startStage = useCallback(
     async (taskId: string, stageName: string): Promise<void> => {
       await patchStage(taskId, stageName, { action: 'start' })
@@ -646,6 +715,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     deEscalateTask,
     advanceStage,
     failStage,
+    moveTaskToStage,
     startStage,
     closeTask,
     reopenTask,

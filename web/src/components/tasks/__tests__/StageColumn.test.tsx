@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -45,12 +45,6 @@ function task(id: string, title: string, state: StageState, reviewPolicy: Review
   }
 }
 
-function dragRight(element: HTMLElement) {
-  fireEvent.pointerDown(element, { clientX: 0, clientY: 0, pointerId: 1 })
-  fireEvent.pointerMove(element, { clientX: 160, clientY: 0, pointerId: 1 })
-  fireEvent.pointerUp(element, { clientX: 160, clientY: 0, pointerId: 1 })
-}
-
 async function loadStageColumn() {
   const modulePath = '../StageColumn'
   return import(/* @vite-ignore */ modulePath)
@@ -68,6 +62,7 @@ async function renderColumn(
       tasks={tasks}
       onSelectTask={vi.fn()}
       onAdvanceStage={onAdvanceStage}
+      availableStages={[requiredStage, noneStage]}
     />,
   )
   return { onAdvanceStage }
@@ -132,7 +127,7 @@ describe('StageColumn Phase 6 contracts', () => {
     ['in_progress', 'submit_for_review'],
     ['needs_review', 'approve_review'],
     ['review_approved', 'complete'],
-  ] as const)('test_drag_advance_required_policy_walks_full_chain %s', async (state, action) => {
+  ] as const)('test_advance_button_required_policy_walks_full_chain %s', async (state, action) => {
     const onAdvanceStage = vi.fn()
     await renderColumn(
       requiredStage,
@@ -140,7 +135,7 @@ describe('StageColumn Phase 6 contracts', () => {
       onAdvanceStage,
     )
 
-    dragRight(screen.getByRole('button', { name: new RegExp(`${state} task`, 'i') }))
+    await userEvent.click(screen.getByRole('button', { name: /advance/i }))
 
     expect(onAdvanceStage).toHaveBeenCalledWith(`task-${state}`, 'build', action)
   })
@@ -148,7 +143,7 @@ describe('StageColumn Phase 6 contracts', () => {
   it.each([
     ['ready', 'start'],
     ['in_progress', 'complete'],
-  ] as const)('test_drag_advance_none_policy_walks_3_state_chain %s', async (state, action) => {
+  ] as const)('test_advance_button_none_policy_walks_3_state_chain %s', async (state, action) => {
     const onAdvanceStage = vi.fn()
     await renderColumn(
       noneStage,
@@ -156,7 +151,7 @@ describe('StageColumn Phase 6 contracts', () => {
       onAdvanceStage,
     )
 
-    dragRight(screen.getByRole('button', { name: new RegExp(`${state} task`, 'i') }))
+    await userEvent.click(screen.getByRole('button', { name: /advance/i }))
 
     expect(onAdvanceStage).toHaveBeenCalledWith(`task-${state}`, 'build', action)
   })
@@ -175,7 +170,7 @@ describe('StageColumn Phase 6 contracts', () => {
       onAdvanceStage,
     )
 
-    dragRight(screen.getByRole('button', { name: /illegal task/i }))
+    await userEvent.click(screen.getByRole('button', { name: /advance/i }))
 
     expect(
       await screen.findByRole('tooltip', {

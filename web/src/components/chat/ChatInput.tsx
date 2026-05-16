@@ -8,7 +8,7 @@ import type {
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
-import { Button } from './ui/Button'
+import { Button } from '../shared/Button'
 import { PaperclipIcon, RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'

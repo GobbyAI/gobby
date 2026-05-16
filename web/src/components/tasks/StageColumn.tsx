@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import {
   type LifecycleTask,
   type ReviewPolicy,
@@ -6,6 +7,8 @@ import {
   type StageRowState,
   type StageStateView,
 } from '../../lib/stageActions'
+import { cn } from '../../lib/utils'
+import { lifecycleBoardStyles, lifecycleGroupStateStyles } from './lifecycleBoardStyles'
 import { StageCard } from './StageCard'
 
 export interface StageRegistryEntry {
@@ -25,6 +28,8 @@ interface StageColumnProps {
     stageName: string,
     action: StageAdvanceAction,
   ) => void | Promise<void>
+  onMoveTaskToStage?: (taskId: string, targetStageName: string) => void | Promise<void>
+  availableStages?: ReadonlyArray<StageRegistryEntry>
   showDoneCardsWhenCollapsed?: boolean
 }
 
@@ -59,9 +64,13 @@ export function StageColumn({
   tasks,
   onSelectTask,
   onAdvanceStage,
+  onMoveTaskToStage,
+  availableStages = [],
   showDoneCardsWhenCollapsed = false,
 }: StageColumnProps) {
+  const ref = useRef<HTMLElement | null>(null)
   const [showDone, setShowDone] = useState(false)
+  const [isOver, setIsOver] = useState(false)
   const stateOrder = stateOrderForPolicy(stage.review_policy)
   const grouped = useMemo(() => {
     const groups = new Map<StageRowState, Array<{ task: LifecycleTask; row: StageStateView }>>()
@@ -77,21 +86,44 @@ export function StageColumn({
 
   const taskCount = Array.from(grouped.values()).reduce((count, rows) => count + rows.length, 0)
 
+  useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    return dropTargetForElements({
+      element,
+      getData: () => ({
+        type: 'lifecycle-stage-column',
+        stageName: stage.name,
+      }),
+      canDrop: ({ source }) => source.data.type === 'lifecycle-stage-card',
+      onDragEnter: () => setIsOver(true),
+      onDragLeave: () => setIsOver(false),
+      onDrop: () => setIsOver(false),
+    })
+  }, [stage.name])
+
   return (
-    <section className="lifecycle-column" role="region" aria-label={stage.display_name}>
-      <header className="lifecycle-column__header">
-        <span className="lifecycle-column__title">{stage.display_name}</span>
-        <span className="lifecycle-column__category">{stage.category}</span>
-        <span className="lifecycle-column__count">{taskCount}</span>
+    <section
+      ref={ref}
+      className={cn(lifecycleBoardStyles.column, isOver && lifecycleBoardStyles.columnOver)}
+      role="region"
+      aria-label={stage.display_name}
+      data-testid={`stage-column-${stage.name}`}
+      data-stage-name={stage.name}
+    >
+      <header className={lifecycleBoardStyles.columnHeader}>
+        <span className={lifecycleBoardStyles.columnTitle}>{stage.display_name}</span>
+        <span className={lifecycleBoardStyles.columnCategory}>{stage.category}</span>
+        <span className={lifecycleBoardStyles.columnCount}>{taskCount}</span>
       </header>
-      <div className="lifecycle-column__groups">
+      <div className={lifecycleBoardStyles.groups}>
         {stateOrder.map(state => {
           const rows = grouped.get(state) ?? []
           const isDone = state === 'done'
           return (
             <section
               key={state}
-              className={`lifecycle-stage-group lifecycle-stage-group--${state}`}
+              className={cn(lifecycleBoardStyles.group, lifecycleGroupStateStyles[state])}
               data-testid={`stage-group-${stage.name}-${state}`}
               data-state={state}
             >
@@ -99,13 +131,13 @@ export function StageColumn({
                 <>
                   <button
                     type="button"
-                    className="lifecycle-stage-group__summary"
+                    className={lifecycleBoardStyles.groupSummary}
                     onClick={() => setShowDone(open => !open)}
                   >
                     {GROUP_LABELS[state]} ({rows.length})
                   </button>
                   {(showDone || showDoneCardsWhenCollapsed) && (
-                    <div className="lifecycle-stage-group__cards">
+                    <div className={lifecycleBoardStyles.cards}>
                       {rows.map(({ task, row }) => (
                         <StageCard
                           key={task.id}
@@ -115,6 +147,8 @@ export function StageColumn({
                           reviewPolicy={row.review_policy}
                           onSelectTask={onSelectTask}
                           onAdvanceStage={onAdvanceStage}
+                          onMoveTaskToStage={onMoveTaskToStage}
+                          availableStages={availableStages}
                         />
                       ))}
                     </div>
@@ -122,11 +156,11 @@ export function StageColumn({
                 </>
               ) : (
                 <>
-                  <div className="lifecycle-stage-group__heading">
+                  <div className={lifecycleBoardStyles.groupHeading}>
                     <span>{GROUP_LABELS[state]}</span>
                     <span>{rows.length}</span>
                   </div>
-                  <div className="lifecycle-stage-group__cards">
+                  <div className={lifecycleBoardStyles.cards}>
                     {rows.map(({ task, row }) => (
                       <StageCard
                         key={task.id}
@@ -136,6 +170,8 @@ export function StageColumn({
                         reviewPolicy={row.review_policy}
                         onSelectTask={onSelectTask}
                         onAdvanceStage={onAdvanceStage}
+                        onMoveTaskToStage={onMoveTaskToStage}
+                        availableStages={availableStages}
                       />
                     ))}
                   </div>

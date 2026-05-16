@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button } from '../chat/ui/Button';
+import { Button } from '../shared/Button';
 import { Badge } from '../chat/ui/Badge';
 
 interface Props {

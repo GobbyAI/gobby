@@ -24,7 +24,7 @@ vi.mock('../ActiveAgentIndicator', () => ({
     <div data-testid="agent-indicator" data-disabled={String(Boolean(disabled))} />
   ),
 }))
-vi.mock('./ui/Button', () => ({
+vi.mock('../shared/Button', () => ({
   Button: ({ children, onClick, disabled, ...props }: any) => (
     <button onClick={onClick} disabled={disabled} {...props}>
       {children}

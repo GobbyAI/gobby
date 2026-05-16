@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
-import '../../styles/lifecycle-board.css'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import {
   type LifecycleTask,
   type StageAdvanceAction,
 } from '../../lib/stageActions'
-import { StageColumn, type StageRegistryEntry } from './StageColumn'
+import { lifecycleBoardStyles } from './lifecycleBoardStyles'
+import { LifecycleLane } from './LifecycleLane'
+import type { StageRegistryEntry } from './StageColumn'
 import {
   activeStageCategories,
   buildStageRegistry,
   filterBlockedTasks,
   groupIntoSwimlanes,
   stageCategories,
-  stageNamesForTasks,
-  tasksForStage,
   visibleStagesForTasks,
 } from './lifecycleBoardModel'
 
@@ -27,6 +27,7 @@ interface LifecycleBoardProps {
     action: StageAdvanceAction,
   ) => void | Promise<void>
   onFailStage?: (taskId: string, stageName: string, reason: string) => void | Promise<void>
+  onMoveTaskToStage?: (taskId: string, targetStageName: string) => void | Promise<void>
 }
 
 const HIDE_BLOCKED_KEY = 'lifecycle-board:hide-blocked'
@@ -37,7 +38,9 @@ export function LifecycleBoard({
   stagesRegistry,
   onSelectTask,
   onAdvanceStage,
+  onMoveTaskToStage,
 }: LifecycleBoardProps) {
+  const pendingMoves = useRef<Set<string>>(new Set())
   const [hideBlocked, setHideBlocked] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(HIDE_BLOCKED_KEY) === 'true'
@@ -71,10 +74,45 @@ export function LifecycleBoard({
     window.localStorage.setItem(HIDE_BLOCKED_KEY, hideBlocked ? 'true' : 'false')
   }, [hideBlocked])
 
+  useEffect(() => {
+    if (!onMoveTaskToStage) return
+    return monitorForElements({
+      canMonitor: ({ source }) => source.data.type === 'lifecycle-stage-card',
+      onDrop: ({ source, location }) => {
+        const taskId = typeof source.data.taskId === 'string' ? source.data.taskId : null
+        const sourceStageName = typeof source.data.sourceStageName === 'string'
+          ? source.data.sourceStageName
+          : null
+        const target = location.current.dropTargets.find(
+          record => record.data.type === 'lifecycle-stage-column',
+        )
+        const targetStageName = typeof target?.data.stageName === 'string'
+          ? target.data.stageName
+          : null
+        if (!taskId || !sourceStageName || !targetStageName) return
+        if (sourceStageName === targetStageName) return
+        if (pendingMoves.current.has(taskId)) return
+        pendingMoves.current.add(taskId)
+        let moveResult: void | Promise<void>
+        try {
+          moveResult = onMoveTaskToStage(taskId, targetStageName)
+        } catch {
+          pendingMoves.current.delete(taskId)
+          return
+        }
+        Promise.resolve(moveResult)
+          .catch(() => undefined)
+          .finally(() => {
+            pendingMoves.current.delete(taskId)
+          })
+      },
+    })
+  }, [onMoveTaskToStage])
+
   return (
-    <section className="lifecycle-board" role="region" aria-label="Lifecycle board">
-      <div className="lifecycle-board__toolbar">
-        <label className="lifecycle-board__switch">
+    <section className={lifecycleBoardStyles.board} role="region" aria-label="Lifecycle board">
+      <div className={lifecycleBoardStyles.toolbar}>
+        <label className={lifecycleBoardStyles.switch}>
           <input
             type="checkbox"
             role="switch"
@@ -83,9 +121,9 @@ export function LifecycleBoard({
           />
           <span>Hide blocked</span>
         </label>
-        <div className="lifecycle-board__categories" aria-label="Stage categories">
+        <div className={lifecycleBoardStyles.categories} aria-label="Stage categories">
           {categories.map(category => (
-            <label key={category} className="lifecycle-board__category">
+            <label key={category} className={lifecycleBoardStyles.category}>
               <input
                 type="checkbox"
                 checked={activeCategories.has(category)}
@@ -104,36 +142,20 @@ export function LifecycleBoard({
           ))}
         </div>
       </div>
-      <div className="lifecycle-board__lanes">
+      <div className={lifecycleBoardStyles.lanes}>
         {swimlanes.map(lane => {
-          const laneStageNames = stageNamesForTasks(lane.tasks)
-          const laneStages = visibleStages.filter(stage => laneStageNames.has(stage.name))
+          const laneStages = visibleStages
           if (!laneStages.length) return null
 
           return (
-            <section
+            <LifecycleLane
               key={lane.key}
-              className="lifecycle-board__lane"
-              role="rowgroup"
-              aria-label={lane.label}
-            >
-              <header className="lifecycle-board__lane-header">
-                <span>{lane.label}</span>
-                <span>{lane.tasks.length}</span>
-              </header>
-              <div className="lifecycle-board__columns">
-                {laneStages.map(stage => (
-                  <StageColumn
-                    key={stage.name}
-                    stage={stage}
-                    tasks={tasksForStage(lane.tasks, stage.name)}
-                    onSelectTask={onSelectTask}
-                    onAdvanceStage={onAdvanceStage}
-                    showDoneCardsWhenCollapsed
-                  />
-                ))}
-              </div>
-            </section>
+              lane={lane}
+              stages={laneStages}
+              onSelectTask={onSelectTask}
+              onAdvanceStage={onAdvanceStage}
+              onMoveTaskToStage={onMoveTaskToStage}
+            />
           )
         })}
       </div>

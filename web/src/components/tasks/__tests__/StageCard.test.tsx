@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -23,18 +23,16 @@ function task(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function dragRight(element: HTMLElement) {
-  fireEvent.pointerDown(element, { clientX: 0, clientY: 0, pointerId: 1 })
-  fireEvent.pointerMove(element, { clientX: 160, clientY: 0, pointerId: 1 })
-  fireEvent.pointerUp(element, { clientX: 160, clientY: 0, pointerId: 1 })
-}
-
 async function loadStageCard() {
   const modulePath = '../StageCard'
   return import(/* @vite-ignore */ modulePath)
 }
 
-async function renderCard(lifecycleTask: ReturnType<typeof task>, onAdvanceStage = vi.fn()) {
+async function renderCard(
+  lifecycleTask: ReturnType<typeof task>,
+  onAdvanceStage = vi.fn(),
+  onMoveTaskToStage = vi.fn(),
+) {
   const { StageCard } = await loadStageCard()
   render(
     <StageCard
@@ -44,9 +42,14 @@ async function renderCard(lifecycleTask: ReturnType<typeof task>, onAdvanceStage
       reviewPolicy="required"
       onSelectTask={vi.fn()}
       onAdvanceStage={onAdvanceStage}
+      onMoveTaskToStage={onMoveTaskToStage}
+      availableStages={[
+        { name: 'build', display_name: 'Build', category: 'delivery', review_policy: 'required' },
+        { name: 'deploy', display_name: 'Deploy', category: 'release', review_policy: 'optional' },
+      ]}
     />,
   )
-  return { onAdvanceStage }
+  return { onAdvanceStage, onMoveTaskToStage }
 }
 
 describe('StageCard Phase 6 contracts', () => {
@@ -58,7 +61,7 @@ describe('StageCard Phase 6 contracts', () => {
       }),
     )
 
-    const badge = screen.getByLabelText(/blocked/i)
+    const badge = screen.getByText('Blocked')
     expect(badge).toBeTruthy()
 
     await userEvent.hover(badge)
@@ -70,19 +73,25 @@ describe('StageCard Phase 6 contracts', () => {
     ).toBeTruthy()
   })
 
-  it('test_blocked_drag_disabled', async () => {
+  it('test_blocked_manual_move_available', async () => {
     const onAdvanceStage = vi.fn()
+    const onMoveTaskToStage = vi.fn()
     await renderCard(
       task({
         is_blocked: true,
         blocked_reason: 'Escalated: waiting on operator decision',
       }),
       onAdvanceStage,
+      onMoveTaskToStage,
     )
 
-    dragRight(screen.getByRole('button', { name: /blocked task/i }))
+    await userEvent.selectOptions(
+      screen.getByLabelText(/move blocked task to stage/i),
+      'deploy',
+    )
 
-    expect(onAdvanceStage).not.toHaveBeenCalled()
+    expect(onMoveTaskToStage).toHaveBeenCalledWith('task-1', 'deploy')
+    await userEvent.hover(screen.getByText('Blocked'))
     expect(
       await screen.findByRole('tooltip', {
         name: /escalated: waiting on operator decision/i,
