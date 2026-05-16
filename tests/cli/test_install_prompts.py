@@ -335,6 +335,15 @@ class TestInstallCommandSharedStores:
         secret_store = MagicMock()
 
         with (
+            # all_flag auto-detects installed CLIs via these unpatched probes;
+            # without pinning them the result depends on the host PATH and on
+            # whatever a prior test left in shutil.which/env, and an empty
+            # detection makes the callback sys.exit(1) (install.py:275).
+            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
+            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
             patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
@@ -387,6 +396,15 @@ class TestInstallCommandSharedStores:
         secret_store = MagicMock()
 
         with (
+            # all_flag auto-detects installed CLIs via these unpatched probes;
+            # without pinning them the result depends on the host PATH and on
+            # whatever a prior test left in shutil.which/env, and an empty
+            # detection makes the callback sys.exit(1) (install.py:275).
+            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
+            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
             patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
