@@ -127,6 +127,7 @@ gobby = [
     "install/gemini/**/*",
     "install/codex/**/*",
     "install/qwen/**/*",
+    "install/bundled_content_manifest.json",
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",

@@ -15,6 +15,13 @@ from .utils import get_install_dir
 logger = logging.getLogger(__name__)
 
 VALID_CONTENT_TYPES = {"skills", "prompts", "rules", "agents", "workflows"}
+CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
+    "skills": {"skills"},
+    "prompts": {"prompts"},
+    "rules": {"rules"},
+    "agents": {"agents"},
+    "workflows": {"pipelines", "variables", "build_profiles"},
+}
 
 
 @click.command("sync")
@@ -44,10 +51,12 @@ def sync(
     dev_mode = is_dev_mode(Path.cwd())
     install_dir = get_install_dir()
     skip_types: set[str] | None = None
+    tampered_types: set[str] = set()
 
     # --- Integrity check ---
     if not dev_mode and not force:
         from gobby.sync.integrity import (
+            BUNDLED_SYNC_CONTENT_TYPES,
             get_dirty_content_types,
             verify_bundled_integrity,
         )
@@ -55,30 +64,36 @@ def sync(
         click.echo("Verifying bundled content integrity...")
         result = verify_bundled_integrity(install_dir)
 
-        if not result.git_available:
-            if verbose:
-                click.echo("  Git not available — skipping integrity check")
-        elif result.all_clean:
-            click.echo("  All bundled content is clean")
+        if not result.checked:
+            click.echo("  Integrity verification unavailable; blocking bundled content sync")
+            for err in result.errors:
+                click.echo(f"  {err}", err=True)
+            skip_types = set(BUNDLED_SYNC_CONTENT_TYPES)
         else:
-            if result.dirty_files:
-                click.echo(f"  Modified files ({len(result.dirty_files)}):")
-                for f in result.dirty_files:
-                    click.echo(f"    {f}")
-            if result.untracked_files:
-                click.echo(f"  Untracked files ({len(result.untracked_files)}):")
-                for f in result.untracked_files:
-                    click.echo(f"    {f}")
+            if not result.git_available and result.source == "manifest" and verbose:
+                click.echo("  Git not available; verified packaged manifest")
+            if result.all_clean:
+                click.echo("  All bundled content is clean")
+            else:
+                if result.dirty_files:
+                    click.echo(f"  Modified files ({len(result.dirty_files)}):")
+                    for f in result.dirty_files:
+                        click.echo(f"    {f}")
+                if result.untracked_files:
+                    click.echo(f"  Untracked files ({len(result.untracked_files)}):")
+                    for f in result.untracked_files:
+                        click.echo(f"    {f}")
 
-            tampered = get_dirty_content_types(
-                result.dirty_files + result.untracked_files, install_dir
-            )
-            if tampered:
-                skip_types = tampered
-                click.echo(f"  Blocking tampered content types: {', '.join(sorted(tampered))}")
+                tampered = get_dirty_content_types(
+                    result.dirty_files + result.untracked_files, install_dir
+                )
+                if tampered:
+                    tampered_types = tampered
+                    skip_types = tampered
+                    click.echo(f"  Blocking tampered content types: {', '.join(sorted(tampered))}")
 
         if verify_only:
-            sys.exit(0 if (not result.git_available or result.all_clean) else 1)
+            sys.exit(0 if (result.checked and result.all_clean) else 1)
     elif dev_mode and not force:
         if verbose:
             click.echo("Dev mode: skipping integrity check")
@@ -93,11 +108,13 @@ def sync(
 
     # --- Filter to requested types ---
     if types:
-        requested = set(types)
+        from gobby.sync.integrity import BUNDLED_SYNC_CONTENT_TYPES
+
+        requested = _sync_targets_for_cli_types(set(types))
         if skip_types:
-            skip_types = (VALID_CONTENT_TYPES - requested) | (skip_types & requested)
+            skip_types = (BUNDLED_SYNC_CONTENT_TYPES - requested) | (skip_types & requested)
         else:
-            skip_types = VALID_CONTENT_TYPES - requested
+            skip_types = BUNDLED_SYNC_CONTENT_TYPES - requested
 
     # --- Initialize DB and sync ---
     from gobby.config.app import load_config
@@ -132,11 +149,10 @@ def sync(
             if synced > 0:
                 click.echo(f"  {content_type}: {synced} items")
 
-    if skip_types and skip_types & VALID_CONTENT_TYPES:
-        skipped = skip_types & VALID_CONTENT_TYPES
-        # Only show types that were actually skipped due to tampering (not type filtering)
+    if tampered_types:
+        skipped = tampered_types
         if types:
-            skipped = skipped & set(types)
+            skipped = skipped & _sync_targets_for_cli_types(set(types))
         if skipped:
             click.echo(f"Skipped tampered types: {', '.join(sorted(skipped))}")
 
@@ -144,3 +160,10 @@ def sync(
         for err in errors:
             click.echo(f"  Warning: {err}", err=True)
         sys.exit(1)
+
+
+def _sync_targets_for_cli_types(types: set[str]) -> set[str]:
+    targets: set[str] = set()
+    for content_type in types:
+        targets.update(CONTENT_TYPE_SYNC_TARGETS[content_type])
+    return targets

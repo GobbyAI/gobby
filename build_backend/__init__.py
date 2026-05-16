@@ -9,8 +9,10 @@ Before every wheel/sdist build:
      ``npm ci && npm run build`` in ``web/`` to produce ``web/dist/``.
   3. Copy ``web/dist/`` into ``src/gobby/ui/web/dist/`` so the
      ``ui/web/dist/**/*`` package-data glob picks the assets up.
-  4. Verify built wheels contain ``gobby/ui/web/dist/index.html`` so release
-     artifacts cannot silently ship without the production UI.
+  4. Generate ``src/gobby/install/bundled_content_manifest.json`` from
+     raw bytes in ``src/gobby/install/shared/``.
+  5. Verify built wheels contain the UI index and bundled-content manifest so
+     release artifacts cannot silently ship without production assets.
 
 Editable installs skip the UI build entirely; the dev workflow uses
 ``gobby ui dev`` against ``web/`` directly.
@@ -23,8 +25,10 @@ import os
 import shutil
 import subprocess  # nosec B404
 import zipfile
+from importlib import util as importlib_util
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, Protocol, cast
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,13 @@ _WEB_SRC: Path = _REPO_ROOT / "web"
 _DIST_SRC: Path = _WEB_SRC / "dist"
 _WHEEL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
 _WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
+_INSTALL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "install"
+_MANIFEST_MODULE: Path = _INSTALL_DEST / "manifest.py"
+_WHEEL_CONTENT_MANIFEST: str = "gobby/install/bundled_content_manifest.json"
+
+
+class _ManifestModule(Protocol):
+    def write_bundled_content_manifest(self, install_dir: Path) -> Path: ...
 
 
 def _parse_npm_build_timeout(raw_value: str | None) -> int:
@@ -163,12 +174,32 @@ def _stage_ui() -> None:
     logger.info("Staged web UI assets at %s", _WHEEL_DEST)
 
 
-def _verify_wheel_contains_ui(wheel_path: Path) -> None:
+def _load_manifest_module() -> ModuleType:
+    spec = importlib_util.spec_from_file_location("_gobby_build_manifest", _MANIFEST_MODULE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load bundled content manifest helper: {_MANIFEST_MODULE}")
+    module = importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _stage_bundled_content_manifest() -> Path:
+    manifest_module = cast(_ManifestModule, _load_manifest_module())
+    manifest_path = manifest_module.write_bundled_content_manifest(_INSTALL_DEST)
+    logger.info("Staged bundled content manifest at %s", manifest_path)
+    return manifest_path
+
+
+def _verify_wheel_contains_required_files(wheel_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as wheel:
-        if _WHEEL_UI_INDEX not in wheel.namelist():
-            raise RuntimeError(
-                f"Built wheel is missing {_WHEEL_UI_INDEX}; build web/dist before publishing."
-            )
+        members = set(wheel.namelist())
+    required = (_WHEEL_UI_INDEX, _WHEEL_CONTENT_MANIFEST)
+    missing = [member for member in required if member not in members]
+    if missing:
+        raise RuntimeError(
+            "Built wheel is missing required packaged assets: "
+            f"{', '.join(missing)}; build assets before publishing."
+        )
 
 
 def build_wheel(
@@ -177,11 +208,12 @@ def build_wheel(
     metadata_directory: str | None = None,
 ) -> str:
     _stage_ui()
+    _stage_bundled_content_manifest()
     wheel_name = str(_orig().build_wheel(wheel_directory, config_settings, metadata_directory))
     wheel_path = Path(wheel_name)
     if not wheel_path.is_absolute():
         wheel_path = Path(wheel_directory) / wheel_path
-    _verify_wheel_contains_ui(wheel_path)
+    _verify_wheel_contains_required_files(wheel_path)
     return wheel_name
 
 
@@ -190,6 +222,7 @@ def build_sdist(
     config_settings: dict[str, Any] | None = None,
 ) -> str:
     _stage_ui()
+    _stage_bundled_content_manifest()
     return str(_orig().build_sdist(sdist_directory, config_settings))
 
 
