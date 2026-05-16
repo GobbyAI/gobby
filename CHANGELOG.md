@@ -10,37 +10,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.4]
 
-A patch release focused on provider model discovery reliability, web session
-detail error handling, voice warmup cleanup, and follow-up review hardening
+A patch release dominated by a web design-system and accessibility pass
+(light-mode rework, a header theme toggle, deutan-safe status indicators,
+anti-pattern cleanup), Homebrew distribution, voice/PTT and tmux session
+reliability, a memory consolidation service, and broad review hardening
 since `0.4.3`.
+
+### Added
+
+- Add a Homebrew distribution mode (#14724).
+- Add a header sun/moon theme toggle (#14723).
+- Add a memory "dream" service that consolidates and cleans up project
+  memories with revertible snapshots.
+- Auto-compact the web chat after a task is closed (#14605).
+- Add a shared `<Heading>` primitive and migrate raw `<hN>` call sites
+  across the web app to it (#14591, #14667).
+- Add `paused`/`stopped` kinds to `ActivityRowStatusDot` (#14673).
+- Add chart-series tokens, a dash helper, and a `--bg-deep` token; drop
+  raw black `color-mix` in pipelines reporting (#14594, #14598).
+- Enable `jsx-a11y/label-has-associated-control` and fix all 83
+  violations (#14590).
+- Generate atomic digest JSON titles and reject placeholder titles
+  (#14666, #14670).
 
 ### Changed
 
+- Rework the light theme: de-white the neutral ramp, replace muddy accent
+  washes with a decisive two-treatment chrome palette, restore light-theme
+  elevation depth, and make code syntax theme-aware while keeping dark
+  chrome at its shipped look (#14714, #14718, #14722).
+- Redesign the activity-panel task detail and split its meta into stats
+  and ref-row groups (#14675, #14686).
+- Apply an anti-pattern design pass: donut arc patterns for grayscale
+  legibility, drop the `ToolCallCard` side-stripe state border, replace
+  the `SavingsCard` hero metric with a sentence lede, and rework the
+  `ProjectSummary` stat row (#14599, #14600, #14601, #14602).
+- Tool-result blocks now sit on the bordered card instead of a second
+  code-background slab (#14721).
+- Bundle JetBrains Mono Variable and drop Roboto from the sans stack;
+  bump Tailwind packages (#14597, #14695).
+- Route daemon SQLite work through the DB executor (#14706).
 - Run Gemini/Qwen model-discovery trust seeding off the event loop while
-  preserving unsupported-CLI no-op behavior (#14671).
-- Replace raw dashboard metric chart-series indexes with named series mapping
-  and normalize heading levels before rendering heading tags (#14671).
-- Document automated expansion leaf categories as `code`, `config`, `docs`,
-  `planning`, `refactor`, `research`, and `test`; generated `manual` leaves are
-  rejected and should move to direct/manual task creation when human gates are
-  required. This aligns `stage_manifest.py` and the
-  `expansion-agent-selection/SKILL.md` guidance with build validation.
+  preserving unsupported-CLI no-op behavior, and scope ACP
+  model-discovery trust (#14568, #14671).
+- Document automated expansion leaf categories as `code`, `config`,
+  `docs`, `planning`, `refactor`, `research`, and `test`; reject generated
+  `manual` leaves so they move to direct/manual task creation when human
+  gates are required, aligning `stage_manifest.py` and the
+  `expansion-agent-selection/SKILL.md` guidance with build validation
+  (#14607, #14671).
+- Replace raw dashboard metric chart-series indexes with named series
+  mapping and normalize heading levels before rendering (#14671).
 
 ### Fixed
 
-- Surface selected-session metadata refresh failures in the Sessions tab and
-  clear stale detail state when a selected session can no longer be loaded
-  (#14671).
-- Bound voice warmup throttling cache growth by pruning expired warmup entries
-  before reuse (#14671).
-- Polish canvas checkbox accent/focus styling, deterministic web-chat session
-  registry test paths, workflow marker coverage, and donut full-circle arc
-  naming (#14671).
+- Voice/PTT reliability: coordinate warmup dependencies, quiet duplicate
+  warmup prepares, clear stuck PTT transcription state, fix the PTT record
+  status UI, and tighten mic-mode label spacing (#14609, #14672, #14702,
+  #14711, #14715).
+- Keep live tmux sessions active and persist fresh chat and terminal
+  attachment restore (#14701, #14713).
+- Wait for service stop before restart (#14710).
+- Harden embedding install and package smoke, validate the UI dev web dir
+  and embedding dimension, and re-export the embedding install prompt
+  (#14676, #14685, #14692).
+- Responsive chrome: compact mobile chat and status-bar controls, collapse
+  the narrow project selector, compact chat chrome at minimum width, align
+  narrow chat controls, and tune the hamburger button (#14688, #14689,
+  #14690, #14703, #14707, #14712).
+- Accessibility and token hygiene: deutan-safe `ActivityRowStatusDot` with
+  shape+lightness redundancy, convert the `RulesTab` card body to a
+  keyboard-activatable `<button>`, add aria-labels to icon-only buttons,
+  share `inputFocusCls` across input chrome, bump touch targets to 44px
+  under `pointer:coarse`, and replace undefined-token red fallbacks,
+  `bg-black/N` scrims, and `border-gray-300` with `--color-error`,
+  `--surface-scrim`, and `--border` tokens (#14586, #14587, #14588,
+  #14589, #14592, #14593, #14595, #14596).
+- Show session digest summaries and refresh the active rule selection
+  live (#14606, #14608).
+- Surface selected-session metadata refresh failures in the Sessions tab
+  and clear stale detail state when a selected session can no longer be
+  loaded; bound voice warmup throttling cache growth by pruning expired
+  entries before reuse (#14671).
+- Replace a lazy `type: ignore` with `typing.cast` in `executor.py` and
+  fix related markdown lint (#12746).
+- Cover code-index bounded DB execution with tests (#14669).
+- Regenerate transcript visual snapshots for the `tool-code-surface`
+  change (#14725).
+- Restore focused CI regressions (#14720).
+- Apply broad CodeRabbit and follow-up review hardening across the web app
+  and daemon (#14671, #14674, #14684, #14687, #14691, #14693, #14694,
+  #14696, #14697, #14698, #14700, #14704, #14705, #14708, #14709, #14716,
+  #14717, #14719).
 
 ### Release
 
-- Add changelog metadata for the already-bumped `0.4.4` package version
-  (#14671).
+- Bump the package version to `0.4.4` and add its changelog metadata
+  (#14584, #14671).
 
 ## [0.4.3]
 
