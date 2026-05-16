@@ -1,8 +1,12 @@
+import type { VoiceInputMode } from '../../hooks/useSettings'
+
 interface VoiceStatusBarProps {
   voiceLoading?: boolean
   isListening: boolean
   isSpeechDetected: boolean
+  isRecording: boolean
   isTranscribing: boolean
+  voiceInputMode: VoiceInputMode
   voiceError?: string | null
 }
 
@@ -10,11 +14,14 @@ export function VoiceStatusBar({
   voiceLoading = false,
   isListening,
   isSpeechDetected,
+  isRecording,
   isTranscribing,
+  voiceInputMode,
   voiceError,
 }: VoiceStatusBarProps) {
+  const isPttRecording = voiceInputMode === 'ptt' && isRecording
   const hasVisibleStatus = Boolean(
-    voiceLoading || isListening || isTranscribing || voiceError,
+    voiceLoading || isListening || isPttRecording || isTranscribing || voiceError,
   )
 
   return (
@@ -34,6 +41,11 @@ export function VoiceStatusBar({
         <>
           <SpinnerIcon />
           <span className="text-muted-foreground">Transcribing...</span>
+        </>
+      ) : isPttRecording ? (
+        <>
+          <span className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
+          <span className="text-destructive-foreground">Recording...</span>
         </>
       ) : isListening && isSpeechDetected ? (
         <>

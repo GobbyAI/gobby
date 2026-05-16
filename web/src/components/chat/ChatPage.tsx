@@ -733,13 +733,18 @@ export function ChatPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanel]);
 
+  const voiceInputMode = voice.voiceInputMode ?? "ptt";
   const wantsVoiceStatusSlot = Boolean(
-    voice.ttsEnabled || (voice.sttEnabled && voice.voiceInputMode === "vad"),
+    voice.ttsEnabled || (voice.sttEnabled && voiceInputMode === "vad"),
+  );
+  const isPttRecording = Boolean(
+    voiceInputMode === "ptt" && voice.isRecording,
   );
   const showVoiceStatusBar = Boolean(
     wantsVoiceStatusSlot ||
       voice.voiceLoading ||
       voice.isListening ||
+      isPttRecording ||
       voice.isTranscribing ||
       voice.voiceError,
   );
@@ -807,7 +812,9 @@ export function ChatPage({
               voiceLoading={voiceStatusWarming}
               isListening={voice.isListening ?? false}
               isSpeechDetected={voice.isSpeechDetected ?? false}
+              isRecording={voice.isRecording ?? false}
               isTranscribing={voice.isTranscribing ?? false}
+              voiceInputMode={voiceInputMode}
               voiceError={voice.voiceError}
             />
           )}

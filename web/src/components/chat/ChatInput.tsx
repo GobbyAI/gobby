@@ -9,7 +9,7 @@ import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
-import { MicIcon, PaperclipIcon, SendIcon, StopIcon } from './ChatInputIcons'
+import { PaperclipIcon, RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
 import { ModeSelector } from './ModeSelector'
@@ -804,7 +804,7 @@ export function ChatInput({
                 aria-pressed={primaryButtonKind === 'mic-recording' ? true : undefined}
                 disabled={primaryButtonDisabled}
               >
-                {primaryButtonKind === 'stop' ? <StopIcon /> : primaryButtonKind === 'send' ? <SendIcon /> : <MicIcon />}
+                {primaryButtonKind === 'stop' ? <StopIcon /> : primaryButtonKind === 'send' ? <SendIcon /> : <RecordIcon />}
               </button>
             </div>
           </div>
