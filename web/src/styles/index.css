@@ -234,21 +234,21 @@
 [data-theme="light"] {
   --gobby-logo-image: url("/logo-light.png");
 
-  --bg-primary: oklch(99% 0.002 125);
-  --bg-secondary: oklch(96% 0.004 125);
-  --bg-tertiary: oklch(92% 0.006 125);
+  --bg-primary: oklch(97% 0.006 125);
+  --bg-secondary: oklch(94.5% 0.007 125);
+  --bg-tertiary: oklch(91% 0.008 125);
 
   --text-primary: oklch(20% 0.005 125);
   --text-secondary: oklch(40% 0.005 125);
-  --text-muted: oklch(51% 0.005 125);
+  --text-muted: oklch(48% 0.005 125);
 
-  --border: oklch(86% 0.008 125);
-  --border-soft: color-mix(in srgb, oklch(86% 0.008 125) 55%, transparent);
+  --border: oklch(84% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(84% 0.008 125) 55%, transparent);
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
   --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
   --surface-tint-subtle: oklch(0% 0 0 / 0.03);
-  --bg-deep: oklch(96% 0.005 125);
+  --bg-deep: oklch(93% 0.007 125);
   --surface-tint: oklch(0% 0 0 / 0.05);
   --surface-tint-strong: oklch(0% 0 0 / 0.08);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.08);
@@ -301,11 +301,11 @@
   --chart-series-6: oklch(48% 0.16 30);
 
   --user-bg: oklch(95% 0.05 125);
-  --assistant-bg: oklch(96% 0.004 125);
+  --assistant-bg: oklch(94% 0.005 125);
   --system-bg: oklch(95% 0.04 350);
 
   /* Language icon colors — see web/src/lib/languageColors.ts. Lightness
-     tightened to clear WCAG 2.2 AA 4.5:1 against --bg-primary (oklch 99%). */
+     tightened to clear WCAG 2.2 AA 4.5:1 against --bg-primary (oklch 97%). */
   --lang-typescript: oklch(42% 0.18 240);
   --lang-javascript: oklch(48% 0.16 95);
   --lang-python: oklch(40% 0.16 250);
