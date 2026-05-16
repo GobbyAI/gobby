@@ -121,6 +121,15 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* Light: brighter neutral well + primary text, drop the inset accent
+   stripe (no decorative color stripe — .impeccable.md). Weight stays
+   semibold (shipped both themes). Dark byte-frozen to IMG_3754. */
+[data-theme="light"] .chat-scope-btn.active {
+  color: var(--text-primary);
+  background: var(--surface-selected);
+  box-shadow: none;
+}
+
 .chat-scope-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;

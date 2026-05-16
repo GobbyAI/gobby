@@ -239,6 +239,15 @@
   --bg-secondary: oklch(94% 0.008 125);
   --bg-tertiary: oklch(90% 0.008 125);
 
+  /* Selected-state well for chrome selectors (segmented active,
+     command-palette active, chat-scope-btn.active, session-item.attached).
+     A brighter neutral lifted ABOVE the bg-secondary track and bg-primary
+     canvas — selection reads via lightness + weight, not hue
+     (.impeccable.md: color is the fourth signal; deutan-safe; chroma in
+     the locked 0.005-0.008 tint band). Light-only: the dark theme keeps
+     its shipped accent treatment and never resolves this token. */
+  --surface-selected: oklch(98.5% 0.005 125);
+
   --text-primary: oklch(20% 0.005 125);
   --text-secondary: oklch(40% 0.005 125);
   --text-muted: oklch(48% 0.005 125);
@@ -793,6 +802,14 @@ body {
 
 .session-item.attached {
   background: var(--accent-soft);
+}
+
+/* Light: the attached session reads as a brighter neutral well, not an
+   accent wash — selection by lightness + weight, accent reserved for
+   applied filters. Dark keeps the shipped accent-soft (byte-frozen). */
+[data-theme="light"] .session-item.attached {
+  background: var(--surface-selected);
+  color: var(--text-primary);
 }
 
 .session-item-main {

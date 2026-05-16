@@ -148,6 +148,15 @@
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
+/* Light: an open filter is an applied constraint — solid accent fill,
+   the one place a decisive accent surface earns its pixels. Dark keeps
+   the shipped tinted treatment (byte-frozen to IMG_3754). */
+[data-theme="light"] .activity-filter-button[aria-expanded="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
 .activity-filter-badge {
   position: absolute;
   top: -4px;

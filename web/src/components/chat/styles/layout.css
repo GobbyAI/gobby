@@ -413,6 +413,15 @@
   color: var(--text-primary);
 }
 
+/* Light: brighter neutral well + semibold, no accent wash — selection by
+   lightness + weight. Dark keeps the shipped accent-tint (byte-frozen to
+   IMG_3754). */
+[data-theme="light"] .command-palette-item.active {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
 .command-palette-item-dot {
   width: 6px;
   height: 6px;

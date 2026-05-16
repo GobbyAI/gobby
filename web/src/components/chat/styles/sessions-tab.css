@@ -338,6 +338,21 @@
   font-family: var(--font-mono);
 }
 
+/* Light: session-kind chips are identity metadata, not interactive state,
+   so they read as neutral mono pills — accent is reserved for applied
+   filters/constraints. Border + mono inherit from the base rule. Dark
+   keeps the shipped accent pill (byte-frozen to IMG_3754). */
+[data-theme="light"] :is(
+  .chip--tmux,
+  .chip--web,
+  .chip--auto,
+  .chip--sandbox,
+  .chip--local
+) {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
 /* --- Session context menu --- */
 .session-ctx-backdrop {
   position: fixed;

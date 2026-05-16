@@ -477,3 +477,11 @@
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
 }
+
+/* Light: a chosen filter is an applied constraint — the one decisive
+   accent moment. Solid accent fill, deutan-tolerant (hue 125),
+   grayscale-distinct as a dark fill. Dark byte-frozen to IMG_3754. */
+[data-theme="light"] .activity-filter-dropdown__item--active {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
