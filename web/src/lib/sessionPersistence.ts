@@ -102,7 +102,14 @@ export function loadReasoningPreferences(): Record<string, string> {
       return {};
     }
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => {
+        return typeof entry[1] === "string";
+      }),
+    );
   } catch {
     return {};
   }

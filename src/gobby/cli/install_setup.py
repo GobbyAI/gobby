@@ -332,6 +332,8 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
             click.echo(f"Warning: Failed to install {label}: {npm_result.stderr.strip()}")
     except FileNotFoundError:
         click.echo(f"Warning: npm not found — skipping {label} install")
+    except OSError as e:
+        click.echo(f"Warning: Failed to run npm for {label}: {e}")
     except subprocess.TimeoutExpired:
         click.echo(f"Warning: {label} install timed out")
 

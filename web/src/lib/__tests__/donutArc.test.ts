@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { describeArcPath, donutArcs } from '../donutArc'
+import { DEFAULT_FULL_CIRCLE_EPSILON_DEG, describeArcPath, donutArcs } from '../donutArc'
 
 function arcCommandCount(pathD: string): number {
   return pathD.match(/\bA\b/g)?.length ?? 0
 }
 
 describe('describeArcPath', () => {
+  it('exports a named full-circle epsilon', () => {
+    expect(DEFAULT_FULL_CIRCLE_EPSILON_DEG).toBeGreaterThan(0)
+  })
+
   it('renders an epsilon-close full circle as two SVG arc commands', () => {
     const pathD = describeArcPath(0, 0, 10, 0, 359.9999999)
 

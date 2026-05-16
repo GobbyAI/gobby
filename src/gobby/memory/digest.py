@@ -37,6 +37,8 @@ _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
     re.IGNORECASE,
 )
+# Matches literal prompt placeholders that models sometimes echo instead of
+# replacing; those values must not become persisted titles or digest turns.
 _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"^\[?\s*(?:"
     r"\d+\s*-\s*\d+\s+word\s+session\s+title(?:\s+reflecting\s+current\s+work)?|"

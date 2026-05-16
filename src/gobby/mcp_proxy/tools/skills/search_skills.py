@@ -109,6 +109,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 try:
                     active_names = await ctx.get_active_skill_names(session_id)
                 except Exception as sv_err:
+                    active_names = []
                     logger.warning(
                         f"Failed to resolve session variables for {session_id}: {sv_err}"
                     )

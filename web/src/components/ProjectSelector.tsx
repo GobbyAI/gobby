@@ -78,23 +78,26 @@ export function ProjectSelector({
       : undefined;
 
   const closePicker = useCallback((restoreFocus: PickerRestoreFocus = false) => {
-    const searchInput = searchInputRef.current;
+    const restoreCompactFocus = () => compactTriggerRef.current?.focus();
+    const restoreSearchFocus = () => {
+      triggerRef.current
+        ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
+        ?.focus();
+    };
+    if (restoreFocus === "compact") {
+      restoreCompactFocus();
+    }
+    if (restoreFocus === "search") {
+      restoreSearchFocus();
+    }
     setPickerMode(null);
     setProjectSearch("");
     setActiveOptionIndex(0);
     if (restoreFocus === "compact") {
-      requestAnimationFrame(() => compactTriggerRef.current?.focus());
+      requestAnimationFrame(restoreCompactFocus);
     }
     if (restoreFocus === "search") {
-      requestAnimationFrame(() => {
-        if (searchInput?.isConnected) {
-          searchInput.focus();
-          return;
-        }
-        triggerRef.current
-          ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
-          ?.focus();
-      });
+      requestAnimationFrame(restoreSearchFocus);
     }
   }, []);
 
@@ -210,7 +213,8 @@ export function ProjectSelector({
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      closePicker();
+      e.preventDefault();
+      closePicker("search");
       return;
     }
     handleArrowNavigation(e, () =>

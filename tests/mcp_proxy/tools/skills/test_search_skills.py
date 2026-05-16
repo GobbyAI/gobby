@@ -5,7 +5,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -302,6 +302,23 @@ class TestSearchSkillsTool:
 
         names = {r["skill_name"] for r in result["results"]}
         assert {"git-commit", "git-rebase"}.issubset(names)
+
+    @pytest.mark.asyncio
+    async def test_active_skill_lookup_error_fails_closed(self, registry) -> None:
+        """Session allowlist lookup failures return no skill matches."""
+        from gobby.mcp_proxy.tools.skills._context import SkillsContext
+
+        tool = registry.get_tool("search_skills")
+
+        with patch.object(
+            SkillsContext,
+            "get_active_skill_names",
+            new=AsyncMock(side_effect=RuntimeError("session variables unavailable")),
+        ):
+            result = await tool(query="git", session_id="s1")
+
+        assert result["success"] is True
+        assert result["results"] == []
 
 
 @pytest.fixture

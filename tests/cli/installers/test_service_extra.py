@@ -1,11 +1,14 @@
 """Extra tests for OS-level service coverage."""
 
+import logging
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.cli.installers.service import (
+    _launchctl_bootout,
     _linux_restart,
     _linux_start,
     _linux_stop,
@@ -125,6 +128,27 @@ class TestMacOSDisable:
         mock_plist.return_value = tmp_path / "missing"
         res = disable_service_macos()
         assert res["success"] is False
+
+    @patch("gobby.cli.installers.service.subprocess.run")
+    def test_launchctl_bootout_timeout_respects_quiet(
+        self,
+        mock_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="launchctl", timeout=30)
+
+        with caplog.at_level(logging.WARNING):
+            quiet_result = _launchctl_bootout(quiet=True)
+
+        assert quiet_result["success"] is False
+        assert quiet_result["error"] == "launchctl bootout timed out"
+        assert "launchctl bootout timed out" not in caplog.text
+
+        with caplog.at_level(logging.WARNING):
+            loud_result = _launchctl_bootout(quiet=False)
+
+        assert loud_result["success"] is False
+        assert "launchctl bootout timed out" in caplog.text
 
 
 class TestDirectStartStopCommands:

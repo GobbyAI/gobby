@@ -110,7 +110,12 @@ class TestCompactSelfTerminalPath:
         session = _make_terminal_session("claude")
         registry, tmux = _register_compact_self(session)
 
-        result = _call_compact_self(registry, tmux, session_id="s1")
+        result = _call_compact_self(
+            registry,
+            tmux,
+            session_id="s1",
+            rule_name="auto-compact-after-task-close",
+        )
 
         assert result == {
             "compacted": True,

@@ -169,6 +169,10 @@ Every deliverable heading needs a `[category: X]` tag. Expansion manifest catego
 | `research` | no | Investigation with no code output |
 | `planning` | no | Design or architecture work |
 
+Use `planning` only for parent or intermediate planning work. Leaf deliverables
+that produce implementation artifacts should use their concrete output category
+such as `code`, `config`, `docs`, `test`, or `refactor`.
+
 `code` and `config` deliverables may use TDD. Expansion emits the TEST, IMPL,
 and REF wrapper tasks for those categories. Do not add filler deliverables such
 as "write tests for X" when they duplicate the wrapper.

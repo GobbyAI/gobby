@@ -60,6 +60,13 @@ class ToolBrief(TypedDict):
     brief: str
 
 
+def _log_empty_unhealthy_cache(server_name: str) -> None:
+    logger.warning(
+        "MCP server %s is unhealthy and has no cached tool list; returning no tools",
+        server_name,
+    )
+
+
 def _object_attr(value: object, attr: str) -> object | None:
     return getattr(value, attr, None)
 
@@ -236,6 +243,8 @@ async def list_all_mcp_tools(
                         server.mcp_manager, server_filter
                     ):
                         cached_tools = _cached_tool_briefs(server_config)
+                        if not cached_tools:
+                            _log_empty_unhealthy_cache(server_filter)
                         tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
                     else:
                         tools_by_server[server_filter] = await _list_external_server_tools(
@@ -257,6 +266,8 @@ async def list_all_mcp_tools(
                     if config.enabled:
                         if _external_server_is_unhealthy(server.mcp_manager, config.name):
                             cached_tools = _cached_tool_briefs(config)
+                            if not cached_tools:
+                                _log_empty_unhealthy_cache(config.name)
                             tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue
 

@@ -24,6 +24,7 @@ from gobby.cli.install_setup import (
     _install_gsqz_from_cargo_install,
     _install_gsqz_from_github,
     _resolve_latest_release_tag,
+    _run_npm_install,
     _write_gcode_version_stamp,
     _write_gsqz_version_stamp,
     ensure_daemon_config,
@@ -254,6 +255,35 @@ class TestRunDaemonSetup:
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
         mock_gloc.assert_not_called()
+
+
+class TestRunNpmInstall:
+    @patch("subprocess.run", side_effect=PermissionError("denied"))
+    def test_warns_when_npm_cannot_execute(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _run_npm_install("Playwright CLI", "@playwright/cli@latest", tmp_path)
+
+        assert mock_run.call_count == 1
+        assert "Warning: Failed to run npm for Playwright CLI: denied" in capsys.readouterr().out
+
+    @patch("subprocess.run", side_effect=OSError("exec format error"))
+    def test_warns_on_os_error(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _run_npm_install("ClawHub CLI", "clawhub", tmp_path)
+
+        assert mock_run.call_count == 1
+        assert (
+            "Warning: Failed to run npm for ClawHub CLI: exec format error"
+            in capsys.readouterr().out
+        )
 
 
 class TestGsqzHelpers:

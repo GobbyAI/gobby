@@ -24,6 +24,7 @@ rules:
         tool: compact_self
         arguments:
           session_id: "{{ event.session_id }}"
+          rule_name: auto-compact-after-task-close
         background: true
       - type: set_variable
         variable: _auto_compact_after_task_close_queued_for

@@ -110,7 +110,16 @@ describe('sessionPersistence', () => {
     expect(loadReasoningPreferences()).toEqual({ codex: 'high', claude: 'none' })
   })
 
-  it.each(['not-json', 'null', '"high"', '42'])(
+  it('drops non-string reasoning preference values', () => {
+    localStorage.setItem(
+      REASONING_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ codex: 'high', claude: null, droid: ['medium'], qwen: 4 }),
+    )
+
+    expect(loadReasoningPreferences()).toEqual({ codex: 'high' })
+  })
+
+  it.each(['not-json', 'null', '"high"', '42', '[]'])(
     'returns empty reasoning preferences for malformed storage %s',
     (raw) => {
       localStorage.setItem(REASONING_PREFERENCES_STORAGE_KEY, raw)

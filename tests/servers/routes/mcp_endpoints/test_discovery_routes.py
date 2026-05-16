@@ -220,7 +220,10 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager.ensure_connected.assert_not_awaited()
 
     def test_list_tools_with_server_filter_external_unhealthy_empty_cache(
-        self, client: TestClient, mock_server: MagicMock
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Unhealthy filtered external servers with no cache return empty without reconnecting."""
         mock_server._internal_manager = MagicMock()
@@ -240,13 +243,18 @@ class TestMCPDiscoveryRoutes:
         }
         mock_server.mcp_manager.ensure_connected = AsyncMock()
 
-        response = client.get("/api/mcp/tools?server_filter=ext-server")
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/api/mcp/tools?server_filter=ext-server")
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["ext-server"] == []
         mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+        assert (
+            "MCP server ext-server is unhealthy and has no cached tool list; returning no tools"
+            in caplog.text
+        )
 
     def test_list_tools_with_server_filter_external_no_config(
         self, client: TestClient, mock_server: MagicMock
@@ -384,7 +392,10 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager.ensure_connected.assert_not_awaited()
 
     def test_list_tools_external_server_unhealthy_empty_cache_all(
-        self, client: TestClient, mock_server: MagicMock
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Unhealthy external servers with no cached tools return empty without reconnecting."""
         ext_config = MagicMock()
@@ -402,13 +413,18 @@ class TestMCPDiscoveryRoutes:
         }
         mock_server.mcp_manager.ensure_connected = AsyncMock()
 
-        response = client.get("/api/mcp/tools")
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/api/mcp/tools")
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["empty-cache-server"] == []
         mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+        assert (
+            "MCP server empty-cache-server is unhealthy and has no cached tool list; "
+            "returning no tools"
+        ) in caplog.text
 
     def test_list_tools_external_disabled_skipped(
         self, client: TestClient, mock_server: MagicMock

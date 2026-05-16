@@ -401,7 +401,7 @@ def test_resolve_rules_for_agent_reuses_parsed_rule_definition(
     parse_count = 0
     original_parser = selectors_module._rule_definition_json
 
-    def counted_parser(rule_row):
+    def counted_parser(rule_row: object) -> object | None:
         nonlocal parse_count
         parse_count += 1
         return original_parser(rule_row)

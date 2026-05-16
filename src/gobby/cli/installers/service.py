@@ -365,7 +365,8 @@ def _launchctl_bootout(*, quiet: bool) -> dict[str, Any]:
         return {"success": False, "platform": "macos", "error": error}
     except subprocess.TimeoutExpired:
         error = "launchctl bootout timed out"
-        logger.warning(error)
+        if not quiet:
+            logger.warning(error)
         return {"success": False, "platform": "macos", "error": error}
     except OSError as e:
         error = f"launchctl bootout failed: {e}"
