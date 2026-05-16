@@ -263,7 +263,7 @@ async def _compact_live_web_chat_fallback(
                 session_id,
                 exc_info=True,
             )
-            return None
+            continue
     return None
 
 
