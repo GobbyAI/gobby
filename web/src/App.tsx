@@ -32,6 +32,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
@@ -668,6 +669,7 @@ export default function App() {
           <span className="app-brand-title">Gobby</span>
         </div>
         <div className="app-header-actions">
+          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
           {projectOptions.length > 0 && (
             <ProjectSelector
               projects={projectOptions}

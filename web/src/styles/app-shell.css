@@ -62,6 +62,17 @@
   line-height: 1;
 }
 
+/* Glyph-only accent button matching the collapsed New Chat / Toggle Panel
+   size. The .btn-accent/.btn-sm system owns the fill/hover/focus and the
+   1.75rem geometry; this only stops it shrinking and pins it to the header
+   control row (var(--control-row-height) resolves to
+   --status-bar-control-height here, which also carries coarse-pointer
+   touch sizing). */
+.app-header-actions .app-theme-toggle {
+  flex-shrink: 0;
+  min-height: var(--control-row-height);
+}
+
 .project-selector {
   position: relative;
   min-width: 0;
