@@ -57,11 +57,12 @@ def start_periodic_tasks(
         loops["cleanup_comms_messages_loop"](runner.database, lambda: runner._shutdown_requested),
         name="comms-message-cleanup",
     )
+    db_executor = getattr(runner, "db_executor", None)
     runner._expired_isolation_task = asyncio.create_task(
         loops["cleanup_expired_isolation_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
-            run_db=runner.db_executor.run,
+            run_db=getattr(db_executor, "run", None),
         ),
         name="expired-isolation-cleanup",
     )

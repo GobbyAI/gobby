@@ -507,10 +507,10 @@ def find_web_dir(
         Path to the web/ directory, or None if not found.
     """
 
-    ui_config: UIConfig | None = None
-    if config is not None:
-        ui_config = config.ui
-    source_required = require_source or (ui_config is not None and ui_config.mode == "dev")
+    ui_config: UIConfig | object | None = (
+        getattr(config, "ui", None) if config is not None else None
+    )
+    source_required = require_source or getattr(ui_config, "mode", None) == "dev"
 
     def _qualifies(p: Path) -> bool:
         if not p.exists():
@@ -521,7 +521,7 @@ def find_web_dir(
             return True
         return False
 
-    web_dir = ui_config.web_dir if ui_config is not None else None
+    web_dir = getattr(ui_config, "web_dir", None)
     if web_dir and isinstance(web_dir, (str, os.PathLike)):
         p = Path(web_dir).expanduser()
         if _qualifies(p):
