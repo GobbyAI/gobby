@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -362,10 +363,10 @@ class TestSkillToolInterception:
         assert response.decision == "block"
         assert "User arguments: status" in response.context
 
-    def test_skill_tool_unknown_blocks_with_error(
+    def test_skill_tool_unknown_allows_native_handler(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
     ) -> None:
-        """Skill tool call with unknown skill name blocks with helpful error."""
+        """Unknown Skill names pass through to the native handler."""
         skill_manager.resolve_skill_name.return_value = None
         event = make_event(
             HookEventType.BEFORE_TOOL,
@@ -373,9 +374,8 @@ class TestSkillToolInterception:
         )
         response = handlers_with_skills.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "unknown-thing" in response.context
-        assert "search_skills" in response.context or "search_hub" in response.context
+        assert response.decision == "allow"
+        skill_manager.resolve_skill_name.assert_called_once_with("unknown-thing")
 
     def test_skill_tool_non_gobby_namespace(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -414,19 +414,24 @@ class TestSkillToolInterception:
 
         assert response.decision == "allow"
 
-    def test_skill_tool_error_blocks_not_allows(
-        self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
+    def test_skill_tool_error_allows_native_handler(
+        self,
+        handlers_with_skills: EventHandlers,
+        skill_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Exception during skill resolution blocks with error, never falls through."""
+        """Exception during skill resolution is logged and falls through."""
         skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
+        caplog.set_level(logging.ERROR, logger="test")
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "error" in response.context.lower() or "failed" in response.context.lower()
+        assert response.decision == "allow"
+        assert "Failed to resolve Skill tool call" in caplog.text
+        assert any(record.exc_info is not None for record in caplog.records)
 
     def test_skill_tool_tier2_mcp_fallback(
         self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
@@ -457,13 +462,13 @@ class TestSkillToolInterception:
         assert "<skill-context" not in (response.context or "")
         mock_call_tool.assert_any_call("gobby-skills", "get_skill", {"name": "playwright"})
 
-    def test_skill_tool_tier3_hub_nudge(
+    def test_skill_tool_hub_match_not_searched_for_native_loop(
         self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
     ) -> None:
-        """Tier 3: When tiers 1-2 fail, shows hub results with MCP install syntax."""
+        """Hub-only matches are not searched; native Skill names pass through."""
         skill_manager.resolve_skill_name.return_value = None
 
-        def _mock_call(server: str, tool: str, args: dict) -> dict:
+        def _mock_call(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
             if tool == "get_skill":
                 return {"success": False}
             if tool == "search_hub":
@@ -480,34 +485,33 @@ class TestSkillToolInterception:
                 }
             return {"success": False}
 
+        mock_call_tool = MagicMock(side_effect=_mock_call)
         mock_dependencies["skill_manager"] = skill_manager
-        mock_dependencies["call_tool"] = _mock_call
+        mock_dependencies["call_tool"] = mock_call_tool
         handlers = EventHandlers(**mock_dependencies)
 
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "playwright"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "/loop"}},
         )
         response = handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "playwright-cli" in response.context
-        assert "call_tool(" in response.context
-        assert "install_skill" in response.context
-        # Must NOT contain slash commands (agents can't use them)
-        assert "/gobby" not in response.context
+        assert response.decision == "allow"
+        mock_call_tool.assert_called_once_with("gobby-skills", "get_skill", {"name": "/loop"})
+        assert all(call.args[1] != "search_hub" for call in mock_call_tool.call_args_list)
 
-    def test_skill_tool_tier4_nothing_found_blocks(
+    def test_skill_tool_unresolved_name_allows_native_handler(
         self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
     ) -> None:
-        """Tier 4: When nothing found anywhere, blocks with search suggestions."""
+        """Unresolved names pass through after local and MCP misses."""
         skill_manager.resolve_skill_name.return_value = None
 
-        def _mock_call(server: str, tool: str, args: dict) -> dict:
+        def _mock_call(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"success": False}
 
+        mock_call_tool = MagicMock(side_effect=_mock_call)
         mock_dependencies["skill_manager"] = skill_manager
-        mock_dependencies["call_tool"] = _mock_call
+        mock_dependencies["call_tool"] = mock_call_tool
         handlers = EventHandlers(**mock_dependencies)
 
         event = make_event(
@@ -516,10 +520,8 @@ class TestSkillToolInterception:
         )
         response = handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "nonexistent" in response.context
-        assert "search_skills" in response.context
-        assert "search_hub" in response.context
+        assert response.decision == "allow"
+        mock_call_tool.assert_called_once_with("gobby-skills", "get_skill", {"name": "nonexistent"})
 
     def test_skill_tool_no_manager_but_has_call_tool(
         self, mock_dependencies: dict[str, Any]

@@ -27,9 +27,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def handle_before_tool(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_TOOL event.
 
-        Intercepts Skill tool calls and resolves gobby skills via a 4-tier
-        fallback chain, directing the agent to fetch the skill through
-        gobby-skills and blocking the native tool call.
+        Intercepts Skill tool calls only when they positively resolve to a
+        Gobby-owned skill, directing the agent to fetch the skill through
+        gobby-skills and blocking the native tool call. Unresolved names fall
+        through to the native CLI handler.
         """
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
@@ -46,31 +47,23 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 skill_response = self._resolve_skill_tool_call(input_data)
                 if skill_response is not None:
                     return skill_response
-            except Exception as e:
-                self.logger.error(f"Failed to resolve skill tool call: {e}", exc_info=True)
-                skill_name = input_data.get("tool_input", {}).get("skill", "unknown")
-                return HookResponse(
-                    decision="block",
-                    reason="Skill resolution failed",
-                    context=(
-                        f"An error occurred while resolving skill '{skill_name}'. "
-                        "Please try again or search for skills with: "
-                        f"call_tool('gobby-skills', 'search_skills', {{'query': '{skill_name}'}})"
-                    ),
+            except Exception:
+                self.logger.error(
+                    "Failed to resolve Skill tool call; allowing native handler",
+                    exc_info=True,
                 )
+                return HookResponse(decision="allow")
 
         return HookResponse(decision="allow")
 
     def _resolve_skill_tool_call(self, input_data: dict[str, Any]) -> HookResponse | None:
-        """Resolve a Skill tool call via 4-tier fallback chain.
+        """Resolve a Gobby-owned Skill tool call.
 
         Tier 1: Local DB via HookSkillManager
         Tier 2: gobby-skills MCP get_skill
-        Tier 3: Hub search with install nudge
-        Tier 4: Block with helpful error
 
-        Never falls through to Claude Code's native Skill handler.
-        Returns None only for non-gobby namespaced skills.
+        Returns None for non-Gobby namespaces, missing skills, and unresolved
+        bare names so the native CLI Skill handler can process them.
         """
         tool_input = input_data.get("tool_input", {})
         raw_skill_name = tool_input.get("skill", "")
@@ -105,28 +98,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         source="MCP",
                     )
 
-        # --- Tier 3: Hub search nudge ---
-        if self._call_tool:
-            result = self._call_tool(
-                "gobby-skills", "search_hub", {"query": skill_name, "limit": 5}
-            )
-            if result and isinstance(result, dict) and result.get("success"):
-                hub_results = result.get("results") or result.get("result", {}).get("results", [])
-                if hub_results:
-                    return self._build_hub_nudge_response(skill_name, hub_results)
-
-        # --- Tier 4: Nothing found — block with clear error ---
-        return HookResponse(
-            decision="block",
-            reason=f"Skill '{skill_name}' not found in local DB or skill hubs",
-            context=(
-                f"The skill '{skill_name}' was not found locally or in any skill hubs.\n\n"
-                f"Search for installed skills:\n"
-                f"  call_tool('gobby-skills', 'search_skills', {{'query': '{skill_name}'}})\n\n"
-                f"Search skill hubs for installable skills:\n"
-                f"  call_tool('gobby-skills', 'search_hub', {{'query': '{skill_name}'}})"
-            ),
-        )
+        return None
 
     def _build_skill_response(
         self,
@@ -146,34 +118,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
             decision="block",
             reason=f"Gobby skill '{name}' resolved via {source} — fetch it with gobby-skills",
             context=context,
-        )
-
-    def _build_hub_nudge_response(
-        self, skill_name: str, hub_results: list[dict[str, Any]]
-    ) -> HookResponse:
-        """Build a blocking HookResponse with hub search results and install instructions."""
-        lines = [f"Found matching skills in skill hubs for '{skill_name}':\n"]
-        for r in hub_results[:5]:
-            name = r.get("display_name") or r.get("name") or r.get("slug", "unknown")
-            desc = r.get("description", "")
-            hub = r.get("hub_name") or r.get("hub", "")
-            slug = r.get("slug") or r.get("name", name)
-            source_ref = f"{hub}:{slug}" if hub else slug
-            lines.append(f"- **{name}**: {desc}")
-            lines.append(
-                f"  Install: call_tool('gobby-skills', 'install_skill', "
-                f"{{'source': '{source_ref}'}})"
-            )
-        lines.append(f'\nAfter installing, retry: Skill("{skill_name}")')
-
-        self.logger.info(
-            f"Skill '{skill_name}' not installed - {len(hub_results)} hub matches found",
-        )
-
-        return HookResponse(
-            decision="block",
-            reason=f"Skill '{skill_name}' not installed - hub matches found",
-            context="\n".join(lines),
         )
 
     def handle_after_tool(self, event: HookEvent) -> HookResponse:
