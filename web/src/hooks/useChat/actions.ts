@@ -10,6 +10,7 @@ import type {
 import { normalizeChatMode } from "../../types/chat";
 import type { UserAction } from "../../components/canvas/types";
 import { mapRenderedMessageToChatMessage } from "../../lib/chatMessageMapping";
+import { markFreshChatDraft } from "../../lib/sessionPersistence";
 import {
   computeContextUsageFromSessionData,
   enqueuePendingProxyMessage,
@@ -194,6 +195,7 @@ const startNewChat = useCallback(
     clearSessionObservationState();
     resetMainChatState();
     bindActiveSession(null);
+    markFreshChatDraft();
     setConversationSwitchKey((k) => k + 1);
   },
   [

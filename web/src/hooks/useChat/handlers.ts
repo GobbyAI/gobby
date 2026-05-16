@@ -410,11 +410,7 @@ useEffect(() => {
   saveViewingSessionId(viewingSessionId);
 }, [viewingSessionId]);
 useEffect(() => {
-  saveViewingSessionMode(
-    viewingSessionId && sessionInteractionMode === "observe"
-      ? "observe"
-      : "none",
-  );
+  saveViewingSessionMode(viewingSessionId ? sessionInteractionMode : "none");
 }, [sessionInteractionMode, viewingSessionId]);
 
 // Keep refs in sync

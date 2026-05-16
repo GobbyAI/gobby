@@ -38,6 +38,7 @@ import { useChatLifecycle } from "./useChat/lifecycle";
 import { useChatMessageHandlers } from "./useChat/handlers";
 import { useChatSessionViewing } from "./useChat/sessionViewing";
 import { useChatTransport } from "./useChat/transport";
+import { clearFreshChatDraft } from "../lib/sessionPersistence";
 
 export function useChat() {
   const [conversationId, setConversationId] = useState<string>(() =>
@@ -133,7 +134,7 @@ export function useChat() {
   const initialViewingSessionIdRef = useRef<string | null>(
     loadViewingSessionId(),
   );
-  const initialViewingModeRef = useRef<"none" | "observe">(
+  const initialViewingModeRef = useRef<SessionInteractionMode>(
     loadViewingSessionMode(),
   );
   const initialViewingRestoreRef = useRef(false);
@@ -302,6 +303,9 @@ export function useChat() {
     dbSessionIdRef.current = sessionId;
     saveDbSessionId(sessionId);
     saveConversationId(nextId);
+    if (sessionId) {
+      clearFreshChatDraft();
+    }
   }, []);
 
   const markSessionUsageFresh = useCallback((sessionId: string, rawTimestamp?: string) => {
@@ -574,10 +578,7 @@ export function useChat() {
       sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
       setSessionInteractionMode(snapshot.sessionInteractionMode);
       saveViewingSessionMode(
-        snapshot.viewingSessionId &&
-          snapshot.sessionInteractionMode === "observe"
-          ? "observe"
-          : "none",
+        snapshot.viewingSessionId ? snapshot.sessionInteractionMode : "none",
       );
       setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
       setIsLoadingMessages(false);

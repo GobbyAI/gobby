@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 import { mapRenderedMessageToChatMessage } from "../../lib/chatMessageMapping";
+import { clearFreshChatDraft } from "../../lib/sessionPersistence";
 import { canProxyAttachSessionRecord } from "../../lib/sessionProxyAttach";
 import {
   buildContextUsageFromTotals,
@@ -75,6 +76,7 @@ const viewRequestSeqRef = useRef(0);
 const viewSession = useCallback(
   (sessionId: string, options?: ViewSessionOptions) => {
     const forceRefresh = options?.forceRefresh ?? false;
+    clearFreshChatDraft();
     // Skip if already viewing/attached to this session
     if (
       !forceRefresh &&
@@ -291,6 +293,7 @@ const clearViewingSession = useCallback(() => {
 const attachToSession = useCallback(
   (sessionId: string, mode: "observe" | "proxy" = "proxy") => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    clearFreshChatDraft();
     pendingSessionInteractionModeRef.current = mode;
     setProxyDeliveryNotice(null);
 
@@ -374,14 +377,14 @@ useEffect(() => {
   const restoredViewingSessionId = initialViewingSessionIdRef.current;
   if (
     !restoredViewingSessionId ||
-    initialViewingModeRef.current !== "observe" ||
+    initialViewingModeRef.current === "none" ||
     !isConnected ||
     viewingSessionIdRef.current !== restoredViewingSessionId ||
     observedSessionIdRef.current === restoredViewingSessionId
   ) {
     return;
   }
-  attachToSession(restoredViewingSessionId, "observe");
+  attachToSession(restoredViewingSessionId, initialViewingModeRef.current);
   initialViewingModeRef.current = "none";
 }, [attachToSession, isConnected, viewingSessionId]);
 
