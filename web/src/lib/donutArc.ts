@@ -22,6 +22,10 @@ function assertValidSegmentValue(value: number, index: number): void {
 /**
  * Render an SVG arc path from polar angles.
  *
+ * The radius must be finite and positive. Coordinates may be any finite SVG
+ * coordinate values supplied by the caller. Angles are in degrees, with 0deg at
+ * twelve o'clock and positive sweeps moving clockwise.
+ *
  * endAngleDeg must be greater than or equal to startAngleDeg. Sweeps are
  * clamped into 0..360 degrees by clampSweepDeg, and a full or epsilon-close
  * full circle is split into two arc commands because SVG cannot represent it
@@ -35,6 +39,9 @@ export function describeArcPath(
   endAngleDeg: number,
   fullCircleEpsilonDeg = DEFAULT_FULL_CIRCLE_EPSILON_DEG,
 ): string {
+  if (!Number.isFinite(r) || r <= 0) {
+    throw new Error('describeArcPath requires a finite positive radius')
+  }
   if (endAngleDeg < startAngleDeg) {
     throw new Error('describeArcPath requires endAngleDeg >= startAngleDeg')
   }
@@ -61,8 +68,9 @@ export function describeArcPath(
 }
 
 /**
- * Convert non-negative segment values into clockwise donut arcs. Invalid,
- * negative, NaN, and infinite values throw; a zero total returns no arcs.
+ * Convert non-negative segment values into clockwise donut arcs around the
+ * supplied center/radius. Segment values must be finite and non-negative; the
+ * radius must be finite and positive. A zero total returns no arcs.
  */
 export function donutArcs<T extends DonutSegmentInput>(
   segments: T[],

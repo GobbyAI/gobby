@@ -70,11 +70,14 @@ def _resolve_run_db(
         return None
 
     try:
-        from gobby.app_context import get_app_context
+        from gobby import app_context as app_context_module
 
-        app_context = get_app_context()
-    except Exception:
+        get_app_context = app_context_module.get_app_context
+    except (ImportError, AttributeError) as exc:
+        logger.debug("Unable to resolve app context for run_db reuse: %s", exc)
         return None
+
+    app_context = get_app_context()
 
     if (
         app_context is not None

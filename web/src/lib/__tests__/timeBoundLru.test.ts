@@ -72,4 +72,18 @@ describe('pruneTimeBoundLru', () => {
 
     expect(Array.from(entries.keys())).toEqual(['newer', 'newest'])
   })
+
+  it('aborts pruning when the clock moves behind any last-seen timestamp', () => {
+    const entries = new Map<string, number>([
+      ['expired', 0],
+      ['future', 20],
+    ])
+
+    pruneTimeBoundLru(entries, 10, { maxEntries: 1, ttlMs: 5 })
+
+    expect(Array.from(entries.entries())).toEqual([
+      ['expired', 0],
+      ['future', 20],
+    ])
+  })
 })

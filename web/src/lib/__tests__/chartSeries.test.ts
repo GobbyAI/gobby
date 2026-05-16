@@ -47,4 +47,11 @@ describe('chartSeriesAt', () => {
   it('throws when called with an empty series', () => {
     expect(() => chartSeriesAt(0, [])).toThrow('at least one series entry')
   })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'throws for non-finite index %s',
+    (index) => {
+      expect(() => chartSeriesAt(index)).toThrow('requires a finite index')
+    },
+  )
 })

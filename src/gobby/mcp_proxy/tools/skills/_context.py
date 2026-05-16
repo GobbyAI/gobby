@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
 from gobby.skills.hubs.manager import HubManager
 from gobby.skills.loader import SkillLoader
@@ -16,6 +16,18 @@ from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class RunDb(Protocol):
+    def __call__(
+        self,
+        func: Callable[P, R],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Awaitable[R]: ...
 
 
 @dataclass
@@ -31,9 +43,14 @@ class SkillsContext:
     loader: SkillLoader
     project_id: str | None
     hub_manager: HubManager | None
-    run_db: Callable[..., Awaitable[Any]] | None = None
+    run_db: RunDb | None = None
 
-    async def run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def run_sqlite(
+        self,
+        func: Callable[P, R],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> R:
         if self.run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self.run_db(func, *args, **kwargs)

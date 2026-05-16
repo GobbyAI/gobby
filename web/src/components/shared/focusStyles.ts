@@ -17,9 +17,9 @@
 /** Inputs, textareas, selects: 2px brand outline on keyboard focus. */
 export const inputFocusCls =
   'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
-  'focus-visible:outline-offset-1 focus:outline-none'
+  'focus-visible:outline-offset-[1px] focus:outline-none'
 
 /** Buttons: mirrors the `buttons.css` `:focus-visible` ring pattern. */
 export const buttonFocusCls =
   'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
-  'focus-visible:outline-offset-2 focus:outline-none'
+  'focus-visible:outline-offset-[2px] focus:outline-none'

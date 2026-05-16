@@ -98,6 +98,35 @@ def test_validate_compiled_spec_rejects_manual_leaves(
     assert any("category:manual" in error for error in validation["errors"])
 
 
+def test_validate_compiled_spec_rejects_planning_leaf_tasks(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    epic = _parent(service, sample_project)
+    spec = service.normalize_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["plan-leaf"]}],
+            "tasks": [
+                {
+                    "id": "plan-leaf",
+                    "phase_id": "phase-1",
+                    "title": "Plan implementation",
+                    "category": "planning",
+                    "task_type": "task",
+                }
+            ],
+            "dependencies": [],
+        },
+        task=epic,
+        plan_file=None,
+    )
+
+    validation = service.validate_compiled_spec(spec)
+
+    assert validation["valid"] is False
+    assert any("planning leaf task" in error for error in validation["errors"])
+
+
 def test_normalize_preserves_registry_agent_selection_and_additional_skills(
     service: ExpansionService,
     sample_project,

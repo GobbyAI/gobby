@@ -60,8 +60,8 @@ class TestDetectors:
         assert _is_ollama_available() is False
 
 
-class TestRunEmbeddingInstallNoInteractive:
-    """Test auto-selection in non-interactive mode."""
+class TestEmbeddingProviderInference:
+    """Test custom URL provider inference."""
 
     @pytest.mark.parametrize(
         ("api_base", "provider"),
@@ -72,13 +72,19 @@ class TestRunEmbeddingInstallNoInteractive:
         ],
     )
     def test_custom_url_provider_inference(self, api_base: str, provider: str) -> None:
+        """Infer provider from known embedding endpoint ports."""
         assert _infer_embedding_provider_from_url(api_base) == provider
+
+
+class TestRunEmbeddingInstallNoInteractive:
+    """Test auto-selection in non-interactive mode."""
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
     def test_autoselect_lmstudio_when_available(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Prefer LM Studio when it is the only local provider available."""
         installer = MagicMock(
             return_value={
                 "success": True,
@@ -105,6 +111,7 @@ class TestRunEmbeddingInstallNoInteractive:
     def test_autoselect_ollama_when_lmstudio_missing(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Select Ollama when LM Studio is unavailable."""
         installer = MagicMock(
             return_value={
                 "success": True,
@@ -124,6 +131,7 @@ class TestRunEmbeddingInstallNoInteractive:
     def test_autoselect_skips_when_no_local(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Disable semantic search when no local embedding provider is available."""
         installer = MagicMock(return_value={"success": True, "provider": "none"})
         results: dict = {}
         provider = _run_embedding_install(installer, results, no_interactive=True)
@@ -159,6 +167,7 @@ class TestRunEmbeddingInstallNoInteractive:
     def test_custom_url_infers_lmstudio_without_local_provider(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Port 1234 selects LM Studio even when the local CLI is unavailable."""
         installer = MagicMock(
             return_value={
                 "success": True,
@@ -194,6 +203,7 @@ class TestRunEmbeddingInstallNoInteractive:
     def test_custom_ollama_url_infers_ollama_without_local_provider(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Port 11434 selects Ollama even when the local CLI is unavailable."""
         installer = MagicMock(
             return_value={
                 "success": True,
@@ -228,6 +238,7 @@ class TestRunEmbeddingInstallNoInteractive:
     def test_custom_unknown_url_infers_openai_compatible(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
+        """Unknown custom endpoint ports use OpenAI-compatible routing."""
         installer = MagicMock(
             return_value={
                 "success": True,

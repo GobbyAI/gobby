@@ -12,10 +12,12 @@ pytestmark = pytest.mark.unit
 
 
 def _manager(temp_db) -> LocalTaskManager:
+    """Create a task manager over the test database."""
     return LocalTaskManager(temp_db)
 
 
 def _task(manager: LocalTaskManager, sample_project: dict):
+    """Create a minimal task for state-helper assertions."""
     return manager.create_task(project_id=sample_project["id"], title="Task state helper")
 
 
@@ -79,6 +81,7 @@ def test_helpers_return_false_without_task_manager() -> None:
 
 
 def test_task_state_in_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+    """Invalid UUID bytes normalize safely and fail closed."""
     assert task_state_in(_manager(temp_db), b"short", "ready") is False
 
 

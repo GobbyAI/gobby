@@ -16,9 +16,13 @@ export function chartSeriesAt(
   index: number,
   series: readonly ChartSeriesEntry[] = chartSeries,
 ): ChartSeriesEntry {
+  if (!Number.isFinite(index)) {
+    throw new Error('chartSeriesAt requires a finite index')
+  }
   if (series.length === 0) {
     throw new Error('chartSeriesAt requires at least one series entry')
   }
+  // Double modulo normalizes negative indexes into the 0..length-1 range.
   const normalizedIndex = ((index % series.length) + series.length) % series.length
   return series[normalizedIndex]
 }

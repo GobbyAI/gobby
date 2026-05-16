@@ -17,8 +17,8 @@ import type { SessionMessage } from "../../../hooks/useSessionDetail";
 
 type SessionDetailMock = {
   session: GobbySession | null;
-  sessionError?: string | null;
-  clearSessionError?: () => void;
+  sessionError: string | null;
+  clearSessionError: () => void;
   messages: SessionMessage[];
   isLoading: boolean;
   transcriptStatus: { content_state: string } | null;
@@ -361,6 +361,8 @@ describe("SessionsTab", () => {
     mockUseSessionDetail.mockImplementation((sessionId) => ({
       session:
         sessionId === "main-web-1" ? MAIN_WEB_CHAT_SESSION : PARKED_WEB_CHAT_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [
         {
           id: `msg-${sessionId ?? "none"}`,
@@ -432,6 +434,8 @@ describe("SessionsTab", () => {
         summary_markdown: null,
         digest_markdown: "## Live digest fallback",
       },
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [
         {
           id: "msg-live",
@@ -473,6 +477,8 @@ describe("SessionsTab", () => {
         summary_markdown: null,
         digest_markdown: null,
       },
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [
         {
           id: "msg-live",
@@ -550,6 +556,8 @@ describe("SessionsTab", () => {
         summary_markdown: "   ",
         digest_markdown: "## Digest fallback",
       },
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [
         {
           id: "msg-1",
@@ -664,6 +672,8 @@ describe("SessionsTab", () => {
     try {
       mockUseSessionDetail.mockImplementation((sessionId) => ({
         session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+        sessionError: null,
+        clearSessionError: vi.fn(),
         messages: [
           {
             id: `msg-${sessionId ?? "none"}`,
@@ -723,6 +733,8 @@ describe("SessionsTab", () => {
     try {
       mockUseSessionDetail.mockImplementation(() => ({
         session: PAUSED_SESSION,
+        sessionError: null,
+        clearSessionError: vi.fn(),
         messages: [
           {
             id: "msg-1",
@@ -770,6 +782,8 @@ describe("SessionsTab", () => {
     try {
       mockUseSessionDetail.mockImplementation(() => ({
         session: PAUSED_SESSION,
+        sessionError: null,
+        clearSessionError: vi.fn(),
         messages: [
           {
             id: "msg-1",
@@ -841,6 +855,8 @@ describe("SessionsTab", () => {
         summary_markdown: "   ",
         digest_markdown: "## Expired digest fallback",
       },
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [],
       isLoading: false,
       transcriptStatus: { content_state: "missing" },
@@ -884,6 +900,8 @@ describe("SessionsTab", () => {
     };
     mockUseSessionDetail.mockImplementation(() => ({
       session: detailSession,
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [],
       isLoading: false,
       transcriptStatus: { content_state: "missing" },

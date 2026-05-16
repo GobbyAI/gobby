@@ -107,6 +107,7 @@ class TestResolveAgentLookup:
         manager: LocalWorkflowDefinitionManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """Invalid persisted agent JSON logs a warning with traceback context."""
         manager.create(
             name="broken-agent",
             workflow_type="agent",

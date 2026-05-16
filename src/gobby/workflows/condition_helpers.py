@@ -7,7 +7,7 @@ so they can be called from rule ``when`` conditions, e.g.:
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -23,6 +23,7 @@ class TaskProvider(Protocol):
     db: Any
 
     def get_task(self, task_id: str) -> Any: ...
+    def list_tasks(self, parent_task_id: str) -> Sequence[Any]: ...
 
 
 def is_task_complete(task: Any) -> bool:
@@ -66,6 +67,8 @@ def _normalize_task_id(task_id: Any) -> str:
         try:
             return str(UUID(bytes=bytes(task_id)))
         except ValueError:
+            # Invalid UUID byte buffers can come from malformed rule variables;
+            # stringify them so callers fail closed instead of raising.
             return str(task_id)
     return str(task_id)
 

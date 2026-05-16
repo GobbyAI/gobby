@@ -732,7 +732,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
                         from gobby.storage.secrets import SecretStore
 
                         secret_store = SecretStore(LocalDatabase())
-                    except (ImportError, OSError, sqlite3.OperationalError) as exc:
+                    except (ImportError, OSError, sqlite3.Error) as exc:
                         secret_store_init_failed = True
                         logger.warning(
                             "Failed to initialize secret store for optional MCP args: %s",

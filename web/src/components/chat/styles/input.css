@@ -823,7 +823,7 @@
 .chat-input-voice-mic {
   display: inline-flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: 0.25rem;
   min-width: 0;
   flex-shrink: 0;
 }
@@ -891,6 +891,8 @@
   }
 }
 
+/* The 360px container target covers narrow phones. Keep compression modest so
+   controls stay on one row without making icon clusters too tight. */
 @container chat-column (max-width: 360px) {
   .command-bar {
     padding-inline: 0.75rem 0.5rem;
@@ -905,7 +907,7 @@
   }
 
   .chat-input-toolbar__left {
-    gap: 0.125rem;
+    gap: 0.25rem;
     flex-wrap: nowrap;
   }
 

@@ -96,6 +96,12 @@ def validate_compiled_spec(self: Any, compiled_spec: dict[str, Any]) -> dict[str
         category = str(task_item.get("category", "code"))
         if category not in AUTOMATED_LEAF_CATEGORIES:
             errors.append(f"Task {task_item.get('id')} has unsupported category:{category}")
+        task_type = str(task_item.get("task_type", "task"))
+        if category == "planning" and task_type == "task":
+            errors.append(
+                f"Task {task_item.get('id')} cannot be a planning leaf task; "
+                "planning is only valid for parent build work"
+            )
 
     for phase in phases:
         phase_task_ids = phase.get("task_ids") or []

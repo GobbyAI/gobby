@@ -766,7 +766,7 @@ class ProviderModelCatalog:
         cwd, created_cwd = await _model_discovery_cwd(client_cls.cli_name)
         try:
             await authorize_model_discovery_trust(client_cls.cli_name, cwd)
-        except Exception as auth_exc:
+        except Exception:
             if created_cwd:
                 try:
                     await asyncio.to_thread(shutil.rmtree, cwd)
@@ -779,7 +779,6 @@ class ProviderModelCatalog:
                         cleanup_exc,
                         exc_info=True,
                     )
-                    raise cleanup_exc from auth_exc
             raise
         client = client_cls(
             cwd=os.fspath(cwd),

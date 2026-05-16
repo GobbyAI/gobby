@@ -65,7 +65,7 @@ function hasMediaAncestor(rule: Rule, media: string): boolean {
 function hasAnyMediaAncestor(rule: Rule): boolean {
   let parent = rule.parent as CssParent | undefined
   while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'media') return true
+    if (parent.type === 'atrule') return true
     parent = parent.parent
   }
   return false
@@ -171,7 +171,7 @@ describe('mobile chrome CSS', () => {
     expect(appSource).toContain('className="app-brand-logo"')
     expect(appSource).toContain('className="app-brand-title"')
     expect(appSource).toContain('className="app-header-actions"')
-    expect(appSource).toContain('className="app-health-badge')
+    expect(appSource).toMatch(/className="[^"]*\bapp-health-badge\b[^"]*"/)
 
     expectDeclarations(
       shellCss,
@@ -297,11 +297,11 @@ describe('mobile chrome CSS', () => {
     })
     expectNoDeclaration(inputCss, '.chat-input-toolbar', 'padding-right')
     expectContainerDeclarations(inputCss, '.chat-input-toolbar__left', narrowChatColumn, {
-      gap: '0.125rem',
+      gap: '0.25rem',
       'flex-wrap': 'nowrap',
     })
     expectDeclarations(inputCss, '.chat-input-voice-mic', {
-      gap: '0.125rem',
+      gap: '0.25rem',
     })
     expectDeclarations(inputCss, '.chat-input-agent-button', {
       display: 'inline-flex',

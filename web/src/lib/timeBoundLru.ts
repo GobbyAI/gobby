@@ -13,6 +13,12 @@ export function pruneTimeBoundLru<K>(
   now: number,
   { maxEntries, ttlMs }: TimeBoundLruOptions,
 ): void {
+  for (const [, lastSeenAt] of entries) {
+    if (now < lastSeenAt) {
+      return
+    }
+  }
+
   for (const [key, lastSeenAt] of entries) {
     if (now - lastSeenAt >= ttlMs) {
       entries.delete(key)

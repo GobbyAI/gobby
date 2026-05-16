@@ -134,11 +134,33 @@ describe("TasksTabDetailPanel — impeccable redesign (#14686)", () => {
   it("uses the mono hero class only for owner session ids", () => {
     const task = makeTask({
       agent_name: null,
-      claimed_by_session_id: "session-123",
+      claimed_by_session_id: "  session-123  ",
     });
     const { container } = render(<TasksTabDetailPanel task={task} />);
 
     const owner = container.querySelector(".activity-task-detail-hero__agent-name");
+    expect(owner?.textContent).toBe("session-123");
+    expect(owner?.className).toContain("activity-task-detail-hero__agent-name--mono");
+  });
+
+  it("trims agent names before rendering owner labels", () => {
+    const task = makeTask({ agent_name: "  codex  " });
+    const { container } = render(<TasksTabDetailPanel task={task} />);
+
+    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
+    expect(owner?.textContent).toBe("codex");
+    expect(owner?.className).not.toContain("activity-task-detail-hero__agent-name--mono");
+  });
+
+  it("falls back to the owner session when the agent name is blank", () => {
+    const task = makeTask({
+      agent_name: "   ",
+      claimed_by_session_id: " session-456 ",
+    });
+    const { container } = render(<TasksTabDetailPanel task={task} />);
+
+    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
+    expect(owner?.textContent).toBe("session-456");
     expect(owner?.className).toContain("activity-task-detail-hero__agent-name--mono");
   });
 
@@ -209,5 +231,31 @@ describe("TasksTabDetailPanel — impeccable redesign (#14686)", () => {
     const value = row?.querySelector(".activity-task-detail-kv-row__value");
 
     expect(value?.tagName).toBe("DIV");
+  });
+
+  it("renders PR labels without a link when repo metadata is missing", () => {
+    const { getByText } = render(
+      <TasksTabDetailPanel task={makeTask({ github_pr_number: 42 })} />,
+    );
+
+    const row = getByText("PR").closest(".activity-task-detail-kv-row");
+    const value = row?.querySelector(".activity-task-detail-kv-row__value");
+    expect(value?.tagName).toBe("DIV");
+    expect(value?.textContent).toBe("#42");
+  });
+
+  it("links PR labels when repo metadata is available", () => {
+    const { getByText } = render(
+      <TasksTabDetailPanel
+        task={makeTask({
+          github_pr_number: 42,
+          github_repo: "example/repo",
+        })}
+      />,
+    );
+
+    const link = getByText("example/repo#42");
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", "https://github.com/example/repo/pull/42");
   });
 });

@@ -46,7 +46,7 @@ function LocalGlyph({ children, className, ...props }: LocalGlyphProps) {
       strokeLinecap="round"
       strokeLinejoin="round"
       className={`activity-row-status-dot__glyph ${className ?? ""}`.trim()}
-      aria-hidden
+      aria-hidden="true"
       focusable="false"
       {...props}
     >
@@ -120,7 +120,7 @@ function ActivityRowStatusDotImpl({
       data-kind={kind}
       aria-label={label}
       role={label ? "img" : undefined}
-      aria-hidden={!label}
+      aria-hidden={label ? "false" : "true"}
       title={title}
     >
       <Icon className={`activity-row-status-dot__glyph--${kind}`} />

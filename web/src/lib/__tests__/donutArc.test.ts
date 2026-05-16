@@ -23,6 +23,15 @@ describe('describeArcPath', () => {
       'describeArcPath requires endAngleDeg >= startAngleDeg',
     )
   })
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid radius %s',
+    (radius) => {
+      expect(() => describeArcPath(0, 0, radius, 0, 90)).toThrow(
+        'describeArcPath requires a finite positive radius',
+      )
+    },
+  )
 })
 
 describe('donutArcs', () => {

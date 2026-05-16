@@ -279,7 +279,7 @@
 .reporting-code-block pre {
   font-family: var(--font-mono);
   font-size: calc(var(--font-size-base) * 0.75);
-  background: var(--bg-deep);
+  background: var(--code-block-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.625rem 0.75rem;
@@ -423,7 +423,6 @@
 }
 
 [data-theme="light"] .reporting-code-block pre {
-  background: var(--surface-tint-subtle);
   border-left-color: var(--border);
 }
 

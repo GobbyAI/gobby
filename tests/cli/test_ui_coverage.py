@@ -188,7 +188,7 @@ class TestUiStart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.logging.client = "~/.gobby/logs/gobby.log"
+        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code != 0
         assert "Failed to start UI server" in result.output
@@ -247,7 +247,7 @@ class TestUiRestart:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        config.logging.client = "~/.gobby/logs/gobby.log"
+        config.telemetry.log_file = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "UI dev server started" in result.output

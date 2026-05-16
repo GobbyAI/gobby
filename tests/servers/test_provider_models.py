@@ -383,10 +383,10 @@ class TestProviderModelCatalog:
         client_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_discover_acp_models_logs_cleanup_failure_and_chains_auth_error(
+    async def test_discover_acp_models_logs_cleanup_failure_and_reraises_auth_error(
         self, temp_dir: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Cleanup failures should be visible while preserving the auth error as cause."""
+        """Cleanup failures are logged while the authorization error remains primary."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -407,11 +407,10 @@ class TestProviderModelCatalog:
             ),
             patch("gobby.servers.provider_models.shutil.rmtree", side_effect=fail_rmtree),
         ):
-            with pytest.raises(OSError, match="cleanup failed") as exc_info:
+            with pytest.raises(PermissionError, match="not trusted") as exc_info:
                 await catalog._discover_acp_models(client_cls=client_cls)
 
-        assert isinstance(exc_info.value.__cause__, PermissionError)
-        assert str(exc_info.value.__cause__) == "not trusted"
+        assert exc_info.value.__cause__ is None
         assert "Failed to remove gemini model-discovery cwd" in caplog.text
         client_cls.assert_not_called()
 

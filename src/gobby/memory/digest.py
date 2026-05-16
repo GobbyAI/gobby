@@ -595,6 +595,10 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
 def _raise_turn_record_contract_error(
     reason: str, response_text: str, exchange_count: int
 ) -> NoReturn:
+    logger.debug(
+        "memory.turn_record malformed response: %s",
+        response_text,
+    )
     logger.warning(
         "memory.turn_record contract failed: %s (response_chars=%d, exchanges=%d)",
         reason,
@@ -802,9 +806,15 @@ async def build_turn_and_digest(
                 title_source="llm",
             )
             if updated_session is None:
-                raise RuntimeError("failed to update session title")
+                logger.warning(
+                    "build_turn_and_digest: Failed to update session title for %s; "
+                    "continuing digest persistence",
+                    session_id,
+                )
+                digest_title = None
+                title_changed = False
 
-        # 6. Persist digest state only after contract validation and any title update succeed.
+        # 6. Persist digest state only after contract validation succeeds.
         session_manager.update_last_turn_markdown(session_id, last_turn)
         session_manager.update_digest_markdown(session_id, updated_digest)
         session_manager.update_last_digest_input_hash(session_id, input_hash)

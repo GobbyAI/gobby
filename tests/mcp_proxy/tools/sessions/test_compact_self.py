@@ -9,7 +9,7 @@ send_keys; web_chat sessions go through the daemon-level ChatSession registry.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _send_codex_compaction_command,
     register_terminal_tools,
 )
+from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from tests._timing import drain_asyncio_tasks
 
@@ -47,11 +48,13 @@ def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicM
     return session
 
 
-async def _done_stream():
+async def _done_stream() -> AsyncIterator[DoneEvent]:
     yield DoneEvent(tool_calls_count=0)
 
 
-def _register_compact_self(session: MagicMock, tmux_send_keys_returns: bool = True):
+def _register_compact_self(
+    session: MagicMock, tmux_send_keys_returns: bool = True
+) -> tuple[_TestRegistry, MagicMock]:
     registry = _TestRegistry(name="test", description="test")
     session_manager = MagicMock()
     session_manager.get.return_value = session
@@ -429,7 +432,7 @@ class TestCompactSelfWebChatPath:
             return_value={"decision": "allow", "context": "pipeline output"}
         )
 
-        async def compact_stream(command: str):
+        async def compact_stream(command: str) -> AsyncIterator[DoneEvent]:
             if command == "/compact":
                 precompact_outputs.append(await live_session._on_pre_compact({"trigger": "manual"}))
             yield DoneEvent(tool_calls_count=0)
@@ -608,7 +611,9 @@ class TestCompactSelfWebChatPath:
         live_session.send_message.side_effect = lambda command: _done_stream()
 
         class FlakyRegistry(WebChatSessionRegistry):
-            def find_session(self, session_id: str):
+            def find_session(
+                self, session_id: str
+            ) -> tuple[str | None, ChatSessionProtocol | None]:
                 if session_id == "#42":
                     raise RuntimeError("registry lookup failed")
                 return super().find_session(session_id)
@@ -648,10 +653,14 @@ class TestCompactSelfWebChatPath:
         self,
     ) -> None:
         class BrokenRegistry(WebChatSessionRegistry):
-            def find_session(self, session_id: str):
+            def find_session(
+                self, session_id: str
+            ) -> tuple[str | None, ChatSessionProtocol | None]:
                 return session_id, MagicMock()
 
-            async def compact_session(self, session_id: str, command: str = "/compact"):
+            async def compact_session(
+                self, session_id: str, command: str = "/compact"
+            ) -> dict[str, Any]:
                 raise RuntimeError("registry compact failed")
 
         registry = _TestRegistry(name="test", description="test")

@@ -27,7 +27,7 @@ rules:
         background: true
       - type: set_variable
         variable: _auto_compact_after_task_close_queued_for
-        value: "str(tool_input.get('task_id') or event.session_id)"
+        value: "{{ tool_input.get('task_id') or event.session_id }}"
       # `compact_call_queue_failed` means the background compact_self MCP call
       # could not be queued, usually because the queue was contended or timed
       # out, or retries were exhausted/blocked. The injected instruction asks

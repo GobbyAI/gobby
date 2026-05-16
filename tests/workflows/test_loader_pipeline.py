@@ -603,6 +603,7 @@ class TestValidatePipelineReferences:
             "name": "bad-validation-order",
             "type": "pipeline",
             "steps": [
+                {"id": "wait_run", "exec": "echo wait"},
                 {
                     "id": "completed-path",
                     "condition": "${{ steps.wait_run.output.status == 'completed' }}",
@@ -632,6 +633,7 @@ class TestValidatePipelineReferences:
             "name": "valid-validation-order",
             "type": "pipeline",
             "steps": [
+                {"id": "wait_run", "exec": "echo wait"},
                 {
                     "id": "fail-run",
                     "condition": "${{ steps.wait_run.output.status != 'completed' }}",

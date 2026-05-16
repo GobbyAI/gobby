@@ -581,7 +581,7 @@ function McpFields({ step, onChange }: { step: PipelineStep; onChange: (u: Parti
       </label>
       <div className={FIELD_CLS} role="group" aria-label="Arguments">
         <span className={FIELD_LABEL_CLS}>Arguments</span>
-        <KeyValueEditor pairs={argPairs} onChange={setArgs} />
+        <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
       </div>
     </>
   )
@@ -619,7 +619,7 @@ function InvokePipelineFields({ step, onChange }: { step: PipelineStep; onChange
       </label>
       <div className={FIELD_CLS} role="group" aria-label="Arguments">
         <span className={FIELD_LABEL_CLS}>Arguments</span>
-        <KeyValueEditor pairs={argPairs} onChange={setArgs} />
+        <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
       </div>
     </>
   )
@@ -664,7 +664,7 @@ function ActivateWorkflowFields({ step, onChange }: { step: PipelineStep; onChan
       </label>
       <div className={FIELD_CLS} role="group" aria-label="Variables">
         <span className={FIELD_LABEL_CLS}>Variables</span>
-        <KeyValueEditor pairs={varPairs} onChange={setVars} />
+        <KeyValueEditor sectionName="Variables" pairs={varPairs} onChange={setVars} />
       </div>
     </>
   )
@@ -782,9 +782,11 @@ function CommonFields({
 // ---------------------------------------------------------------------------
 
 function KeyValueEditor({
+  sectionName,
   pairs,
   onChange,
 }: {
+  sectionName: string
   pairs: KVPair[]
   onChange: (pairs: KVPair[]) => void
 }) {
@@ -796,6 +798,7 @@ function KeyValueEditor({
             type="text"
             className={KV_INPUT_CLS}
             value={p.key}
+            aria-label={`${sectionName} key ${i + 1}`}
             onChange={(e) => {
               const next = [...pairs]
               next[i] = { ...next[i], key: e.target.value }
@@ -807,6 +810,7 @@ function KeyValueEditor({
             type="text"
             className={KV_INPUT_CLS}
             value={p.value}
+            aria-label={`${sectionName} value ${i + 1}`}
             onChange={(e) => {
               const next = [...pairs]
               next[i] = { ...next[i], value: e.target.value }
@@ -818,6 +822,7 @@ function KeyValueEditor({
             type="button"
             className={KV_REMOVE_CLS}
             onClick={() => onChange(pairs.filter((_, j) => j !== i))}
+            aria-label={`Remove ${sectionName} row ${i + 1}`}
           >
             &times;
           </button>
@@ -827,6 +832,7 @@ function KeyValueEditor({
         type="button"
         className={KV_ADD_CLS}
         onClick={() => onChange([...pairs, { key: '', value: '' }])}
+        aria-label={`Add ${sectionName} row`}
       >
         + Add
       </button>

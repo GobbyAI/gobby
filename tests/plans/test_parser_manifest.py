@@ -199,6 +199,7 @@ def test_manifest_invariants_enforced_in_all_modes(tmp_path: Path) -> None:
 
 
 def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
+    """Parse a complete manifest entry in strict mode."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_MINIMAL_DELIVERABLE,
@@ -217,6 +218,7 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
 
 
 def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
+    """Reject manual as an automated expansion manifest category."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_MINIMAL_DELIVERABLE,
@@ -234,6 +236,7 @@ def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
 
 
 def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:
+    """Use the plan-id override when validating covers labels."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_MINIMAL_DELIVERABLE,
@@ -249,6 +252,7 @@ def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:
 
 
 def test_plan_id_override_rejects_embedded_mismatch(tmp_path: Path) -> None:
+    """Reject a plan-id override that conflicts with the document header."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_MINIMAL_DELIVERABLE,
@@ -263,6 +267,7 @@ def test_plan_id_override_rejects_embedded_mismatch(tmp_path: Path) -> None:
 
 
 def test_task_filename_fallback_sets_plan_id(tmp_path: Path) -> None:
+    """Infer plan_id from a task-prefixed filename when no header exists."""
     plan = _write_plan(
         tmp_path,
         """
@@ -302,6 +307,7 @@ def test_manifest_depends_on_must_reference_manifest_entry_source_section(
     parse_mode: ParseMode,
     missing_dependency: str,
 ) -> None:
+    """Reject manifest dependencies that do not point at manifest source sections."""
     manifest_yaml = _LINKED_MANIFEST.replace(
         'depends_on: ["A2"]',
         f'depends_on: ["{missing_dependency}"]',
@@ -326,6 +332,7 @@ def test_manifest_depends_on_resolves_to_manifest_entry_source_section(
     tmp_path: Path,
     parse_mode: ParseMode,
 ) -> None:
+    """Preserve valid manifest dependency source-section references."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_TWO_DELIVERABLES,
@@ -340,6 +347,7 @@ def test_manifest_depends_on_resolves_to_manifest_entry_source_section(
 
 
 def test_test_category_with_tdd_true_fails(tmp_path: Path) -> None:
+    """Reject test-category manifest entries that still request TDD expansion."""
     manifest_yaml = _MINIMAL_MANIFEST.replace("category: code", "category: test")
     plan = _plan_with_manifest(
         tmp_path,
@@ -356,6 +364,7 @@ def test_test_category_with_tdd_true_fails(tmp_path: Path) -> None:
 
 
 def test_test_category_with_tdd_false_passes(tmp_path: Path) -> None:
+    """Allow test-category manifest entries when TDD wrapping is disabled."""
     manifest_yaml = _MINIMAL_MANIFEST.replace("category: code", "category: test").replace(
         "tdd: true",
         "tdd: false",
@@ -374,6 +383,7 @@ def test_test_category_with_tdd_false_passes(tmp_path: Path) -> None:
 
 
 def test_code_category_with_tdd_false_passes(tmp_path: Path) -> None:
+    """Allow code-category manifest entries to opt out of TDD wrapping."""
     manifest_yaml = _MINIMAL_MANIFEST.replace("tdd: true", "tdd: false")
     plan = _plan_with_manifest(
         tmp_path,
@@ -389,6 +399,7 @@ def test_code_category_with_tdd_false_passes(tmp_path: Path) -> None:
 
 
 def test_manifest_section_kind_recognized(tmp_path: Path) -> None:
+    """Classify task manifest sections as Kind.manifest."""
     plan = _plan_with_manifest(
         tmp_path,
         deliverables=_MINIMAL_DELIVERABLE,

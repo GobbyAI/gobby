@@ -529,7 +529,6 @@ export function AgentPortfolioPage() {
             type="button"
             className="agent-refresh-btn"
             onClick={fetchData}
-            title="Refresh"
             aria-label="Refresh agents"
           >
             \u21BB

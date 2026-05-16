@@ -99,8 +99,10 @@ export function TasksTabDetailPanel({
 }: TasksTabDetailPanelProps) {
   const taskState = getCanonicalTaskState(task);
   const displayState = getTaskDisplayState(task);
-  const ownerLabel = task.agent_name ?? taskState.owner_session_id ?? null;
-  const ownerMono = !task.agent_name && Boolean(taskState.owner_session_id);
+  const agentName = task.agent_name?.trim() || null;
+  const ownerSessionId = taskState.owner_session_id?.trim() || null;
+  const ownerLabel = agentName ?? ownerSessionId;
+  const ownerMono = agentName === null && ownerSessionId !== null;
   const stateLabel = getTaskStateSummary(task);
   const categoryLabel = task.category ?? task.task_type;
   const labels = task.labels?.filter(Boolean) ?? [];
@@ -162,7 +164,7 @@ export function TasksTabDetailPanel({
     labels.length > 0 ||
     showAutomationRow ||
     commits.length > 0 ||
-    (prUrl !== null && prLabel !== null) ||
+    prLabel !== null ||
     Boolean(task.closed_commit_sha) ||
     Boolean(task.closed_reason) ||
     Boolean(task.closed_in_session_id);
@@ -446,10 +448,16 @@ export function TasksTabDetailPanel({
               </div>
             </MetaKVRow>
           )}
-          {prUrl && prLabel && (
-            <MetaKVRow label="PR" mono link href={prUrl}>
-              {prLabel}
-            </MetaKVRow>
+          {prLabel && (
+            prUrl ? (
+              <MetaKVRow label="PR" mono link href={prUrl}>
+                {prLabel}
+              </MetaKVRow>
+            ) : (
+              <MetaKVRow label="PR" mono>
+                {prLabel}
+              </MetaKVRow>
+            )
           )}
           {task.closed_commit_sha && (
             <MetaKVRow

@@ -106,7 +106,7 @@ describe('ActivityRowStatusDot — deutan-safe state rendering (#14586)', () => 
       const span = renderDot(kind)
       const color = span.style.color
       expect(color).toBeTruthy()
-      expect(color).toContain(TOKENS[kind].slice(4, -1)) // strip leading `var(` and trailing `)`
+      expect(color).toBe(TOKENS[kind])
       seenTokens.add(color)
     }
     expect(seenTokens.size).toBe(KINDS.length)

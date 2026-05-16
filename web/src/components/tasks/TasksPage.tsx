@@ -487,7 +487,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             className={REFRESH_BTN_CLS}
             onClick={refreshTasks}
             title="Refresh"
-            aria-label="Refresh tasks"
           >
             ↻
           </button>
