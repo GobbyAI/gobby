@@ -1,0 +1,5 @@
+# CODEOWNERS — default reviewers for the repository.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global owner — requested for all paths unless overridden below.
+* @joshwilhelmi
