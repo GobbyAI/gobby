@@ -93,3 +93,27 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  dispatch-homebrew-tap:
+    name: Dispatch Homebrew tap update
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch tap workflow
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_DISPATCH_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_DISPATCH_TOKEN is not configured; skipping tap dispatch"
+            exit 0
+          fi
+
+          version="${TAG_NAME#v}"
+          gh api repos/GobbyAI/homebrew-tap/dispatches \
+            --method POST \
+            -f event_type=gobby-release \
+            -F client_payload[tag]="$TAG_NAME" \
+            -F client_payload[version]="$version" \
+            -F client_payload[gobby_repo]="GobbyAI/gobby" \
+            -F client_payload[helper_repo]="GobbyAI/gobby-cli"
