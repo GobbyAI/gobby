@@ -522,6 +522,7 @@ async def _build_turn_record(
     db: Any | None = None,
 ) -> _TurnRecord:
     """Build and validate turn record JSON via LLM from undigested pairs."""
+    max_attempts = 3
     max_prompt_chars = 4000
     max_response_chars = 8000
 
@@ -548,12 +549,39 @@ async def _build_turn_record(
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
 
-    response_text = await provider.generate_text(
-        turn_prompt,
-        model=model,
-        caller="memory.turn_record",
-    )
-    return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+    last_error: ValueError | None = None
+    for attempt in range(1, max_attempts + 1):
+        prompt = turn_prompt
+        if last_error is not None:
+            prompt = (
+                f"{turn_prompt}\n\n"
+                "## Correction\n"
+                f"Your previous response failed the JSON contract: {last_error}. "
+                "Return only one valid JSON object with non-empty string fields "
+                "`turn_markdown` and `title_candidate`."
+            )
+
+        response_text = await provider.generate_text(
+            prompt,
+            model=model,
+            caller="memory.turn_record",
+        )
+        try:
+            return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+        except ValueError as exc:
+            if not str(exc).startswith("memory.turn_record returned invalid JSON contract"):
+                raise
+            last_error = exc
+            if attempt >= max_attempts:
+                raise
+            logger.warning(
+                "memory.turn_record retrying after contract failure (attempt %d/%d): %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+
+    raise RuntimeError("memory.turn_record retry loop exited unexpectedly")
 
 
 def _parse_turn_record_response(response_text: str, exchange_count: int) -> _TurnRecord:

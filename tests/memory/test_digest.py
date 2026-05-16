@@ -462,13 +462,13 @@ class TestBuildTurnAndDigest:
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_invalid_turn_record_json_returns_error_without_persistence(
+    async def test_invalid_turn_record_json_retries_then_returns_error_without_persistence(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """Invalid turn-record JSON fails without persisting digest state."""
+        """Invalid turn-record JSON fails after retries without persisting digest state."""
         provider = mock_llm_service.get_default_provider.return_value
         provider.generate_text = AsyncMock(return_value="not json")
 
@@ -482,11 +482,54 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "invalid JSON contract" in result["error"]
+        assert provider.generate_text.await_count == 3
         mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_turn_record_json_retries_and_recovers(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Transient invalid turn-record JSON retries and persists the valid response."""
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text = AsyncMock(
+            side_effect=[
+                "not json",
+                '{"turn_markdown":"","title_candidate":"Digest JSON Titles"}',
+                _turn_record_json(
+                    "User asked to fix a bug. Agent retried malformed digest output.",
+                    "Retry Digest JSON",
+                ),
+            ]
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Fix the authentication bug in auth.py",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert "error" not in result
+        assert result["title"] == "Retry Digest JSON"
+        assert provider.generate_text.await_count == 3
+        calls = provider.generate_text.await_args_list
+        assert "## Correction" not in calls[0].args[0]
+        assert "## Correction" in calls[1].args[0]
+        assert "## Correction" in calls[2].args[0]
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert (
+            mock_session_manager.persist_digest_state.call_args.kwargs["title"]
+            == "Retry Digest JSON"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
