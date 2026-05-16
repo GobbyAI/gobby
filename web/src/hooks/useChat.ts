@@ -134,8 +134,15 @@ export function useChat() {
   const initialViewingSessionIdRef = useRef<string | null>(
     loadViewingSessionId(),
   );
-  const initialViewingModeRef = useRef<"none" | "observe">(
-    loadViewingSessionMode() === "observe" ? "observe" : "none",
+  // Widened to the full SessionInteractionMode (incl. "proxy") on purpose:
+  // a persisted proxy-attached terminal session must restore its proxy
+  // attach on reload, not collapse to read-only. New-Chat-refresh
+  // suppression is handled separately by the fresh-chat-draft flag and the
+  // viewingSessionId->null localStorage clear, not by narrowing this type.
+  // A CodeRabbit cleanup (#14719) re-narrowed this and regressed #14713;
+  // do not narrow it again.
+  const initialViewingModeRef = useRef<SessionInteractionMode>(
+    loadViewingSessionMode(),
   );
   const initialViewingRestoreRef = useRef(false);
   const initialViewingReconnectRetryRef = useRef(false);
