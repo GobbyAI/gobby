@@ -62,7 +62,6 @@ import { useReasoningPreferences } from "./components/app/useReasoningPreference
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { HamburgerIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
-import { cn } from "./lib/utils";
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
@@ -678,23 +677,19 @@ export default function App() {
               dropDirection="down"
             />
           )}
-          <Badge
-            variant={isConnected ? "success" : "error"}
-            style={{ height: "var(--control-row-height)" }}
-            className="app-health-badge gap-2 uppercase tracking-[0.05em]"
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "size-2 rounded-full",
-                isConnected ? "bg-success-foreground" : "bg-destructive-foreground",
-              )}
-            />
-            <span className="hidden sm:inline">
-              {isConnected ? "Connected" : "Disconnected"}
-            </span>
-            <span className="sm:hidden">{isConnected ? "Up" : "Down"}</span>
-          </Badge>
+          {!isConnected && (
+            <Badge
+              variant="error"
+              style={{ height: "var(--control-row-height)" }}
+              className="app-health-badge gap-2 uppercase tracking-[0.05em]"
+            >
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full bg-destructive-foreground"
+              />
+              <span>Down</span>
+            </Badge>
+          )}
           {authRequired && authenticated && (
             <Button
               variant="outline"
