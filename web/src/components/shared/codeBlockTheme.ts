@@ -1,4 +1,4 @@
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 /**
  * Code-chrome palette for syntax-highlighted blocks and the CodeMirror
@@ -67,25 +67,48 @@ export const lineNumberStyle = {
   fontStyle: 'italic' as const,
 }
 
+type PrismStyle = Record<string, Record<string, string>>
+
 /**
- * Canonical Prism theme for view-only code blocks. Built on `oneDark`
- * but with brand-tinted background and the project's monospace stack.
+ * Canonical Prism theme for view-only code blocks. The token palette is
+ * theme-aware: `oneDark` under `[data-theme="dark"]`, `oneLight` under
+ * `[data-theme="light"]` — without this, dark-theme grays render on the
+ * light code background and become unreadable. The brand-tinted
+ * background stays a `var(--code-bg)` ref so it still cascades per theme.
  * Tool-result and tool-arg blocks pass `customStyle` overrides for
  * denser padding/font; the line-number gutter style is shared.
  */
-export const codeBlockTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: CODE_CHROME_VARS.bg,
-    margin: '0',
-    padding: CODE_CHROME_TYPOGRAPHY.padding,
-    borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
-    fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
-  },
+function buildCodeBlockTheme(base: PrismStyle): PrismStyle {
+  return {
+    ...base,
+    'pre[class*="language-"]': {
+      ...base['pre[class*="language-"]'],
+      background: CODE_CHROME_VARS.bg,
+      margin: '0',
+      padding: CODE_CHROME_TYPOGRAPHY.padding,
+      borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
+      fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
+      // One Dark/Light ship a `0 1px` glyph text-shadow that reads as a
+      // muddy drop shadow on code; the design system bans decorative
+      // shadows (hierarchy from type/space, not effects).
+      textShadow: 'none',
+    },
+    'code[class*="language-"]': {
+      ...base['code[class*="language-"]'],
+      background: 'transparent',
+      fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
+      textShadow: 'none',
+    },
+  }
 }
+
+export const codeBlockThemeDark = buildCodeBlockTheme(oneDark as PrismStyle)
+export const codeBlockThemeLight = buildCodeBlockTheme(oneLight as PrismStyle)
+
+/** Resolve the Prism theme for the active app theme. */
+export function getCodeBlockTheme(theme: 'light' | 'dark'): PrismStyle {
+  return theme === 'light' ? codeBlockThemeLight : codeBlockThemeDark
+}
+
+/** Back-compat default (dark). Prefer `getCodeBlockTheme(resolvedTheme)`. */
+export const codeBlockTheme = codeBlockThemeDark
