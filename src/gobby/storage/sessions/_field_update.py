@@ -152,7 +152,9 @@ class _FieldUpdateMixin:
             try:
                 listener(session_id, title)
             except Exception:
-                get_logger().warning("Title listener failed for session %s", session_id, exc_info=True)
+                get_logger().warning(
+                    "Title listener failed for session %s", session_id, exc_info=True
+                )
 
     def persist_digest_state(
         self: _ManagerState,
