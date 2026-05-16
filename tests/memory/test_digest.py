@@ -314,6 +314,7 @@ class TestBuildTurnAndDigest:
         sm.update_last_turn_markdown.return_value = session
         sm.update_digest_markdown.return_value = session
         sm.update_title.return_value = session
+        sm.persist_digest_state.return_value = session
         return sm
 
     @pytest.fixture
@@ -415,39 +416,36 @@ class TestBuildTurnAndDigest:
         assert result["digest_length"] > 0
         assert result["title"] == "Fix Auth Bug"
 
-        # Verify last_turn_markdown was persisted
-        mock_session_manager.update_last_turn_markdown.assert_called_once()
-        call_args = mock_session_manager.update_last_turn_markdown.call_args
-        assert call_args[0][0] == "session-123"
-        assert "bug" in call_args[0][1].lower() or "auth" in call_args[0][1].lower()
+        # Verify digest state was persisted atomically.
+        mock_session_manager.persist_digest_state.assert_called_once()
+        call_args = mock_session_manager.persist_digest_state.call_args
+        assert call_args.args == ("session-123",)
+        last_turn = call_args.kwargs["last_turn_markdown"]
+        assert "bug" in last_turn.lower() or "auth" in last_turn.lower()
 
-        # Verify digest was appended with turn header
-        mock_session_manager.update_digest_markdown.assert_called_once()
-        digest_content = mock_session_manager.update_digest_markdown.call_args[0][1]
+        # Verify digest was appended with turn header.
+        digest_content = call_args.kwargs["digest_markdown"]
         assert "### Turn 1" in digest_content
         assert "root cause in auth.py line 42" in digest_content
 
-        # Verify title was updated
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix Auth Bug",
-            title_source="llm",
-        )
+        # Verify title was included in the same persistence call.
+        assert call_args.kwargs["title"] == "Fix Auth Bug"
+        assert call_args.kwargs["title_source"] == "llm"
         provider = mock_llm_service.get_default_provider.return_value
         assert provider.generate_text.await_count == 1
         assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
-    async def test_title_update_failure_aborts_digest_persistence(
+    async def test_digest_persistence_failure_raises_without_legacy_writes(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """Digest persistence fails fast when title storage rejects the update."""
-        mock_session_manager.update_title.return_value = None
+        """Digest persistence failures surface without falling back to legacy writes."""
+        mock_session_manager.persist_digest_state.return_value = None
 
-        with pytest.raises(RuntimeError, match="Failed to update session title"):
+        with pytest.raises(RuntimeError, match="Failed to persist session digest state"):
             await build_turn_and_digest(
                 memory_manager=mock_memory_manager,
                 session_manager=mock_session_manager,
@@ -456,11 +454,9 @@ class TestBuildTurnAndDigest:
                 llm_service=mock_llm_service,
             )
 
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix Auth Bug",
-            title_source="llm",
-        )
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] == "Fix Auth Bug"
+        mock_session_manager.update_title.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
@@ -486,6 +482,7 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "invalid JSON contract" in result["error"]
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
@@ -520,6 +517,7 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "turn_markdown" in result["error"]
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
@@ -546,6 +544,7 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "title_candidate" in result["error"]
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
@@ -577,6 +576,7 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "title_candidate" in result["error"]
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
@@ -608,6 +608,7 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert "placeholder turn_markdown" in result["error"]
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
@@ -663,7 +664,9 @@ class TestBuildTurnAndDigest:
         assert result["turn_num"] == 2
 
         # Verify digest contains both turns
-        digest_content = mock_session_manager.update_digest_markdown.call_args[0][1]
+        digest_content = mock_session_manager.persist_digest_state.call_args.kwargs[
+            "digest_markdown"
+        ]
         assert "### Turn 1" in digest_content
         assert "### Turn 2" in digest_content
 
@@ -689,11 +692,10 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert result["title"] == "Fix Auth Bug"
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix Auth Bug",
-            title_source="llm",
-        )
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] == "Fix Auth Bug"
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
+        mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_updates_existing_llm_title_from_each_digest_turn(
@@ -724,11 +726,13 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert result["title"] == "Rolling Digest Titles"
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Rolling Digest Titles",
-            title_source="llm",
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert (
+            mock_session_manager.persist_digest_state.call_args.kwargs["title"]
+            == "Rolling Digest Titles"
         )
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
+        mock_session_manager.update_title.assert_not_called()
         assert provider.generate_text.await_count == 1
 
     @pytest.mark.asyncio
@@ -879,6 +883,7 @@ class TestBuildTurnAndDigestIdempotency:
         sm.update_digest_markdown.return_value = session
         sm.update_title.return_value = session
         sm.update_last_digest_input_hash.return_value = None
+        sm.persist_digest_state.return_value = session
         return sm
 
     @pytest.fixture
@@ -911,9 +916,11 @@ class TestBuildTurnAndDigestIdempotency:
 
         assert result is not None
         assert result["turn_num"] == 1
-        # Hash should have been persisted
-        mock_session_manager.update_last_digest_input_hash.assert_called_once()
-        stored_hash = mock_session_manager.update_last_digest_input_hash.call_args[0][1]
+        # Hash should have been persisted with the rest of the digest state.
+        mock_session_manager.persist_digest_state.assert_called_once()
+        stored_hash = mock_session_manager.persist_digest_state.call_args.kwargs[
+            "last_digest_input_hash"
+        ]
         assert len(stored_hash) == 16  # sha256 hex truncated to 16 chars
 
     @pytest.mark.asyncio
@@ -984,6 +991,7 @@ class TestBuildTurnAndDigestIdempotency:
             "Recovered Title",
             title_source="llm",
         )
+        mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
@@ -1077,9 +1085,11 @@ class TestBuildTurnAndDigestIdempotency:
 
         assert result is not None
         assert result["turn_num"] == 1
-        # New hash should have been stored
-        mock_session_manager.update_last_digest_input_hash.assert_called_once()
-        new_hash = mock_session_manager.update_last_digest_input_hash.call_args[0][1]
+        # New hash should have been stored with the rest of the digest state.
+        mock_session_manager.persist_digest_state.assert_called_once()
+        new_hash = mock_session_manager.persist_digest_state.call_args.kwargs[
+            "last_digest_input_hash"
+        ]
         assert new_hash != old_hash
 
 
@@ -1432,6 +1442,7 @@ class TestBuildTurnAndDigestCatchUp:
         sm.update_digest_markdown.return_value = session
         sm.update_title.return_value = session
         sm.update_last_digest_input_hash.return_value = None
+        sm.persist_digest_state.return_value = session
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -1454,7 +1465,7 @@ class TestBuildTurnAndDigestCatchUp:
         assert turn_prompt_call.kwargs["caller"] == "memory.turn_record"
 
         # Verify digest contains both turns
-        digest_content = sm.update_digest_markdown.call_args[0][1]
+        digest_content = sm.persist_digest_state.call_args.kwargs["digest_markdown"]
         assert "### Turn 1" in digest_content
         assert "### Turn 2" in digest_content
 
