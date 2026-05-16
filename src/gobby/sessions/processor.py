@@ -367,21 +367,30 @@ class SessionMessageProcessor:
         self._render_states[session_id] = render_state
 
         if self.websocket_server:
+            tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
             for rendered_msg in completed:
+                rendered = rendered_msg.to_dict()
+                if callable(tts_feed):
+                    await tts_feed(session_id, rendered, complete=True)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
                         "session_id": session_id,
-                        "message": rendered_msg.to_dict(),
+                        "message": rendered,
+                        "complete": True,
                     }
                 )
             # Broadcast in-progress turn for live updates (upsert by ID)
             if render_state.current_message:
+                rendered = render_state.current_message.to_dict()
+                if callable(tts_feed):
+                    await tts_feed(session_id, rendered, complete=False)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
                         "session_id": session_id,
-                        "message": render_state.current_message.to_dict(),
+                        "message": rendered,
+                        "complete": False,
                     }
                 )
 
@@ -466,20 +475,29 @@ class SessionMessageProcessor:
         self._render_states[session_id] = render_state
 
         if self.websocket_server:
+            tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
             for rendered_msg in completed:
+                rendered = rendered_msg.to_dict()
+                if callable(tts_feed):
+                    await tts_feed(session_id, rendered, complete=True)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
                         "session_id": session_id,
-                        "message": rendered_msg.to_dict(),
+                        "message": rendered,
+                        "complete": True,
                     }
                 )
             if render_state.current_message:
+                rendered = render_state.current_message.to_dict()
+                if callable(tts_feed):
+                    await tts_feed(session_id, rendered, complete=False)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
                         "session_id": session_id,
-                        "message": render_state.current_message.to_dict(),
+                        "message": rendered,
+                        "complete": False,
                     }
                 )
 

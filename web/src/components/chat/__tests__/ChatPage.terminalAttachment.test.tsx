@@ -141,13 +141,13 @@ describe("ChatPage – terminal attachment", () => {
       "false",
     );
     expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent(
-      "true",
+      "false",
     );
     expect(
       screen.getByTestId("chat-input-attachments-disabled"),
-    ).toHaveTextContent("true");
+    ).toHaveTextContent("false");
     expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent(
-      "true",
+      "false",
     );
     expect(
       screen.getByTestId("chat-input-worktree-disabled"),

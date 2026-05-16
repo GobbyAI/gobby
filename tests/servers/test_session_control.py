@@ -1176,6 +1176,63 @@ class TestContinueInChatTerminalKill:
         assert response["agent_name"] == "code-reviewer"
 
     @pytest.mark.asyncio
+    async def test_attach_to_session_hydrates_live_session_variables(self) -> None:
+        """Attached status should reflect live variables when stored metadata is stale."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-123"
+        source_session.seq_num = 42
+        source_session.source = "codex"
+        source_session.title = "Observed Session"
+        source_session.status = "active"
+        source_session.model = "old-model"
+        source_session.reasoning_effort = "low"
+        source_session.chat_mode = "plan"
+        source_session.git_branch = "main"
+        source_session.context_window = 128000
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.workflow_name = None
+        source_session.agent_run_id = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        with patch(
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            return_value={
+                "model_id": "gpt-5.4",
+                "_effective_reasoning_effort": "high",
+                "mode_level": 2,
+                "model_context_window": 200000,
+            },
+        ):
+            await SessionControlMixin._handle_attach_to_session(
+                host,
+                ws,
+                {"session_id": "source-uuid"},
+            )
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["model"] == "gpt-5.4"
+        assert response["reasoning_effort"] == "high"
+        assert response["chat_mode"] == "bypass"
+        assert response["context_window"] == 200000
+
+    @pytest.mark.asyncio
     async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:
         """Live tmux metadata should keep resume-only terminal rows attachable."""
         from gobby.servers.websocket.session_control import SessionControlMixin
@@ -1358,6 +1415,77 @@ class TestContinueInChatTerminalKill:
         assert response["delivered"] is True
         assert response["delivery_method"] == "tmux"
         assert response["message_id"] == "msg-1"
+
+    @pytest.mark.asyncio
+    async def test_send_to_cli_session_stores_attachments_and_appends_paths(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        """Attached proxy uploads should be persisted and relayed as local paths."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%7"}
+        source_session.metadata = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        inter_message = MagicMock()
+        inter_message.id = "msg-1"
+        inter_msg_manager = MagicMock()
+        inter_msg_manager.create_message.return_value = inter_message
+
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {"attached_session_id": "web-123"}}
+        host._send_error = AsyncMock()
+
+        with (
+            patch(
+                "gobby.storage.inter_session_messages.InterSessionMessageManager",
+                return_value=inter_msg_manager,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ),
+        ):
+            await SessionControlMixin._handle_send_to_cli_session(
+                host,
+                ws,
+                {
+                    "session_id": "source-uuid",
+                    "content": "please inspect",
+                    "attachments": [
+                        {
+                            "name": "../note.txt",
+                            "mime_type": "text/plain",
+                            "size": 5,
+                            "base64": "aGVsbG8=",
+                        }
+                    ],
+                },
+            )
+
+        delivered_content = tmux_manager.send_keys.await_args.args[1]
+        assert delivered_content.startswith("please inspect\n\nAttachments:\n")
+        attached_path = delivered_content.removesuffix("\n").splitlines()[-1]
+        assert attached_path.endswith("_note.txt")
+        assert (tmp_path / "attachments" / "attached-sessions" / "source-uuid").is_dir()
+        assert inter_msg_manager.create_message.call_args.kwargs["content"].endswith(attached_path)
+        assert host._send_error.await_count == 0
 
 
 @pytest.mark.asyncio

@@ -149,9 +149,13 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const voiceConversationId =
+    attachedSessionId && sessionInteractionMode === "proxy"
+      ? attachedSessionId
+      : conversationId;
   const voice = useVoice(
     wsRef,
-    conversationId,
+    voiceConversationId,
     conversationSwitchKey,
     projectIdRef,
     {
@@ -769,7 +773,10 @@ export default function App() {
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
                   onAttachedModeChange: attachedSessionId
-                    ? (mode) => sendAttachedSessionMode(attachedSessionId, mode)
+                    ? (mode) => {
+                        updateChatMode(mode);
+                        sendAttachedSessionMode(attachedSessionId, mode);
+                      }
                     : undefined,
                   activeAgent,
                   onAgentChange: sendAgentChange,

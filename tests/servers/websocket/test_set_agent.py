@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -230,3 +230,46 @@ class TestSetAgentPersonaValidation:
 
         server._send_error.assert_awaited_once()
         assert "not persona-capable" in server._send_error.call_args.args[1]
+
+
+class TestSetAgentAttachedSession:
+    async def test_routes_persona_switch_to_attached_terminal_pane(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        target_session = MagicMock()
+        target_session.session_type = "terminal"
+        target_session.source = "codex"
+        target_session.project_id = "project-1"
+        target_session.terminal_context = {
+            "tmux_pane": "%11",
+            "tmux_socket_path": "/tmp/tmux-1000/gobby",
+        }
+        target_session.metadata = None
+        server.session_manager.get.return_value = target_session
+        server.session_manager.db = MagicMock()
+
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(
+            "gobby.servers.websocket.handlers.session_config.get_tmux_manager_for_context",
+            return_value=tmux_manager,
+        ) as get_tmux_manager:
+            await server._handle_set_agent(
+                ws,
+                {"target_session_id": "term-1", "agent_name": "persona-agent"},
+            )
+
+        get_tmux_manager.assert_called_once_with(target_session.terminal_context)
+        tmux_manager.send_keys.assert_awaited_once_with(
+            "%11",
+            "/gobby persona persona-agent\n",
+        )
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg == {
+            "type": "agent_changed",
+            "target_session_id": "term-1",
+            "agent_name": "persona-agent",
+        }
+        server._send_error.assert_not_awaited()

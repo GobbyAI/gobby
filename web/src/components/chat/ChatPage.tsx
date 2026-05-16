@@ -340,6 +340,10 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
+  const handleInputModeChange =
+    isProxyAttached && chat.onAttachedModeChange
+      ? chat.onAttachedModeChange
+      : chat.onModeChange;
   // Anchor the activity-panel session list to whichever session is currently
   // showing in the main area so a swapped/attached session cannot also appear
   // in the panel list.
@@ -851,8 +855,8 @@ export function ChatPage({
               paletteItems={chat.paletteItems}
               onPaletteSelect={handlePaletteSelect}
               mode={chat.mode}
-              onModeChange={chat.onModeChange}
-              modeDisabled={isProxyAttached}
+              onModeChange={handleInputModeChange}
+              modeDisabled={isAutonomousSession}
               modeOptions={
                 isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined
               }
@@ -863,7 +867,7 @@ export function ChatPage({
               worktreePickerDisabled={isProxyAttached}
               agentName={effectiveAgentName}
               onAgentChange={chat.onAgentChange}
-              agentPickerDisabled={isProxyAttached}
+              agentPickerDisabled={isAutonomousSession}
               agentDefinitions={agentDefinitions}
               agentGlobalDefs={agentGlobalDefs}
               agentProjectDefs={agentProjectDefs}
@@ -913,8 +917,7 @@ export function ChatPage({
                 isSwappedTerminal && chat.sessionInteractionMode === "proxy"
               }
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
-              attachmentsDisabled={isProxyAttached}
-              isAttached={isProxyAttached}
+              attachmentsDisabled={false}
             />
           )}
         </ArtifactContext.Provider>

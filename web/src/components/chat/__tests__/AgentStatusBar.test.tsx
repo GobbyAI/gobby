@@ -166,6 +166,40 @@ describe('AgentStatusBar', () => {
     expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
   })
 
+  it('keeps context usage visible while attached', () => {
+    render(
+      <AgentStatusBar
+        viewingMeta={{
+          ref: '#89',
+          source: 'claude',
+          title: 'Attached Session',
+          status: 'active',
+          model: 'sonnet',
+          externalId: 'ext-89',
+          chatMode: 'accept_edits',
+          gitBranch: null,
+          contextWindow: 200000,
+          agentRunId: null,
+          workflowName: null,
+          agentName: null,
+          sessionType: 'terminal',
+        }}
+        interactionMode="proxy"
+        isAttached={true}
+        contextUsage={{
+          totalInputTokens: 100000,
+          outputTokens: 1200,
+          contextWindow: 200000,
+          uncachedInputTokens: 90000,
+          cacheReadTokens: 8000,
+          cacheCreationTokens: 2000,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('context-usage-indicator')).toHaveTextContent('50%')
+  })
+
   it('hides Resume while attached if the session is autonomous', () => {
     render(
       <AgentStatusBar

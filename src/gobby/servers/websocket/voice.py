@@ -14,7 +14,7 @@ import importlib
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
@@ -27,6 +27,15 @@ _WARMUP_LOADING = "loading"
 _WARMUP_READY = "ready"
 _WARMUP_ERROR = "error"
 VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
+
+
+def _client_matches_conversation(meta: dict[str, Any] | None, conversation_id: str) -> bool:
+    if not meta:
+        return True
+    cid = meta.get("conversation_id")
+    return (
+        cid is None or cid == conversation_id or meta.get("attached_session_id") == conversation_id
+    )
 
 
 def _voice_status_payload(
@@ -65,8 +74,7 @@ async def _broadcast_tts_status(
 
     message = json.dumps(payload)
     for ws, meta in list(clients.items()):
-        cid = meta.get("conversation_id") if meta else None
-        if cid is not None and cid != conversation_id:
+        if not _client_matches_conversation(meta, conversation_id):
             continue
         try:
             await ws.send(message)
@@ -76,6 +84,7 @@ async def _broadcast_tts_status(
 
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
+    from gobby.servers.websocket.session_control import SessionControlMixin
     from gobby.voice.tts import TTSProvider
 
 
@@ -183,8 +192,7 @@ class TTSPipeline:
 
                 # Broadcast to all clients in this conversation
                 for ws, ws_meta in list(self.clients.items()):
-                    cid = ws_meta.get("conversation_id") if ws_meta else None
-                    if cid is not None and cid != self.conversation_id:
+                    if not _client_matches_conversation(ws_meta, self.conversation_id):
                         continue
                     try:
                         await ws.send(meta)
@@ -237,6 +245,7 @@ class VoiceMixin:
 
         # Active TTS pipelines per conversation (for cancellation)
         self._active_tts_pipelines: dict[str, TTSPipeline] = {}
+        self._attached_tts_offsets: dict[str, int] = {}
 
         # Background preload state for startup warmup
         self._voice_warmup_task: asyncio.Task[None] | None = None
@@ -627,6 +636,13 @@ class VoiceMixin:
         self._active_tts_pipelines[conversation_id] = pipeline
         return pipeline
 
+    async def feed_attached_session_tts(
+        self, session_id: str, message: dict[str, Any], *, complete: bool = False
+    ) -> None:
+        from gobby.servers.websocket.voice_attached import feed_attached_session_tts
+
+        await feed_attached_session_tts(self, session_id, message, complete=complete)
+
     async def _cancel_tts(self, conversation_id: str) -> None:
         """Cancel active TTS for a conversation. Called on barge-in/interruption."""
         pipeline = self._active_tts_pipelines.pop(conversation_id, None)
@@ -670,6 +686,14 @@ class VoiceMixin:
         request_id_raw = data.get("request_id", "")
         request_id = request_id_raw if isinstance(request_id_raw, str) else ""
         project_id = data.get("project_id")
+        target_session_id = data.get("target_session_id")
+        if not isinstance(target_session_id, str) or not target_session_id:
+            try:
+                client_meta = self.clients.get(websocket) or {}
+            except TypeError:
+                client_meta = {}
+            attached = client_meta.get("attached_session_id")
+            target_session_id = attached if attached == conversation_id else None
 
         logger.info(
             f"Voice audio received: {len(audio_data_b64)} chars b64, "
@@ -761,6 +785,21 @@ class VoiceMixin:
             }
             if isinstance(project_id, str) and project_id.strip():
                 chat_data["project_id"] = project_id
+            if target_session_id:
+                from gobby.servers.websocket.handlers.session_observe import (
+                    handle_send_to_cli_session,
+                )
+
+                await handle_send_to_cli_session(
+                    cast("SessionControlMixin", self),
+                    websocket,
+                    {
+                        "session_id": target_session_id,
+                        "content": text,
+                        "client_message_id": request_id,
+                    },
+                )
+                return
             await self._handle_chat_message(websocket, chat_data)
 
         except TimeoutError:

@@ -96,7 +96,6 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
-  isAttached?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -170,7 +169,6 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
-  isAttached = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -422,7 +420,7 @@ export function ChatInput({
 
   const resolvePrimaryButtonKind = (): PrimaryButtonKind => {
     if (isStreaming) return 'stop'
-    if (pttEnabled && !hasInput && !isAttached) {
+    if (pttEnabled && !hasInput) {
       return isRecording ? 'mic-recording' : 'mic-idle'
     }
     return 'send'
@@ -680,7 +678,7 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {!isAttached && onModeChange && (
+              {onModeChange && (
                 <ModeSelector
                   mode={mode}
                   onModeChange={onModeChange}
@@ -689,54 +687,49 @@ export function ChatInput({
                   size={isNarrow ? 'sm' : 'md'}
                 />
               )}
-              {!isAttached && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disabled || attachmentsDisabled}
-                  title={
-                    attachmentsDisabled
-                      ? 'Attached session owns attachments'
-                      : 'Attach file'
-                  }
-                >
-                  <PaperclipIcon />
-                </Button>
-              )}
-              {!isAttached &&
-                onAgentChange &&
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || attachmentsDisabled}
+                title={
+                  attachmentsDisabled
+                    ? 'Attached session owns attachments'
+                    : 'Attach file'
+                }
+              >
+                <PaperclipIcon />
+              </Button>
+              {onAgentChange &&
                 agentName &&
                 agentDefinitions.length > 0 && (
-                <ActiveAgentIndicator
-                  agentName={agentName}
-                  onAgentChange={onAgentChange}
-                  definitions={agentDefinitions}
-                  globalDefs={agentGlobalDefs}
-                  projectDefs={agentProjectDefs}
-                  showScopeToggle={agentShowScopeToggle}
-                  hasGlobal={agentHasGlobal}
-                  hasProject={agentHasProject}
-                  disabled={disabled || agentPickerDisabled}
-                />
+                  <ActiveAgentIndicator
+                    agentName={agentName}
+                    onAgentChange={onAgentChange}
+                    definitions={agentDefinitions}
+                    globalDefs={agentGlobalDefs}
+                    projectDefs={agentProjectDefs}
+                    showScopeToggle={agentShowScopeToggle}
+                    hasGlobal={agentHasGlobal}
+                    hasProject={agentHasProject}
+                    disabled={disabled || agentPickerDisabled}
+                  />
               )}
-              {!isAttached && (
-                <ChatInputVoiceControls
-                  disabled={disabled}
-                  sttEnabled={sttEnabled}
-                  ttsEnabled={ttsEnabled}
-                  voiceInputMode={voiceInputMode}
-                  isRecording={isRecording}
-                  isSpeaking={isSpeaking}
-                  voiceLoading={voiceLoading}
-                  voiceReady={voiceReady}
-                  prepareTTSPlayback={prepareTTSPlayback}
-                  stopTTS={stopTTS}
-                  onSttEnabledChange={onSttEnabledChange}
-                  onTtsEnabledChange={onTtsEnabledChange}
-                  onVoiceInputModeChange={onVoiceInputModeChange}
-                />
-              )}
+              <ChatInputVoiceControls
+                disabled={disabled}
+                sttEnabled={sttEnabled}
+                ttsEnabled={ttsEnabled}
+                voiceInputMode={voiceInputMode}
+                isRecording={isRecording}
+                isSpeaking={isSpeaking}
+                voiceLoading={voiceLoading}
+                voiceReady={voiceReady}
+                prepareTTSPlayback={prepareTTSPlayback}
+                stopTTS={stopTTS}
+                onSttEnabledChange={onSttEnabledChange}
+                onTtsEnabledChange={onTtsEnabledChange}
+                onVoiceInputModeChange={onVoiceInputModeChange}
+              />
             </div>
             {!canSelectModel && onWorktreeChange ? (
               <div className="chat-input-toolbar__right">
@@ -809,7 +802,7 @@ export function ChatInput({
             </div>
           </div>
 
-          {!isAttached && canSelectModel && (
+          {canSelectModel && (
             <ChatInputModelControls
                 compact={isNarrow}
                 currentBranch={currentBranch}

@@ -292,7 +292,16 @@ const connect = useCallback(() => {
                 ? voiceMsg.request_id
                 : "";
             if (text && reqId) {
-              activeRequestIdRef.current = reqId;
+              const voiceConversationId =
+                typeof voiceMsg.conversation_id === "string"
+                  ? voiceMsg.conversation_id
+                  : "";
+              const attachedVoice =
+                voiceConversationId === attachedSessionIdRef.current &&
+                sessionInteractionModeRef.current === "proxy";
+              if (!attachedVoice) {
+                activeRequestIdRef.current = reqId;
+              }
               setMessages((prev) => [
                 ...prev,
                 {
@@ -302,8 +311,10 @@ const connect = useCallback(() => {
                   timestamp: new Date(),
                 },
               ]);
-              setIsStreaming(true);
-              setIsThinking(true);
+              if (!attachedVoice) {
+                setIsStreaming(true);
+                setIsThinking(true);
+              }
             }
           }
           handleVoiceMessageRef.current(data as Record<string, unknown>);

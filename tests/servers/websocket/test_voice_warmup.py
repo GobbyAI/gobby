@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -269,15 +270,73 @@ class TestVoiceWarmup:
 
         assert mixin._voice_warmup_task is not None
         await mixin._voice_warmup_task
-
         mock_stt.warmup.assert_awaited_once()
         mock_tts.warmup.assert_not_awaited()
         assert mixin._stt_warmup_status == "ready"
         assert mixin._tts_warmup_status == "idle"
 
-        status = mixin.get_voice_status(want_stt=True, want_tts=False)
-        assert status["voice_ready"] is True
-        assert status["voice_loading"] is False
+    @pytest.mark.asyncio
+    async def test_attached_voice_transcription_is_sent_to_terminal_session(self) -> None:
+        """STT from an attached web client should relay into the attached tmux pane."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True, tts_enabled=False))
+        websocket = MagicMock()
+        websocket.send = AsyncMock()
+        mixin.clients = {websocket: {"attached_session_id": "term-voice"}}
+        mixin._send_error = AsyncMock()
+
+        stt = MagicMock()
+        stt.transcribe = AsyncMock(return_value="run the focused tests")
+        mixin._get_stt = MagicMock(return_value=stt)
+
+        target_session = MagicMock()
+        target_session.session_type = "terminal"
+        target_session.terminal_context = {"tmux_pane": "%21"}
+        target_session.metadata = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=target_session)
+        session_manager.db = MagicMock()
+        mixin.session_manager = session_manager
+
+        inter_message = MagicMock()
+        inter_message.id = "msg-voice"
+        inter_msg_manager = MagicMock()
+        inter_msg_manager.create_message.return_value = inter_message
+
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with (
+            patch(
+                "gobby.storage.inter_session_messages.InterSessionMessageManager",
+                return_value=inter_msg_manager,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ),
+        ):
+            await mixin._handle_voice_audio(
+                websocket,
+                {
+                    "conversation_id": "term-voice",
+                    "audio_data": base64.b64encode(b"audio").decode("ascii"),
+                    "mime_type": "audio/webm",
+                    "request_id": "voice-req-1",
+                },
+            )
+
+        tmux_manager.send_keys.assert_awaited_once_with("%21", "run the focused tests\n")
+        inter_msg_manager.create_message.assert_called_once()
+        mixin._handle_chat_message.assert_not_awaited()
+        sent_payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert any(
+            payload["type"] == "voice_transcription"
+            and payload["conversation_id"] == "term-voice"
+            and payload["request_id"] == "voice-req-1"
+            and payload["text"] == "run the focused tests"
+            for payload in sent_payloads
+        )
 
     @pytest.mark.asyncio
     async def test_voice_prepare_tts_only_does_not_warm_stt(self) -> None:

@@ -557,8 +557,23 @@ const sendProjectChange = useCallback((projectId: string) => {
 // so the next chat_message recreates it with the new agent context.
 const sendAgentChange = useCallback((agentName: string) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-  if (!conversationIdRef.current) return;
+  const proxySessionId = attachedSessionIdRef.current;
+  const isProxyTerminal =
+    proxySessionId &&
+    sessionInteractionModeRef.current === "proxy" &&
+    attachedSessionMetaRef.current?.sessionType === "terminal";
   setActiveAgent(agentName);
+  if (isProxyTerminal) {
+    wsRef.current.send(
+      JSON.stringify({
+        type: "set_agent",
+        agent_name: agentName,
+        target_session_id: proxySessionId,
+      }),
+    );
+    return;
+  }
+  if (!conversationIdRef.current) return;
   wsRef.current.send(
     JSON.stringify({
       type: "set_agent",
@@ -692,12 +707,21 @@ const sendMessage = useCallback(
         },
       ]);
       setProxyDeliveryNotice(null);
+      const attachmentPayload = (files ?? [])
+        .filter((qf) => qf.base64)
+        .map((qf) => ({
+          name: qf.file.name,
+          mime_type: qf.file.type || "application/octet-stream",
+          size: qf.file.size,
+          base64: qf.base64,
+        }));
       wsRef.current.send(
         JSON.stringify({
           type: "send_to_cli_session",
           session_id: proxySessionId,
           content,
           client_message_id: clientMessageId,
+          attachments: attachmentPayload,
         }),
       );
       return true;

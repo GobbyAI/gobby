@@ -83,6 +83,25 @@ class TestTTSPipeline:
         await pipeline.cancel()
 
     @pytest.mark.asyncio
+    async def test_attached_session_clients_receive_tts_audio(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="term-1234",
+            clients={ws: {"conversation_id": "web-chat", "attached_session_id": "term-1234"}},
+        )
+
+        pipeline.feed_text("Attached response.")
+        await pipeline.flush()
+
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+        assert binary_frames == [b"Attached response."]
+
+        await pipeline.cancel()
+
+    @pytest.mark.asyncio
     async def test_flush_enqueues_multiple_ordered_chunks_for_long_remainder(self) -> None:
         ws = DummyWebSocket()
         pipeline = TTSPipeline(

@@ -102,6 +102,7 @@ export interface ModelSwitchedMessage {
 
 export interface VoiceTranscriptionMessage {
   type: "voice_transcription";
+  conversation_id?: string;
   text: string;
   request_id: string;
 }

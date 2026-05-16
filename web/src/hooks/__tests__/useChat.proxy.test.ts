@@ -406,4 +406,145 @@ describe("useChat proxy session messaging", () => {
       contextWindow: 200000,
     });
   });
+
+  it("sends queued attachment payloads to attached terminal sessions", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy Session",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#300",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
+    act(() => {
+      result.current.sendMessage("inspect this", undefined, [
+        {
+          id: "file-1",
+          file,
+          base64: "aGVsbG8=",
+          status: "ready",
+        } as any,
+      ]);
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg).toMatchObject({
+      type: "send_to_cli_session",
+      session_id: "sess-proxy",
+      content: "inspect this",
+      attachments: [
+        {
+          name: "note.txt",
+          mime_type: "text/plain",
+          size: 5,
+          base64: "aGVsbG8=",
+        },
+      ],
+    });
+  });
+
+  it("routes agent changes to the attached terminal session", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy Session",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#300",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendAgentChange("persona-agent");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg).toEqual({
+      type: "set_agent",
+      agent_name: "persona-agent",
+      target_session_id: "sess-proxy",
+    });
+  });
+
+  it("keeps attached voice transcriptions out of main chat streaming state", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy Session",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#300",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "voice_transcription",
+        conversation_id: "sess-proxy",
+        request_id: "voice-1",
+        text: "run tests",
+      });
+    });
+
+    const lastMessage = result.current.messages[result.current.messages.length - 1];
+    expect(lastMessage).toMatchObject({
+      id: "user-voice-voice-1",
+      role: "user",
+      content: "run tests",
+    });
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.isThinking).toBe(false);
+  });
 });
