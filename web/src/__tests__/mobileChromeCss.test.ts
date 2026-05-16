@@ -188,9 +188,16 @@ describe('mobile chrome CSS', () => {
       color: 'var(--accent)',
     })
     expectDeclarations(shellCss, '.app-menu-button', {
-      width: '2.25rem',
-      'min-height': '2.25rem',
-      'border-color': 'transparent',
+      width: '2rem',
+      'min-height': 'var(--control-row-height)',
+      border: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+      background: 'var(--accent-tint)',
+      color: 'var(--accent)',
+    })
+    expectDeclarations(shellCss, '.app-menu-button:hover', {
+      'border-color': 'color-mix(in srgb, var(--accent) 55%, transparent)',
+      background: 'var(--accent-soft)',
+      color: 'var(--accent)',
     })
     expectDeclarations(buttonCss, '.segmented-control__option--sm', {
       'padding-inline': '0.5rem',
