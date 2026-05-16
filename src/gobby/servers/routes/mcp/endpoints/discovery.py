@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+MCP_CALL_TIMEOUT = 30.0
 
 # Set to keep background tasks alive (prevent garbage collection)
 _background_tasks: set[asyncio.Task[Any]] = set()
@@ -116,6 +117,74 @@ def _tool_briefs_from_list_tools_result(tools_result: ListToolsResult) -> list[T
     return tools_list
 
 
+def _mcp_call_timeout(server: "HTTPServer") -> float:
+    proxy_config = getattr(getattr(server, "config", None), "mcp_client_proxy", None)
+    timeout = getattr(proxy_config, "tool_timeout", None)
+    if isinstance(timeout, int | float) and timeout > 0:
+        return float(timeout)
+    return MCP_CALL_TIMEOUT
+
+
+async def _disconnect_external_server(mcp_manager: Any, server_name: str) -> None:
+    connection = None
+    connections = getattr(mcp_manager, "connections", None)
+    if isinstance(connections, dict):
+        connection = connections.pop(server_name, None)
+    if connection is None:
+        get_client = getattr(mcp_manager, "get_client", None)
+        if callable(get_client):
+            try:
+                connection = get_client(server_name)
+            except Exception:
+                connection = None
+
+    disconnect = getattr(connection, "disconnect", None)
+    if not callable(disconnect):
+        return
+
+    try:
+        result = disconnect()
+        if hasattr(result, "__await__"):
+            await asyncio.wait_for(result, timeout=5.0)
+    except Exception:
+        logger.warning(
+            "Failed to disconnect MCP server %s after discovery timeout",
+            server_name,
+            exc_info=True,
+        )
+
+
+async def _list_external_server_tools(
+    mcp_manager: Any,
+    server_name: str,
+    *,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    try:
+        session = await asyncio.wait_for(
+            mcp_manager.ensure_connected(server_name),
+            timeout=timeout,
+        )
+        tools_result = await asyncio.wait_for(session.list_tools(), timeout=timeout)
+        return _response_tool_briefs(_tool_briefs_from_list_tools_result(tools_result))
+    except TimeoutError:
+        logger.warning(
+            "Timed out listing tools from MCP server %s after %.1fs",
+            server_name,
+            timeout,
+        )
+        await _disconnect_external_server(mcp_manager, server_name)
+        return []
+    except Exception as e:
+        logger.warning(
+            "Failed to list tools from %s (%s): %r",
+            server_name,
+            type(e).__name__,
+            e,
+        )
+        return []
+
+
 async def list_all_mcp_tools(
     server_filter: str | None = None,
     include_metrics: bool = False,
@@ -169,21 +238,11 @@ async def list_all_mcp_tools(
                         cached_tools = _cached_tool_briefs(server_config)
                         tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
                     else:
-                        try:
-                            # Use ensure_connected for lazy loading
-                            session = await server.mcp_manager.ensure_connected(server_filter)
-                            tools_result = await session.list_tools()
-                            tools_by_server[server_filter] = _response_tool_briefs(
-                                _tool_briefs_from_list_tools_result(tools_result)
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to list tools from %s (%s): %r",
-                                server_filter,
-                                type(e).__name__,
-                                e,
-                            )
-                            tools_by_server[server_filter] = []
+                        tools_by_server[server_filter] = await _list_external_server_tools(
+                            server.mcp_manager,
+                            server_filter,
+                            timeout=_mcp_call_timeout(server),
+                        )
         else:
             # Get tools from all servers
             # Internal servers
@@ -201,20 +260,11 @@ async def list_all_mcp_tools(
                             tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue
 
-                        try:
-                            session = await server.mcp_manager.ensure_connected(config.name)
-                            tools_result = await session.list_tools()
-                            tools_by_server[config.name] = _response_tool_briefs(
-                                _tool_briefs_from_list_tools_result(tools_result)
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to list tools from %s (%s): %r",
-                                config.name,
-                                type(e).__name__,
-                                e,
-                            )
-                            tools_by_server[config.name] = []
+                        tools_by_server[config.name] = await _list_external_server_tools(
+                            server.mcp_manager,
+                            config.name,
+                            timeout=_mcp_call_timeout(server),
+                        )
 
         # Enrich with metrics if requested
         if include_metrics and metrics_manager and resolved_project_id:

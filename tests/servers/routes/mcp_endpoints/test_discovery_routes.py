@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -158,6 +159,35 @@ class TestMCPDiscoveryRoutes:
         assert "RuntimeError" in caplog.text
         assert "Connection refused" in caplog.text
 
+    def test_list_tools_with_server_filter_external_connect_timeout(
+        self, client: TestClient, mock_server: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Filtered external discovery times out and skips the slow server."""
+        mock_server.config.mcp_client_proxy.tool_timeout = 0.01
+        mock_server._internal_manager = MagicMock()
+        mock_server._internal_manager.is_internal.return_value = False
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.has_server.return_value = True
+        config = MagicMock()
+        config.enabled = True
+        mock_server.mcp_manager._configs = {"slow-server": config}
+
+        async def slow_connect(server_name: str) -> MagicMock:
+            assert server_name == "slow-server"
+            await asyncio.sleep(1)
+            return MagicMock()
+
+        mock_server.mcp_manager.ensure_connected = AsyncMock(side_effect=slow_connect)
+
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/api/mcp/tools?server_filter=slow-server")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["slow-server"] == []
+        assert "Timed out listing tools from MCP server slow-server" in caplog.text
+
     def test_list_tools_with_server_filter_external_unhealthy_cached_tools(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
@@ -287,6 +317,40 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["broken-server"] == []
+
+    def test_list_tools_all_external_list_tools_timeout_disconnects_open_connection(
+        self, client: TestClient, mock_server: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """All-server discovery disconnects a server whose list_tools call times out."""
+        mock_server.config.mcp_client_proxy.tool_timeout = 0.01
+        ext_config = MagicMock()
+        ext_config.name = "slow-server"
+        ext_config.enabled = True
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = [ext_config]
+        connection = MagicMock()
+        connection.disconnect = AsyncMock()
+        mock_server.mcp_manager.connections = {"slow-server": connection}
+
+        mock_session = AsyncMock()
+
+        async def slow_list_tools() -> MagicMock:
+            await asyncio.sleep(1)
+            return MagicMock(tools=[])
+
+        mock_session.list_tools.side_effect = slow_list_tools
+        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/api/mcp/tools")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"]["slow-server"] == []
+        connection.disconnect.assert_awaited_once()
+        assert mock_server.mcp_manager.connections == {}
+        assert "Timed out listing tools from MCP server slow-server" in caplog.text
 
     def test_list_tools_external_server_unhealthy_cached_tools_all(
         self, client: TestClient, mock_server: MagicMock
