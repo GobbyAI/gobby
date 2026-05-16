@@ -11,7 +11,10 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-from gobby.servers.provider_models import ProviderModelCatalog
+from gobby.servers.provider_models import (
+    ProviderModelCatalog,
+    _model_discovery_cwd_path,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -634,3 +637,25 @@ class TestProviderModelCatalog:
         assert settings["security"]["auth"]["selectedType"] == "anthropic"
         assert settings["modelProviders"]["openai"][0]["id"] == "gpt-5"
         assert settings["modelProviders"]["anthropic"][0]["id"] == "claude-sonnet-4-5"
+
+
+class TestModelDiscoveryCwdPath:
+    """Path-traversal prevention for provider-scoped model-discovery dirs."""
+
+    @pytest.mark.parametrize(
+        "provider",
+        ["", "   ", ".", "..", " .. ", "/", "\\", "../escape", "/abs/path", "a/b", "a\\b"],
+    )
+    def test_rejects_traversal_and_empty_inputs(self, provider: str) -> None:
+        with pytest.raises(ValueError, match="Invalid provider model-discovery directory"):
+            _model_discovery_cwd_path(provider)
+
+    @pytest.mark.parametrize(
+        ("provider", "expected_dir"),
+        [("gemini", "gemini"), ("Qwen", "qwen"), ("  GEMINI  ", "gemini")],
+    )
+    def test_accepts_valid_provider_and_normalizes(self, provider: str, expected_dir: str) -> None:
+        result = _model_discovery_cwd_path(provider)
+
+        assert result.name == expected_dir
+        assert ".." not in result.parts

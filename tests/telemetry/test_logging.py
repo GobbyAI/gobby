@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,39 +12,6 @@ from gobby.telemetry.logging import (
     OTelTraceFormatter,
     setup_otel_logging,
 )
-
-_GOBBY_LOGGER_NAMES = ("gobby", "gobby.hooks", "gobby.mcp.server", "gobby.mcp.client")
-
-
-@pytest.fixture(autouse=True)
-def _restore_gobby_logger_state() -> Generator[None]:
-    """Snapshot and restore the gobby logger tree around each test.
-
-    ``setup_otel_logging`` (and ``init_telemetry`` by extension) mutate the
-    ``gobby`` logger and its sub-loggers: they set ``propagate=False``, attach
-    rotating file + OTel handlers, and bump the level. Without teardown, those
-    mutations leak into other test modules — most visibly, ``propagate=False``
-    silently hides warnings from pytest's ``caplog`` in downstream tests (which
-    attaches its handler to root and relies on propagation).
-    """
-    snapshots = []
-    for name in _GOBBY_LOGGER_NAMES:
-        logger = logging.getLogger(name)
-        snapshots.append((name, logger.level, logger.propagate, logger.handlers[:]))
-    try:
-        yield
-    finally:
-        for name, level, propagate, original_handlers in snapshots:
-            logger = logging.getLogger(name)
-            for handler in logger.handlers[:]:
-                if handler not in original_handlers:
-                    handler.close()
-                    logger.removeHandler(handler)
-            for handler in original_handlers:
-                if handler not in logger.handlers:
-                    logger.addHandler(handler)
-            logger.setLevel(level)
-            logger.propagate = propagate
 
 
 @pytest.fixture
