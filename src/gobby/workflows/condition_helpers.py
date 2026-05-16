@@ -15,7 +15,7 @@ from gobby.tasks.state_semantics import projected_task_state
 
 logger = logging.getLogger(__name__)
 
-TaskIdRef = str | int | UUID | bytes | bytearray
+TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 
 
@@ -63,7 +63,7 @@ def _normalize_task_id(task_id: Any) -> str:
     """
     if isinstance(task_id, int):
         return f"#{task_id}"
-    if isinstance(task_id, bytes | bytearray):
+    if isinstance(task_id, bytes | bytearray | memoryview):
         try:
             return str(UUID(bytes=bytes(task_id)))
         except ValueError:
@@ -107,19 +107,14 @@ def task_tree_complete(task_manager: TaskProvider | None, task_id: TaskIdInput) 
         when: "task_tree_complete(variables.session_task)"
         when: "task_tree_complete(variables.auto_task_ref)"
     """
-    if not task_id:
+    task_ids = _normalize_task_ids(task_id, "task_tree_complete")
+    if task_ids is None:
+        return False
+    if not task_ids:
         return True
 
     if not task_manager:
         logger.warning("task_tree_complete: No task_manager available")
-        return False
-
-    if isinstance(task_id, str | int | UUID):
-        task_ids = [_normalize_task_id(task_id)]
-    elif isinstance(task_id, list):
-        task_ids = [_normalize_task_id(t) for t in task_id]
-    else:
-        logger.warning(f"task_tree_complete: Unexpected task_id type: {type(task_id)}")
         return False
 
     for tid in task_ids:
@@ -154,14 +149,14 @@ def _normalize_task_ids(task_id_or_ids: TaskIdInput, caller_name: str) -> list[s
         return []
     if isinstance(task_id_or_ids, str | int | UUID):
         return [_normalize_task_id(task_id_or_ids)]
-    if isinstance(task_id_or_ids, bytes | bytearray):
+    if isinstance(task_id_or_ids, bytes | bytearray | memoryview):
         return [_normalize_task_id(task_id_or_ids)]
     if isinstance(task_id_or_ids, Iterable):
         task_ids: list[str] = []
         for item in task_id_or_ids:
             if item is None:
                 continue
-            if isinstance(item, bytes | bytearray):
+            if isinstance(item, bytes | bytearray | memoryview):
                 task_ids.append(_normalize_task_id(item))
                 continue
             task_ids.append(_normalize_task_id(item))
