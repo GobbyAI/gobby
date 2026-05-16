@@ -26,8 +26,8 @@ pytestmark = pytest.mark.unit
 
 
 class TestLinuxEnableDisableRestart:
-    @patch("gobby.cli.installers.service.subprocess.run")
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_enable_linux(self, mock_unit_path, mock_run, tmp_path: Path) -> None:
         unit_file = tmp_path / "gobby-daemon.service"
         unit_file.write_text("dummy")
@@ -37,14 +37,14 @@ class TestLinuxEnableDisableRestart:
         res = enable_service_linux()
         assert res["success"] is True
 
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_enable_linux_not_installed(self, mock_unit_path, tmp_path: Path) -> None:
         mock_unit_path.return_value = tmp_path / "missing"
         res = enable_service_linux()
         assert res["success"] is False
 
-    @patch("gobby.cli.installers.service.subprocess.run")
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_disable_linux(self, mock_unit_path, mock_run, tmp_path: Path) -> None:
         unit_file = tmp_path / "gobby-daemon.service"
         unit_file.write_text("dummy")
@@ -54,13 +54,13 @@ class TestLinuxEnableDisableRestart:
         res = disable_service_linux()
         assert res["success"] is True
 
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_disable_linux_not_installed(self, mock_unit_path, tmp_path: Path) -> None:
         mock_unit_path.return_value = tmp_path / "missing"
         res = disable_service_linux()
         assert res["success"] is False
 
-    @patch("gobby.cli.installers.service.subprocess.run")
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
     def test_linux_restart(self, mock_run) -> None:
         mock_run.return_value = MagicMock(returncode=0)
         res = _linux_restart()
@@ -162,12 +162,12 @@ class TestDirectStartStopCommands:
         mock_disable.return_value = {"success": True}
         assert _macos_stop() == {"success": True}
 
-    @patch("gobby.cli.installers.service.enable_service_linux")
+    @patch("gobby.cli.installers.service_linux.enable_service_linux")
     def test_linux_start(self, mock_enable) -> None:
         mock_enable.return_value = {"success": True}
         assert _linux_start() == {"success": True}
 
-    @patch("gobby.cli.installers.service.disable_service_linux")
+    @patch("gobby.cli.installers.service_linux.disable_service_linux")
     def test_linux_stop(self, mock_disable) -> None:
         mock_disable.return_value = {"success": True}
         assert _linux_stop() == {"success": True}
