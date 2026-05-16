@@ -8,12 +8,14 @@ import os
 import threading
 import time
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 import pytest
 
 from gobby.agents.trust import (
+    _MODEL_DISCOVERY_TRUST_LOCKS,
     TrustSeedResult,
     _encode_claude_project_path,
     authorize_model_discovery_trust,
@@ -232,6 +234,12 @@ class TestPreApproveQwen:
 
 
 class TestModelDiscoveryTrust:
+    @pytest.fixture(autouse=True)
+    def clear_model_discovery_locks(self) -> Iterator[None]:
+        _MODEL_DISCOVERY_TRUST_LOCKS.clear()
+        yield
+        _MODEL_DISCOVERY_TRUST_LOCKS.clear()
+
     @pytest.mark.asyncio
     async def test_gemini_authorization_writes_only_gemini_stores(self, tmp_path: Path) -> None:
         discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
@@ -383,6 +391,59 @@ class TestModelDiscoveryTrust:
         assert first.success is True
         assert second.success is True
         assert max_active == 2
+
+    @pytest.mark.asyncio
+    async def test_blocked_same_cli_authorization_does_not_block_different_cli(
+        self, tmp_path: Path
+    ) -> None:
+        first_started = threading.Event()
+        qwen_started = threading.Event()
+        release_first = threading.Event()
+
+        def slow_seed(
+            cli: str,
+            directory: os.PathLike[str],
+            *,
+            respect_folder_trust_setting: bool,
+        ) -> TrustSeedResult:
+            if cli == "gemini" and Path(directory).name == "first":
+                first_started.set()
+                if not release_first.wait(timeout=2):
+                    raise TimeoutError("timed out waiting to release first authorization")
+            if cli == "qwen":
+                qwen_started.set()
+            return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
+
+        with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
+            first_task = asyncio.create_task(
+                authorize_model_discovery_trust("gemini", tmp_path / "first")
+            )
+            assert await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1), timeout=2)
+
+            second_task = asyncio.create_task(
+                authorize_model_discovery_trust("gemini", tmp_path / "second")
+            )
+            await asyncio.sleep(0.05)
+            assert not second_task.done()
+
+            qwen_task = asyncio.create_task(
+                authorize_model_discovery_trust("qwen", tmp_path / "qwen")
+            )
+
+            try:
+                qwen_ran_before_first_released = await asyncio.wait_for(
+                    asyncio.to_thread(qwen_started.wait, 1),
+                    timeout=2,
+                )
+            finally:
+                release_first.set()
+
+            assert qwen_ran_before_first_released is True
+            first, second, qwen = await asyncio.gather(first_task, second_task, qwen_task)
+
+        assert first.success is True
+        assert second.success is True
+        assert qwen.success is True
 
 
 class TestCodexNoop:
