@@ -735,6 +735,7 @@ describe('useVoice', () => {
   })
 
   it('does not leave PTT transcribing state stuck for local send failures', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const missingConversation = renderHook(() => useVoice(
       wsRef as any,
       '',
@@ -763,6 +764,7 @@ describe('useVoice', () => {
     await submitPttAudio(closedSocket.result)
     expect(closedSocket.result.current.isTranscribing).toBe(false)
     expect(voiceAudioPayloads()).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledWith('Voice: WebSocket not open, discarding audio')
   })
 
   it('clears stale PTT transcribing state after the watchdog timeout', async () => {

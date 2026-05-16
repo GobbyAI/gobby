@@ -37,6 +37,8 @@ _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
     re.IGNORECASE,
 )
+# Matches literal prompt placeholders that models sometimes echo instead of
+# replacing; those values must not become persisted titles or digest turns.
 _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"^\[?\s*(?:"
     r"\d+\s*-\s*\d+\s+word\s+session\s+title(?:\s+reflecting\s+current\s+work)?|"
@@ -520,6 +522,7 @@ async def _build_turn_record(
     db: Any | None = None,
 ) -> _TurnRecord:
     """Build and validate turn record JSON via LLM from undigested pairs."""
+    max_attempts = 3
     max_prompt_chars = 4000
     max_response_chars = 8000
 
@@ -546,12 +549,39 @@ async def _build_turn_record(
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
 
-    response_text = await provider.generate_text(
-        turn_prompt,
-        model=model,
-        caller="memory.turn_record",
-    )
-    return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+    last_error: ValueError | None = None
+    for attempt in range(1, max_attempts + 1):
+        prompt = turn_prompt
+        if last_error is not None:
+            prompt = (
+                f"{turn_prompt}\n\n"
+                "## Correction\n"
+                f"Your previous response failed the JSON contract: {last_error}. "
+                "Return only one valid JSON object with non-empty string fields "
+                "`turn_markdown` and `title_candidate`."
+            )
+
+        response_text = await provider.generate_text(
+            prompt,
+            model=model,
+            caller="memory.turn_record",
+        )
+        try:
+            return _parse_turn_record_response(str(response_text), len(undigested_pairs))
+        except ValueError as exc:
+            if not str(exc).startswith("memory.turn_record returned invalid JSON contract"):
+                raise
+            last_error = exc
+            if attempt >= max_attempts:
+                raise
+            logger.warning(
+                "memory.turn_record retrying after contract failure (attempt %d/%d): %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+
+    raise RuntimeError("memory.turn_record retry loop exited unexpectedly")
 
 
 def _parse_turn_record_response(response_text: str, exchange_count: int) -> _TurnRecord:
@@ -799,26 +829,38 @@ async def build_turn_and_digest(
 
         digest_title: str | None = None
         title_changed = False
+        persist_title: str | None = None
+        persist_title_source: str | None = None
         if turn_record.title_candidate and _should_update_digest_title(session):
             existing_title = str(getattr(session, "title", "") or "").strip()
             existing_title_source = str(getattr(session, "title_source", "") or "").strip().lower()
             digest_title = turn_record.title_candidate
             title_changed = existing_title != digest_title or existing_title_source != "llm"
-            updated_session = session_manager.update_title(
-                session_id,
-                digest_title,
-                title_source="llm",
-            )
-            if updated_session is None:
-                raise _DigestPersistenceError(
-                    "Failed to update session title while persisting digest for "
-                    f"{session_id}; aborting digest persistence to avoid partial state."
-                )
+            if title_changed:
+                persist_title = digest_title
+                persist_title_source = "llm"
 
         # 6. Persist digest state only after contract validation succeeds.
-        session_manager.update_last_turn_markdown(session_id, last_turn)
-        session_manager.update_digest_markdown(session_id, updated_digest)
-        session_manager.update_last_digest_input_hash(session_id, input_hash)
+        try:
+            updated_session = session_manager.persist_digest_state(
+                session_id,
+                last_turn_markdown=last_turn,
+                digest_markdown=updated_digest,
+                last_digest_input_hash=input_hash,
+                title=persist_title,
+                title_source=persist_title_source,
+            )
+        except Exception as exc:
+            raise _DigestPersistenceError(
+                "Failed to persist session digest state for "
+                f"{session_id}; aborting digest persistence to avoid partial state."
+            ) from exc
+
+        if updated_session is None:
+            raise _DigestPersistenceError(
+                "Failed to persist session digest state for "
+                f"{session_id}; aborting digest persistence to avoid partial state."
+            )
 
         logger.info(
             f"build_turn_and_digest: Turn {turn_num} recorded ({len(last_turn)} chars) for session {session_id}",

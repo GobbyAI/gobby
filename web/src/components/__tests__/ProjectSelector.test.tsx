@@ -76,6 +76,20 @@ describe('ProjectSelector', () => {
     await waitFor(() => expect(within(group).getByRole('radio', { name: 'gobby' })).toHaveFocus())
   })
 
+  it('restores segmented control focus when Escape closes search', async () => {
+    renderSelector()
+    const group = screen.getByRole('radiogroup', { name: 'Project scope' })
+    const projectRadio = within(group).getByRole('radio', { name: 'gobby' })
+
+    fireEvent.click(projectRadio)
+
+    const input = screen.getByRole('combobox')
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(screen.queryByRole('listbox', { name: 'Project search results' })).toBeNull()
+    await waitFor(() => expect(projectRadio).toHaveFocus())
+  })
+
   it('toggles the compact selector from keyboard and restores focus on Escape', async () => {
     renderSelector()
     const trigger = screen.getByRole('button', { name: 'Project scope: gobby' })

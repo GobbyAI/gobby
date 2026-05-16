@@ -51,7 +51,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if session_id:
                 try:
                     active_names = await ctx.get_active_skill_names(session_id)
-                except Exception:
+                except ValueError:
                     logger.debug(f"Failed to resolve active skill names for session {session_id}")
 
             # Over-fetch when a post-query filter (active_names or include_internal=False)

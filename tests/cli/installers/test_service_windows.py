@@ -84,6 +84,26 @@ class TestTemplateRendering:
         assert "GOBBY_HOME" in content
         assert r"D:\gobby" in content
 
+    def test_render_launcher_cmd_does_not_html_escape_text_template(self) -> None:
+        """Batch script templates should preserve shell metacharacters."""
+        from gobby.cli.installers.service import _render_template
+
+        ctx = {**_INSTALL_CONTEXT, "path_env": r"C:\Tools & More;C:\Windows"}
+        content = _render_template("gobby-launcher.cmd.j2", **ctx)
+        assert r"C:\Tools & More;C:\Windows" in content
+        assert "&amp;" not in content
+
+    def test_render_task_xml_escapes_xml_values(self) -> None:
+        """XML templates should escape XML-sensitive characters."""
+        from gobby.cli.installers.service import _render_template
+
+        content = _render_template(
+            "gobby-daemon.task.xml.j2",
+            launcher_script=r"C:\Tools & More\gobby-launcher.cmd",
+            working_directory=r"C:\Users\test",
+        )
+        assert r"C:\Tools &amp; More\gobby-launcher.cmd" in content
+
 
 # ---------------------------------------------------------------------------
 # Install

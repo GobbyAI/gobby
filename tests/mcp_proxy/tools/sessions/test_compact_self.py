@@ -110,7 +110,12 @@ class TestCompactSelfTerminalPath:
         session = _make_terminal_session("claude")
         registry, tmux = _register_compact_self(session)
 
-        result = _call_compact_self(registry, tmux, session_id="s1")
+        result = _call_compact_self(
+            registry,
+            tmux,
+            session_id="s1",
+            rule_name="auto-compact-after-task-close",
+        )
 
         assert result == {
             "compacted": True,
@@ -690,6 +695,53 @@ class TestCompactSelfWebChatPath:
         result = asyncio.run(compact_self(session_id="db-id"))
 
         assert result == {"compacted": False, "reason": "Session db-id not found"}
+
+    def test_web_chat_fallback_continues_after_registry_compact_error(self) -> None:
+        """A failed original-id fallback compact still tries the resolved DB id."""
+
+        class PartiallyBrokenRegistry(WebChatSessionRegistry):
+            def __init__(self) -> None:
+                super().__init__()
+                self.compacted_session_ids: list[str] = []
+
+            def find_session(
+                self, session_id: str
+            ) -> tuple[str | None, ChatSessionProtocol | None]:
+                return session_id, MagicMock()
+
+            async def compact_session(
+                self, session_id: str, command: str = "/compact"
+            ) -> dict[str, Any]:
+                self.compacted_session_ids.append(session_id)
+                if session_id == "#42":
+                    raise RuntimeError("registry compact failed")
+                return {"compacted": True, "session_id": session_id}
+
+        web_chat_registry = PartiallyBrokenRegistry()
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        session_manager.resolve_session_reference.return_value = "db-id"
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(),
+                web_chat_session_registry=web_chat_registry,
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="#42"))
+
+        assert result == {"compacted": True, "session_id": "db-id"}
+        assert web_chat_registry.compacted_session_ids == ["#42", "db-id"]
 
 
 class TestCompactSelfUnsupportedSessionType:

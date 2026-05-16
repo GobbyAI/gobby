@@ -162,7 +162,8 @@ async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> Tru
 
     async with _LOCK_DICT_LOCK:
         lock = _MODEL_DISCOVERY_TRUST_LOCKS.setdefault(cli, asyncio.Lock())
-        await lock.acquire()
+
+    await lock.acquire()
 
     try:
         return await asyncio.to_thread(

@@ -1,7 +1,14 @@
-import { createContext, useContext, type ReactNode, type HTMLAttributes } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type HTMLAttributes,
+} from 'react'
 import { cn } from '../../lib/utils'
 
-const HeadingLevelContext = createContext<number>(1)
+const HeadingLevelContext = createContext<number | null>(null)
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 type HeadingVariant = 'modal'
@@ -36,7 +43,18 @@ interface HeadingProps extends HTMLAttributes<HTMLHeadingElement> {
 
 export function Heading({ level: explicit, variant, className, ...rest }: HeadingProps) {
   const ambient = useContext(HeadingLevelContext)
-  const resolved = normalizeHeadingLevel(explicit ?? ambient)
+  const missingImplicitLevel = explicit === undefined && ambient === null
+  const warnedMissingProvider = useRef(false)
+  useEffect(() => {
+    if (!import.meta.env.DEV || !missingImplicitLevel || warnedMissingProvider.current) {
+      return
+    }
+    warnedMissingProvider.current = true
+    console.warn(
+      'Heading rendered without an explicit level or HeadingProvider; defaulting to h1.',
+    )
+  }, [missingImplicitLevel])
+  const resolved = normalizeHeadingLevel(explicit ?? ambient ?? 1)
   const Tag = `h${resolved}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
   return <Tag className={cn(variant && headingVariantClass[variant], className)} {...rest} />
 }

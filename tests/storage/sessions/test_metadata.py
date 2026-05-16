@@ -1,5 +1,6 @@
 """Focused tests for session storage behavior."""
 
+import sqlite3
 from unittest.mock import patch
 
 import pytest
@@ -161,6 +162,113 @@ class TestSessionManagerMetadata:
 
         assert updated is None
         assert calls == []
+
+    def test_persist_digest_state_updates_digest_and_title_atomically(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Digest persistence updates all digest fields and title metadata in one call."""
+        session = session_manager.register(
+            external_id="digest-state-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Old Title",
+            terminal_context={"tmux_pane": "%42"},
+        )
+        session_calls: list[tuple[str, str]] = []
+        title_calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: session_calls.append((event, session_id))
+        )
+        session_manager.register_title_listener(
+            lambda session_id, title: title_calls.append((session_id, title))
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.persist_digest_state(
+                session.id,
+                last_turn_markdown="last turn",
+                digest_markdown="### Turn 1\nlast turn",
+                last_digest_input_hash="abc123",
+                title="Digest Title",
+                title_source="llm",
+            )
+
+        assert updated is not None
+        assert updated.title == "Digest Title"
+        assert updated.title_source == "llm"
+        assert updated.last_turn_markdown == "last turn"
+        assert updated.digest_markdown == "### Turn 1\nlast turn"
+        assert updated.last_digest_input_hash == "abc123"
+        assert session_calls == [("session_updated", session.id)]
+        assert title_calls == [(session.id, "Digest Title")]
+        mock_rename.assert_called_once()
+
+    def test_persist_digest_state_missing_session_does_not_notify_listener(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """Missing digest-state updates return None and do not notify listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        updated = session_manager.persist_digest_state(
+            "missing-session",
+            last_turn_markdown="last turn",
+            digest_markdown="digest",
+            last_digest_input_hash="abc123",
+            title="Digest Title",
+            title_source="llm",
+        )
+
+        assert updated is None
+        assert calls == []
+
+    def test_persist_digest_state_rolls_back_on_update_failure(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A failed digest update leaves title and digest columns unchanged."""
+        session = session_manager.register(
+            external_id="digest-rollback-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Old Title",
+        )
+        session_manager.db.execute(
+            """
+            CREATE TRIGGER fail_digest_state_update
+            BEFORE UPDATE OF digest_markdown ON sessions
+            WHEN NEW.digest_markdown = 'boom'
+            BEGIN
+                SELECT RAISE(ABORT, 'digest boom');
+            END
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="digest boom"):
+            session_manager.persist_digest_state(
+                session.id,
+                last_turn_markdown="new turn",
+                digest_markdown="boom",
+                last_digest_input_hash="new-hash",
+                title="New Title",
+                title_source="llm",
+            )
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.title == "Old Title"
+        assert reloaded.title_source is None
+        assert reloaded.last_turn_markdown is None
+        assert reloaded.digest_markdown is None
+        assert reloaded.last_digest_input_hash is None
 
     def test_update_title_listener_failure_does_not_break_update(
         self,

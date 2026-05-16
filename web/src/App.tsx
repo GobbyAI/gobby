@@ -62,7 +62,6 @@ import { useReasoningPreferences } from "./components/app/useReasoningPreference
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { HamburgerIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
-import { cn } from "./lib/utils";
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
@@ -669,7 +668,19 @@ export default function App() {
           <span className="app-brand-title">Gobby</span>
         </div>
         <div className="app-header-actions">
-          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
+          {!isConnected && (
+            <Badge
+              variant="error"
+              style={{ height: "var(--control-row-height)" }}
+              className="app-health-badge gap-2 uppercase tracking-[0.05em]"
+            >
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full bg-destructive-foreground"
+              />
+              <span>Down</span>
+            </Badge>
+          )}
           {projectOptions.length > 0 && (
             <ProjectSelector
               projects={projectOptions}
@@ -678,34 +689,7 @@ export default function App() {
               dropDirection="down"
             />
           )}
-          <Badge
-            variant={isConnected ? "success" : "error"}
-            style={{ height: "var(--control-row-height)" }}
-            className="app-health-badge gap-2 uppercase tracking-[0.05em]"
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "size-2 rounded-full",
-                isConnected ? "bg-success-foreground" : "bg-destructive-foreground",
-              )}
-            />
-            <span className="hidden sm:inline">
-              {isConnected ? "Connected" : "Disconnected"}
-            </span>
-            <span className="sm:hidden">{isConnected ? "Up" : "Down"}</span>
-          </Badge>
-          {authRequired && authenticated && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={logout}
-              title="Sign out"
-            >
-              Logout
-            </Button>
-          )}
+          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
         </div>
       </header>
 
@@ -715,6 +699,7 @@ export default function App() {
         isOpen={sidebarOpen}
         onItemSelect={setActiveTab}
         onClose={() => setSidebarOpen(false)}
+        onLogout={authRequired && authenticated ? logout : undefined}
       />
 
       <FilesProvider>

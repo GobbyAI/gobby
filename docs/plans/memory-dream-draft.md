@@ -20,7 +20,7 @@ Mirror the `gobby build` shared-service shape: one core async service exposed id
 
 Pipeline per project, in order, all inside one dream run:
 
-```
+```text
 Stage 0  lock + scope (per-project active-run guard, load memories)
 Stage 1  CLEANUP phase   → reuse execute_cleanup() (stale/dup/code-derivable/orphaned delete)
 Stage 2  cluster         → deterministic embedding clustering (reuse find_duplicate_memories + dedup richness)

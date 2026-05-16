@@ -1,4 +1,5 @@
 import React from 'react'
+import { LogoutIcon } from './icons'
 
 interface NavItem {
   id: string
@@ -13,9 +14,11 @@ interface SidebarProps {
   isOpen: boolean
   onItemSelect: (itemId: string) => void
   onClose: () => void
+  /** When provided (auth enabled + signed in), renders a Logout entry under Configuration. */
+  onLogout?: () => void
 }
 
-export function Sidebar({ items, activeItem, isOpen, onItemSelect, onClose }: SidebarProps) {
+export function Sidebar({ items, activeItem, isOpen, onItemSelect, onClose, onLogout }: SidebarProps) {
   return (
     <>
       {isOpen && <div className="sidebar-overlay" onClick={onClose} />}
@@ -46,6 +49,23 @@ export function Sidebar({ items, activeItem, isOpen, onItemSelect, onClose }: Si
               </button>
             </React.Fragment>
           ))}
+          {onLogout && (
+            <>
+              <hr className="sidebar-separator" />
+              <button
+                type="button"
+                className="sidebar-item"
+                onClick={() => {
+                  onLogout()
+                  onClose()
+                }}
+                aria-label="Sign out"
+              >
+                <span className="sidebar-item-icon"><LogoutIcon /></span>
+                <span className="sidebar-item-label">Logout</span>
+              </button>
+            </>
+          )}
         </div>
       </nav>
     </>

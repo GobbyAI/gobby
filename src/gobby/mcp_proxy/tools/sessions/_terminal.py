@@ -263,7 +263,7 @@ async def _compact_live_web_chat_fallback(
                 session_id,
                 exc_info=True,
             )
-            return None
+            continue
     return None
 
 
@@ -316,7 +316,9 @@ def register_terminal_tools(
             "sessions use the live daemon ChatSession registry."
         ),
     )
-    async def compact_self(session_id: str) -> dict[str, Any]:
+    async def compact_self(session_id: str, rule_name: str | None = None) -> dict[str, Any]:
+        if rule_name:
+            logger.info("Compacting session %s (triggered by rule %s)", session_id, rule_name)
         resolved_session_id, session, error = _resolve_session_for_compaction(
             session_id,
             session_manager,

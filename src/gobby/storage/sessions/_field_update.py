@@ -24,6 +24,8 @@ class _ManagerState(Protocol):
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
+    def _run_title_change_side_effects(self, updated: Session, title: str) -> None: ...
+
 
 class _FieldUpdateMixin:
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:
@@ -125,26 +127,83 @@ class _FieldUpdateMixin:
         self._notify_session_change("session_updated", session_id)
 
         if title_changed:
-            try:
-                from gobby.workflows.summary_actions import schedule_tmux_window_rename
+            self._run_title_change_side_effects(updated, title)
 
-                schedule_tmux_window_rename(updated, title)
+        return updated
+
+    def _run_title_change_side_effects(
+        self: _ManagerState,
+        updated: Session,
+        title: str,
+    ) -> None:
+        session_id = updated.id
+        try:
+            from gobby.workflows.summary_actions import schedule_tmux_window_rename
+
+            schedule_tmux_window_rename(updated, title)
+        except Exception:
+            get_logger().warning(
+                "Failed to schedule tmux title update for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+        for listener in list(self._title_listeners):
+            try:
+                listener(session_id, title)
             except Exception:
                 get_logger().warning(
-                    "Failed to schedule tmux title update for session %s",
-                    session_id,
-                    exc_info=True,
+                    "Title listener failed for session %s", session_id, exc_info=True
                 )
 
-        if title_changed:
-            for listener in list(self._title_listeners):
-                try:
-                    listener(session_id, title)
-                except Exception:
-                    get_logger().warning(
-                        "Title listener failed for session %s", session_id, exc_info=True
-                    )
+    def persist_digest_state(
+        self: _ManagerState,
+        session_id: str,
+        *,
+        last_turn_markdown: str,
+        digest_markdown: str,
+        last_digest_input_hash: str,
+        title: str | None = None,
+        title_source: str | None = None,
+    ) -> Session | None:
+        """Persist digest fields, optionally updating title metadata atomically."""
+        current = self.get(session_id)
+        if current is None:
+            return None
+        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+            raise ValueError(
+                f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
+            )
 
+        changed_title = title if title is not None and current.title != title else None
+        source_changed = title_source is not None and current.title_source != title_source
+
+        now = datetime.now(UTC).isoformat()
+        values: dict[str, Any] = {
+            "last_turn_markdown": last_turn_markdown,
+            "digest_markdown": digest_markdown,
+            "last_digest_input_hash": last_digest_input_hash,
+            "updated_at": now,
+        }
+        if changed_title is not None:
+            values["title"] = changed_title
+        if source_changed:
+            values["title_source"] = title_source
+
+        set_clause = ", ".join(f"{column} = ?" for column in values)
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"UPDATE sessions SET {set_clause} WHERE id = ?",  # nosec B608
+                (*values.values(), session_id),
+            )
+
+        updated = self.get(session_id)
+        if updated is None:
+            return None
+
+        self._notify_session_change("session_updated", session_id)
+        if changed_title is not None:
+            self._run_title_change_side_effects(updated, changed_title)
         return updated
 
     def update_model(self: _ManagerState, session_id: str, model: str) -> Session | None:

@@ -624,7 +624,11 @@ def build_condition_helpers(
         if _tool_payload_failed(top_level):
             return False
 
-        return not _tool_payload_failed(data.get("tool_output"))
+        tool_output = data.get("tool_output")
+        if tool_output is None:
+            return data.get("success") is True
+
+        return not _tool_payload_failed(tool_output)
 
     def _skill_loaded(name: str) -> bool:
         """Check the canonical skill ledger."""

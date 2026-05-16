@@ -278,6 +278,22 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is True
 
+    @pytest.mark.parametrize("data", [{}, {"tool_output": None}])
+    def test_rejects_missing_tool_output_without_explicit_success(
+        self, data: dict[str, Any]
+    ) -> None:
+        ev = self._eval(data)
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    @pytest.mark.parametrize("data", [{"success": True}, {"success": True, "tool_output": None}])
+    def test_accepts_missing_tool_output_with_top_level_success(
+        self, data: dict[str, Any]
+    ) -> None:
+        ev = self._eval(data)
+
+        assert ev.evaluate("tool_call_succeeded()") is True
+
     def test_rejects_top_level_is_error(self) -> None:
         ev = self._eval({"is_error": True, "tool_output": {"success": True}})
 

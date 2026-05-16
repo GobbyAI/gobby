@@ -173,6 +173,46 @@ class TestTaskTreeCompleteList:
         assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is False
 
 
+class TestTaskTreeCompleteIterableInputs:
+    def test_tuple_of_strings_all_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+        manager.close_task(second.id, force=True)
+
+        assert task_tree_complete(manager, (first.id, second.id)) is True
+
+    def test_generator_of_ints_all_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+        manager.close_task(second.id, force=True)
+
+        assert task_tree_complete(manager, (task.seq_num for task in (first, second))) is True
+
+    @pytest.mark.parametrize(
+        "bytes_factory",
+        [
+            bytes,
+            bytearray,
+            memoryview,
+        ],
+    )
+    def test_bytes_like_uuid_is_scalar_task_id(
+        self,
+        temp_db,
+        sample_project,
+        bytes_factory,
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.close_task(task.id, force=True)
+
+        assert task_tree_complete(manager, bytes_factory(UUID(task.id).bytes)) is True
+
+
 class TestTaskTreeCompleteEdgeCases:
     def test_none_returns_true(self, temp_db) -> None:
         assert task_tree_complete(_manager(temp_db), None) is True

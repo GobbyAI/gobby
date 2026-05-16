@@ -172,7 +172,7 @@ class TestDevModeDetection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "gobby"\n')
 
-        with patch("gobby.cli.installers.service.sys") as mock_sys:
+        with patch("gobby.cli.installers.service_common.sys") as mock_sys:
             mock_sys.executable = str(fake_exe)
             assert _is_dev_mode() is True
 
@@ -191,8 +191,8 @@ class TestDevModeDetection:
         (project_dir / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
 
         with (
-            patch("gobby.cli.installers.service.sys") as mock_sys,
-            patch("gobby.cli.installers.service.Path.cwd", return_value=project_dir),
+            patch("gobby.cli.installers.service_common.sys") as mock_sys,
+            patch("gobby.cli.installers.service_common.Path.cwd", return_value=project_dir),
         ):
             mock_sys.executable = str(global_exe)
             assert _is_dev_mode() is True
@@ -204,8 +204,8 @@ class TestDevModeDetection:
         fake_exe.touch()
 
         with (
-            patch("gobby.cli.installers.service.sys") as mock_sys,
-            patch("gobby.cli.installers.service.Path.cwd", return_value=tmp_path),
+            patch("gobby.cli.installers.service_common.sys") as mock_sys,
+            patch("gobby.cli.installers.service_common.Path.cwd", return_value=tmp_path),
         ):
             mock_sys.executable = str(fake_exe)
             assert _is_dev_mode() is False
@@ -221,8 +221,8 @@ class TestDevModeDetection:
         pyproject.write_text('[project]\nname = "other-project"\n')
 
         with (
-            patch("gobby.cli.installers.service.sys") as mock_sys,
-            patch("gobby.cli.installers.service.Path.cwd", return_value=tmp_path),
+            patch("gobby.cli.installers.service_common.sys") as mock_sys,
+            patch("gobby.cli.installers.service_common.Path.cwd", return_value=tmp_path),
         ):
             mock_sys.executable = str(fake_exe)
             assert _is_dev_mode() is False
@@ -238,7 +238,7 @@ class TestFindProjectFromCwd:
         (venv_bin / "python3").touch()
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
 
-        with patch("gobby.cli.installers.service.Path.cwd", return_value=tmp_path):
+        with patch("gobby.cli.installers.service_common.Path.cwd", return_value=tmp_path):
             assert _find_project_from_cwd() == tmp_path
 
     def test_finds_project_from_subdirectory(self, tmp_path: Path) -> None:
@@ -251,14 +251,14 @@ class TestFindProjectFromCwd:
         subdir = tmp_path / "src" / "gobby"
         subdir.mkdir(parents=True)
 
-        with patch("gobby.cli.installers.service.Path.cwd", return_value=subdir):
+        with patch("gobby.cli.installers.service_common.Path.cwd", return_value=subdir):
             assert _find_project_from_cwd() == tmp_path
 
     def test_returns_none_without_venv(self, tmp_path: Path) -> None:
         """Returns None when project has no .venv."""
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
 
-        with patch("gobby.cli.installers.service.Path.cwd", return_value=tmp_path):
+        with patch("gobby.cli.installers.service_common.Path.cwd", return_value=tmp_path):
             assert _find_project_from_cwd() is None
 
     def test_returns_none_for_non_gobby_project(self, tmp_path: Path) -> None:
@@ -268,7 +268,7 @@ class TestFindProjectFromCwd:
         (venv_bin / "python3").touch()
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "other"\n')
 
-        with patch("gobby.cli.installers.service.Path.cwd", return_value=tmp_path):
+        with patch("gobby.cli.installers.service_common.Path.cwd", return_value=tmp_path):
             assert _find_project_from_cwd() is None
 
 
@@ -277,7 +277,7 @@ class TestResolveInstallContext:
 
     def test_resolve_returns_absolute_python_path(self) -> None:
         """Python executable path is absolute."""
-        with patch("gobby.cli.installers.service._is_dev_mode", return_value=False):
+        with patch("gobby.cli.installers.service_common._is_dev_mode", return_value=False):
             ctx = _resolve_install_context()
             assert Path(ctx["python_executable"]).is_absolute()
 
@@ -292,8 +292,8 @@ class TestResolveInstallContext:
         pyproject.write_text('[project]\nname = "gobby"\n')
 
         with (
-            patch("gobby.cli.installers.service._is_dev_mode", return_value=True),
-            patch("gobby.cli.installers.service.sys") as mock_sys,
+            patch("gobby.cli.installers.service_common._is_dev_mode", return_value=True),
+            patch("gobby.cli.installers.service_common.sys") as mock_sys,
         ):
             mock_sys.executable = str(fake_exe)
             ctx = _resolve_install_context()
@@ -316,9 +316,12 @@ class TestResolveInstallContext:
         (project_dir / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
 
         with (
-            patch("gobby.cli.installers.service._is_dev_mode", return_value=True),
-            patch("gobby.cli.installers.service._find_project_from_cwd", return_value=project_dir),
-            patch("gobby.cli.installers.service.sys") as mock_sys,
+            patch("gobby.cli.installers.service_common._is_dev_mode", return_value=True),
+            patch(
+                "gobby.cli.installers.service_common._find_project_from_cwd",
+                return_value=project_dir,
+            ),
+            patch("gobby.cli.installers.service_common.sys") as mock_sys,
         ):
             mock_sys.executable = str(global_exe)
             ctx = _resolve_install_context()
@@ -328,7 +331,7 @@ class TestResolveInstallContext:
 
     def test_resolve_installed_mode_uses_home(self) -> None:
         """Installed mode sets working directory to $HOME."""
-        with patch("gobby.cli.installers.service._is_dev_mode", return_value=False):
+        with patch("gobby.cli.installers.service_common._is_dev_mode", return_value=False):
             ctx = _resolve_install_context()
             assert ctx["mode"] == "installed"
             assert ctx["working_directory"] == str(Path.home())
@@ -922,10 +925,10 @@ class TestMacOSStatus:
 class TestLinuxInstall:
     """Test Linux systemd installation."""
 
-    @patch("gobby.cli.installers.service._check_linger", return_value=[])
-    @patch("gobby.cli.installers.service.subprocess.run")
-    @patch("gobby.cli.installers.service._resolve_install_context")
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux._check_linger", return_value=[])
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
+    @patch("gobby.cli.installers.service_linux._resolve_install_context")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_install_writes_unit_and_enables(
         self,
         mock_unit_path: MagicMock,
@@ -969,8 +972,8 @@ class TestLinuxInstall:
 class TestLinuxUninstall:
     """Test Linux systemd uninstallation."""
 
-    @patch("gobby.cli.installers.service.subprocess.run")
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_uninstall_removes_unit(
         self,
         mock_unit_path: MagicMock,
@@ -994,7 +997,7 @@ class TestLinuxUninstall:
 class TestLinuxStatus:
     """Test Linux service status detection."""
 
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_status_not_installed(self, mock_unit_path: MagicMock, tmp_path: Path) -> None:
         """Reports not installed when unit file doesn't exist."""
         from gobby.cli.installers.service import _get_service_status_linux
@@ -1006,9 +1009,9 @@ class TestLinuxStatus:
         assert result["installed"] is False
         assert result["running"] is False
 
-    @patch("gobby.cli.installers.service._check_linger", return_value=[])
-    @patch("gobby.cli.installers.service.subprocess.run")
-    @patch("gobby.cli.installers.service._systemd_unit_path")
+    @patch("gobby.cli.installers.service_linux._check_linger", return_value=[])
+    @patch("gobby.cli.installers.service_linux.subprocess.run")
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_status_installed_and_running(
         self,
         mock_unit_path: MagicMock,

@@ -78,23 +78,20 @@ export function ProjectSelector({
       : undefined;
 
   const closePicker = useCallback((restoreFocus: PickerRestoreFocus = false) => {
-    const searchInput = searchInputRef.current;
+    const restoreCompactFocus = () => compactTriggerRef.current?.focus();
+    const restoreSearchFocus = () => {
+      triggerRef.current
+        ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
+        ?.focus();
+    };
     setPickerMode(null);
     setProjectSearch("");
     setActiveOptionIndex(0);
     if (restoreFocus === "compact") {
-      requestAnimationFrame(() => compactTriggerRef.current?.focus());
+      requestAnimationFrame(restoreCompactFocus);
     }
     if (restoreFocus === "search") {
-      requestAnimationFrame(() => {
-        if (searchInput?.isConnected) {
-          searchInput.focus();
-          return;
-        }
-        triggerRef.current
-          ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
-          ?.focus();
-      });
+      requestAnimationFrame(restoreSearchFocus);
     }
   }, []);
 
@@ -210,7 +207,8 @@ export function ProjectSelector({
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      closePicker();
+      e.preventDefault();
+      closePicker("search");
       return;
     }
     handleArrowNavigation(e, () =>
@@ -248,7 +246,12 @@ export function ProjectSelector({
     project.name === "Personal" ? isPersonal : project.id === selectedProjectId;
 
   return (
-    <div className="project-selector" ref={triggerRef}>
+    <div
+      className="project-selector"
+      ref={triggerRef}
+      role="group"
+      aria-label="Project selector"
+    >
       <div className="project-selector-segmented-wrap">
         <SegmentedControl<ProjectMode>
           value={isPersonal ? "personal" : "project"}

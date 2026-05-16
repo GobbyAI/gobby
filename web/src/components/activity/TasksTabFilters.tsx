@@ -66,8 +66,8 @@ export function TasksTabFilters({
 
   const handleReset = useCallback(() => {
     setDraftFilters(new Set(DEFAULT_FILTERS))
-    setDraftStages(new Set())
-  }, [])
+    setDraftStages(new Set(stages.map(stage => stage.name)))
+  }, [stages])
 
   return (
     <>

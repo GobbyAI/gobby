@@ -39,6 +39,12 @@ let packageJson
 try {
   packageJson = JSON.parse(readText(packageJsonPath))
 } catch (error) {
+  if (error?.code === 'ENOENT') {
+    console.warn(
+      `Skipping @tailwindcss/node DEP0205 patch because ${packageJsonPath} was not found.`,
+    )
+    process.exit(0)
+  }
   if (error instanceof SyntaxError) {
     console.warn(
       `Skipping @tailwindcss/node DEP0205 patch because ${packageJsonPath} is malformed: ${error.message}`,

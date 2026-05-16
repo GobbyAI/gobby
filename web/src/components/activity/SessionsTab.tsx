@@ -100,7 +100,7 @@ function FilterEmptyState({
   hasActiveFilters,
   activeFilterCount,
   onClear,
-  hint = "Matching sessions will appear here.",
+  hint = "Matching sessions will appear here",
 }: {
   message: string;
   hasActiveFilters: boolean;
@@ -617,7 +617,7 @@ export const SessionsTab = memo(function SessionsTab({
 
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
   const emptyListMessage = hasActiveFilters
-    ? "No sessions match these filters."
+    ? "No sessions match these filters"
     : statusMode === "expired"
       ? "No expired sessions"
       : "No live sessions";

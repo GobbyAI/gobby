@@ -86,6 +86,72 @@ function normalizeActivityTask(raw: RawTaskPayload, fallback?: GobbyTask | null)
   }) as GobbyTask;
 }
 
+function areSetsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+function getCurrentStageName(task: GobbyTask): string | null {
+  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null;
+}
+
+function mergeTasksById(...taskGroups: GobbyTask[][]): GobbyTask[] {
+  const taskMap = new Map<string, GobbyTask>();
+  for (const group of taskGroups) {
+    for (const task of group) {
+      taskMap.set(task.id, task);
+    }
+  }
+  return [...taskMap.values()];
+}
+
+async function fetchMissingTaskAncestors(
+  baseUrl: string,
+  seedTasks: GobbyTask[],
+  signal: AbortSignal,
+): Promise<GobbyTask[]> {
+  const taskMap = new Map(seedTasks.map((task) => [task.id, task]));
+  const queuedParentIds = new Set<string>();
+  const parentQueue: string[] = [];
+
+  const enqueueParent = (task: GobbyTask) => {
+    const parentId = task.parent_task_id;
+    if (!parentId || taskMap.has(parentId) || queuedParentIds.has(parentId)) {
+      return;
+    }
+    queuedParentIds.add(parentId);
+    parentQueue.push(parentId);
+  };
+
+  seedTasks.forEach(enqueueParent);
+
+  while (parentQueue.length > 0) {
+    const parentId = parentQueue.shift();
+    if (!parentId || signal.aborted) break;
+    queuedParentIds.delete(parentId);
+
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/tasks/${encodeURIComponent(parentId)}`,
+        { signal },
+      );
+      if (!response.ok) continue;
+      const raw = extractTaskPayload(await response.json());
+      if (!raw) continue;
+      const parentTask = normalizeActivityTask(raw, taskMap.get(parentId) ?? null);
+      taskMap.set(parentTask.id, parentTask);
+      enqueueParent(parentTask);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+    }
+  }
+
+  return [...taskMap.values()];
+}
+
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
@@ -98,28 +164,76 @@ export const TasksTab = memo(function TasksTab({
   const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
     () => new Set(),
   );
+  const registryStageNames = useMemo(
+    () => stagesRegistry.map((stage) => stage.name).sort(),
+    [stagesRegistry],
+  );
+  const defaultStageFilters = useMemo(
+    () => new Set(registryStageNames),
+    [registryStageNames],
+  );
   const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const previousDefaultStageFiltersRef = useRef<Set<string>>(new Set());
+  const stageFiltersInitializedRef = useRef(false);
+  useEffect(() => {
+    const previousDefaultStageFilters = previousDefaultStageFiltersRef.current;
+    setSelectedStageFilters((prev) => {
+      const shouldUseDefault =
+        !stageFiltersInitializedRef.current ||
+        areSetsEqual(prev, previousDefaultStageFilters);
+      stageFiltersInitializedRef.current = true;
+
+      if (shouldUseDefault) {
+        return areSetsEqual(prev, defaultStageFilters)
+          ? prev
+          : new Set(defaultStageFilters);
+      }
+
+      const next = new Set(
+        [...prev].filter((stageName) => defaultStageFilters.has(stageName)),
+      );
+      return areSetsEqual(prev, next) ? prev : next;
+    });
+    previousDefaultStageFiltersRef.current = new Set(defaultStageFilters);
+  }, [defaultStageFilters]);
+  const stageSelectionMatchesDefault = useMemo(
+    () => areSetsEqual(selectedStageFilters, defaultStageFilters),
+    [defaultStageFilters, selectedStageFilters],
+  );
+  const selectedRegistryStageNames = useMemo(
+    () => registryStageNames.filter((stageName) => selectedStageFilters.has(stageName)),
+    [registryStageNames, selectedStageFilters],
+  );
   const stageQueryKey = useMemo(
     () =>
-      selectedStageFilters.size > 0
-        ? [...selectedStageFilters].sort().join("\u0000")
+      !stageSelectionMatchesDefault && selectedRegistryStageNames.length > 0
+        ? selectedRegistryStageNames.join("\u0000")
         : "",
-    [selectedStageFilters],
+    [selectedRegistryStageNames, stageSelectionMatchesDefault],
   );
   const stageQueryList = useMemo(
     () => (stageQueryKey ? stageQueryKey.split("\u0000") : []),
     [stageQueryKey],
   );
+  const includeClosedTasks = statusFilters.has("closed");
   const activeFilterCount = useMemo(() => {
     const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
     const statusFilterCount = [...symmetricDifference].filter(
       (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
     ).length;
-    return statusFilterCount + selectedStageFilters.size;
-  }, [selectedStageFilters, statusFilters]);
+    const stageFilterCount = registryStageNames.filter(
+      (stageName) => !selectedStageFilters.has(stageName),
+    ).length;
+    return statusFilterCount + (stageSelectionMatchesDefault ? 0 : stageFilterCount);
+  }, [
+    registryStageNames,
+    selectedStageFilters,
+    stageSelectionMatchesDefault,
+    statusFilters,
+  ]);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -147,25 +261,49 @@ export const TasksTab = memo(function TasksTab({
     abortRef.current = controller;
     setLoading(true);
     const baseUrl = getBaseUrl();
-    const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
-    params.set("limit", "500");
-    params.set("sort_by", "updated_at");
-    params.set("sort_order", "desc");
-    params.set("include_stages", "1");
-    if (stageQueryList.length > 0) {
+
+    const buildParams = (closed: boolean, limit: number) => {
+      const params = new URLSearchParams();
+      if (projectId) params.set("project_id", projectId);
+      params.set("closed", closed ? "true" : "false");
+      params.set("limit", String(limit));
+      params.set("sort_by", "updated_at");
+      params.set("sort_order", "desc");
+      params.set("include_stages", "1");
       stageQueryList.forEach((stageName) => params.append("stage", stageName));
-    }
-    fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : { tasks: [] }))
-      .then((data) => setTasks(normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[]))
+      return params;
+    };
+
+    const fetchTaskList = async (closed: boolean, limit: number) => {
+      const params = buildParams(closed, limit);
+      const response = await fetch(`${baseUrl}/api/tasks?${params}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[];
+    };
+
+    void (async () => {
+      const activeTasks = await fetchTaskList(false, 500);
+      const closedTasks = includeClosedTasks
+        ? await fetchTaskList(true, RECENT_CLOSED_TASK_LIMIT)
+        : [];
+      const taskList = mergeTasksById(activeTasks, closedTasks);
+      const tasksWithAncestors = await fetchMissingTaskAncestors(
+        baseUrl,
+        taskList,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) setTasks(tasksWithAncestors);
+    })()
       .catch((err) => {
         if (err.name !== "AbortError") setTasks([]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [projectId, stageQueryList]);
+  }, [includeClosedTasks, projectId, stageQueryList]);
 
   useEffect(() => {
     fetchTasks();
@@ -339,9 +477,14 @@ export const TasksTab = memo(function TasksTab({
   // Client-side filter + display ordering. The activity Tasks tree should read
   // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
-    const matchingTasks = tasks.filter((task) =>
-      matchesTaskFilter(task, statusFilters),
-    );
+    const shouldApplyStageFilter =
+      defaultStageFilters.size > 0 && !stageSelectionMatchesDefault;
+    const matchingTasks = tasks.filter((task) => {
+      if (!matchesTaskFilter(task, statusFilters)) return false;
+      if (!shouldApplyStageFilter) return true;
+      const stageName = getCurrentStageName(task);
+      return stageName !== null && selectedStageFilters.has(stageName);
+    });
     const recentClosedIds = new Set(
       matchingTasks
         .filter((task) => getTaskDisplayState(task) === "closed")
@@ -362,7 +505,13 @@ export const TasksTab = memo(function TasksTab({
         return recentClosedIds.has(task.id);
       })
       .sort(compareTasksForDisplay);
-  }, [tasks, statusFilters]);
+  }, [
+    defaultStageFilters,
+    selectedStageFilters,
+    stageSelectionMatchesDefault,
+    statusFilters,
+    tasks,
+  ]);
 
   const treeData = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
@@ -379,7 +528,7 @@ export const TasksTab = memo(function TasksTab({
       }
     }
 
-    const visibleTasks = filtered.filter((task) => visibleIds.has(task.id));
+    const visibleTasks = tasks.filter((task) => visibleIds.has(task.id));
     return buildTree(visibleTasks);
   }, [filtered, tasks]);
 

@@ -107,6 +107,9 @@ describe('usePipelineExecutions', () => {
   })
 
   it('reports error and zeroes total when the request fails', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
     mockFetch.resetRoutes()
     mockFetch.mockErrorResponse('/api/pipelines/executions', 500, 'boom')
 
@@ -120,5 +123,10 @@ describe('usePipelineExecutions', () => {
     expect(result.current.total).toBe(0)
     expect(result.current.executions).toEqual([])
     expect(result.current.error).toContain('500')
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to fetch pipeline executions:',
+      500,
+      'Error 500',
+    )
   })
 })
