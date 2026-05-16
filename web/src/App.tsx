@@ -668,15 +668,6 @@ export default function App() {
           <span className="app-brand-title">Gobby</span>
         </div>
         <div className="app-header-actions">
-          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
-          {projectOptions.length > 0 && (
-            <ProjectSelector
-              projects={projectOptions}
-              selectedProjectId={effectiveProjectId}
-              onProjectChange={setSelectedProjectId}
-              dropDirection="down"
-            />
-          )}
           {!isConnected && (
             <Badge
               variant="error"
@@ -690,17 +681,15 @@ export default function App() {
               <span>Down</span>
             </Badge>
           )}
-          {authRequired && authenticated && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={logout}
-              title="Sign out"
-            >
-              Logout
-            </Button>
+          {projectOptions.length > 0 && (
+            <ProjectSelector
+              projects={projectOptions}
+              selectedProjectId={effectiveProjectId}
+              onProjectChange={setSelectedProjectId}
+              dropDirection="down"
+            />
           )}
+          <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
         </div>
       </header>
 
@@ -710,6 +699,7 @@ export default function App() {
         isOpen={sidebarOpen}
         onItemSelect={setActiveTab}
         onClose={() => setSidebarOpen(false)}
+        onLogout={authRequired && authenticated ? logout : undefined}
       />
 
       <FilesProvider>

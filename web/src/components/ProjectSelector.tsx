@@ -246,7 +246,12 @@ export function ProjectSelector({
     project.name === "Personal" ? isPersonal : project.id === selectedProjectId;
 
   return (
-    <div className="project-selector" ref={triggerRef}>
+    <div
+      className="project-selector"
+      ref={triggerRef}
+      role="group"
+      aria-label="Project selector"
+    >
       <div className="project-selector-segmented-wrap">
         <SegmentedControl<ProjectMode>
           value={isPersonal ? "personal" : "project"}
