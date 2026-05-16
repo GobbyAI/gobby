@@ -242,6 +242,16 @@ async def test_open_delivery_pr_uses_rest_head_repo_for_same_org_cross_repo(
     assert captured["head"] == "org:feature/cross"
     assert captured["head_repo"] == "source"
     assert [name for name, _args in github.calls] == ["list_pull_requests"]
+    row = temp_db.fetchone(
+        "SELECT repo, source_branch, target_branch, pr_url, github_pr_number "
+        "FROM task_delivery_units WHERE task_id = ?",
+        (task.id,),
+    )
+    assert row["repo"] == "org/target"
+    assert row["source_branch"] == "feature/cross"
+    assert row["target_branch"] == "main"
+    assert row["pr_url"] == "https://github.com/org/target/pull/9"
+    assert row["github_pr_number"] == 9
 
 
 def test_push_branch_rejects_invalid_branch_ref(tmp_path: Path) -> None:
