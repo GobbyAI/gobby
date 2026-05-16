@@ -8,6 +8,54 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5]
+
+A patch release focused on MCP discovery timeout hardening, memory-digest
+atomicity and retry, agent trust-lock contention, header/chrome polish, a
+service-installer module split, and review/test hardening since `0.4.4`.
+
+### Added
+
+- Reorder header actions to `[Down][Project][Light/Dark]` and relocate the
+  Logout control into the hamburger menu under Configuration, rendered only
+  when auth is enabled, adding `role="group"` and an aria-label to the
+  project selector container (#14745).
+
+### Changed
+
+- Split the service installer into focused `service_common` and
+  `service_linux` modules, reducing large-file pressure while preserving
+  install behavior under test (#14741).
+- Promote the inline sidebar `LogoutIcon` into the shared `AppIcons` module
+  (18px feather style) with no behavior change (#14746).
+
+### Fixed
+
+- Time out MCP discovery calls and add a discovery time-budget check so
+  discovery cannot exceed its timeout limits (#14735).
+- Persist memory-digest state atomically and retry invalid memory turn
+  records instead of dropping them (#14734, #14747).
+- Continue the web chat compaction fallback instead of aborting when the
+  primary compaction path is unavailable (#14733).
+- Avoid serialized agent trust-lock acquisition so concurrent trust checks
+  no longer block each other (#14732).
+- Fail closed on missing tool output in the safe evaluator and normalize
+  task-tree iterable inputs in workflow condition helpers (#14736, #14737).
+- Restore activity task filtering in the Tasks tab (#14742).
+- Show the header connection chip only when the daemon is down, using a
+  single "Down" label at all viewport widths (#14744).
+- Remove trailing periods from empty-state bylines in the Sessions tab and
+  chat message list (#14748).
+- Address release review findings across the service installer, terminal
+  session, MCP discovery, and project selector, apply deferred review
+  polish, and add session-persistence and theme-toggle test coverage
+  (#14726, #14738, #14739, #14743).
+
+### Release
+
+- Open the 0.4.5 development line, bump the package version to 0.4.5, and
+  regenerate the workspace lockfile entry (#14740).
+
 ## [0.4.4]
 
 A patch release dominated by a web design-system and accessibility pass
