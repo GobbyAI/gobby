@@ -34,6 +34,12 @@ vi.mock("../../chat/artifacts/ResizeHandle", () => ({
 
 let mockFetch: MockFetchInstance;
 
+function taskListRequestUrls(): string[] {
+  return mockFetch.fn.mock.calls
+    .map(([url]) => String(url))
+    .filter((url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="));
+}
+
 describe("TasksTab — filters", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
@@ -126,12 +132,14 @@ describe("TasksTab — filters", () => {
     expect(screen.getByText("Status")).toBeTruthy();
     expect(screen.getAllByText("Development").length).toBeGreaterThan(0);
     expect(await screen.findByText("Operator Review")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Development" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Operator Review" })).toBeChecked();
     expect(screen.getByText("Needs Review")).toBeTruthy();
     expect(screen.getByText("Review Approved")).toBeTruthy();
     expect(screen.getByText("Closed")).toBeTruthy();
   });
 
-  it("selecting a stage filter and applying fetches that stage", async () => {
+  it("deselecting a stage filter and applying fetches only remaining stages", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -144,16 +152,15 @@ describe("TasksTab — filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
-      const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
-        const s = String(url);
-        return s.includes("/api/tasks?") && !s.includes("parent_task_id=");
-      });
-      expect(String(taskFetch?.[0])).toContain("stage=development");
-      expect(String(taskFetch?.[0])).toContain("include_stages=1");
+      const taskFetch = taskListRequestUrls().find((url) =>
+        url.includes("stage=operator_review"),
+      );
+      expect(taskFetch).toContain("include_stages=1");
+      expect(taskFetch).not.toContain("stage=development");
     });
   });
 
-  it("selecting multiple stage filters and applying fetches each stage", async () => {
+  it("deselecting every stage shows a filtered empty state without stage params", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -167,16 +174,12 @@ describe("TasksTab — filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
-      const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
-        const text = String(url);
-        return (
-          text.includes("/api/tasks?") &&
-          text.includes("stage=development") &&
-          text.includes("stage=operator_review")
-        );
-      });
-      expect(String(taskFetch?.[0])).toContain("include_stages=1");
+      expect(
+        screen.getByText("Tasks exist, but none match the current filters"),
+      ).toBeTruthy();
     });
+
+    expect(taskListRequestUrls().every((url) => !/[?&]stage=/.test(url))).toBe(true);
   });
 
   it("hides retired lifecycle stages from the stage filter", async () => {
@@ -227,30 +230,76 @@ describe("TasksTab — filters", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
-    const funnel = screen.getByLabelText("Filter tasks");
-    const openAndApply = (toggleLabels: string[]) => {
+    const getBadgeText = () =>
+      screen
+        .getByLabelText("Filter tasks")
+        .querySelector(".activity-filter-badge")?.textContent ?? null;
+    const openAndApply = async (toggleLabels: string[]) => {
+      const funnel = await screen.findByLabelText("Filter tasks");
       fireEvent.click(funnel);
       for (const label of toggleLabels) {
-        fireEvent.click(screen.getByLabelText(label));
+        fireEvent.click(await screen.findByLabelText(label));
       }
       fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     };
 
     // Toggle a default off (Blocked is in DEFAULT_FILTERS).
-    openAndApply(["Blocked"]);
-    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
+    await openAndApply(["Blocked"]);
+    expect(getBadgeText()).toBe("1");
 
     // Toggle a non-default on (Closed is not in DEFAULT_FILTERS) → diff = 2.
-    openAndApply(["Closed"]);
-    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("2");
+    await openAndApply(["Closed"]);
+    await waitFor(() => {
+      expect(getBadgeText()).toBe("2");
+    });
 
     // Restore Blocked → diff = 1 (only Closed is non-default).
-    openAndApply(["Blocked"]);
-    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
+    await openAndApply(["Blocked"]);
+    expect(getBadgeText()).toBe("1");
 
     // Restore defaults completely.
-    openAndApply(["Closed"]);
-    expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
+    await openAndApply(["Closed"]);
+    await waitFor(() => {
+      expect(getBadgeText()).toBeNull();
+    });
+  });
+
+  it("reset restores all checked stages and clears the filter badge", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Filter tasks"));
+    fireEvent.click(screen.getByLabelText("Development"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByLabelText("Filter tasks")
+          .querySelector(".activity-filter-badge")?.textContent,
+      ).toBe("1");
+    });
+
+    mockFetch.fn.mockClear();
+    fireEvent.click(screen.getByLabelText("Filter tasks"));
+    expect(await screen.findByLabelText("Development")).not.toBeChecked();
+    expect(screen.getByLabelText("Operator Review")).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByLabelText("Development")).toBeChecked();
+    expect(screen.getByLabelText("Operator Review")).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Filter tasks").querySelector(".activity-filter-badge"),
+      ).toBeNull();
+      const taskFetch = taskListRequestUrls()[0];
+      expect(taskFetch).toContain("include_stages=1");
+      expect(taskFetch).not.toMatch(/[?&]stage=/);
+    });
   });
 
   it("shows a filtered empty state when tasks exist but none match the default filters", async () => {

@@ -34,6 +34,12 @@ vi.mock("../../chat/artifacts/ResizeHandle", () => ({
 
 let mockFetch: MockFetchInstance;
 
+function taskListRequestUrls(): string[] {
+  return mockFetch.fn.mock.calls
+    .map(([url]) => String(url))
+    .filter((url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="));
+}
+
 describe("TasksTab", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
@@ -56,13 +62,10 @@ describe("TasksTab", () => {
 
     expect(screen.queryByText("Closed task")).toBeNull();
     expect(screen.queryByText("Load more")).toBeNull();
-    expect(
-      String(
-        mockFetch.fn.mock.calls.find(([url]) =>
-          String(url).includes("/api/tasks?"),
-        )?.[0],
-      ),
-    ).toContain("include_stages=1");
+    const taskRequest = taskListRequestUrls()[0];
+    expect(taskRequest).toContain("include_stages=1");
+    expect(taskRequest).toContain("closed=false");
+    expect(taskRequest).not.toMatch(/[?&]stage=/);
 
     const tasksPane = screen.getByTestId("task-tree");
     expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
@@ -70,7 +73,7 @@ describe("TasksTab", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
   });
 
-  it("leaves stage filters clear by default and narrows by selection", async () => {
+  it("checks all stage filters by default and narrows by deselection", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -80,8 +83,8 @@ describe("TasksTab", () => {
     fireEvent.click(screen.getByTitle("Filter by task state"));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Development")).not.toBeChecked();
-      expect(screen.getByLabelText("Operator Review")).not.toBeChecked();
+      expect(screen.getByLabelText("Development")).toBeChecked();
+      expect(screen.getByLabelText("Operator Review")).toBeChecked();
     });
 
     mockFetch.fn.mockClear();
@@ -89,11 +92,11 @@ describe("TasksTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
-      const taskRequest = mockFetch.fn.mock.calls
-        .map(([url]) => String(url))
-        .find((url) => url.includes("/api/tasks?") && url.includes("stage=development"));
+      const taskRequest = taskListRequestUrls().find((url) =>
+        url.includes("stage=operator_review"),
+      );
       expect(taskRequest).toBeTruthy();
-      expect(taskRequest).not.toContain("stage=operator_review");
+      expect(taskRequest).not.toContain("stage=development");
     });
   });
 
@@ -262,6 +265,10 @@ describe("TasksTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
+      const closedRequest = taskListRequestUrls().find((url) =>
+        url.includes("closed=true"),
+      );
+      expect(closedRequest).toContain("limit=20");
       expect(screen.getByText("Closed task 1")).toBeTruthy();
       expect(screen.getByText("Closed task 20")).toBeTruthy();
       expect(screen.queryByText("Closed task 21")).toBeNull();
@@ -563,6 +570,103 @@ describe("TasksTab", () => {
         name: "Expand subtasks for Expandable parent",
       }),
     ).toBeTruthy();
+  });
+
+  it("loads missing ancestors and renders children under their root context", async () => {
+    mockFetch.resetRoutes();
+    const childTask = {
+      id: "orphan-child",
+      ref: "#902",
+      title: "Visible child task",
+      state: taskStatePayload("ready"),
+      current_stage: stagePayload("ready"),
+      priority: 2,
+      task_type: "task",
+      parent_task_id: "missing-root-epic",
+      created_at: "2026-04-02T00:00:00Z",
+      updated_at: "2026-04-02T00:00:00Z",
+      seq_num: 902,
+      path_cache: "901/902",
+      requires_user_review: false,
+      assignee: null,
+      agent_name: null,
+      sequence_order: null,
+      start_date: null,
+      due_date: null,
+      project_id: "proj-1",
+    };
+    const rootEpic = {
+      id: "missing-root-epic",
+      ref: "#901",
+      title: "Fetched root epic",
+      state: taskStatePayload("done", {
+        is_closed: true,
+        closed_at: "2026-04-01T00:00:00Z",
+      }),
+      current_stage: stagePayload("done"),
+      closed_at: "2026-04-01T00:00:00Z",
+      priority: 2,
+      task_type: "epic",
+      parent_task_id: null,
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+      seq_num: 901,
+      path_cache: "901",
+      requires_user_review: false,
+      assignee: null,
+      agent_name: null,
+      sequence_order: null,
+      start_date: null,
+      due_date: null,
+      project_id: "proj-1",
+    };
+
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?.*parent_task_id=/, { tasks: [] });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?.*closed=false/, {
+      tasks: [childTask],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/missing-root-epic$/, {
+      task: {
+        ...rootEpic,
+        description: null,
+        category: null,
+        validation_criteria: null,
+      },
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/orphan-child$/, {
+      task: {
+        ...childTask,
+        description: "Visible child detail",
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched root epic")).toBeTruthy();
+      expect(screen.getByText("Visible child task")).toBeTruthy();
+    });
+
+    const parentRow = screen.getByText("Fetched root epic").closest('[role="treeitem"]');
+    const childRow = screen.getByText("Visible child task").closest('[role="treeitem"]');
+
+    expect(parentRow).toHaveAttribute("aria-level", "1");
+    expect(parentRow).toHaveAttribute("aria-expanded", "true");
+    expect(childRow).toHaveAttribute("aria-level", "2");
   });
 
   it("auto-selects the first visible task and keeps the detail pane open", async () => {
