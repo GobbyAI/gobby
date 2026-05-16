@@ -84,12 +84,6 @@ export function ProjectSelector({
         ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
         ?.focus();
     };
-    if (restoreFocus === "compact") {
-      restoreCompactFocus();
-    }
-    if (restoreFocus === "search") {
-      restoreSearchFocus();
-    }
     setPickerMode(null);
     setProjectSearch("");
     setActiveOptionIndex(0);

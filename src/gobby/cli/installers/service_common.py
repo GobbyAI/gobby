@@ -16,6 +16,15 @@ from jinja2 import Environment, FileSystemLoader
 
 # Template directory
 _TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "services"
+_XML_TEMPLATE_SUFFIXES = (".plist.j2", ".xml.j2")
+_TEMPLATE_OPTIONS: dict[str, Any] = {
+    "loader": FileSystemLoader(str(_TEMPLATES_DIR)),
+    "trim_blocks": True,
+    "lstrip_blocks": True,
+    "keep_trailing_newline": True,
+}
+_TEXT_TEMPLATE_ENV = Environment(autoescape=False, **_TEMPLATE_OPTIONS)
+_XML_TEMPLATE_ENV = Environment(autoescape=True, **_TEMPLATE_OPTIONS)
 
 # Service identifiers
 LAUNCHD_LABEL = "com.gobby.daemon"
@@ -25,12 +34,8 @@ SYSTEMD_UNIT_NAME = "gobby-daemon.service"
 
 def _render_template(template_name: str, **context: Any) -> str:
     """Render a Jinja2 template from the services directory."""
-    env = Environment(
-        loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-        autoescape=True,
-        trim_blocks=True,
-        lstrip_blocks=True,
-        keep_trailing_newline=True,
+    env = (
+        _XML_TEMPLATE_ENV if template_name.endswith(_XML_TEMPLATE_SUFFIXES) else _TEXT_TEMPLATE_ENV
     )
     template = env.get_template(template_name)
     return template.render(**context)

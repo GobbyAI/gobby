@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
+from gobby.servers.routes.mcp.endpoints import discovery
 from gobby.servers.routes.mcp.tools import create_mcp_router
 
 pytestmark = pytest.mark.unit
@@ -358,6 +360,35 @@ class TestMCPDiscoveryRoutes:
         assert data["tools"]["slow-server"] == []
         connection.disconnect.assert_awaited_once()
         assert mock_server.mcp_manager.connections == {}
+        assert "Timed out listing tools from MCP server slow-server" in caplog.text
+
+    def test_list_tools_external_timeout_budget_exhausted_before_list_tools(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Discovery should not give list_tools a fresh timeout after connecting."""
+        manager = MagicMock()
+        connection = MagicMock()
+        connection.disconnect = AsyncMock()
+        manager.connections = {"slow-server": connection}
+
+        session = AsyncMock()
+        manager.ensure_connected = AsyncMock(return_value=session)
+
+        ticks = iter([100.0, 101.0])
+        monkeypatch.setattr(
+            discovery,
+            "time",
+            SimpleNamespace(monotonic=lambda: next(ticks)),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = asyncio.run(
+                discovery._list_external_server_tools(manager, "slow-server", timeout=0.5)
+            )
+
+        assert result == []
+        session.list_tools.assert_not_called()
+        connection.disconnect.assert_awaited_once()
         assert "Timed out listing tools from MCP server slow-server" in caplog.text
 
     def test_list_tools_external_server_unhealthy_cached_tools_all(

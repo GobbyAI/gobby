@@ -317,7 +317,8 @@ def register_terminal_tools(
         ),
     )
     async def compact_self(session_id: str, rule_name: str | None = None) -> dict[str, Any]:
-        del rule_name
+        if rule_name:
+            logger.info("Compacting session %s (triggered by rule %s)", session_id, rule_name)
         resolved_session_id, session, error = _resolve_session_for_compaction(
             session_id,
             session_manager,

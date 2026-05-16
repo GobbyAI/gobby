@@ -151,7 +151,7 @@ async def _disconnect_external_server(mcp_manager: Any, server_name: str) -> Non
 
     try:
         result = disconnect()
-        if hasattr(result, "__await__"):
+        if asyncio.iscoroutine(result):
             await asyncio.wait_for(result, timeout=5.0)
     except Exception:
         logger.warning(
@@ -168,11 +168,15 @@ async def _list_external_server_tools(
     timeout: float,
 ) -> list[dict[str, Any]]:
     try:
+        start = time.monotonic()
         session = await asyncio.wait_for(
             mcp_manager.ensure_connected(server_name),
             timeout=timeout,
         )
-        tools_result = await asyncio.wait_for(session.list_tools(), timeout=timeout)
+        remaining = timeout - (time.monotonic() - start)
+        if remaining <= 0:
+            raise TimeoutError
+        tools_result = await asyncio.wait_for(session.list_tools(), timeout=remaining)
         return _response_tool_briefs(_tool_briefs_from_list_tools_result(tools_result))
     except TimeoutError:
         logger.warning(
