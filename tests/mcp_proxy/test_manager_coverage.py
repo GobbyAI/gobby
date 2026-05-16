@@ -17,7 +17,7 @@ import pytest
 
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
-from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.manager import MCPClientManager, _truncate_tool_brief
 from gobby.mcp_proxy.models import (
     ConnectionState,
     HealthState,
@@ -28,6 +28,13 @@ from gobby.mcp_proxy.models import (
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
+
+
+def test_truncate_tool_brief_handles_non_positive_lengths() -> None:
+    assert _truncate_tool_brief("abcdef", max_chars=0) == ""
+    assert _truncate_tool_brief("abcdef", max_chars=-1) == ""
+    assert _truncate_tool_brief("abcdef", max_chars=1) == "…"
+    assert _truncate_tool_brief("abcdef", max_chars=4) == "abc…"
 
 
 class MockDBServer:

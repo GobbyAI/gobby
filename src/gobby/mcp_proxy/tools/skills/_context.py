@@ -68,6 +68,6 @@ class SkillsContext:
             return variables.get("_active_skill_names") if variables else None
 
         names = await self.run_sqlite(_get_active_names)
-        if not isinstance(names, list):
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
             return None
-        return [name for name in names if isinstance(name, str)]
+        return names

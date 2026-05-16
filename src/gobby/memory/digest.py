@@ -403,8 +403,8 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
 
 def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
     """Return whether digest-owned title generation may update this session title."""
-    existing_title = str(session.title or "").strip()
-    raw_source = session.title_source
+    existing_title = str(getattr(session, "title", None) or "").strip()
+    raw_source = getattr(session, "title_source", None)
     title_source = str(raw_source or "").strip().lower()
 
     if title_source == "manual":

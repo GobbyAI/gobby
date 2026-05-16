@@ -134,8 +134,8 @@ export function useChat() {
   const initialViewingSessionIdRef = useRef<string | null>(
     loadViewingSessionId(),
   );
-  const initialViewingModeRef = useRef<SessionInteractionMode>(
-    loadViewingSessionMode(),
+  const initialViewingModeRef = useRef<"none" | "observe">(
+    loadViewingSessionMode() === "observe" ? "observe" : "none",
   );
   const initialViewingRestoreRef = useRef(false);
   const initialViewingReconnectRetryRef = useRef(false);

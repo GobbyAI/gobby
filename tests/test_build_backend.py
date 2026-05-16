@@ -361,11 +361,15 @@ def test_build_editable_delegates_to_setuptools(
         assert metadata_directory == "meta"
         return "gobby-0-editable.whl"
 
+    def fail_stage_ui() -> None:
+        raise AssertionError("_stage_ui must not run")
+
     monkeypatch.setattr(
         backend,
         "_orig",
         lambda: SimpleNamespace(build_editable=fake_build_editable),
     )
+    monkeypatch.setattr(backend, "_stage_ui", fail_stage_ui)
 
     assert (
         backend.build_editable(str(wheel_dir), {"editable": True}, "meta") == "gobby-0-editable.whl"

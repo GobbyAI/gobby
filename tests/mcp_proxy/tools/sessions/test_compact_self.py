@@ -563,6 +563,7 @@ class TestCompactSelfWebChatPath:
         self,
         lookup_id: str,
     ) -> None:
+        """Missing DB rows can still compact a live web-chat session by either id."""
         live_session = MagicMock()
         live_session.db_session_id = "db-id"
         live_session.conversation_id = "conv-1"
@@ -605,6 +606,7 @@ class TestCompactSelfWebChatPath:
         ]
 
     def test_web_chat_fallback_continues_after_registry_lookup_error(self) -> None:
+        """A mocked live-session lookup RuntimeError falls through to resolved DB id."""
         live_session = MagicMock()
         live_session.db_session_id = "db-id"
         live_session.conversation_id = "conv-1"
@@ -652,6 +654,8 @@ class TestCompactSelfWebChatPath:
     def test_web_chat_fallback_returns_original_error_after_registry_compact_error(
         self,
     ) -> None:
+        """Fallback compaction errors preserve the original DB lookup failure response."""
+
         class BrokenRegistry(WebChatSessionRegistry):
             def find_session(
                 self, session_id: str

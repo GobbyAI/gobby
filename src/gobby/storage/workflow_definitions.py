@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from sqlite3 import Row
+from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -14,6 +15,8 @@ from gobby.storage.database import DatabaseProtocol
 logger = logging.getLogger(__name__)
 
 DefinitionSource = Literal["installed", "template", "agent", "project", "custom"]
+_WORKFLOW_DEFINITIONS_REVISION = 0
+_WORKFLOW_DEFINITIONS_REVISION_LOCK = Lock()
 
 
 def compute_definition_hash(definition_json: str) -> str:
@@ -23,6 +26,22 @@ def compute_definition_hash(definition_json: str) -> str:
     and their on-disk template files.
     """
     return hashlib.sha256(definition_json.encode()).hexdigest()
+
+
+def get_workflow_definitions_revision() -> int:
+    """Return the in-process workflow-definition mutation revision."""
+    with _WORKFLOW_DEFINITIONS_REVISION_LOCK:
+        return _WORKFLOW_DEFINITIONS_REVISION
+
+
+def _bump_workflow_definitions_revision() -> None:
+    global _WORKFLOW_DEFINITIONS_REVISION
+    with _WORKFLOW_DEFINITIONS_REVISION_LOCK:
+        _WORKFLOW_DEFINITIONS_REVISION += 1
+
+    from gobby.hooks.session_activation import clear_active_rule_names_cache
+
+    clear_active_rule_names_cache()
 
 
 @dataclass
@@ -151,6 +170,7 @@ class LocalWorkflowDefinitionManager:
                 ),
             )
 
+        _bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def get(self, definition_id: str, include_deleted: bool = False) -> WorkflowDefinitionRow:
@@ -200,7 +220,9 @@ class LocalWorkflowDefinitionManager:
             return self.get(definition_id)
 
         values["updated_at"] = datetime.now(UTC).isoformat()
-        self.db.safe_update("workflow_definitions", values, "id = ?", (definition_id,))
+        cursor = self.db.safe_update("workflow_definitions", values, "id = ?", (definition_id,))
+        if cursor.rowcount > 0:
+            _bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def delete(self, definition_id: str) -> bool:
@@ -211,13 +233,19 @@ class LocalWorkflowDefinitionManager:
                 "UPDATE workflow_definitions SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
                 (now, now, definition_id),
             )
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+        if deleted:
+            _bump_workflow_definitions_revision()
+        return deleted
 
     def hard_delete(self, definition_id: str) -> bool:
         """Permanently delete a workflow definition from the database."""
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM workflow_definitions WHERE id = ?", (definition_id,))
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+        if deleted:
+            _bump_workflow_definitions_revision()
+        return deleted
 
     def restore(self, definition_id: str) -> WorkflowDefinitionRow:
         """Restore a soft-deleted workflow definition."""
@@ -229,6 +257,7 @@ class LocalWorkflowDefinitionManager:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Workflow definition {definition_id} not found or not deleted")
+        _bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def purge_deleted(self, older_than_days: int = 30) -> int:
@@ -242,6 +271,7 @@ class LocalWorkflowDefinitionManager:
             )
             count = cursor.rowcount
         if count:
+            _bump_workflow_definitions_revision()
             logger.info(f"Purged {count} soft-deleted workflow definitions")
         return count
 

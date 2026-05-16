@@ -242,7 +242,9 @@ class TestSyncBundledPipelines:
     @pytest.mark.integration
     def test_expand_task_fails_run_before_validation(self) -> None:
         """Evaluate expand-task conditions with the runtime step renderer."""
-        path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+
+        path = get_bundled_pipelines_path() / "expand-task.yaml"
         assert path.is_file(), f"Missing bundled pipeline: {path}"
         pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
         renderer = StepRenderer(strict_conditions=True)

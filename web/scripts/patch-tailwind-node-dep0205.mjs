@@ -1,3 +1,8 @@
+// Patch @tailwindcss/node 4.3.0's DEP0205 warning under Node's synchronous
+// ESM loader path. DEP0205 marks `module.register()` as deprecated in favor of
+// `module.registerHooks()`. The target package ships minified bundles, so the
+// replacement is intentionally minified and version-locked to 4.3.0. Remove
+// this script once @tailwindcss/node >= 4.4.0 contains the upstream fix.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

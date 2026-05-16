@@ -366,17 +366,82 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
     assert list_all_calls == 1
 
 
+def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
+    db: LocalDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="default",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+            }
+        ),
+    )
+    manager.create(
+        name="cached-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "matched", "value": True}],
+            }
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["stale-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
+    reconcile_session_activation(event, handlers)
+    assert _variables(db, session_id)["_active_rule_names"] == ["cached-rule"]
+
+    manager.create(
+        name="new-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "new_matched", "value": True}],
+            }
+        ),
+    )
+
+    reconcile_session_activation(event, handlers)
+
+    assert _variables(db, session_id)["_active_rule_names"] == ["cached-rule", "new-rule"]
+
+
 def test_active_rule_names_cache_evicts_oldest_entries(
     db: LocalDatabase,
     project_id: str,
 ) -> None:
-    now = time.monotonic()
-    for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
-        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
-            now - 1 + (index * 0.001),
-            {f"rule-{index}"},
-        )
-
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="new-agent",
@@ -389,6 +454,12 @@ def test_active_rule_names_cache_evicts_oldest_entries(
             }
         ),
     )
+    now = time.monotonic()
+    for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
+        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
+            now - 1 + (index * 0.001),
+            {f"rule-{index}"},
+        )
 
     from gobby.hooks.session_activation import _resolve_active_rule_names
 
@@ -401,13 +472,6 @@ def test_active_rule_names_cache_purges_expired_entries(
     db: LocalDatabase,
     project_id: str,
 ) -> None:
-    now = time.monotonic()
-    _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
-        now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
-        {"stale-rule"},
-    )
-    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (now, {"fresh-rule"})
-
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="new-agent",
@@ -420,6 +484,12 @@ def test_active_rule_names_cache_purges_expired_entries(
             }
         ),
     )
+    now = time.monotonic()
+    _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
+        now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
+        {"stale-rule"},
+    )
+    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (now, {"fresh-rule"})
 
     from gobby.hooks.session_activation import _resolve_active_rule_names
 

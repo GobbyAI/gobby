@@ -363,7 +363,6 @@ class TestAutoCompactAfterTaskClose:
         assert "_auto_compact_after_task_close_queued_for" in body.when
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_terminal_close_task_queues_compact_self_once(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)

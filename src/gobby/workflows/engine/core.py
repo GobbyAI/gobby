@@ -25,6 +25,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
+    get_workflow_definitions_revision,
 )
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
@@ -259,6 +260,8 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._agent_def_cache_revision = get_workflow_definitions_revision()
+        self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
 
     async def evaluate(
         self,
@@ -942,18 +945,27 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         if not isinstance(agent_type, str) or not agent_type:
             return None
 
-        row = self.definition_manager.get_by_name(agent_type, project_id=project_id)
-        if row is None or row.workflow_type != "agent" or not row.definition_json:
-            return None
+        revision = get_workflow_definitions_revision()
+        if revision != self._agent_def_cache_revision:
+            self._agent_def_cache.clear()
+            self._agent_def_cache_revision = revision
 
-        try:
-            data = json.loads(row.definition_json)
-            if isinstance(data, dict):
-                data.setdefault("name", row.name)
-            return AgentDefinitionBody.model_validate(data)
-        except (json.JSONDecodeError, TypeError) as exc:
-            logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
-            return None
-        except ValidationError as exc:
-            logger.debug("Failed to validate active agent definition %s: %s", agent_type, exc)
-            return None
+        cache_key = (agent_type, project_id)
+        if cache_key in self._agent_def_cache:
+            return self._agent_def_cache[cache_key]
+
+        agent: AgentDefinitionBody | None = None
+        row = self.definition_manager.get_by_name(agent_type, project_id=project_id)
+        if row is not None and row.workflow_type == "agent" and row.definition_json:
+            try:
+                data = json.loads(row.definition_json)
+                if isinstance(data, dict):
+                    data.setdefault("name", row.name)
+                agent = AgentDefinitionBody.model_validate(data)
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
+            except ValidationError as exc:
+                logger.debug("Failed to validate active agent definition %s: %s", agent_type, exc)
+
+        self._agent_def_cache[cache_key] = agent
+        return agent

@@ -12,6 +12,7 @@ from gobby.memory.digest import (
     _get_next_turn_number,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
+    _should_update_digest_title,
     _synthesize_title,
     bootstrap_session_title,
     build_turn_and_digest,
@@ -151,6 +152,16 @@ class TestBuildHeuristicTitle:
 
     def test_allows_two_character_titles(self) -> None:
         assert _build_heuristic_title("PR") == "PR"
+
+
+class TestShouldUpdateDigestTitle:
+    """Tests for digest title ownership policy."""
+
+    def test_missing_title_attrs_are_treated_as_untitled(self) -> None:
+        class LegacySession:
+            pass
+
+        assert _should_update_digest_title(LegacySession()) is True
 
 
 class TestBootstrapSessionTitle:

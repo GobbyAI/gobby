@@ -319,7 +319,7 @@ class TestSessionManagerMetadata:
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Title, model, summary, digest, and bulk updates notify catalog listeners."""
+        """Title, model, summary, digest, last turn, and bulk updates notify listeners."""
         session = session_manager.register(
             external_id="change-metadata-test",
             machine_id="machine",
@@ -335,9 +335,11 @@ class TestSessionManagerMetadata:
         session_manager.update_model(session.id, "sonnet")
         session_manager.update_summary(session.id, summary_markdown="# Summary")
         session_manager.update_digest_markdown(session.id, "## Digest")
+        session_manager.update_last_turn_markdown(session.id, "last turn")
         session_manager.update(session.id, git_branch="feature/session-events")
 
         assert calls == [
+            ("session_updated", session.id),
             ("session_updated", session.id),
             ("session_updated", session.id),
             ("session_updated", session.id),

@@ -104,7 +104,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if not query or not query.strip():
                 return {"success": False, "error": "Query is required and cannot be empty"}
 
-            active_names = None
+            active_names: list[str] | None = None
             if session_id:
                 try:
                     active_names = await ctx.get_active_skill_names(session_id)

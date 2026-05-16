@@ -2584,6 +2584,54 @@ class TestLiveActiveRuleSelection:
         assert variables.get("global_matched") is True
 
     @pytest.mark.asyncio
+    async def test_agent_definition_cache_refreshes_after_definition_update(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Workflow-definition mutations invalidate per-engine agent selector cache."""
+        agent_id = _insert_agent(manager, "default", include=["tag:old"])
+        _insert_rule(
+            manager,
+            "old-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="old_matched", value=True)],
+            ),
+            tags=["old"],
+        )
+        _insert_rule(
+            manager,
+            "new-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_variable", variable="new_matched", value=True)],
+            ),
+            tags=["new"],
+        )
+        engine = RuleEngine(db)
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        first_variables: dict[str, Any] = {"_agent_type": "default"}
+
+        await engine.evaluate(event, session_id="sess-1", variables=first_variables)
+
+        assert first_variables.get("old_matched") is True
+        assert first_variables.get("new_matched") is None
+
+        updated_agent = AgentDefinitionBody(
+            name="default",
+            workflows=AgentWorkflows(
+                rules=[],
+                rule_selectors=AgentSelector(include=["tag:new"], exclude=[]),
+            ),
+        )
+        manager.update(agent_id, definition_json=updated_agent.model_dump_json())
+        second_variables: dict[str, Any] = {"_agent_type": "default"}
+
+        await engine.evaluate(event, session_id="sess-1", variables=second_variables)
+
+        assert second_variables.get("new_matched") is True
+        assert second_variables.get("old_matched") is None
+
+    @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:

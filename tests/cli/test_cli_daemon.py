@@ -1054,7 +1054,11 @@ class TestRestartCommand:
         result = runner.invoke(cli, ["restart"])
 
         assert result.exit_code == 1
-        assert "Service stop returned, but daemon is still running after 75s" in result.output
+        expected_timeout = f"{SERVICE_MANAGED_STOP_TIMEOUT_SECONDS:.0f}s"
+        assert (
+            f"Service stop returned, but daemon is still running after {expected_timeout}"
+            in result.output
+        )
         mock_stop_daemon.assert_not_called()
         mock_service_stop.assert_called_once_with(
             shutdown_intent="restart",

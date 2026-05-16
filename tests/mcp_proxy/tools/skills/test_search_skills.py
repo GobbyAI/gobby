@@ -12,7 +12,10 @@ import pytest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.migrations import run_migrations
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.integration
 
@@ -266,6 +269,39 @@ class TestSearchSkillsTool:
         for res in result["results"]:
             assert res["category"] == "python"
             assert "typing" in res["tags"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_active_skill_names_do_not_filter_results(self, populated_db):
+        """Invalid session allowlists are ignored instead of partially applied."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.storage.skills import LocalSkillManager
+
+        registry = create_skills_registry(populated_db)
+        storage = LocalSkillManager(populated_db)
+        skills = storage.list_skills(limit=1000, include_global=True)
+        if hasattr(registry, "search"):
+            await registry.search.index_skills_async(skills)
+
+        project = LocalProjectManager(populated_db).create(
+            name="skills-test",
+            repo_path="/tmp/skills-test",
+        )
+        session = SessionManager(populated_db).register(
+            external_id="invalid-active-skills",
+            machine_id="machine",
+            source="claude",
+            project_id=project.id,
+        )
+        SessionVariableManager(populated_db).merge_variables(
+            session.id,
+            {"_active_skill_names": ["git-commit", 42]},
+        )
+
+        tool = registry.get_tool("search_skills")
+        result = await tool(query="git", session_id=session.id)
+
+        names = {r["skill_name"] for r in result["results"]}
+        assert {"git-commit", "git-rebase"}.issubset(names)
 
 
 @pytest.fixture

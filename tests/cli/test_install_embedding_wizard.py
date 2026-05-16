@@ -322,6 +322,27 @@ class TestRunEmbeddingInstallNoInteractive:
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_subprocess_exception_records_failure_result(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(side_effect=subprocess.SubprocessError("boom"))
+        results: dict = {}
+
+        provider = _run_embedding_install(
+            installer,
+            results,
+            no_interactive=True,
+            api_base_override="http://lan:1234/v1",
+            provider_override="lmstudio",
+        )
+
+        assert provider == "lmstudio"
+        assert results["embedding"]["success"] is False
+        assert results["embedding"]["provider"] == "lmstudio"
+        assert "boom" in results["embedding"]["error"]
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
     def test_installer_type_error_propagates(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:

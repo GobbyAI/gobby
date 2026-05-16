@@ -1,4 +1,5 @@
 import React from 'react';
+import { cn } from '../../../lib/utils';
 import { inputFocusCls } from '../../shared/focusStyles';
 import { A2UIComponentProps, resolveBoundValue } from '../types';
 
@@ -23,7 +24,10 @@ export const A2UICheckBox: React.FC<A2UIComponentProps> = ({ componentId, def, d
         checked={checked}
         onChange={handleChange}
         disabled={completed || def.disabled}
-        className={`h-4 w-4 rounded border-[var(--border)] text-[var(--accent)] ${inputFocusCls}`}
+        className={cn(
+          'h-4 w-4 rounded border-[var(--border)] text-[var(--accent)]',
+          inputFocusCls,
+        )}
       />
       {label && (
         <label

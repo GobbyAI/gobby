@@ -1,17 +1,12 @@
 /*
  * Shared focus utility classes.
  *
- * The base @layer in `web/src/styles/index.css` already paints a 2px
- * `outline: var(--accent)` on every interactive element with `:focus-visible`.
- * The Tailwind hop `focus:outline-none` (without an accompanying ring or
- * border treatment) defeats that base layer and leaves keyboard users
- * with no focus indicator — a WCAG 2.4.7 / 2.4.11 violation.
+ * These classes pair `focus:outline-none` with explicit `focus-visible`
+ * outline utilities. Mouse focus stays quiet, while keyboard focus still gets
+ * a visible 2px brand outline instead of relying on browser defaults.
  *
- * Use these constants on inputs and on icon-only or otherwise styled
- * buttons so the explicit intent is "the base outline is fine, but I am
- * adding a visible focus-visible affordance on top." They keep the
- * outline silent on mouse focus (focus-visible only) and tighten the
- * offset from the base 2px to 1px for input chrome.
+ * Use these constants on inputs and on icon-only or otherwise styled buttons
+ * whenever a component needs to suppress the default focus outline.
  */
 
 /** Inputs, textareas, selects: 2px brand outline on keyboard focus. */

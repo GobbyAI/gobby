@@ -391,7 +391,7 @@ describe('mobile chrome CSS', () => {
       display: 'inline-flex',
       width: '2.25rem',
       height: '2.25rem',
-      padding: '0',
+      padding: '0.375rem',
     })
     expectContainerDeclarations(
       inputCss,

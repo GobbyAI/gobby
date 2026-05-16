@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { pruneTimeBoundLru } from '../timeBoundLru'
 
 describe('pruneTimeBoundLru', () => {
@@ -71,6 +71,27 @@ describe('pruneTimeBoundLru', () => {
     pruneTimeBoundLru(entries, 60, { maxEntries: 2, ttlMs: 100 })
 
     expect(Array.from(entries.keys())).toEqual(['newer', 'newest'])
+  })
+
+  it('uses bounded selection for small excess counts in large maps', () => {
+    const entries = new Map<string, number>(
+      Array.from({ length: 130 }, (_, index) => [`k${index}`, index + 1]),
+    )
+    const sortSpy = vi.spyOn(Array.prototype, 'sort')
+    let sortedLengths: number[] = []
+
+    try {
+      pruneTimeBoundLru(entries, 200, { maxEntries: 129, ttlMs: 1000 })
+      sortedLengths = sortSpy.mock.contexts.map((context) =>
+        Array.isArray(context) ? context.length : 0,
+      )
+    } finally {
+      sortSpy.mockRestore()
+    }
+
+    expect(sortedLengths).not.toContain(130)
+    expect(entries.has('k0')).toBe(false)
+    expect(entries.size).toBe(129)
   })
 
   it('aborts pruning when the clock moves behind any last-seen timestamp', () => {

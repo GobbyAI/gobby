@@ -246,7 +246,7 @@ async def _compact_live_web_chat_fallback(
         seen.add(session_id)
         try:
             live_session = web_chat_session_registry.find_session(session_id)[1]
-        except Exception:
+        except (LookupError, KeyError, RuntimeError):
             logger.debug(
                 "Failed to look up live web_chat session %s for compaction fallback",
                 session_id,
@@ -257,7 +257,7 @@ async def _compact_live_web_chat_fallback(
             continue
         try:
             return await web_chat_session_registry.compact_session(session_id)
-        except Exception:
+        except (LookupError, KeyError, RuntimeError):
             logger.warning(
                 "Failed to compact live web_chat session %s via fallback",
                 session_id,
