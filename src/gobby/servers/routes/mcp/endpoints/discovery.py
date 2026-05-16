@@ -173,6 +173,7 @@ async def _list_external_server_tools(
             mcp_manager.ensure_connected(server_name),
             timeout=timeout,
         )
+        # Budget remaining time after connection to ensure total time <= timeout
         remaining = timeout - (time.monotonic() - start)
         if remaining <= 0:
             raise TimeoutError
