@@ -56,6 +56,20 @@ def test_resolve_native_bin_prefers_local_binary(temp_dir: Path) -> None:
         assert resolve_native_bin("ghook") == str(local_bin)
 
 
+def test_homebrew_distribution_prefers_path_over_local_binary(temp_dir: Path) -> None:
+    local_bin = temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
+    local_bin.parent.mkdir(parents=True)
+    local_bin.write_text("")
+    local_bin.chmod(0o755)
+
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch("gobby.utils.native_bin.shutil.which", return_value="/opt/homebrew/bin/ghook"),
+        patch.dict("gobby.utils.native_bin.os.environ", {"GOBBY_DISTRIBUTION": "homebrew"}),
+    ):
+        assert resolve_native_bin("ghook") == "/opt/homebrew/bin/ghook"
+
+
 def test_resolve_native_bin_ignores_non_executable_local_file(temp_dir: Path) -> None:
     local_bin = temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
     local_bin.parent.mkdir(parents=True)
