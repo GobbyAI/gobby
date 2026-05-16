@@ -96,7 +96,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.model == "gpt-5.5"
     assert agent.reasoning_effort == "high"
     assert agent.isolation == "none"
-    assert agent.surfaces == ["spawn"]
+    assert agent.surfaces == ["spawn", "persona"]
     assert raw["skills"]["methodology"] == spec["skills"]
     assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.instructions or "")
 
