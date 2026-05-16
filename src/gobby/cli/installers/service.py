@@ -336,11 +336,13 @@ def disable_service_macos() -> dict[str, Any]:
     if not plist_file.exists():
         return {"success": False, "error": "Service not installed."}
 
-    _launchctl_bootout(quiet=False)
+    result = _launchctl_bootout(quiet=False)
+    if not result.get("success"):
+        return result
     return {"success": True, "platform": "macos"}
 
 
-def _launchctl_bootout(*, quiet: bool) -> None:
+def _launchctl_bootout(*, quiet: bool) -> dict[str, Any]:
     """Bootout the launchd service (stop + unload)."""
     uid = os.getuid()
     try:
@@ -350,13 +352,33 @@ def _launchctl_bootout(*, quiet: bool) -> None:
             text=True,
             timeout=30,
         )
-        if not quiet and result.returncode != 0:
-            logger.debug(f"launchctl bootout: {result.stderr or result.stdout}")
-    except subprocess.TimeoutExpired:
-        logger.warning("launchctl bootout timed out")
-    except OSError as e:
+        output = (result.stderr or result.stdout or "").strip()
+        if result.returncode == 0:
+            return {"success": True, "platform": "macos"}
+        if _launchctl_bootout_already_unloaded(output):
+            if not quiet:
+                logger.debug("launchctl bootout: service already unloaded: %s", output)
+            return {"success": True, "platform": "macos", "already_unloaded": True}
+        error = f"launchctl bootout failed: {output or f'exit code {result.returncode}'}"
         if not quiet:
-            logger.warning(f"launchctl bootout failed: {e}")
+            logger.warning(error)
+        return {"success": False, "platform": "macos", "error": error}
+    except subprocess.TimeoutExpired:
+        error = "launchctl bootout timed out"
+        logger.warning(error)
+        return {"success": False, "platform": "macos", "error": error}
+    except OSError as e:
+        error = f"launchctl bootout failed: {e}"
+        if not quiet:
+            logger.warning(error)
+        return {"success": False, "platform": "macos", "error": error}
+
+
+def _launchctl_bootout_already_unloaded(output: str) -> bool:
+    """Return whether launchctl bootout failed because the service is already unloaded."""
+    message = output.lower()
+    markers = ("no such process", "could not find specified service", "service is not loaded")
+    return any(marker in message for marker in markers)
 
 
 def _get_service_status_macos() -> dict[str, Any]:
@@ -487,9 +509,9 @@ def _macos_restart() -> dict[str, Any]:
     _launchctl_bootout(quiet=True)
 
     # Wait for launchd to fully unload the service entry.
-    # The plist sets ExitTimeOut=15s, so the process may take that long
-    # to terminate.  Poll for up to 16s to avoid racing bootstrap.
-    for _ in range(160):  # up to ~16s
+    # The plist sets ExitTimeOut=60s, so the process may take that long
+    # to terminate. Poll with buffer to avoid racing bootstrap.
+    for _ in range(750):  # up to ~75s
         status = _get_service_status_macos()
         if not status.get("enabled"):
             break
