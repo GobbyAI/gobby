@@ -293,7 +293,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                 </div>
                 <div className="chat-empty-state__title">Chat</div>
                 <p className="chat-empty-state__copy">
-                  Start a conversation with Gobby.
+                  Start a conversation with Gobby
                 </p>
               </>
             )}

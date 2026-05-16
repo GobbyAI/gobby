@@ -90,6 +90,23 @@ describe("MessageList", () => {
     virtuosoProps.length = 0;
   });
 
+  it("renders empty-state copy without a terminal period", () => {
+    render(
+      <MessageList
+        messages={[]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    expect(
+      screen.getByText("Start a conversation with Gobby"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Start a conversation with Gobby."),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses instant scroll for imperative bottom jumps", () => {
     const ref = React.createRef<MessageListHandle>();
     render(
