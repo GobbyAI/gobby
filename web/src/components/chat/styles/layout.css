@@ -409,9 +409,8 @@
 }
 
 .command-palette-item.active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-primary);
-  font-weight: var(--font-weight-semibold);
 }
 
 .command-palette-item-dot {

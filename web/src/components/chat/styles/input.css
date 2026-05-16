@@ -115,9 +115,10 @@
 }
 
 .chat-scope-btn.active {
-  color: var(--text-primary);
+  color: var(--accent);
   background: var(--bg-tertiary);
   font-weight: var(--font-weight-semibold);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .chat-scope-btn:disabled {

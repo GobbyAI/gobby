@@ -424,10 +424,18 @@ body,
 body {
   font-family: var(--font-sans);
   font-size: var(--font-size-base);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
   touch-action: manipulation;
+}
+
+/* Light mode recesses the backdrop so content surfaces lift off it
+   (intentional light-depth model). Dark keeps the original near-black
+   canvas — the transparent .app-header reads against this, so dark
+   must stay bg-primary to match the shipped look. */
+[data-theme="light"] body {
+  background: var(--bg-secondary);
 }
 
 .gobby-logo {
@@ -784,7 +792,7 @@ body {
 }
 
 .session-item.attached {
-  background: var(--bg-tertiary);
+  background: var(--accent-soft);
 }
 
 .session-item-main {

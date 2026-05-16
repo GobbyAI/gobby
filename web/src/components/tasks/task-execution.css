@@ -141,13 +141,11 @@
   position: relative;
 }
 
-/* Open-popover state — solid accent fill. An open filter is an applied
-   constraint, the one place a decisive accent surface earns its pixels;
-   it reads unambiguously against the resting tinted btn-accent. */
+/* Open-popover state — stronger accent fill so the active surface reads
+   distinct from the resting btn-accent treatment. */
 .activity-filter-button[aria-expanded="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-foreground);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .activity-filter-badge {

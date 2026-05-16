@@ -28,6 +28,7 @@ export function ModeSelector({
       }))}
       ariaLabel="Chat mode"
       size={size}
+      controlHeight="sm"
       disabled={disabled}
     />
   )

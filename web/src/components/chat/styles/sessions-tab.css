@@ -323,16 +323,17 @@
   letter-spacing: 0;
 }
 
-/* Session-kind badges are identity metadata, not interactive state, so
-   they read as neutral mono pills rather than spending the accent. Accent
-   is reserved for applied filters/constraints. */
+/* Filled-accent pill — same shared active-state treatment used by
+   SegmentedControl's active option and .activity-filter-button when its
+   dropdown is open. Chip pills mark a session as having a given mode
+   active (tmux/web/auto/sandbox/local), so they always read as "on". */
 .chip--tmux,
 .chip--web,
 .chip--auto,
 .chip--sandbox,
 .chip--local {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
   border: 1px solid var(--border);
   font-family: var(--font-mono);
 }

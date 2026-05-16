@@ -82,7 +82,6 @@
 
 .activity-panel-tab.active {
   color: var(--accent);
-  font-weight: var(--font-weight-semibold);
 }
 
 /* Tab-strip column collapse: when the panel is narrower than 280px the
@@ -369,13 +368,11 @@
    Single authoring site for the toolbar shell that hosts the optional
    ActivityPanelSearch on the left and a filter affordance (SegmentedControl
    for 2–3 options, or .activity-filter-button + dropdown for many) on the
-   right. Two decisive treatments, no translucent accent washes:
-   (A) selectors/segments/selected items read via lightness + weight —
-   solid var(--bg-tertiary) well + var(--text-primary) + semibold, on a
-   recessed var(--bg-secondary) track; (B) an applied filter/constraint
-   gets a solid var(--accent) + var(--accent-foreground) fill
-   (.activity-filter-button[aria-expanded], .activity-filter-dropdown__item
-   --active). Hue stays the fourth signal; both survive grayscale.
+   right. Active-state treatment is locked to the filled-accent pill:
+   background color-mix(in srgb, var(--accent) 15%, transparent) + color
+   var(--accent), neutral border. Applied uniformly to the SegmentedControl
+   active option, .activity-filter-button when its dropdown is open, and
+   Sessions' .chip--* pills.
    ============================================ */
 .activity-panel-toolbar {
   --control-row-height-sm: var(--status-bar-control-height);
@@ -473,10 +470,10 @@
   color: var(--text-primary);
 }
 
-/* A chosen filter is an applied constraint: solid accent fill, matching
-   .activity-filter-button[aria-expanded]. Decisive, deutan-tolerant
-   (hue 125), grayscale-distinct as a dark fill. */
+/* Active option uses the same shared filled-accent treatment as
+   SegmentedControl active option, .activity-filter-button[aria-expanded],
+   and Sessions' chip pills. */
 .activity-filter-dropdown__item--active {
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }

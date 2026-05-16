@@ -62,7 +62,7 @@ export function SegmentedControl<T extends string>({
       aria-disabled={disabled || undefined}
       style={{ height: heightVar }}
       className={cn(
-        'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-secondary)]',
+        'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-primary)]',
         sizeText,
         className,
       )}
@@ -96,7 +96,7 @@ export function SegmentedControl<T extends string>({
               index === 0 && 'rounded-l-md',
               index === options.length - 1 && 'rounded-r-md',
               isActive
-                ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-semibold'
+                ? 'bg-accent/15 text-accent font-semibold'
                 : 'text-muted-foreground hover:bg-muted hover:text-foreground',
               disabled && 'cursor-not-allowed opacity-50',
             )}
