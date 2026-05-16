@@ -7,6 +7,7 @@ import {
   MetadataStrip,
   ToolResultBody,
 } from '../ToolResultBlocks'
+import { TOOL_RESULT_CUSTOM_STYLE } from '../ToolCallCard.styles'
 
 describe('JsonResultBlock', () => {
   it('renders embedded \\n inside string fields as actual line breaks', () => {
@@ -37,6 +38,32 @@ describe('JsonResultBlock', () => {
     const { container } = render(<JsonResultBlock value={'{"err":"x"}'} variant="error" />)
     const pre = container.querySelector('pre')
     expect(pre?.className).toMatch(/destructive/)
+  })
+
+  it('renders the normal variant transparently — no second off-shade slab (#14721)', () => {
+    const { container } = render(<JsonResultBlock value={'{"k":"v"}'} />)
+    const pre = container.querySelector('pre')
+    // No bg-muted fill: the result sits on the bordered tool card surface.
+    expect(pre?.className).not.toMatch(/bg-muted/)
+    expect(pre?.className).not.toMatch(/bg-/)
+    expect(pre?.className).toContain('text-foreground')
+  })
+})
+
+describe('tool-result background (#14721)', () => {
+  it('TOOL_RESULT_CUSTOM_STYLE overrides the shared code-bg pre fill', () => {
+    // CodeBlock/PlainBody/LineNumberedBody read this so the syntax block
+    // does not paint var(--code-bg) over the tool card.
+    expect(TOOL_RESULT_CUSTOM_STYLE.background).toBe('transparent')
+  })
+
+  it('GsqzResultBlock wrapper carries no bg-muted fill', () => {
+    const { container } = render(
+      <GsqzResultBlock metadata={{ chunkId: 'abc' }} body="plain body" />,
+    )
+    const wrapper = container.firstElementChild as HTMLElement
+    expect(wrapper.className).toContain('border-border/40')
+    expect(wrapper.className).not.toMatch(/bg-muted/)
   })
 })
 

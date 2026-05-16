@@ -48,6 +48,10 @@ export function JsonBlock({
         wrapLongLines
         customStyle={{
           margin: 0,
+          // Sit on the surrounding tool card / message surface rather than
+          // the shared code theme's var(--code-bg) slab; the theme-aware
+          // syntax palette is unaffected.
+          background: 'transparent',
           borderRadius: 'inherit',
           maxHeight: 'inherit',
           overflowY: 'auto',

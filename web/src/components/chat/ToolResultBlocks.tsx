@@ -110,10 +110,13 @@ function formatJsonForDisplay(value: unknown): string {
 
 export function JsonResultBlock({ value, variant = 'normal', className }: JsonResultBlockProps) {
   const display = useMemo(() => formatJsonForDisplay(value), [value])
+  // Normal results sit transparently on the bordered tool card (no second
+  // off-shade slab). The error variant keeps a destructive wash: that is a
+  // grayscale-legible state signal, not chrome (.impeccable.md state rule).
   const palette =
     variant === 'error'
       ? 'bg-destructive/30 text-destructive-foreground'
-      : 'bg-muted text-foreground'
+      : 'text-foreground'
   return (
     <pre className={cn(JSON_BLOCK_BASE, TOOL_RESULT_WRAP_CLASS, palette, className)}>
       <code>{display}</code>
@@ -145,6 +148,7 @@ function LineNumberedBody({
       language={language}
       startingLineNumber={startingLineNumber}
       wrapLongLines
+      className="tool-code-surface"
       customStyle={TOOL_RESULT_CUSTOM_STYLE}
     >
       {content}
@@ -158,6 +162,7 @@ function PlainBody({ body, language }: { body: string; language?: string }) {
       language={language ?? 'text'}
       showLineNumbers={false}
       wrapLongLines
+      className="tool-code-surface"
       customStyle={TOOL_RESULT_CUSTOM_STYLE}
       codeTagProps={{ className: TOOL_RESULT_WRAP_CLASS }}
     >
@@ -198,7 +203,7 @@ export interface GsqzResultBlockProps {
 export function GsqzResultBlock({ metadata, body, language }: GsqzResultBlockProps) {
   const nested = useMemo(() => parseGsqzWrapper(body), [body])
   return (
-    <div className="overflow-hidden rounded border border-border/40 bg-muted/30">
+    <div className="overflow-hidden rounded border border-border/40">
       <GsqzMetadataStrip metadata={metadata} />
       {nested ? (
         <GsqzResultBlock metadata={nested.metadata} body={nested.body} language={language} />

@@ -79,6 +79,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <CodeBlock
           language={language}
           startingLineNumber={1}
+          className="tool-code-surface"
           customStyle={TOOL_RESULT_CUSTOM_STYLE}
         >
           {args.content as string}
@@ -95,7 +96,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} />
+        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} className="tool-code-surface" />
       </div>
     )
   }
@@ -106,7 +107,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
       <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Arguments</div>
       <JsonBlock
         value={args}
-        className="rounded max-h-96"
+        className="rounded max-h-96 tool-code-surface"
         testId="toolcall-json"
       />
     </div>
@@ -191,6 +192,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             language={language}
             startingLineNumber={parsed.startLine}
             wrapLongLines
+            className="tool-code-surface"
             customStyle={{
               ...TOOL_RESULT_CUSTOM_STYLE,
               borderRadius: 0,
@@ -224,6 +226,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
                   language={lang}
                   startingLineNumber={startLine}
                   wrapLongLines
+                  className="tool-code-surface"
                   customStyle={TOOL_RESULT_CUSTOM_STYLE}
                 >
                   {content}
@@ -269,7 +272,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   const toolName = formatToolName(call.tool_name)
   if (toolName === 'Agent' || toolName === 'Task') {
     return (
-      <div className="max-h-96 overflow-y-auto text-xs p-2">
+      <div className="max-h-96 overflow-y-auto text-xs p-2 tool-code-surface">
         <MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />
       </div>
     )
@@ -281,7 +284,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   if (envelope) {
     const wrapper = parseGsqzWrapper(envelope.primary)
     return (
-      <div className="overflow-hidden rounded border border-border/40 bg-muted/30">
+      <div className="overflow-hidden rounded border border-border/40">
         <MetadataStrip meta={envelope.meta} />
         {wrapper ? (
           <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
