@@ -13,7 +13,7 @@ from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.database import DatabaseProtocol, LocalDatabase
 
 
 @dataclass
@@ -104,7 +104,7 @@ class InterSessionMessageManager:
     enabling agent coordination and parent-child communication.
     """
 
-    def __init__(self, db: LocalDatabase) -> None:
+    def __init__(self, db: LocalDatabase | DatabaseProtocol) -> None:
         """Initialize the message manager.
 
         Args:

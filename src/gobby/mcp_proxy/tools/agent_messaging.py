@@ -133,8 +133,8 @@ def add_messaging_tools(
                 return {
                     "success": False,
                     "error": (
-                        "Pass a single session identifier using either to_session "
-                        "or to_session_id, not both."
+                        "Pass a single session identifier: use either to_session "
+                        "or to_session_id. Do not pass both, even if they match."
                     ),
                 }
             if not send_to_all and not target_refs:

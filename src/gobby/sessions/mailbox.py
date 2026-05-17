@@ -84,6 +84,7 @@ class MailboxService:
         if not send_to_all and not to_session_id:
             raise ValueError("to_session_id is required when send_to_all=false")
 
+        resolved_project_id: str | None
         if send_to_all:
             resolved_project_id = self._resolve_project_id(from_session_id, project_id)
             recipient_ids = self._broadcast_recipient_session_ids(

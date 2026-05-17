@@ -243,8 +243,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.sessions import SYSTEM_SESSION_ID
 
-        state = task_dict.get("state") if isinstance(task_dict.get("state"), dict) else {}
-        current_stage = state.get("current_stage") if isinstance(state, dict) else None
+        raw_state = task_dict.get("state")
+        state = cast(dict[str, Any], raw_state) if isinstance(raw_state, dict) else {}
+        current_stage = state.get("current_stage")
         if state.get("is_closed"):
             task_status = "closed"
         elif state.get("is_escalated"):

@@ -250,8 +250,8 @@ class TestSendMessage:
 
         assert result["success"] is False
         assert result["error"] == (
-            "Pass a single session identifier using either to_session or to_session_id, "
-            "not both."
+            "Pass a single session identifier: use either to_session or to_session_id. "
+            "Do not pass both, even if they match."
         )
         mock_session_manager.resolve_session_reference.assert_not_called()
         mock_message_manager.create_message.assert_not_called()
