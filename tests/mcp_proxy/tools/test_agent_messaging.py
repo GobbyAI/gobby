@@ -205,10 +205,10 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_accepts_to_session_id_and_metadata(
+    async def test_send_message_accepts_to_session_and_metadata(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """New mailbox entrypoint accepts to_session_id and forwards metadata."""
+        """Public send_message accepts to_session and forwards metadata."""
         mock_session_manager.get.side_effect = lambda sid: {
             "s-from": MockSession(id="s-from", project_id="proj-1"),
             "s-to": MockSession(id="s-to", project_id="proj-1"),
@@ -218,7 +218,7 @@ class TestSendMessage:
             "send_message",
             {
                 "from_session": "s-from",
-                "to_session_id": "s-to",
+                "to_session": "s-to",
                 "content": "assignment",
                 "priority": "high",
                 "message_type": "task_assignment",
@@ -234,25 +234,22 @@ class TestSendMessage:
         assert '"task_id": "#14760"' in call_kwargs["metadata_json"]
 
     @pytest.mark.asyncio
-    async def test_send_message_rejects_both_target_aliases(
+    async def test_send_message_rejects_target_with_broadcast(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Reject ambiguous target aliases even when they match."""
+        """Reject explicit target when broadcasting."""
         result = await messaging_registry.call(
             "send_message",
             {
                 "from_session": "s-from",
                 "to_session": "s-to",
-                "to_session_id": "s-to",
+                "send_to_all": True,
                 "content": "hi",
             },
         )
 
         assert result["success"] is False
-        assert result["error"] == (
-            "Pass a single session identifier: use either to_session or to_session_id. "
-            "Do not pass both, even if they match."
-        )
+        assert result["error"] == "to_session cannot be combined with send_to_all=true."
         mock_session_manager.resolve_session_reference.assert_not_called()
         mock_message_manager.create_message.assert_not_called()
 
@@ -267,10 +264,7 @@ class TestSendMessage:
         )
 
         assert result["success"] is False
-        assert result["error"] == (
-            "Pass exactly one session identifier using to_session or to_session_id, "
-            "unless send_to_all is true."
-        )
+        assert result["error"] == "Pass to_session unless send_to_all is true."
         mock_session_manager.resolve_session_reference.assert_not_called()
         mock_message_manager.create_message.assert_not_called()
 

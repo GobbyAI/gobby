@@ -120,7 +120,6 @@ def add_messaging_tools(
         from_session: str,
         content: str,
         to_session: str | None = None,
-        to_session_id: str | None = None,
         send_to_all: bool = False,
         include_wakeup: bool = False,
         priority: str = "normal",
@@ -128,27 +127,19 @@ def add_messaging_tools(
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            target_refs = [ref for ref in (to_session, to_session_id) if ref is not None]
-            if len(target_refs) > 1:
+            if send_to_all and to_session is not None:
                 return {
                     "success": False,
-                    "error": (
-                        "Pass a single session identifier: use either to_session "
-                        "or to_session_id. Do not pass both, even if they match."
-                    ),
+                    "error": "to_session cannot be combined with send_to_all=true.",
                 }
-            if not send_to_all and not target_refs:
+            if not send_to_all and to_session is None:
                 return {
                     "success": False,
-                    "error": (
-                        "Pass exactly one session identifier using to_session or "
-                        "to_session_id, unless send_to_all is true."
-                    ),
+                    "error": "Pass to_session unless send_to_all is true.",
                 }
-            target_session_ref = target_refs[0] if target_refs else None
             from_id = _resolve(from_session)
 
-            to_id = _resolve(target_session_ref) if target_session_ref else None
+            to_id = _resolve(to_session) if to_session is not None else None
 
             from gobby.sessions.mailbox import MailboxService
 
