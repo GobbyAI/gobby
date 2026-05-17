@@ -187,7 +187,9 @@ function isOptionalOwnerSessionRef(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
     typeof value.session_id === 'string' &&
+    value.session_id.trim().length > 0 &&
     typeof value.ref === 'string' &&
+    value.ref.trim().length > 0 &&
     (value.source === null || typeof value.source === 'string')
   )
 }

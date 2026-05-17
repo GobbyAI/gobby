@@ -42,12 +42,16 @@ def extract_attachment_ids(attachments: Any) -> list[str]:
     if not isinstance(attachments, list):
         return []
     ids: list[str] = []
+    seen: set[str] = set()
     for item in attachments:
         if not isinstance(item, dict):
             continue
         attachment_id = item.get("id")
         if isinstance(attachment_id, str) and attachment_id.strip():
-            ids.append(attachment_id.strip())
+            normalized = attachment_id.strip()
+            if normalized not in seen:
+                seen.add(normalized)
+                ids.append(normalized)
     return ids
 
 

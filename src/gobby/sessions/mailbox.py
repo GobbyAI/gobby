@@ -204,8 +204,9 @@ class MailboxService:
         from_session_id: str,
         project_id: str,
     ) -> list[str]:
+        active_status_placeholders = ",".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
         rows = self._db.fetchall(
-            """
+            f"""
             SELECT
                 ar.child_session_id,
                 ar.parent_session_id,
@@ -214,11 +215,11 @@ class MailboxService:
             FROM agent_runs ar
             LEFT JOIN sessions child ON child.id = ar.child_session_id
             LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
-            WHERE ar.status IN ('pending', 'running')
+            WHERE ar.status IN ({active_status_placeholders})
               AND COALESCE(child.project_id, parent.project_id) = ?
             ORDER BY ar.created_at ASC
             """,
-            (project_id,),
+            (*ACTIVE_AGENT_RUN_STATUSES, project_id),
         )
 
         recipients: list[str] = []

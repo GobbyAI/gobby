@@ -129,7 +129,20 @@ async def _validate_persona_agent(
             f"Agent definition '{agent_name}' is invalid: missing supports_surface",
         )
         return False
-    if not supports_surface("persona"):
+    try:
+        persona_supported = bool(supports_surface("persona"))
+    except Exception:
+        logger.warning(
+            "Agent definition '%s' failed persona surface validation",
+            agent_name,
+            exc_info=True,
+        )
+        await mixin._send_error(
+            websocket,
+            f"Agent definition '{agent_name}' failed persona surface validation",
+        )
+        return False
+    if not persona_supported:
         await mixin._send_error(
             websocket,
             f"Agent definition '{agent_name}' is not persona-capable",
@@ -488,7 +501,7 @@ async def handle_set_agent(
     if not isinstance(raw_conversation_id, str) or not raw_conversation_id:
         await mixin._send_error(
             websocket,
-            "set_agent requires conversation_id or target_session_id and agent_name",
+            "set_agent requires a valid conversation_id and agent_name",
         )
         return
     conversation_id = raw_conversation_id

@@ -196,6 +196,7 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const deletedUploadedAttachmentIdsRef = useRef<Set<string>>(new Set())
   const metaRef = useRef<HTMLDivElement>(null)
   // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
   // but compress: model name + branch label truncate, toolbar buttons show
@@ -224,14 +225,21 @@ export function ChatInput({
   useEffect(() => {
     attachmentsDisabledRef.current = attachmentsDisabled
   }, [attachmentsDisabled])
+  const deleteUploadedAttachment = useCallback((attachmentId: string) => {
+    if (deletedUploadedAttachmentIdsRef.current.has(attachmentId)) return
+    deletedUploadedAttachmentIdsRef.current.add(attachmentId)
+    void deleteChatAttachment(attachmentId).catch((error: unknown) => {
+      console.warn('Failed to delete uploaded chat attachment', { attachmentId, error })
+    })
+  }, [])
   const clearQueuedFiles = useCallback((deleteUploaded = false) => {
     queuedFilesRef.current.forEach((qf) => {
       if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
-      if (deleteUploaded && qf.attachment) void deleteChatAttachment(qf.attachment.id)
+      if (deleteUploaded && qf.attachment) deleteUploadedAttachment(qf.attachment.id)
     })
     queuedFilesRef.current = []
     setQueuedFiles([])
-  }, [])
+  }, [deleteUploadedAttachment])
   useEffect(() => {
     return () => {
       queuedFilesRef.current.forEach((qf) => {
@@ -327,40 +335,40 @@ export function ChatInput({
     }
   }, [onPaletteSelect, onInputChange])
 
-  const uploadQueuedFile = useCallback((id: string, file: File) => {
-    void uploadChatAttachment(file, {
-      projectId,
-      onProgress: (progress) => {
-        setQueuedFiles((prev) =>
-          prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
-        )
-      },
-    })
-      .then((attachment) => {
-        setQueuedFiles((prev) => {
-          const stillQueued = prev.some((qf) => qf.id === id)
-          if (!stillQueued || attachmentsDisabledRef.current) {
-            void deleteChatAttachment(attachment.id)
-            return prev
-          }
-          return prev.map((qf) =>
-            qf.id === id
-              ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null }
-              : qf,
+  const uploadQueuedFile = useCallback(async (id: string, file: File) => {
+    try {
+      const attachment = await uploadChatAttachment(file, {
+        projectId,
+        onProgress: (progress) => {
+          setQueuedFiles((prev) =>
+            prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
           )
-        })
+        },
       })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Attachment upload failed'
-        setQueuedFiles((prev) =>
-          prev.map((qf) =>
-            qf.id === id
-              ? { ...qf, status: 'error', progress: null, attachment: null, error: message }
-              : qf,
-          ),
+      setQueuedFiles((prev) => {
+        const stillQueued = prev.some((qf) => qf.id === id)
+        if (!stillQueued || attachmentsDisabledRef.current) {
+          deleteUploadedAttachment(attachment.id)
+          return prev
+        }
+        return prev.map((qf) =>
+          qf.id === id
+            ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null }
+            : qf,
         )
       })
-  }, [projectId])
+    } catch (error: unknown) {
+      console.warn('Attachment upload failed', { id, error })
+      const message = error instanceof Error ? error.message : 'Attachment upload failed'
+      setQueuedFiles((prev) =>
+        prev.map((qf) =>
+          qf.id === id
+            ? { ...qf, status: 'error', progress: null, attachment: null, error: message }
+            : qf,
+        ),
+      )
+    }
+  }, [deleteUploadedAttachment, projectId])
 
   const handleFilesSelected = useCallback((files: FileList | null) => {
     if (!files || attachmentsDisabled) return
@@ -372,7 +380,7 @@ export function ChatInput({
         ...prev,
         { id, file, previewUrl, status: 'uploading', progress: null, attachment: null, error: null },
       ])
-      uploadQueuedFile(id, file)
+      void uploadQueuedFile(id, file)
     })
   }, [attachmentsDisabled, uploadQueuedFile])
 
@@ -380,10 +388,10 @@ export function ChatInput({
     setQueuedFiles((prev) => {
       const removed = prev.find((f) => f.id === id)
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
-      if (removed?.attachment) void deleteChatAttachment(removed.attachment.id)
+      if (removed?.attachment) deleteUploadedAttachment(removed.attachment.id)
       return prev.filter((f) => f.id !== id)
     })
-  }, [])
+  }, [deleteUploadedAttachment])
 
   const retryFile = useCallback((id: string) => {
     const queued = queuedFilesRef.current.find((qf) => qf.id === id)
@@ -395,7 +403,7 @@ export function ChatInput({
           : qf,
       ),
     )
-    uploadQueuedFile(id, queued.file)
+    void uploadQueuedFile(id, queued.file)
   }, [uploadQueuedFile])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {

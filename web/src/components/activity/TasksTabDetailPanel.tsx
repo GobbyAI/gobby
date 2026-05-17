@@ -89,16 +89,14 @@ export function TasksTabDetailPanel({
       {editError && (
         <div className="activity-task-detail-edit-error" role="alert">
           <span>{editError}</span>
-          {edit && (
-            <button
-              type="button"
-              className="activity-task-detail-edit-error__dismiss"
-              aria-label="Dismiss error"
-              onClick={() => edit.clearError(task.id)}
-            >
-              ×
-            </button>
-          )}
+          <button
+            type="button"
+            className="activity-task-detail-edit-error__dismiss"
+            aria-label="Dismiss error"
+            onClick={() => edit?.clearError(task.id)}
+          >
+            ×
+          </button>
         </div>
       )}
 

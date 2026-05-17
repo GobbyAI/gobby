@@ -474,8 +474,12 @@ class TestAgentWorkflowCompletion:
         assert completed is not None
         assert completed.status == "success"
         assert completed.parent_session_id == parent.id
-        assert sessions.get(parent.id).status == "active"
-        assert sessions.get(child.id).status == "expired"
+        parent_lookup = sessions.get(parent.id)
+        child_lookup = sessions.get(child.id)
+        assert parent_lookup is not None
+        assert child_lookup is not None
+        assert parent_lookup.status == "active"
+        assert child_lookup.status == "expired"
         assert mutex.get_mutex(task.id) is None
         assert WorkflowInstanceManager(db).get_active_instances(child.id) == []
 

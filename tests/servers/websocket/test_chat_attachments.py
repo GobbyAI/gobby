@@ -34,6 +34,7 @@ def _attachment(
     attachment_id: str = "att-1",
     size_bytes: int = 5,
 ) -> str:
+    """Create a stored attachment row backed by a temporary local file."""
     path = tmp_path / f"{attachment_id}.txt"
     path.write_bytes(b"x" * size_bytes)
     chat_attachments.create_attachment(

@@ -1488,6 +1488,7 @@ CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
 CREATE TABLE chat_attachments (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    -- Client/display identifiers intentionally do not reference server tables.
     draft_id TEXT,
     conversation_id TEXT,
     message_id TEXT,

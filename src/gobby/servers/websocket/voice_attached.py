@@ -48,9 +48,15 @@ async def feed_attached_session_tts(
         if pipeline and delta.strip():
             try:
                 pipeline.feed_text(delta)
-            except Exception:
-                logger.debug(
+            except (ValueError, RuntimeError):
+                logger.warning(
                     "Failed to feed attached-session TTS for session %s",
+                    session_id,
+                    exc_info=True,
+                )
+            except Exception:
+                logger.warning(
+                    "Unexpected attached-session TTS feed failure for session %s",
                     session_id,
                     exc_info=True,
                 )

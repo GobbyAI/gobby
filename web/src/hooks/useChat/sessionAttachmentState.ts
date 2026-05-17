@@ -46,6 +46,9 @@ export function useSessionAttachmentState() {
     null,
   );
   const agentNameCacheRef = useRef<Map<string, string | null>>(new Map());
+  const agentNameInflightRef = useRef<Map<string, Promise<string | null>>>(
+    new Map(),
+  );
 
   const [attachedSessionId, setAttachedSessionId] = useState<string | null>(
     null,
@@ -79,32 +82,49 @@ export function useSessionAttachmentState() {
       return cached;
     }
 
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), AGENT_NAME_RESOLVE_TIMEOUT_MS);
-    try {
-      const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`, {
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        console.warn("Failed to resolve agent name", {
-          agentRunId,
-          status: res.status,
+    const inflight = agentNameInflightRef.current.get(agentRunId);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = (async () => {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      const controller = new AbortController();
+      const timeout = window.setTimeout(
+        () => controller.abort(),
+        AGENT_NAME_RESOLVE_TIMEOUT_MS,
+      );
+      try {
+        const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`, {
+          credentials: "include",
+          signal: controller.signal,
         });
+        if (!res.ok) {
+          console.warn("Failed to resolve agent name", {
+            agentRunId,
+            status: res.status,
+          });
+          agentNameCacheRef.current.set(agentRunId, null);
+          return null;
+        }
+        const data = await res.json();
+        const resolved =
+          data?.run?.agent_name || data?.run?.workflow_name || null;
+        agentNameCacheRef.current.set(agentRunId, resolved);
+        return resolved;
+      } catch (error) {
+        console.warn("Failed to resolve agent name", { agentRunId, error });
         agentNameCacheRef.current.set(agentRunId, null);
         return null;
+      } finally {
+        window.clearTimeout(timeout);
       }
-      const data = await res.json();
-      const resolved =
-        data?.run?.agent_name || data?.run?.workflow_name || null;
-      agentNameCacheRef.current.set(agentRunId, resolved);
-      return resolved;
-    } catch (error) {
-      console.warn("Failed to resolve agent name", { agentRunId, error });
-      agentNameCacheRef.current.set(agentRunId, null);
-      return null;
+    })();
+    agentNameInflightRef.current.set(agentRunId, promise);
+    try {
+      return await promise;
     } finally {
-      window.clearTimeout(timeout);
+      agentNameInflightRef.current.delete(agentRunId);
     }
   }, []);
 

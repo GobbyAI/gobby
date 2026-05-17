@@ -222,11 +222,13 @@ class StageStatesManager:
         stage_name: str,
         *,
         by_session_id: str | None,
+        notes: str | None = None,
     ) -> StageState:
         return self._transitions.move_task_to_stage(
             task_id,
             stage_name,
             by_session_id=by_session_id,
+            notes=notes,
         )
 
     def escalate_stage_failure(self, task_id: str, reason: str) -> None:

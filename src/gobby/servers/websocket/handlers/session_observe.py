@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 from uuid import uuid4
 
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
@@ -62,20 +63,32 @@ def _mode_from_level(value: Any) -> str | None:
     return None
 
 
-def _variable_str(variables: dict[str, Any], *names: str) -> str | None:
+def _variable_value[T](
+    variables: dict[str, Any],
+    predicate: Callable[[Any], TypeGuard[T]],
+    *names: str,
+) -> T | None:
     for name in names:
         value = variables.get(name)
-        if isinstance(value, str) and value.strip():
+        if predicate(value):
             return value
     return None
+
+
+def _is_nonempty_str(value: Any) -> TypeGuard[str]:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_nonbool_int(value: Any) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _variable_str(variables: dict[str, Any], *names: str) -> str | None:
+    return _variable_value(variables, _is_nonempty_str, *names)
 
 
 def _variable_int(variables: dict[str, Any], *names: str) -> int | None:
-    for name in names:
-        value = variables.get(name)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
+    return _variable_value(variables, _is_nonbool_int, *names)
 
 
 def _read_session_variables(db: Any, session_id: str) -> dict[str, Any]:
@@ -740,7 +753,10 @@ async def handle_send_to_cli_session(
     attachment_items = attachments if isinstance(attachments, list) else []
     client_message_id = _as_str(data.get("client_message_id"))
     if not session_id or (not content and not attachment_items):
-        await mixin._send_error(websocket, "send_to_cli_session requires session_id and content")
+        await mixin._send_error(
+            websocket,
+            "send_to_cli_session requires session_id and content or attachments",
+        )
         return
 
     session_manager = getattr(mixin, "session_manager", None)
@@ -776,10 +792,22 @@ async def handle_send_to_cli_session(
             content = append_prepared_attachment_context(content, prepared)
             legacy_items = legacy_attachment_items(attachment_items)
             stored_paths = await store_proxy_attachments(str(session_id), legacy_items)
+            content = append_attachment_paths(content, stored_paths)
         except ValueError as exc:
             await mixin._send_error(websocket, str(exc), code="INVALID_ATTACHMENT")
             return
-        content = append_attachment_paths(content, stored_paths)
+        except Exception:
+            logger.warning(
+                "Failed to process attachments for CLI session %s",
+                session_id,
+                exc_info=True,
+            )
+            await mixin._send_error(
+                websocket,
+                "Failed to process attachments",
+                code="ATTACHMENT_ERROR",
+            )
+            return
 
     # Persist the message via InterSessionMessageManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager

@@ -348,12 +348,16 @@ class ChatSessionMixin:
                     cli_source=effective_provider or "claude",
                     project_id=effective_project_for_agent,
                 )
-                persona_selected = bool(
-                    pending_agent
-                    and pending_agent != "default"
-                    and agent_body is not None
-                    and agent_body.supports_surface("persona")
-                )
+                persona_selected = False
+                if pending_agent and pending_agent != "default" and agent_body is not None:
+                    try:
+                        persona_selected = bool(agent_body.supports_surface("persona"))
+                    except Exception:
+                        logger.warning(
+                            "Agent '%s' failed persona surface validation during session bootstrap",
+                            agent_name,
+                            exc_info=True,
+                        )
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for session bootstrap: {e}")
 

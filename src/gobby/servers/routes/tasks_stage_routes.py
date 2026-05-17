@@ -192,6 +192,7 @@ def register_task_stage_routes(
                     task.id,
                     stage_name,
                     by_session_id=None,
+                    notes=request_data.notes,
                 )
                 event = "stage_changed"
             elif request_data.action == "add":

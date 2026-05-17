@@ -56,7 +56,7 @@ describe("TasksTab row layout (#14247)", () => {
     for (const row of rows) {
       const title = row.querySelector(".activity-task-row-title");
       const stage = row.querySelector(".activity-task-row-stage");
-      const menu = row.querySelector(".session-more-btn");
+      const menu = row.querySelector(".task-more-btn");
 
       expect(title).not.toBeNull();
       expect(menu).not.toBeNull();

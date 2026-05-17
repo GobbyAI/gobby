@@ -105,7 +105,7 @@ class SessionMessageProcessor:
         try:
             await tts_feed(session_id, rendered, complete=complete)
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Attached-session TTS feed failed for session %s",
                 session_id,
                 exc_info=True,

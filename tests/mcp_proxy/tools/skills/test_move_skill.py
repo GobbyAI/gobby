@@ -17,7 +17,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_move_skill_tools_route_storage_calls_through_run_sqlite() -> None:
+async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
     """Move operations use the injected SQLite runner instead of the default executor."""
     storage = MagicMock()
     storage.move_to_project.return_value = SimpleNamespace(

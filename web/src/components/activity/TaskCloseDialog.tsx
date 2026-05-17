@@ -18,6 +18,11 @@ export function TaskCloseDialog({
   const [showReasonError, setShowReasonError] = useState(false);
 
   useEffect(() => {
+    setReason("");
+    setShowReasonError(false);
+  }, [task?.id]);
+
+  useEffect(() => {
     if (!task) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !isSubmitting) {

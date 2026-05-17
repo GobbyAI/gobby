@@ -253,7 +253,7 @@ def _to_shared_relative_path(file_path: str, install_dir: Path) -> str | None:
     if marker in normalized:
         return normalized.split(marker, 1)[1]
 
-    return normalized if _content_type_for_shared_relative_path(normalized) is not None else None
+    return normalized
 
 
 def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
@@ -272,7 +272,7 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
         return None
 
     if parts[0] == "registry" and len(parts) >= 2:
-        if parts[1] == "build_profiles.yaml" or parts[1] == "build_profiles":
+        if parts[1] == "build_profiles.yaml":
             return "build_profiles"
 
     return None

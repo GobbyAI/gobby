@@ -17,6 +17,7 @@ from gobby.storage.migrations import (
     migrations_needed,
     run_migrations,
 )
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 
 pytestmark = pytest.mark.unit
@@ -777,6 +778,12 @@ def test_migration_258_recreates_chat_attachments_with_project_scope(tmp_path) -
     db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
     db.execute("INSERT INTO schema_version (version) VALUES (257)")
     db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
+    db.execute("INSERT INTO projects (id) VALUES (?)", (PERSONAL_PROJECT_ID,))
+    db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT)")
+    db.execute(
+        "INSERT INTO sessions (id, project_id) VALUES ('sess-1', ?)",
+        (PERSONAL_PROJECT_ID,),
+    )
     db.execute(
         """
         CREATE TABLE chat_attachments (
@@ -797,8 +804,10 @@ def test_migration_258_recreates_chat_attachments_with_project_scope(tmp_path) -
     )
     db.execute(
         """
-        INSERT INTO chat_attachments (id, filename, mime_type, size_bytes, local_path)
-        VALUES ('att-old', 'old.txt', 'text/plain', 3, '/tmp/old.txt')
+        INSERT INTO chat_attachments (
+            id, target_session_id, filename, mime_type, size_bytes, local_path
+        )
+        VALUES ('att-old', 'sess-1', 'old.txt', 'text/plain', 3, '/tmp/old.txt')
         """
     )
     migration_258 = [item for item in MIGRATIONS if item[0] == 258]
@@ -807,7 +816,11 @@ def test_migration_258_recreates_chat_attachments_with_project_scope(tmp_path) -
 
     assert "project_id" in _column_names(db, "chat_attachments")
     assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
-    assert db.fetchall("SELECT * FROM chat_attachments") == []
+    rows = db.fetchall("SELECT * FROM chat_attachments")
+    assert len(rows) == 1
+    assert rows[0]["id"] == "att-old"
+    assert rows[0]["project_id"] == PERSONAL_PROJECT_ID
+    assert rows[0]["target_session_id"] == "sess-1"
     assert get_current_version(db) == 258
 
 

@@ -665,8 +665,10 @@ class ChatMessagingMixin:
                     if tts_pipeline and content.strip():
                         try:
                             tts_pipeline.feed_text(content)
+                        except (ValueError, RuntimeError):
+                            logger.warning("TTS feed_text failed", exc_info=True)
                         except Exception:
-                            logger.debug("TTS feed_text failed", exc_info=True)
+                            logger.warning("Unexpected TTS feed_text failure", exc_info=True)
 
                 elif isinstance(event, ToolCallEvent):
                     # If there's a pending approval card, transition it so

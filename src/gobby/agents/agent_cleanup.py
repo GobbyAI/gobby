@@ -78,6 +78,7 @@ class AgentCleanupHandler:
         if callable(get_result):
             existing_result = get_result(run_id)
             if isinstance(existing_result, dict):
+                logger.debug("Completion notification already recorded for run %s; skipping", run_id)
                 return
         try:
             await self._completion_registry.notify(run_id, result=result, message=message)

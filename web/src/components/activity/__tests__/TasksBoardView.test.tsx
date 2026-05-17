@@ -6,6 +6,10 @@ import type { StageRegistryEntry } from "../../../hooks/useStagesRegistry";
 import type { StageStateView } from "../../../lib/stageActions";
 import { TasksBoardView } from "../TasksBoardView";
 
+function getDisplayName(name: string): string {
+  return name === "build" ? "Build" : name;
+}
+
 function stage(
   name: string,
   position: number,
@@ -13,7 +17,7 @@ function stage(
 ): StageStateView {
   return {
     name,
-    display_name: name === "build" ? "Build" : name,
+    display_name: getDisplayName(name),
     category: "build",
     state,
     review_policy: "none",
@@ -28,7 +32,7 @@ function registryEntry(
 ): StageRegistryEntry {
   return {
     ...stage(name, position, "ready"),
-    display_name: name === "build" ? "Build" : name,
+    display_name: getDisplayName(name),
     sequence_order: position,
   } as StageRegistryEntry;
 }

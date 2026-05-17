@@ -31,6 +31,7 @@ from gobby.storage.migration_helpers import (
     _setup_skills_fts,
     _setup_tasks_fts,
 )
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -470,9 +471,149 @@ def _apply_chat_attachments_schema(db: LocalDatabase) -> None:
             db.execute(statement)
 
 
+_LEGACY_CHAT_ATTACHMENT_COLUMNS = (
+    "id",
+    "draft_id",
+    "conversation_id",
+    "message_id",
+    "target_session_id",
+    "filename",
+    "mime_type",
+    "size_bytes",
+    "local_path",
+    "created_at",
+    "updated_at",
+    "bound_at",
+)
+
+
+def _table_exists(db: LocalDatabase, table_name: str) -> bool:
+    return db.fetchone(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ) is not None
+
+
+def _db_column_names(db: LocalDatabase, table_name: str) -> set[str]:
+    if not _table_exists(db, table_name):
+        return set()
+    return {str(row["name"]) for row in db.fetchall(f"PRAGMA table_info({table_name})")}
+
+
+def _active_project_predicate(db: LocalDatabase) -> str:
+    return " AND deleted_at IS NULL" if "deleted_at" in _db_column_names(db, "projects") else ""
+
+
+def _fallback_chat_attachment_project_id(db: LocalDatabase) -> str:
+    if not _table_exists(db, "projects"):
+        raise RuntimeError("Cannot migrate chat_attachments: projects table is missing")
+
+    active_predicate = _active_project_predicate(db)
+    personal = db.fetchone(
+        f"SELECT id FROM projects WHERE id = ?{active_predicate}",
+        (PERSONAL_PROJECT_ID,),
+    )
+    if personal is not None:
+        return PERSONAL_PROJECT_ID
+
+    rows = db.fetchall(f"SELECT id FROM projects WHERE 1 = 1{active_predicate} ORDER BY id")
+    if len(rows) == 1:
+        return str(rows[0]["id"])
+    if not rows:
+        raise RuntimeError("Cannot migrate chat_attachments: no default project available")
+    raise RuntimeError(
+        "Cannot migrate chat_attachments: multiple projects exist and the personal project is "
+        "missing"
+    )
+
+
+def _chat_attachment_session_project_map(
+    db: LocalDatabase,
+    session_ids: set[str],
+) -> dict[str, str]:
+    if (
+        not session_ids
+        or not _table_exists(db, "sessions")
+        or "project_id" not in _db_column_names(db, "sessions")
+    ):
+        return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    rows = db.fetchall(
+        f"""
+        SELECT id, project_id
+          FROM sessions
+         WHERE id IN ({placeholders}) AND project_id IS NOT NULL
+        """,
+        tuple(session_ids),
+    )
+    return {str(row["id"]): str(row["project_id"]) for row in rows}
+
+
 def _recreate_project_scoped_chat_attachments(db: LocalDatabase) -> None:
-    db.execute("DROP TABLE IF EXISTS chat_attachments")
+    if not _table_exists(db, "chat_attachments"):
+        _apply_chat_attachments_schema(db)
+        return
+
+    columns = _db_column_names(db, "chat_attachments")
+    if "project_id" in columns:
+        _apply_chat_attachments_schema(db)
+        return
+
+    missing_columns = set(_LEGACY_CHAT_ATTACHMENT_COLUMNS) - columns
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise RuntimeError(f"Cannot migrate chat_attachments: missing legacy columns {missing}")
+
+    rows = db.fetchall(
+        """
+        SELECT id, draft_id, conversation_id, message_id, target_session_id,
+               filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+          FROM chat_attachments
+        """
+    )
+    if not rows:
+        db.execute("DROP TABLE IF EXISTS chat_attachments")
+        _apply_chat_attachments_schema(db)
+        return
+
+    fallback_project_id = _fallback_chat_attachment_project_id(db)
+    session_ids = {
+        str(row["target_session_id"])
+        for row in rows
+        if row["target_session_id"] is not None
+    }
+    project_by_session = _chat_attachment_session_project_map(db, session_ids)
+
+    db.execute("ALTER TABLE chat_attachments RENAME TO chat_attachments_legacy_258")
     _apply_chat_attachments_schema(db)
+    db.executemany(
+        """
+        INSERT INTO chat_attachments (
+            id, project_id, draft_id, conversation_id, message_id, target_session_id,
+            filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                row["id"],
+                project_by_session.get(str(row["target_session_id"]), fallback_project_id),
+                row["draft_id"],
+                row["conversation_id"],
+                row["message_id"],
+                row["target_session_id"],
+                row["filename"],
+                row["mime_type"],
+                row["size_bytes"],
+                row["local_path"],
+                row["created_at"],
+                row["updated_at"],
+                row["bound_at"],
+            )
+            for row in rows
+        ],
+    )
+    db.execute("DROP TABLE chat_attachments_legacy_258")
 
 
 def _apply_linear_project_binding_schema(db: LocalDatabase) -> None:

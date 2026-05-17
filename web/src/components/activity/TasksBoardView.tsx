@@ -90,7 +90,10 @@ export function TasksBoardView({
             ? target.data.stageName
             : null;
         if (!taskId || !stageName) return;
-        void onMoveTaskToStage(taskId, stageName).catch(() => {
+        void onMoveTaskToStage(taskId, stageName).catch((error: unknown) => {
+          if (error instanceof Error) {
+            console.error("Unexpected task stage move failure", error);
+          }
           // Surfaced via moveErrors banner; hook already rolled back.
         });
       },

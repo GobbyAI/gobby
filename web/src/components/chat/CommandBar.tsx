@@ -68,7 +68,7 @@ export function CommandBar({
             aria-label={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
             title={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
           >
-            <PanelIcon pinned={panelVisible} />
+            <PanelIcon visible={panelVisible} />
             <span className="command-bar-btn__label">
               {panelVisible ? 'Hide Panel' : 'Show Panel'}
             </span>

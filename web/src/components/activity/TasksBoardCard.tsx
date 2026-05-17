@@ -24,6 +24,7 @@ export function TasksBoardCard({
 }: TasksBoardCardProps) {
   const ref = useRef<HTMLButtonElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Prefer the serialized top-level flag when present; older payloads keep it under state.
   const isBlocked = Boolean(task.is_blocked ?? task.state?.is_blocked);
   const taskRefLabel =
     task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : "No ref");
@@ -69,7 +70,6 @@ export function TasksBoardCard({
         {isBlocked && (
           <span
             className="ml-auto rounded-full bg-[var(--color-error-soft)] px-1.5 text-[length:var(--text-2xs)] font-semibold text-[var(--color-error)]"
-            aria-label="Blocked"
           >
             Blocked
           </span>

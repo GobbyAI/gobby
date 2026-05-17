@@ -561,7 +561,12 @@ export const TasksTab = memo(function TasksTab({
 
   const applyRawTaskUpdate = useCallback(
     (taskId: string, rawTask: RawTaskPayload | null) => {
-      if (!rawTask) return;
+      if (!rawTask) {
+        if (selectedTaskId === taskId) {
+          setTaskDetail(null);
+        }
+        return;
+      }
       setTasks((prev) =>
         prev.map((task) =>
           task.id === taskId ? normalizeActivityTask(rawTask, task) : task,

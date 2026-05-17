@@ -214,13 +214,6 @@ export function useChat() {
       setProxyDeliveryNotice(null);
     },
     [
-      attachedSessionIdRef,
-      attachedSessionMetaRef,
-      observedSessionIdRef,
-      observedSessionMetaRef,
-      pendingProxyMessagesRef,
-      pendingProxySessionQueuesRef,
-      sessionInteractionModeRef,
       setAttachedSessionId,
       setAttachedSessionMeta,
       setObservedSessionId,
@@ -228,8 +221,6 @@ export function useChat() {
       setSessionInteractionMode,
       setViewingSessionId,
       setViewingSessionMeta,
-      viewingSessionIdRef,
-      viewingSessionMetaRef,
     ],
   );
 
@@ -251,8 +242,6 @@ export function useChat() {
     setMessages([]);
     setIsLoadingMessages(false);
   }, [
-    lastSeqRef,
-    planContentRef,
     setContextUsage,
     setCurrentBranch,
     setMainSessionMeta,
@@ -334,16 +323,6 @@ export function useChat() {
       }
     },
     [
-      attachedSessionIdRef,
-      attachedSessionMetaRef,
-      conversationIdRef,
-      currentModeRef,
-      dbSessionIdRef,
-      observedSessionIdRef,
-      observedSessionMetaRef,
-      onModeChangedRef,
-      pendingSessionInteractionModeRef,
-      sessionInteractionModeRef,
       setAttachedSessionId,
       setAttachedSessionMeta,
       setContextUsage,
@@ -360,8 +339,6 @@ export function useChat() {
       setViewingSessionId,
       setViewingSessionMeta,
       setWorktreePath,
-      viewingSessionIdRef,
-      viewingSessionMetaRef,
     ],
   );
 

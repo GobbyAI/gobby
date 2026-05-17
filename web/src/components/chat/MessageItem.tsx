@@ -21,12 +21,44 @@ function renderImagePlaceholders(content: string): string {
   )
 }
 
+function safeAttachmentHref(contentUrl: string): string | null {
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://localhost'
+  try {
+    const parsed = new URL(contentUrl, origin)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    if (!parsed.pathname.startsWith('/api/chat/attachments/')) return null
+    if (parsed.origin === origin && contentUrl.startsWith('/')) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+    return parsed.href
+  } catch {
+    return null
+  }
+}
+
+function AttachmentUnavailableCard({ attachment }: { attachment: ChatAttachment }) {
+  return (
+    <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
+      <span className="font-medium text-foreground truncate">{attachment.filename}</span>
+      <span className="text-muted-foreground">Attachment link unavailable</span>
+    </div>
+  )
+}
+
 function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
   const resolved = normalizeAttachmentUrl(attachment)
   const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
   const isImage = resolved.mime_type.startsWith('image/')
   const isPdf = resolved.mime_type === 'application/pdf'
   const imageFailed = failedImageUrl === resolved.content_url
+  const safeHref = safeAttachmentHref(resolved.content_url)
+
+  if (!safeHref) {
+    return <AttachmentUnavailableCard attachment={resolved} />
+  }
 
   if (isImage) {
     if (imageFailed) {
@@ -34,14 +66,14 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
         <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
           <span className="font-medium text-foreground truncate">{resolved.filename}</span>
           <span className="text-muted-foreground">Image preview unavailable</span>
-          <a className="ml-auto text-accent hover:underline" href={resolved.content_url} download={resolved.filename}>Download</a>
+          <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
         </div>
       )
     }
 
     return (
       <div className="my-2">
-        <img src={resolved.content_url} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" onError={() => setFailedImageUrl(resolved.content_url)} />
+        <img src={safeHref} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" onError={() => setFailedImageUrl(resolved.content_url)} />
       </div>
     )
   }
@@ -49,10 +81,10 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
   if (isPdf) {
     return (
       <div className="my-2 rounded-md border border-border overflow-hidden bg-muted/30">
-        <iframe title={resolved.filename} src={resolved.content_url} sandbox="" className="h-80 w-full bg-background" />
+        <iframe title={resolved.filename} src={safeHref} sandbox="allow-scripts" className="h-80 w-full bg-background" />
         <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
           <span className="truncate font-medium">{resolved.filename}</span>
-          <a className="text-accent hover:underline" href={resolved.content_url} target="_blank" rel="noreferrer noopener">Open</a>
+          <a className="text-accent hover:underline" href={safeHref} target="_blank" rel="noreferrer noopener">Open</a>
         </div>
       </div>
     )
@@ -62,7 +94,7 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
     <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
       <span className="font-medium text-foreground truncate">{resolved.filename}</span>
       <span className="text-muted-foreground">{formatAttachmentSize(resolved.size_bytes)}</span>
-      <a className="ml-auto text-accent hover:underline" href={resolved.content_url} download={resolved.filename}>Download</a>
+      <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
     </div>
   )
 }

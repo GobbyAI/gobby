@@ -245,8 +245,35 @@ describe('MessageItem', () => {
     )
 
     const iframe = screen.getByTitle('plan.pdf')
-    expect(iframe).toHaveAttribute('sandbox', '')
+    expect(iframe).toHaveAttribute('sandbox', 'allow-scripts')
     expect(screen.getByText('Open')).toHaveAttribute('rel', 'noreferrer noopener')
+  })
+
+  it('renders an unavailable card for unsafe attachment links', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-bad',
+                project_id: 'proj-1',
+                filename: 'bad.txt',
+                mime_type: 'text/plain',
+                size_bytes: 12,
+                content_url: 'javascript:alert(1)',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('bad.txt')).toBeTruthy()
+    expect(screen.getByText('Attachment link unavailable')).toBeTruthy()
+    expect(screen.queryByText('Download')).toBeNull()
   })
 
   it('renders stored document attachments as file cards', () => {

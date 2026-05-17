@@ -4,6 +4,9 @@ import { type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 import { buttonVariants } from './buttonVariants'
 
+const BUTTON_SPINNER_CLASS_NAME =
+  'mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none'
+
 export interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
@@ -37,7 +40,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             {loading && (
               <span
                 aria-hidden="true"
-                className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+                className={BUTTON_SPINNER_CLASS_NAME}
               />
             )}
             {children}

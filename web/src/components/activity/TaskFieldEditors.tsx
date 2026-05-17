@@ -43,9 +43,11 @@ export function TaskTextField({
 }: TaskTextFieldProps) {
   const [committed, setCommitted] = useState(value);
   const [draft, setDraft] = useState(value);
+  const skipNextBlurCommitRef = useRef(false);
   if (committed !== value) {
     setCommitted(value);
     setDraft(value);
+    skipNextBlurCommitRef.current = false;
   }
 
   const commit = useCallback(() => {
@@ -61,6 +63,7 @@ export function TaskTextField({
       event.currentTarget.blur();
     } else if (event.key === "Escape") {
       event.preventDefault();
+      skipNextBlurCommitRef.current = true;
       setDraft(committed);
       event.currentTarget.blur();
     }
@@ -76,7 +79,13 @@ export function TaskTextField({
       disabled={disabled}
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={onKeyDown}
-      onBlur={commit}
+      onBlur={() => {
+        if (skipNextBlurCommitRef.current) {
+          skipNextBlurCommitRef.current = false;
+          return;
+        }
+        commit();
+      }}
     />
   );
 }
@@ -100,11 +109,12 @@ export function TaskTextAreaField({
 }: TaskTextAreaFieldProps) {
   const [committed, setCommitted] = useState(value);
   const [draft, setDraft] = useState(value);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextBlurCommitRef = useRef(false);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
+      clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   }, []);
@@ -112,6 +122,7 @@ export function TaskTextAreaField({
   if (committed !== value) {
     setCommitted(value);
     setDraft(value);
+    skipNextBlurCommitRef.current = false;
   }
 
   useEffect(() => clearTimer, [clearTimer]);
@@ -129,7 +140,7 @@ export function TaskTextAreaField({
     (next: string) => {
       setDraft(next);
       clearTimer();
-      timerRef.current = window.setTimeout(() => {
+      timerRef.current = setTimeout(() => {
         timerRef.current = null;
         commit(next);
       }, debounceMs);
@@ -142,6 +153,7 @@ export function TaskTextAreaField({
       if (event.key === "Escape") {
         event.preventDefault();
         clearTimer();
+        skipNextBlurCommitRef.current = true;
         setDraft(committed);
         event.currentTarget.blur();
       }
@@ -161,6 +173,10 @@ export function TaskTextAreaField({
       onKeyDown={onKeyDown}
       onBlur={() => {
         clearTimer();
+        if (skipNextBlurCommitRef.current) {
+          skipNextBlurCommitRef.current = false;
+          return;
+        }
         commit(draft);
       }}
     />
@@ -222,9 +238,11 @@ export function TaskTagsField({
   const [committed, setCommitted] = useState<string[]>(value);
   const [tags, setTags] = useState<string[]>(value);
   const [entry, setEntry] = useState("");
+  const skipNextBlurCommitRef = useRef(false);
   if (!sameTags(committed, value)) {
     setCommitted(value);
     setTags(value);
+    skipNextBlurCommitRef.current = false;
   }
 
   const commit = useCallback(
@@ -260,6 +278,7 @@ export function TaskTagsField({
         setTags((prev) => prev.slice(0, -1));
       } else if (event.key === "Escape") {
         event.preventDefault();
+        skipNextBlurCommitRef.current = true;
         setTags(committed);
         setEntry("");
         event.currentTarget.blur();
@@ -297,6 +316,10 @@ export function TaskTagsField({
         onChange={(event) => setEntry(event.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => {
+          if (skipNextBlurCommitRef.current) {
+            skipNextBlurCommitRef.current = false;
+            return;
+          }
           const trimmed = entry.trim();
           const nextTags =
             trimmed && !tags.includes(trimmed) ? [...tags, trimmed] : tags;

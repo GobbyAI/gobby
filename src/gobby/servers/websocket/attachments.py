@@ -8,6 +8,7 @@ import binascii
 import re
 import shutil
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,9 +17,11 @@ from gobby.paths import get_gobby_home
 
 MAX_PROXY_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_PROXY_ATTACHMENT_COUNT = 10
-MAX_PROXY_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_PROXY_TOTAL_ATTACHMENT_BYTES = MAX_PROXY_ATTACHMENT_BYTES
 PROXY_ATTACHMENT_RETENTION_DAYS = 7
 PROXY_ATTACHMENT_RETENTION_SECONDS = PROXY_ATTACHMENT_RETENTION_DAYS * 24 * 60 * 60
+_SAFE_PATH_PART_PATTERN = re.compile(r"[^A-Za-z0-9_-]+")
+_SAFE_PATH_PART_MAX_LENGTH = 120
 
 
 def _format_attachment_size_limit(byte_count: int) -> str:
@@ -28,9 +31,10 @@ def _format_attachment_size_limit(byte_count: int) -> str:
 
 
 def _safe_path_part(value: str, fallback: str) -> str:
-    cleaned = value.replace("\x00", "").replace("/", "_").replace("\\", "_")
-    cleaned = cleaned.lstrip(".")
-    cleaned = re.sub(r"[^\w.\-]", "_", cleaned)
+    normalized = unicodedata.normalize("NFC", value.replace("\x00", ""))
+    cleaned = _SAFE_PATH_PART_PATTERN.sub("_", normalized)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_-")
+    cleaned = cleaned[:_SAFE_PATH_PART_MAX_LENGTH].strip("_-")
     return cleaned or fallback
 
 
@@ -64,7 +68,7 @@ def _declared_attachment_size(item: dict[str, Any], raw_name: str, raw_data: str
     raw_size = item.get("size")
     if raw_size is None:
         return _estimated_base64_size(raw_data)
-    if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size < 0:
+    if not isinstance(raw_size, int) or isinstance(raw_size, bool) or raw_size < 0:
         raise ValueError(f"Attachment {raw_name!r} has invalid size metadata")
     return int(raw_size)
 
@@ -122,6 +126,7 @@ async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> li
         _decode_attachment_payload(raw_name, raw_data)
         for raw_name, raw_data in prepared_attachments
     ]
+    # Defensive recheck: declared sizes and base64 payloads can disagree.
     if sum(len(content) for _, content in decoded_attachments) > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
         limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
         raise ValueError(f"Attachments exceed {limit} total")

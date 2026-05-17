@@ -1,8 +1,10 @@
 import asyncio
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +14,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
+T = TypeVar("T")
 
 _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
@@ -316,13 +319,15 @@ class TestSessionLifecycleManager:
                     SimpleNamespace(id="mem-1", content="remember this", project_id="proj-1")
                 ]
                 self.marked: list[str] = []
-                self.run_db_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+                self.run_db_calls: list[
+                    tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]
+                ] = []
 
-            async def run_db(self, func, *args, **kwargs):
+            async def run_db(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
                 self.run_db_calls.append((func, args, kwargs))
                 return func(*args, **kwargs)
 
-            def get_pending_graph_memories(self, limit: int = 20):
+            def get_pending_graph_memories(self, limit: int = 20) -> list[SimpleNamespace]:
                 assert limit == 3
                 return self.pending
 

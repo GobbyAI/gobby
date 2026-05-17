@@ -595,11 +595,17 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           setAllTasks(prev =>
             prev.map(task => task.id === taskId ? previousTask : task)
           )
+        } else {
+          console.warn('Could not rollback task move; previous task snapshot missing', {
+            taskId,
+            targetStageName,
+          })
         }
         setError(stageMutationErrorMessage(errorPayload, 'Failed to move task'))
         throw errorPayload
       }
     },
+    // Uses refs and module-level helpers only; keep this stable for board DnD monitors.
     []
   )
 

@@ -14,6 +14,7 @@ CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    -- Client/display identifiers intentionally do not reference server tables.
     draft_id TEXT,
     conversation_id TEXT,
     message_id TEXT,
@@ -162,7 +163,8 @@ def create_attachment(
 
 
 def get_attachment(db: DatabaseProtocol, attachment_id: str) -> ChatAttachmentRecord | None:
-    return _fetch_attachment(db.connection, attachment_id)
+    with db.transaction() as conn:
+        return _fetch_attachment(conn, attachment_id)
 
 
 def get_attachments_by_ids(

@@ -103,6 +103,7 @@ export function ParentKVRow({
           <button
             type="button"
             className="activity-task-detail-parent-link"
+            aria-label={`Open parent task ${parent.ref}: ${parent.title}`}
             onClick={handleClick}
           >
             <span className="activity-task-detail-parent-ref">{parent.ref}</span>

@@ -37,10 +37,16 @@ interface UseChatActionsParams extends Record<string, any> {
   setMessages: Setter<ChatMessage[]>;
 }
 
+function hasUploadedAttachment(
+  file: QueuedFile,
+): file is QueuedFile & { attachment: NonNullable<QueuedFile["attachment"]> } {
+  return file.attachment !== null;
+}
+
 function attachmentPayload(files?: QueuedFile[]): Array<{ id: string }> {
   return (files ?? [])
-    .filter((qf) => qf.attachment)
-    .map((qf) => ({ id: qf.attachment!.id }));
+    .filter(hasUploadedAttachment)
+    .map((qf) => ({ id: qf.attachment.id }));
 }
 
 function userContentBlocks(content: string, files?: QueuedFile[]): ContentBlock[] | undefined {

@@ -22,13 +22,13 @@ function storageSet(key: string, value: string): "stored" | "unavailable" | "fai
   }
 }
 
-function storageRemove(key: string): void {
+function storageRemove(key: string): "removed" | "unavailable" | "failed" {
   try {
-    if (typeof globalThis.localStorage !== "undefined") {
-      globalThis.localStorage.removeItem(key);
-    }
+    if (typeof globalThis.localStorage === "undefined") return "unavailable";
+    globalThis.localStorage.removeItem(key);
+    return "removed";
   } catch {
-    /* ignore */
+    return "failed";
   }
 }
 
@@ -51,8 +51,12 @@ export function useProviderAgentState() {
 
   const setSelectedProvider = useCallback((provider: string | null) => {
     setSelectedProviderRaw(provider);
-    if (provider) storageSet(SELECTED_PROVIDER_KEY, provider);
-    else storageRemove(SELECTED_PROVIDER_KEY);
+    const status = provider
+      ? storageSet(SELECTED_PROVIDER_KEY, provider)
+      : storageRemove(SELECTED_PROVIDER_KEY);
+    if (status === "failed") {
+      console.warn("Failed to persist selected provider");
+    }
   }, []);
 
   const selectedProviderRef = useRef<string | null>(selectedProvider);

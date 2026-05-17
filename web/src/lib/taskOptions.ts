@@ -4,7 +4,7 @@ export interface TaskOption<T extends string | number = string> {
 }
 
 export const TASK_CATEGORY_OPTIONS = [
-  { value: '', label: 'Uncategorized' },
+  { value: '', label: 'None' },
   { value: 'code', label: 'Code' },
   { value: 'config', label: 'Config' },
   { value: 'docs', label: 'Docs' },

@@ -53,7 +53,10 @@ function sameValue(
   a: PatchFieldValue | null | undefined,
   b: PatchFieldValue,
 ): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) {
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray || bIsArray) {
+    if (!aIsArray || !bIsArray) return false;
     return a.length === b.length && a.every((item, index) => item === b[index]);
   }
   return a === b;

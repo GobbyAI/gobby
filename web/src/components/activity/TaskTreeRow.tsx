@@ -122,7 +122,7 @@ export function TaskTreeRow({
       )}
       <button
         type="button"
-        className="session-more-btn"
+        className="task-more-btn"
         onClick={(event) => onMenuButtonClick(event, task)}
         title="Task actions"
         aria-label="Task actions"

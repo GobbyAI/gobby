@@ -16,6 +16,7 @@ MANIFEST_ROOT = "shared"
 _EXCLUDED_FILE_NAMES = {".DS_Store"}
 _EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 _EXCLUDED_DIR_NAMES = {"__pycache__"}
+_HASH_CHUNK_BYTES = 64 * 1024
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = set(string.hexdigits)
 
@@ -31,7 +32,11 @@ class BundledContentManifest(TypedDict):
 
 def hash_file_bytes(path: Path) -> str:
     """Return the SHA-256 hash of *path*'s raw bytes."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def should_include_bundled_file(path: Path, shared_dir: Path) -> bool:

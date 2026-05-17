@@ -276,11 +276,13 @@ class ChatConfig(FeatureDefaultConfig):
     attachment_max_file_bytes: int = Field(
         default=1_073_741_824,
         ge=1,
+        le=5_368_709_120,
         description="Maximum size for one uploaded chat attachment in bytes.",
     )
     attachment_max_files_per_message: int = Field(
         default=20,
         ge=1,
+        le=100,
         description="Maximum number of chat attachments accepted on one message.",
     )
 

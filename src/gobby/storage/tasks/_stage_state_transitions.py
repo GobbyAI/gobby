@@ -278,6 +278,7 @@ class StageStateTransitions:
         target_stage_name: str,
         *,
         by_session_id: str | None,
+        notes: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         snapshot = self.rows.current_stage(task_id)
@@ -349,11 +350,14 @@ class StageStateTransitions:
                                    completed_by_session_id = NULL,
                                    completed_commit_sha = NULL,
                                    artifact_refs = NULL,
-                                   notes = NULL,
+                                   notes = CASE
+                                       WHEN stage_name = ? THEN COALESCE(?, notes)
+                                       ELSE NULL
+                                   END,
                                    updated_at = ?
                              WHERE task_id = ? AND stage_name = ?
                             """,
-                            (now, task_id, row.stage_name),
+                            (target_stage_name, notes, now, task_id, row.stage_name),
                         )
                     if row.state == to_state:
                         continue

@@ -36,7 +36,10 @@ def register_task_dependency_routes(
 ) -> None:
     """Register dependency routes on the shared tasks router."""
 
-    def _enrich_dependency_nodes(node: dict[str, Any], cache: dict[str, Task | None]) -> None:
+    async def _enrich_dependency_nodes(
+        node: dict[str, Any],
+        cache: dict[str, Task | None],
+    ) -> None:
         """Attach the real task identity (ref/title/type) to each tree node.
 
         The storage tree carries ids only; the UI must show the actual tasks,
@@ -47,7 +50,7 @@ def register_task_dependency_routes(
         if isinstance(node_id, str) and node_id:
             if node_id not in cache:
                 try:
-                    cache[node_id] = server.task_manager.get_task(node_id)
+                    cache[node_id] = await server.run_db(server.task_manager.get_task, node_id)
                 except (ValueError, TaskNotFoundError):
                     cache[node_id] = None
             resolved = cache[node_id]
@@ -60,7 +63,7 @@ def register_task_dependency_routes(
             if isinstance(children, list):
                 for child in children:
                     if isinstance(child, dict):
-                        _enrich_dependency_nodes(child, cache)
+                        await _enrich_dependency_nodes(child, cache)
 
     @router.get("/{task_id}/dependencies")
     async def get_dependency_tree(
@@ -74,7 +77,7 @@ def register_task_dependency_routes(
             task = resolve_task(task_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
             tree = dep_manager.get_dependency_tree(task.id, direction=direction)
-            _enrich_dependency_nodes(tree, {})
+            await _enrich_dependency_nodes(tree, {})
             return tree
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

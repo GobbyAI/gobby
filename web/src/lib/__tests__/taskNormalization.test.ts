@@ -27,6 +27,8 @@ describe('isRawTaskPayload optional field guard', () => {
       { id: 'task-1', labels: 'web' },
       { id: 'task-1', labels: ['web', 42] },
       { id: 'task-1', owner_session_ref: { session_id: 'sess-1' } },
+      { id: 'task-1', owner_session_ref: { session_id: '', ref: '#1' } },
+      { id: 'task-1', owner_session_ref: { session_id: 'sess-1', ref: ' ' } },
     ]
 
     invalidPayloads.forEach(payload => {

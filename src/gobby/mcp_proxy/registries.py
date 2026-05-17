@@ -104,6 +104,7 @@ def setup_internal_registries(
         pipeline_execution_manager: Pipeline execution manager for tracking executions
         hook_manager_resolver: Lazy callable returning HookManager (or None).
             Solves timing: registries init before HookManager is created in HTTP lifespan.
+        wake_dispatcher: Dispatcher used to wake live sessions after mailbox messages.
         run_db: Optional bounded executor bridge for SQLite storage calls.
 
     Returns:

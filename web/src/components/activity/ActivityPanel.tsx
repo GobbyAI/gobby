@@ -564,7 +564,7 @@ export function ActivityPanel({
               aria-label={chatHidden ? "Show chat" : "Hide chat"}
               title={chatHidden ? "Show chat" : "Hide chat"}
             >
-              <PanelIcon pinned={!chatHidden} />
+              <PanelIcon visible={!chatHidden} />
               <span className="activity-panel-action-btn__label">
                 {chatHidden ? "Show Chat" : "Hide Chat"}
               </span>
