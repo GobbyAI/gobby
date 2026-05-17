@@ -27,13 +27,22 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={loading || undefined}
         {...props}
       >
-        {loading && (
-          <span
-            aria-hidden="true"
-            className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
-          />
+        {asChild ? (
+          // Radix Slot enforces a single element child, so the spinner is
+          // never injected as a sibling here. State still propagates via the
+          // disabled / aria-busy props above.
+          children
+        ) : (
+          <>
+            {loading && (
+              <span
+                aria-hidden="true"
+                className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+              />
+            )}
+            {children}
+          </>
         )}
-        {children}
       </Comp>
     )
   },

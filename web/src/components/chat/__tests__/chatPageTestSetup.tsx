@@ -6,18 +6,20 @@ import type {
   ConversationState,
   VoiceProps,
 } from "../../../types/chat";
+import type { LayoutMode } from "../../activity/useActivityPanel";
 
 export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
 
 export const isMobileState = { value: false };
-export const isPinnedState = { value: false };
+export const effectiveModeState: { value: LayoutMode } = { value: "split" };
 
 export const clearArtifactsSpy = vi.fn();
 export const createArtifactSpy = vi.fn();
 export const scrollToBottomSpy = vi.fn();
-export const setIsPinnedSpy = vi.fn();
 export const showTabSpy = vi.fn();
-export const togglePanelSpy = vi.fn();
+export const toggleFromChatSpy = vi.fn();
+export const toggleFromPanelSpy = vi.fn();
+export const dismissOnMobileSpy = vi.fn();
 
 export const messageListMockFactory = () => ({
   MessageList: React.forwardRef((_props: unknown, ref) => {
@@ -338,16 +340,18 @@ export const useArtifactsMockFactory = () => ({
 });
 
 export const useActivityPanelMockFactory = () => ({
-  useActivityPanel: () => ({
+  useActivityPanel: (_isMobile: boolean) => ({
     activeTab: "artifacts",
     closeIfAutoOpened: vi.fn(),
-    isPinned: isPinnedState.value,
+    dismissOnMobile: dismissOnMobileSpy,
+    effectiveMode: effectiveModeState.value,
+    mode: effectiveModeState.value,
     panelWidth: 320,
     setActiveTab: vi.fn(),
-    setIsPinned: setIsPinnedSpy,
     setPanelWidth: vi.fn(),
     showTab: showTabSpy,
-    togglePanel: togglePanelSpy,
+    toggleFromChat: toggleFromChatSpy,
+    toggleFromPanel: toggleFromPanelSpy,
   }),
 });
 
@@ -445,7 +449,7 @@ export function createVoice(overrides: Partial<VoiceProps> = {}): VoiceProps {
 export function setupChatPageEnvironment(): void {
   vi.clearAllMocks();
   isMobileState.value = false;
-  isPinnedState.value = false;
+  effectiveModeState.value = "split";
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {

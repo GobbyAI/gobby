@@ -76,8 +76,8 @@ describe('ActivityPanel', () => {
 
     render(
       <ActivityPanel
-        isPinned={true}
-        onPinnedChange={vi.fn()}
+        mode={"split"}
+        onToggleChat={vi.fn()}
         panelWidth={320}
         onWidthChange={vi.fn()}
         activeTab="sessions"
@@ -110,8 +110,8 @@ describe('ActivityPanel', () => {
 
     render(
       <ActivityPanel
-        isPinned={true}
-        onPinnedChange={vi.fn()}
+        mode={"split"}
+        onToggleChat={vi.fn()}
         panelWidth={320}
         onWidthChange={vi.fn()}
         activeTab="sessions"
@@ -146,8 +146,8 @@ describe('ActivityPanel', () => {
     try {
       const { container } = render(
         <ActivityPanel
-          isPinned={true}
-          onPinnedChange={vi.fn()}
+          mode={"split"}
+          onToggleChat={vi.fn()}
           panelWidth={900}
           onWidthChange={vi.fn()}
           activeTab="sessions"
@@ -184,8 +184,8 @@ describe('ActivityPanel', () => {
   it('renders generated artifacts under the Artifacts tab', () => {
     render(
       <ActivityPanel
-        isPinned={true}
-        onPinnedChange={vi.fn()}
+        mode={"split"}
+        onToggleChat={vi.fn()}
         panelWidth={320}
         onWidthChange={vi.fn()}
         activeTab="artifacts"
@@ -220,8 +220,8 @@ describe('ActivityPanel', () => {
   it('renders file diffs under the Changes tab', () => {
     render(
       <ActivityPanel
-        isPinned={true}
-        onPinnedChange={vi.fn()}
+        mode={"split"}
+        onToggleChat={vi.fn()}
         panelWidth={320}
         onWidthChange={vi.fn()}
         activeTab="changes"

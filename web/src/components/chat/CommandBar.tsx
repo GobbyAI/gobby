@@ -9,7 +9,7 @@ interface CommandBarProps {
   sessionSource?: string | null
   onOpenPalette: () => void
   onTogglePanel?: () => void
-  isPanelPinned?: boolean
+  panelVisible?: boolean
   agentDefinitions?: AgentDefInfo[]
   agentGlobalDefs?: AgentDefInfo[]
   agentProjectDefs?: AgentDefInfo[]
@@ -24,7 +24,7 @@ export function CommandBar({
   sessionSource,
   onOpenPalette,
   onTogglePanel,
-  isPanelPinned = false,
+  panelVisible = false,
   agentDefinitions: _agentDefinitions = [],
   agentGlobalDefs: _agentGlobalDefs = [],
   agentProjectDefs: _agentProjectDefs = [],
@@ -65,11 +65,13 @@ export function CommandBar({
             type="button"
             className="btn btn-accent btn-sm command-bar-btn"
             onClick={onTogglePanel}
-            aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-            title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
+            aria-label={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
+            title={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
           >
-            <PanelIcon pinned={isPanelPinned} />
-            <span className="command-bar-btn__label">Toggle Panel</span>
+            <PanelIcon pinned={panelVisible} />
+            <span className="command-bar-btn__label">
+              {panelVisible ? 'Hide Panel' : 'Show Panel'}
+            </span>
           </button>
         )}
       </div>

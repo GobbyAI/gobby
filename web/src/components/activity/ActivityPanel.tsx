@@ -2,6 +2,7 @@ import {
   useState,
   useEffect,
   useRef,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
@@ -19,6 +20,8 @@ import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
+import type { LayoutMode } from "./useActivityPanel";
+import { PanelIcon } from "../chat/icons/PanelIcon";
 import { Heading } from '../shared/Heading'
 
 export type ActivityTab =
@@ -170,8 +173,11 @@ const LAYOUT_BUFFER = 0;
 type ActivityTabConfig = (typeof TABS)[number];
 
 interface ActivityPanelProps {
-  isPinned: boolean;
-  onPinnedChange: (pinned: boolean) => void;
+  // Effective layout mode (desktop value, or the mobile binary collapsed into
+  // 'chat'|'panel'). The panel renders for 'split' and 'panel'; never 'chat'.
+  mode: LayoutMode;
+  // Toggles the chat pane: desktop split<->panel, mobile panel->chat (close).
+  onToggleChat: () => void;
   panelWidth: number;
   onWidthChange: (width: number) => void;
   activeTab: ActivityTab;
@@ -284,8 +290,8 @@ function ActivityDropdown({
 }
 
 export function ActivityPanel({
-  isPinned,
-  onPinnedChange,
+  mode,
+  onToggleChat,
   panelWidth,
   onWidthChange,
   activeTab,
@@ -319,16 +325,14 @@ export function ActivityPanel({
   onResumeSession,
   isMobile = false,
 }: ActivityPanelProps) {
-  // Use overlay mode when viewport is too narrow for side-by-side layout
-  const [narrowViewport, setNarrowViewport] = useState(
-    () => window.innerWidth < 768,
-  );
+  // viewportWidth feeds the resize-handle max-width calc only. The overlay
+  // decision is mobile-only now (decoupled from desktop): the desktop
+  // tri-state owns chat/split/panel, mobile owns chat/panel as an overlay.
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
   const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleResize = () => {
-      setNarrowViewport(window.innerWidth < 768);
       setViewportWidth(window.innerWidth);
     };
     window.addEventListener("resize", handleResize);
@@ -371,16 +375,19 @@ export function ActivityPanel({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [showMobileTabMenu]);
-  const useOverlay = isMobile || narrowViewport;
+  const useOverlay = isMobile;
   const activeTabConfig = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
 
-  if (!isPinned) return null;
+  if (mode === "chat") return null;
 
-  // Mobile: close handler
-  const handleClose = () => {
+  // Mobile close / desktop "Show Chat" — both delegate to the same toggle.
+  const handleToggleChat = () => {
     setShowMobileTabMenu(false);
-    onPinnedChange(false);
+    onToggleChat();
   };
+  // Desktop only: in 'split' the button hides the chat (-> panel); in 'panel'
+  // it brings the chat back (-> split).
+  const chatHidden = mode === "panel";
   const handleTabSelect = (tab: ActivityTab) => {
     onTabChange(tab);
     setShowMobileTabMenu(false);
@@ -481,7 +488,7 @@ export function ActivityPanel({
               <button
                 type="button"
                 className="btn btn-accent btn-sm activity-panel-action-btn"
-                onClick={handleClose}
+                onClick={handleToggleChat}
                 aria-label="Close panel"
                 title="Close panel"
               >
@@ -511,23 +518,32 @@ export function ActivityPanel({
     );
   }
 
+  // 'split' = panel sits beside the chat at a resizable fixed width.
+  // 'panel' = panel is the only pane: full width, no resize handle.
+  const isFullWidth = mode === "panel";
+  const asideStyle: CSSProperties = isFullWidth
+    ? { flex: "1 1 auto", width: "100%", minWidth: PANEL_MIN_WIDTH }
+    : {
+        width: effectivePanelWidth,
+        minWidth: PANEL_MIN_WIDTH,
+        maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
+        flexShrink: 1,
+      };
+
   return (
     <>
-      <ResizeHandle
-        onResize={onWidthChange}
-        panelWidth={effectivePanelWidth}
-        minWidth={PANEL_MIN_WIDTH}
-        maxWidth={effectivePanelMaxWidth}
-      />
+      {!isFullWidth && (
+        <ResizeHandle
+          onResize={onWidthChange}
+          panelWidth={effectivePanelWidth}
+          minWidth={PANEL_MIN_WIDTH}
+          maxWidth={effectivePanelMaxWidth}
+        />
+      )}
       <aside
         className="activity-panel"
         aria-labelledby="activity-panel-title"
-        style={{
-          width: effectivePanelWidth,
-          minWidth: PANEL_MIN_WIDTH,
-          maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
-          flexShrink: 1,
-        }}
+        style={asideStyle}
       >
         <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
         <div className="activity-panel-tabs">
@@ -540,6 +556,20 @@ export function ActivityPanel({
             onSelect={handleTabSelect}
             wrapperRef={mobileTabMenuRef}
           />
+          <span className="activity-panel-close-slot">
+            <button
+              type="button"
+              className="btn btn-accent btn-sm activity-panel-action-btn"
+              onClick={handleToggleChat}
+              aria-label={chatHidden ? "Show chat" : "Hide chat"}
+              title={chatHidden ? "Show chat" : "Hide chat"}
+            >
+              <PanelIcon pinned={!chatHidden} />
+              <span className="activity-panel-action-btn__label">
+                {chatHidden ? "Show Chat" : "Hide Chat"}
+              </span>
+            </button>
+          </span>
         </div>
 
         {/* Tab content */}
