@@ -7,10 +7,6 @@ import {
   type TaskDisplayState,
 } from '../../lib/taskState'
 import type { StageState5 } from '../../lib/stageActions'
-import {
-  isRetiredStageName,
-  type StageRegistryEntry,
-} from '../../lib/taskNormalization'
 
 export interface TreeNode {
   id: string
@@ -41,84 +37,6 @@ export const DEFAULT_FILTERS = new Set<TaskFilterKey>([
   'escalated',
 ])
 export const RECENT_CLOSED_TASK_LIMIT = 20
-
-/**
- * The lifecycle stages a Tasks board / mobile stage-pivot renders, in column
- * order: retired stages dropped, sorted by `sequence_order` (then legacy
- * `position`). Single source of truth shared by `TasksBoardView` (desktop
- * columns) and `TasksMobileStageChips` (mobile pivot) so the two never
- * disagree on order or labels.
- */
-export function getOrderedBoardStages(
-  stagesRegistry: ReadonlyArray<StageRegistryEntry>,
-): StageRegistryEntry[] {
-  return stagesRegistry
-    .filter((stage) => !isRetiredStageName(stage.name))
-    .slice()
-    .sort(
-      (a, b) =>
-        (a.sequence_order ?? a.position ?? 0) -
-        (b.sequence_order ?? b.position ?? 0),
-    )
-}
-
-export interface StagePivotChip {
-  /** Canonical stage name (the filter key), e.g. `"development"`. */
-  name: string
-  /** Human label, e.g. `"Development"`. */
-  label: string
-  /** Tasks in this stage under the current status filter. */
-  count: number
-}
-
-export interface StagePivot {
-  chips: StagePivotChip[]
-  /** Count for the `All` chip (every status-filtered task). */
-  total: number
-}
-
-/**
- * Mobile stage-pivot data: status-filtered tasks bucketed by current stage,
- * laid out in board-column order. `stageNameOf` is injected (the list's own
- * stage resolver) so a chip's count is byte-identical to what tapping it
- * shows in the list.
- */
-export function computeStagePivot(
-  tasks: GobbyTask[],
-  statusFilters: Set<TaskFilterKey>,
-  stagesRegistry: ReadonlyArray<StageRegistryEntry>,
-  stageNameOf: (task: GobbyTask) => string | null,
-): StagePivot {
-  const counts = new Map<string, number>()
-  let total = 0
-  for (const task of tasks) {
-    if (!matchesTaskFilter(task, statusFilters)) continue
-    total += 1
-    const name = stageNameOf(task)
-    if (name) counts.set(name, (counts.get(name) ?? 0) + 1)
-  }
-  const chips = getOrderedBoardStages(stagesRegistry).map((stage) => ({
-    name: stage.name,
-    label: stage.display_name || stage.name,
-    count: counts.get(stage.name) ?? 0,
-  }))
-  return { chips, total }
-}
-
-/**
- * Which chip owns the current stage filter: `null` → `All` (the default
- * all-stages set), a single stage name → that chip, `undefined` → a custom
- * multi-stage filter from the dropdown that no single chip represents.
- */
-export function resolveActiveStagePivot(
-  selectedStageFilters: ReadonlySet<string>,
-  stageSelectionMatchesDefault: boolean,
-): string | null | undefined {
-  if (stageSelectionMatchesDefault) return null
-  return selectedStageFilters.size === 1
-    ? [...selectedStageFilters][0]
-    : undefined
-}
 
 export const PRIORITY_TEXT_COLORS: Record<number, string> = {
   0: 'var(--text-primary)',

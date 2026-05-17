@@ -69,8 +69,6 @@ const viewOptions = [
 interface TasksTabToolbarProps {
   search: string;
   onSearchChange: (value: string) => void;
-  /** Mobile hides the List/Board switcher — List is the only mobile surface. */
-  isMobile: boolean;
   viewMode: TasksViewMode;
   onViewModeChange: (mode: TasksViewMode) => void;
   showFilterDropdown: boolean;
@@ -92,7 +90,6 @@ interface TasksTabToolbarProps {
 export function TasksTabToolbar({
   search,
   onSearchChange,
-  isMobile,
   viewMode,
   onViewModeChange,
   showFilterDropdown,
@@ -111,16 +108,14 @@ export function TasksTabToolbar({
         onChange={onSearchChange}
         placeholder="Search"
       />
-      {!isMobile && (
-        <SegmentedControl
-          className="activity-panel-toolbar-segmented"
-          ariaLabel="Task view"
-          value={viewMode}
-          onChange={onViewModeChange}
-          options={viewOptions}
-          controlHeight="sm"
-        />
-      )}
+      <SegmentedControl
+        className="activity-panel-toolbar-segmented"
+        ariaLabel="Task view"
+        value={viewMode}
+        onChange={onViewModeChange}
+        options={viewOptions}
+        controlHeight="sm"
+      />
       <button
         type="button"
         className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
