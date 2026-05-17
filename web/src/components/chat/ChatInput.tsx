@@ -98,7 +98,14 @@ interface ChatInputProps {
   attachmentsDisabled?: boolean
 }
 
-const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
+const LOCAL_ONLY_SLASH_COMMANDS = new Set([
+  'gobby',
+  'mcp',
+  'panel',
+  'restart',
+  'settings',
+  'skills',
+])
 
 function shouldHandleSlashCommandLocally(input: string): boolean {
   if (!input.startsWith('/')) return false

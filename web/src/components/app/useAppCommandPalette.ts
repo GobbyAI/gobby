@@ -9,6 +9,7 @@ import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { Settings } from "../../hooks/useSettings";
 import type { CommandPaletteAction } from "../chat/CommandPalette";
 import type { ChatMode, QueuedFile } from "../../types/chat";
+import { requestDaemonRestart } from "../../lib/api";
 import { APP_NAV_PAGES } from "./appNavigation";
 
 type ActiveModal = "skills" | "gobby" | "mcp" | null;
@@ -78,15 +79,19 @@ export function useAppCommandPalette({
   ]);
 
   const restartDaemon = useCallback(
-    (showFailureMessage: boolean) => {
+    async (showFailureMessage: boolean) => {
       addSystemMessage("Restarting daemon...");
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/admin/restart`, { method: "POST" }).catch((err) => {
+      try {
+        const response = await requestDaemonRestart();
+        if (!response.ok) {
+          throw new Error(`Restart failed: ${response.status}`);
+        }
+      } catch (err) {
         console.error("Restart request failed:", err);
         if (showFailureMessage) {
           addSystemMessage("Failed to restart daemon");
         }
-      });
+      }
     },
     [addSystemMessage],
   );
