@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.routes.chat_attachments import create_chat_attachments_router
-from gobby.storage.chat_attachments import bind_attachments
+from gobby.storage.chat_attachments import bind_attachments, create_attachment
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
@@ -162,6 +162,30 @@ def test_content_route_sets_disposition_by_mime_type(
     assert response.status_code == 200
     assert response.content == b"hello"
     assert response.headers["content-disposition"].startswith(expected_disposition)
+
+
+def test_content_route_returns_404_when_content_path_is_directory(
+    client: TestClient,
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    content_dir = tmp_path / "directory-backed-attachment"
+    content_dir.mkdir()
+    create_attachment(
+        temp_db,
+        attachment_id="directory-attachment",
+        project_id=PERSONAL_PROJECT_ID,
+        draft_id=None,
+        filename="directory.txt",
+        mime_type="text/plain",
+        size_bytes=0,
+        local_path=str(content_dir),
+    )
+
+    response = client.get("/api/chat/attachments/directory-attachment/content")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Attachment content not found"
 
 
 def test_delete_only_removes_unbound_uploads(

@@ -83,6 +83,22 @@ def _row_to_record(row: sqlite3.Row) -> ChatAttachmentRecord:
     )
 
 
+def _fetch_attachment(
+    conn: sqlite3.Connection,
+    attachment_id: str,
+) -> ChatAttachmentRecord | None:
+    row = conn.execute(
+        """
+        SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
+               filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+          FROM chat_attachments
+         WHERE id = ?
+        """,
+        (attachment_id,),
+    ).fetchone()
+    return _row_to_record(row) if row else None
+
+
 def content_url(attachment_id: str) -> str:
     return f"/api/chat/attachments/{attachment_id}/content"
 
@@ -118,33 +134,35 @@ def create_attachment(
 ) -> ChatAttachmentRecord:
     now = datetime.now(UTC).isoformat()
     record_id = attachment_id or str(uuid.uuid4())
-    db.execute(
-        """
-        INSERT INTO chat_attachments (
-            id, project_id, draft_id, filename, mime_type, size_bytes, local_path,
-            created_at, updated_at
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_attachments (
+                id, project_id, draft_id, filename, mime_type, size_bytes, local_path,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record_id,
+                project_id,
+                draft_id,
+                filename,
+                mime_type,
+                size_bytes,
+                local_path,
+                now,
+                now,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (record_id, project_id, draft_id, filename, mime_type, size_bytes, local_path, now, now),
-    )
-    record = get_attachment(db, record_id)
+        record = _fetch_attachment(conn, record_id)
     if record is None:
         raise RuntimeError("Failed to create chat attachment metadata")
     return record
 
 
 def get_attachment(db: DatabaseProtocol, attachment_id: str) -> ChatAttachmentRecord | None:
-    row = db.fetchone(
-        """
-        SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
-               filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
-          FROM chat_attachments
-         WHERE id = ?
-        """,
-        (attachment_id,),
-    )
-    return _row_to_record(row) if row else None
+    return _fetch_attachment(db.connection, attachment_id)
 
 
 def get_attachments_by_ids(
@@ -214,10 +232,11 @@ def bind_attachments(
 def delete_unbound_attachment(
     db: DatabaseProtocol, attachment_id: str
 ) -> ChatAttachmentRecord | None:
-    record = get_attachment(db, attachment_id)
-    if record is None:
-        return None
-    if record.is_bound:
-        raise ValueError("Only unbound queued attachments can be deleted")
-    db.execute("DELETE FROM chat_attachments WHERE id = ?", (attachment_id,))
-    return record
+    with db.transaction_immediate() as conn:
+        record = _fetch_attachment(conn, attachment_id)
+        if record is None:
+            return None
+        if record.is_bound:
+            raise ValueError("Only unbound queued attachments can be deleted")
+        conn.execute("DELETE FROM chat_attachments WHERE id = ?", (attachment_id,))
+        return record

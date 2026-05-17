@@ -71,6 +71,82 @@ vi.mock('../TracesTab', () => ({
 }))
 
 describe('ActivityPanel', () => {
+  it('returns null in chat-only mode', () => {
+    const { container } = render(
+      <ActivityPanel
+        mode="chat"
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('fills the available width in panel-only mode without a resize handle', () => {
+    const { container } = render(
+      <ActivityPanel
+        mode="panel"
+        onToggleChat={vi.fn()}
+        panelWidth={480}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    const panel = container.querySelector('.activity-panel') as HTMLElement
+    expect(screen.queryByTestId('resize-handle')).toBeNull()
+    expect(panel.style.width).toBe('100%')
+    expect(panel.style.minWidth).toBe('320px')
+    expect(panel.style.flex).toBe('1 1 auto')
+  })
+
+  it('keeps resize handle sizing props in split mode', () => {
+    render(
+      <ActivityPanel
+        mode="split"
+        onToggleChat={vi.fn()}
+        panelWidth={400}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    const handle = screen.getByTestId('resize-handle')
+    expect(handle).toHaveAttribute('data-panel-width', '400')
+    expect(handle).toHaveAttribute('data-min-width', '320')
+    expect(handle).toHaveAttribute('data-max-width', '704')
+  })
+
   it('uses a dropdown menu instead of the mobile icon strip', async () => {
     const onTabChange = vi.fn()
 

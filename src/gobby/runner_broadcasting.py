@@ -189,7 +189,6 @@ def setup_pipeline_event_broadcasting(
             db = getattr(pipeline_executor, "db", None)
             run_db = getattr(pipeline_executor, "run_db", None)
             try:
-                dispatch = _dispatch.on_pipeline_completed
                 if event == "pipeline_completed":
                     dispatch = _dispatch.on_pipeline_completed
                 elif event == "pipeline_failed":

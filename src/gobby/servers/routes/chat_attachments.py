@@ -164,7 +164,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=404, detail="Attachment not found")
 
         path = Path(record.local_path)
-        if not path.exists():
+        if not path.is_file():
             raise HTTPException(status_code=404, detail="Attachment content not found")
 
         return FileResponse(

@@ -151,11 +151,11 @@ describe('useActivityPanel — mobile', () => {
     localStorage.clear()
   })
 
-  it('derives the mobile binary from the persisted desktop mode', () => {
+  it('starts in chat on an initial mobile render regardless of desktop panel preference', () => {
     localStorage.setItem(LAYOUT_KEY, 'panel')
     const { result } = renderHook(() => useActivityPanel(true))
 
-    expect(result.current.effectiveMode).toBe('panel')
+    expect(result.current.effectiveMode).toBe('chat')
   })
 
   it('split desktop preference collapses to chat on mobile', () => {
@@ -183,6 +183,7 @@ describe('useActivityPanel — mobile', () => {
     localStorage.setItem(LAYOUT_KEY, 'panel')
     const { result } = renderHook(() => useActivityPanel(true))
 
+    act(() => result.current.toggleFromChat())
     expect(result.current.effectiveMode).toBe('panel')
     act(() => result.current.dismissOnMobile())
     expect(result.current.effectiveMode).toBe('chat')

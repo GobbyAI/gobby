@@ -1,6 +1,7 @@
 import type { ChatAttachment } from '../types/chat'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
 
 function attachmentUrl(path: string): string {
   if (!API_BASE_URL || !path.startsWith('/')) return path
@@ -41,6 +42,7 @@ export function uploadChatAttachment(
 
     xhr.open('POST', `${API_BASE_URL}/api/chat/attachments`)
     xhr.withCredentials = true
+    xhr.timeout = ATTACHMENT_UPLOAD_TIMEOUT_MS
     xhr.upload.onprogress = (event) => {
       options.onProgress?.(event.lengthComputable ? event.loaded / event.total : null)
     }
@@ -53,6 +55,10 @@ export function uploadChatAttachment(
     }
     xhr.onerror = () => reject(new Error('Attachment upload failed'))
     xhr.onabort = () => reject(new Error('Attachment upload canceled'))
+    xhr.ontimeout = () => {
+      options.onProgress?.(null)
+      reject(new Error('Attachment upload timed out'))
+    }
     xhr.send(form)
   })
 }

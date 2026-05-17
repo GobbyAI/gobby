@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MessageItem } from '../MessageItem'
 import type { ChatMessage } from '../../../types/chat'
 
@@ -193,6 +193,35 @@ describe('MessageItem', () => {
     expect(img.getAttribute('src')).toBe('/api/chat/attachments/att-img/content')
   })
 
+  it('renders a filename-aware fallback when a stored image attachment fails to load', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-img',
+                project_id: 'proj-1',
+                filename: 'screen.png',
+                mime_type: 'image/png',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-img/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    fireEvent.error(screen.getByAltText('screen.png'))
+
+    expect(screen.getByText('screen.png')).toBeTruthy()
+    expect(screen.getByText('Image preview unavailable')).toBeTruthy()
+    expect(screen.getByText('Download')).toBeTruthy()
+  })
+
   it('renders stored PDF attachments in an embedded viewer', () => {
     render(
       <MessageItem
@@ -215,8 +244,9 @@ describe('MessageItem', () => {
       />,
     )
 
-    expect(screen.getByTitle('plan.pdf')).toBeTruthy()
-    expect(screen.getByText('Open')).toBeTruthy()
+    const iframe = screen.getByTitle('plan.pdf')
+    expect(iframe).toHaveAttribute('sandbox', '')
+    expect(screen.getByText('Open')).toHaveAttribute('rel', 'noreferrer noopener')
   })
 
   it('renders stored document attachments as file cards', () => {

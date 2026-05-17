@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { ChatAttachment, ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
@@ -23,13 +23,25 @@ function renderImagePlaceholders(content: string): string {
 
 function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
   const resolved = normalizeAttachmentUrl(attachment)
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
   const isImage = resolved.mime_type.startsWith('image/')
   const isPdf = resolved.mime_type === 'application/pdf'
+  const imageFailed = failedImageUrl === resolved.content_url
 
   if (isImage) {
+    if (imageFailed) {
+      return (
+        <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
+          <span className="font-medium text-foreground truncate">{resolved.filename}</span>
+          <span className="text-muted-foreground">Image preview unavailable</span>
+          <a className="ml-auto text-accent hover:underline" href={resolved.content_url} download={resolved.filename}>Download</a>
+        </div>
+      )
+    }
+
     return (
       <div className="my-2">
-        <img src={resolved.content_url} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" />
+        <img src={resolved.content_url} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" onError={() => setFailedImageUrl(resolved.content_url)} />
       </div>
     )
   }
@@ -37,10 +49,10 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
   if (isPdf) {
     return (
       <div className="my-2 rounded-md border border-border overflow-hidden bg-muted/30">
-        <iframe title={resolved.filename} src={resolved.content_url} className="h-80 w-full bg-background" />
+        <iframe title={resolved.filename} src={resolved.content_url} sandbox="" className="h-80 w-full bg-background" />
         <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
           <span className="truncate font-medium">{resolved.filename}</span>
-          <a className="text-accent hover:underline" href={resolved.content_url} target="_blank" rel="noreferrer">Open</a>
+          <a className="text-accent hover:underline" href={resolved.content_url} target="_blank" rel="noreferrer noopener">Open</a>
         </div>
       </div>
     )
