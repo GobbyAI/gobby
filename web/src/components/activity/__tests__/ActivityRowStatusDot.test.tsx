@@ -4,9 +4,14 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import {
+  ActivityGlyph,
   ActivityRowStatusDot,
+  LockGlyph,
   type StatusKind,
 } from '../ActivityRowStatusDot'
+
+// The dishonest icons this override exists to retire.
+const WARNING_TRIANGLE_D = 'm21.73 18-8-14a2 2 0 0 0-3.48 0'
 
 const KINDS: StatusKind[] = [
   'success',
@@ -183,5 +188,54 @@ describe('ActivityRowStatusDot — grayscale(1) structural snapshot', () => {
     }
 
     expect(seenClasses.size).toBe(KINDS.length)
+  })
+})
+
+describe('ActivityRowStatusDot — optional glyph override (#14769 / D2)', () => {
+  it('renders the kind glyph when no override is supplied', () => {
+    const span = renderDot('warning')
+    const svg = span.querySelector('svg')
+    expect(svg?.getAttribute('data-glyph')).toBeNull()
+    expect(svg?.getAttribute('class')).toContain(
+      'activity-row-status-dot__glyph--warning',
+    )
+  })
+
+  it('swaps the shape but keeps the kind color/lightness band', () => {
+    const { container } = render(
+      <ActivityRowStatusDot kind="warning" glyph={ActivityGlyph} label="Working" />,
+    )
+    const span = container.querySelector(
+      'span.activity-row-status-dot',
+    ) as HTMLSpanElement
+    const svg = span.querySelector('svg')
+
+    // Color/lightness still derive from `kind` — grayscale ranking preserved.
+    expect(span.getAttribute('data-kind')).toBe('warning')
+    expect(span.style.color).toBe('var(--color-warning-foreground)')
+
+    // Shape is the honest activity glyph, not the caution triangle.
+    expect(svg?.getAttribute('data-glyph')).toBe('activity')
+    const paths = Array.from(svg?.querySelectorAll('path') ?? [])
+    expect(
+      paths.some((p) => (p.getAttribute('d') ?? '').startsWith(WARNING_TRIANGLE_D)),
+    ).toBe(false)
+  })
+
+  it('renders blocked as a lock, never the error X, while keeping error lightness', () => {
+    const { container } = render(
+      <ActivityRowStatusDot kind="error" glyph={LockGlyph} label="Blocked" />,
+    )
+    const span = container.querySelector(
+      'span.activity-row-status-dot',
+    ) as HTMLSpanElement
+    const svg = span.querySelector('svg')
+
+    expect(span.getAttribute('data-kind')).toBe('error')
+    expect(span.style.color).toBe('var(--color-error)')
+    expect(svg?.getAttribute('data-glyph')).toBe('lock')
+    // A lock has a rect body; the error X is two crossed paths in a circle.
+    expect(svg?.querySelector('rect')).not.toBeNull()
+    expect(svg?.querySelector('circle')).toBeNull()
   })
 })
