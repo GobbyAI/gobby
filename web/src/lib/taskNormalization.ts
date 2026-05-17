@@ -1,5 +1,5 @@
 import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
-import type { CanonicalTaskState, TaskCompatProjection } from './taskState'
+import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from './taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
 
 const STAGE_STATES: readonly StageState5[] = [
@@ -119,6 +119,7 @@ export type RawTaskPayload = {
   description?: string | null
   labels?: string[] | null
   validation_criteria?: string | null
+  owner_session_ref?: OwnerSessionRef | null
   current_stage?: RawStagePayload | null
   stages?: RawStagePayload[] | null
   state?: Partial<CanonicalTaskState> | null

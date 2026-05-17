@@ -1,6 +1,6 @@
 import type { MouseEvent } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
-import { StatusDot } from "../tasks/TaskBadges";
+import { PriorityGlyph, StatusDot, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
@@ -95,6 +95,7 @@ export function TaskTreeRow({
       ) : (
         <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
       )}
+      <PriorityGlyph priority={task.priority ?? 4} />
       <StatusDot task={task} />
       {ref && <span className="activity-task-row-ref">{ref}</span>}
       <span
@@ -102,6 +103,9 @@ export function TaskTreeRow({
         style={{ color: textColor, fontWeight: textWeight }}
       >
         {task.title}
+      </span>
+      <span className="activity-task-row-chips">
+        <TypeBadge type={task.task_type} />
       </span>
       {currentStage && (
         <span className="activity-task-row-stage" title={stateSummary}>

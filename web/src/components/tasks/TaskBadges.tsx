@@ -127,6 +127,47 @@ export function PriorityBadge({ priority }: { priority: number }) {
 }
 
 // =============================================================================
+// PriorityGlyph — compact, deutan-safe priority symbol for dense rows
+// =============================================================================
+
+// Shape is the primary signal (up = urgent, flat = neutral, down = low),
+// lightness/hue only reinforce; legible in a grayscale screenshot. Always
+// carries a text alternative via title + aria-label (WCAG 2.2 AA).
+const PRIORITY_GLYPH_PATHS: Record<number, string> = {
+  0: "M5 1.5 1.5 6h7zM5 5.5 1.5 10h7z", // Critical — double up
+  1: "M5 3 1.5 7.5h7z", // High — up
+  2: "M2 4h6M2 7h6", // Medium — two bars
+  3: "M1.5 3.5h7L5 8z", // Low — down
+  4: "M2.5 5.5h5", // Backlog — single muted dash
+};
+
+export function PriorityGlyph({ priority }: { priority: number }) {
+  const p = priority in PRIORITY_STYLES ? priority : 2;
+  const style = PRIORITY_STYLES[p];
+  const filled = p <= 1;
+  return (
+    <span
+      className="priority-glyph"
+      style={{ color: style.color }}
+      title={`${style.label} priority`}
+      aria-label={`${style.label} priority`}
+      role="img"
+    >
+      <svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true">
+        <path
+          d={PRIORITY_GLYPH_PATHS[p]}
+          fill={filled ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth={filled ? 0 : 1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+// =============================================================================
 // TypeBadge
 // =============================================================================
 

@@ -22,6 +22,7 @@ import type { CanonicalTaskState } from '../../../lib/taskState'
 function makeState(overrides: Partial<CanonicalTaskState> = {}): CanonicalTaskState {
   return {
     owner_session_id: null,
+    owner_session_ref: null,
     current_stage: null,
     is_claimed: false,
     is_closed: false,

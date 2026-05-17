@@ -8,7 +8,7 @@ import type {
   StageStateView,
 } from '../lib/stageActions'
 import { optimisticMoveTaskToStage } from '../lib/stageActions'
-import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
+import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from '../lib/taskState'
 import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
 import {
   isRawTaskPayload,
@@ -20,6 +20,7 @@ import {
 
 export type {
   LifecycleTask,
+  OwnerSessionRef,
   ReviewPolicy,
   StageAdvanceAction,
   StageState5,
@@ -52,6 +53,12 @@ export interface GobbyTask extends LifecycleTask {
   due_date: string | null
   project_id: string
   claimed_by_session_id?: string | null
+  /**
+   * Friendly owner-session identity from the backend serializer. The UI
+   * renders `owner_session_ref.ref` (#<seq_num> or short hash), never the
+   * raw `claimed_by_session_id` UUID. Optional only for older payloads.
+   */
+  owner_session_ref?: OwnerSessionRef | null
   closed_at?: string | null
   closed_in_session_id?: string | null
   escalated_at?: string | null
@@ -135,6 +142,10 @@ export interface TaskListResponse {
 
 export interface DependencyTree {
   id: string
+  /** Friendly ref (#<seq_num> or short hash), resolved by the deps route. */
+  ref?: string
+  title?: string
+  task_type?: string
   blockers?: DependencyTree[]
   blocking?: DependencyTree[]
   _truncated?: boolean

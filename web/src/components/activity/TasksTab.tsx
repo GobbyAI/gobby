@@ -11,11 +11,11 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
-import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
 } from "../../lib/taskState";
+import { useTaskInlineEdit } from "./useTaskInlineEdit";
 import {
   normalizeTaskPayloads,
   type RawTaskPayload,
@@ -50,6 +50,8 @@ import {
 import { TaskTreeRow } from "./TaskTreeRow";
 import {
   claimTaskForSession,
+  patchTaskFields,
+  type PatchTaskFields,
   postBuildControl,
   postTaskLifecycleAction,
   startBuild,
@@ -173,6 +175,10 @@ export const TasksTab = memo(function TasksTab({
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
+  // WS task_event truth supersedes any in-flight optimistic inline edit. The
+  // ref breaks the declaration-order cycle (handleTaskEvent is defined before
+  // the inline-edit hook, which itself depends on applyRawTaskUpdate).
+  const reconcileInlineEditRef = useRef<(taskId: string) => void>(() => {});
 
   const fetchTasks = useCallback(() => {
     abortRef.current?.abort();
@@ -276,6 +282,9 @@ export const TasksTab = memo(function TasksTab({
       // Abort any previous in-flight detail fetch so a stale response can't
       // overwrite a newer one (or land after the component unmounts).
       if (taskId === selectedTaskId && event !== "task_deleted") {
+        // Server truth landed: drop in-flight optimistic-edit bookkeeping so a
+        // slow PATCH resolve/reject can't stomp this WS update.
+        reconcileInlineEditRef.current(taskId);
         detailFetchControllerRef.current?.abort();
         const controller = new AbortController();
         detailFetchControllerRef.current = controller;
@@ -497,7 +506,6 @@ export const TasksTab = memo(function TasksTab({
     [selectedTaskId, tasks],
   );
   const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
-  const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
   let parentTask: ParentTaskRef | null = null;
   if (taskDetail?.parent_task_id) {
     const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);
@@ -550,6 +558,37 @@ export const TasksTab = memo(function TasksTab({
     },
     [selectedTaskId],
   );
+
+  // Restore the pre-edit snapshot when an optimistic inline edit fails.
+  const rollbackTask = useCallback(
+    (taskId: string, snapshot: GobbyTask) => {
+      setTasks((prev) =>
+        prev.map((task) => (task.id === taskId ? snapshot : task)),
+      );
+      setTaskDetail((prev) =>
+        prev && prev.id === taskId ? (snapshot as GobbyTaskDetail) : prev,
+      );
+    },
+    [],
+  );
+
+  const patchTask = useCallback(
+    (taskId: string, fields: PatchTaskFields) =>
+      patchTaskFields(getBaseUrl(), taskId, fields),
+    [],
+  );
+
+  // D4 store-agnostic inline editor, wired to this tab's own optimistic
+  // store (no second store, no extra fetch).
+  const inlineEdit = useTaskInlineEdit({
+    patchTask,
+    applyRawTaskUpdate,
+    rollback: rollbackTask,
+  });
+
+  useEffect(() => {
+    reconcileInlineEditRef.current = inlineEdit.reconcile;
+  }, [inlineEdit.reconcile]);
 
   const runMenuAction = useCallback(
     async (
@@ -685,6 +724,28 @@ export const TasksTab = memo(function TasksTab({
       "Failed to release task claim",
     );
   }, [runMenuAction, taskMenu]);
+
+  const handleDetailClaim = useCallback(() => {
+    if (!taskDetail || !chatSessionId) return;
+    const detail = taskDetail;
+    void runMenuAction(
+      detail,
+      "assign",
+      () => claimTaskForSession(getBaseUrl(), detail.id, chatSessionId),
+      "Failed to claim task",
+    );
+  }, [chatSessionId, runMenuAction, taskDetail]);
+
+  const handleDetailRelease = useCallback(() => {
+    if (!taskDetail) return;
+    const detail = taskDetail;
+    void runMenuAction(
+      detail,
+      "releaseClaim",
+      () => postTaskLifecycleAction(getBaseUrl(), detail.id, "release-claim"),
+      "Failed to release task claim",
+    );
+  }, [runMenuAction, taskDetail]);
 
   const handleOpenCloseTaskDialog = useCallback(() => {
     if (!taskMenu?.task) return;
@@ -848,15 +909,7 @@ export const TasksTab = memo(function TasksTab({
           <div className="activity-task-pane-bar activity-task-pane-bar--detail">
             <span className="activity-task-pane-bar__title">
               Task {headerRef ?? "—"}
-              {headerTitle ? <> – {headerTitle}</> : null}
             </span>
-            {taskDetail && (
-              <div className="activity-task-pane-bar__chips">
-                <TaskStateBadges task={taskDetail} />
-                <PriorityBadge priority={taskDetail.priority ?? 4} />
-                <TypeBadge type={taskDetail.task_type} />
-              </div>
-            )}
           </div>
           {detailLoading ? (
             <p className="activity-task-detail-loading">
@@ -869,6 +922,10 @@ export const TasksTab = memo(function TasksTab({
               onSelectTask={setSelectedTaskId}
               dependencies={taskDependencies}
               subtasks={taskSubtasks}
+              edit={inlineEdit}
+              onClaim={chatSessionId ? handleDetailClaim : undefined}
+              onRelease={handleDetailRelease}
+              claimBusy={activeTaskAction?.taskId === taskDetail.id}
             />
           ) : (
             <p className="activity-task-detail-empty">

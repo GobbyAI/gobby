@@ -186,6 +186,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         ws = server.services.websocket_server
         if ws:
             try:
+                _apply_owner_ref([task_dict])
                 await ws.broadcast_task_event(
                     event, task_id=task_dict.get("id", ""), task=task_dict
                 )
@@ -235,6 +236,52 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             item["build_state"] = derive_build_state(
                 allow_automation=bool(item.get("allow_automation")),
                 has_build_event=item["id"] in built,
+            )
+
+    def _owner_session_ref(owner_id: str | None) -> dict[str, Any] | None:
+        """Resolve an owner session UUID to a friendly, human-readable ref.
+
+        The web detail pane must never render a raw 36-char session UUID. We
+        resolve the owning session to ``#<seq_num>`` plus its source (the CLI
+        that drives it). When the session cannot be resolved we still degrade
+        to a short ``id[:8]`` hash — the same convention task refs use — never
+        the full UUID.
+        """
+        if not owner_id:
+            return None
+        session = None
+        if server.session_manager is not None:
+            try:
+                session = server.session_manager.get(owner_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"Failed to resolve owner session {owner_id}: {exc}")
+                session = None
+        if session is not None and session.seq_num:
+            ref = f"#{session.seq_num}"
+        else:
+            ref = owner_id[:8]
+        return {
+            "session_id": owner_id,
+            "ref": ref,
+            "source": session.source if session is not None else None,
+        }
+
+    def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
+        """Attach a friendly ``owner_session_ref`` to each serialized task.
+
+        Reads the canonical owner from ``state.owner_session_id`` (falling back
+        to the top-level ``claimed_by_session_id``) so the value matches the
+        frontend canonical-state precedence. Unowned tasks get ``None``.
+        """
+        for item in task_dicts:
+            raw_state = item.get("state")
+            owner_id: Any = None
+            if isinstance(raw_state, dict):
+                owner_id = raw_state.get("owner_session_id")
+            if not owner_id:
+                owner_id = item.get("claimed_by_session_id")
+            item["owner_session_ref"] = _owner_session_ref(
+                owner_id if isinstance(owner_id, str) else None
             )
 
     def _normalize_stage_filters(values: list[str] | None) -> list[str]:
@@ -416,6 +463,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
             _apply_build_state(task_dicts)
+            _apply_owner_ref(task_dicts)
 
             state_counts = server.task_manager.count_by_state(project_id=resolved_project)
             return {
@@ -466,10 +514,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             data = task.to_dict()
             data["build_state"] = derive_build_state(
                 allow_automation=bool(task.allow_automation),
-                has_build_event=server.task_manager.lifecycle_events.has_build_event(
-                    task.id
-                ),
+                has_build_event=server.task_manager.lifecycle_events.has_build_event(task.id),
             )
+            _apply_owner_ref([data])
             return data
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -530,7 +577,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             if not kwargs:
-                return task.to_dict()
+                unchanged = task.to_dict()
+                _apply_owner_ref([unchanged])
+                return unchanged
 
             updated = server.task_manager.update_task(resolved_id, **kwargs)
             result = updated.to_dict()

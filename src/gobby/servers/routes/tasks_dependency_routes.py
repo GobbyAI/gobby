@@ -36,6 +36,32 @@ def register_task_dependency_routes(
 ) -> None:
     """Register dependency routes on the shared tasks router."""
 
+    def _enrich_dependency_nodes(node: dict[str, Any], cache: dict[str, Task | None]) -> None:
+        """Attach the real task identity (ref/title/type) to each tree node.
+
+        The storage tree carries ids only; the UI must show the actual tasks,
+        not bare counts. Resolution is cached per request and bounded by the
+        tree's own ``max_depth``, so the fan-out stays small.
+        """
+        node_id = node.get("id")
+        if isinstance(node_id, str) and node_id:
+            if node_id not in cache:
+                try:
+                    cache[node_id] = server.task_manager.get_task(node_id)
+                except Exception:  # noqa: BLE001 - boundary; degrade to id only
+                    cache[node_id] = None
+            resolved = cache[node_id]
+            if resolved is not None:
+                node["ref"] = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
+                node["title"] = resolved.title
+                node["task_type"] = resolved.task_type
+        for key in ("blockers", "blocking"):
+            children = node.get(key)
+            if isinstance(children, list):
+                for child in children:
+                    if isinstance(child, dict):
+                        _enrich_dependency_nodes(child, cache)
+
     @router.get("/{task_id}/dependencies")
     async def get_dependency_tree(
         task_id: str,
@@ -47,7 +73,9 @@ def register_task_dependency_routes(
         try:
             task = resolve_task(task_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
-            return dep_manager.get_dependency_tree(task.id, direction=direction)
+            tree = dep_manager.get_dependency_tree(task.id, direction=direction)
+            _enrich_dependency_nodes(tree, {})
+            return tree
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 

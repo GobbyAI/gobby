@@ -1,16 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
 
 import {
   TasksTabDetailPanel,
-  type ParentTaskRef,
+  type TaskInlineEditApi,
 } from "../TasksTabDetailPanel";
-import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import type { DependencyTree, GobbyTaskDetail } from "../../../hooks/useTasks";
 import type { StageStateView } from "../../../lib/stageActions";
 
-function makeStage(
-  overrides: Partial<StageStateView> = {},
-): StageStateView {
+function makeStage(overrides: Partial<StageStateView> = {}): StageStateView {
   return {
     name: "development",
     display_name: "Development",
@@ -26,19 +24,19 @@ function makeStage(
 function makeTask(overrides: Partial<GobbyTaskDetail> = {}): GobbyTaskDetail {
   const baseStage = makeStage();
   return {
-    id: "task-1",
+    id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     ref: "#101",
     title: "Sample task",
     status: "in_progress",
     state: null,
     compat: null,
     priority: 2,
-    task_type: "task",
+    task_type: "epic",
     parent_task_id: null,
     created_at: "2026-05-14T17:00:00Z",
     updated_at: "2026-05-14T17:55:00Z",
     seq_num: 101,
-    path_cache: "src/path/to/file.ts",
+    path_cache: "src/secret/path/to/file.ts",
     requires_user_review: false,
     assignee: null,
     agent_name: "codex",
@@ -77,185 +75,207 @@ function makeTask(overrides: Partial<GobbyTaskDetail> = {}): GobbyTaskDetail {
   } as GobbyTaskDetail;
 }
 
-describe("TasksTabDetailPanel — impeccable redesign (#14686)", () => {
-  it("renders the stage name as the hero, not the task title", () => {
-    const { container, queryByText } = render(
+function makeEdit(
+  overrides: Partial<TaskInlineEditApi> = {},
+): TaskInlineEditApi {
+  return {
+    commitField: vi.fn(),
+    isFieldPending: () => false,
+    errorFor: () => null,
+    clearError: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
+  it("header is the single source of state truth: ref + title + chips", () => {
+    const { container, getByText } = render(
       <TasksTabDetailPanel task={makeTask()} />,
     );
-    const hero = container.querySelector(".activity-task-detail-hero__stage");
-    expect(hero?.textContent).toBe("Development");
-    // The task title is rendered by the parent pane bar, not the panel hero
-    expect(queryByText("Sample task")).toBeNull();
+    const header = container.querySelector(".activity-task-detail-header");
+    expect(header).not.toBeNull();
+    expect(header?.textContent).toContain("#101");
+    expect(getByText("Sample task")).toBeTruthy();
+    // Type + priority chips render in the header.
+    expect(getByText("epic")).toBeTruthy();
+    expect(getByText("Medium")).toBeTruthy();
   });
 
-  it("applies the active stage variant when display state is in_progress", () => {
-    const { container } = render(
-      <TasksTabDetailPanel task={makeTask()} />,
+  it("renders an editable title input only when an edit API is injected", () => {
+    const edit = makeEdit();
+    const { getByLabelText, rerender, queryByLabelText } = render(
+      <TasksTabDetailPanel task={makeTask()} edit={edit} />,
     );
-    const hero = container.querySelector(".activity-task-detail-hero__stage");
-    expect(hero?.className).toContain("activity-task-detail-hero__stage--active");
-  });
-
-  it("applies the escalated stage variant and label when task is escalated", () => {
-    const task = makeTask({ escalated_at: "2026-05-14T17:50:00Z" });
-    const { container } = render(<TasksTabDetailPanel task={task} />);
-    const hero = container.querySelector(".activity-task-detail-hero__stage");
-    expect(hero?.textContent).toBe("Escalated");
-    expect(hero?.className).toContain(
-      "activity-task-detail-hero__stage--escalated",
-    );
-  });
-
-  it("applies the closed stage variant when task is closed", () => {
-    const closedStage = makeStage({ state: "done" });
-    const task = makeTask({
-      closed_at: "2026-05-14T17:40:00Z",
-      stages: [closedStage],
-      current_stage: closedStage,
+    const input = getByLabelText("Task title") as HTMLInputElement;
+    expect(input.value).toBe("Sample task");
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    fireEvent.blur(input);
+    expect(edit.commitField).toHaveBeenCalledWith({
+      task: expect.objectContaining({ id: makeTask().id }),
+      field: "title",
+      value: "Renamed",
     });
-    const { container } = render(<TasksTabDetailPanel task={task} />);
-    const hero = container.querySelector(".activity-task-detail-hero__stage");
-    expect(hero?.textContent).toBe("Closed");
-    expect(hero?.className).toContain(
-      "activity-task-detail-hero__stage--closed",
-    );
+
+    rerender(<TasksTabDetailPanel task={makeTask()} />);
+    expect(queryByLabelText("Task title")).toBeNull();
   });
 
-  it("renders agent name and a relative-time string in the hero", () => {
-    const { container } = render(
-      <TasksTabDetailPanel task={makeTask()} />,
-    );
-    const agent = container.querySelector(".activity-task-detail-hero__agent");
-    expect(agent?.textContent).toContain("Driven by");
-    expect(agent?.textContent).toContain("codex");
-    expect(agent?.textContent).toMatch(/(just now|ago)/);
-  });
-
-  it("uses the mono hero class only for owner session ids", () => {
+  it("shows the owner exactly once, as the friendly ref, never the UUID", () => {
+    const uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const task = makeTask({
       agent_name: null,
-      claimed_by_session_id: "  session-123  ",
+      claimed_by_session_id: uuid,
+      owner_session_ref: {
+        session_id: uuid,
+        ref: "#5122",
+        source: "claude",
+      },
     });
     const { container } = render(<TasksTabDetailPanel task={task} />);
-
-    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
-    expect(owner?.textContent).toBe("session-123");
-    expect(owner?.className).toContain("activity-task-detail-hero__agent-name--mono");
+    const refs = container.querySelectorAll(
+      ".activity-task-detail-statusline__owner-ref",
+    );
+    expect(refs).toHaveLength(1);
+    expect(refs[0].textContent).toBe("#5122");
+    expect(container.textContent).not.toContain(uuid);
+    // The old duplicate metadata vocabulary is gone.
+    expect(container.textContent).not.toContain("Driven by");
+    expect(container.textContent).not.toContain("Claimed by");
   });
 
-  it("trims agent names before rendering owner labels", () => {
-    const task = makeTask({ agent_name: "  codex  " });
-    const { container } = render(<TasksTabDetailPanel task={task} />);
-
-    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
-    expect(owner?.textContent).toBe("codex");
-    expect(owner?.className).not.toContain("activity-task-detail-hero__agent-name--mono");
+  it("renders 'Unassigned' when there is no owner", () => {
+    const { container } = render(
+      <TasksTabDetailPanel task={makeTask({ agent_name: null })} />,
+    );
+    expect(
+      container.querySelector(
+        ".activity-task-detail-statusline__owner--unassigned",
+      )?.textContent,
+    ).toContain("Unassigned");
   });
 
-  it("falls back to the owner session when the agent name is blank", () => {
+  it("never renders the dropped 'Path' field or its value", () => {
+    const { queryByText, container } = render(
+      <TasksTabDetailPanel task={makeTask()} />,
+    );
+    expect(queryByText("Path")).toBeNull();
+    expect(container.textContent).not.toContain("src/secret/path/to/file.ts");
+  });
+
+  it("renders the escalation block only when the task is escalated", () => {
+    const { container: a } = render(
+      <TasksTabDetailPanel task={makeTask()} />,
+    );
+    expect(
+      a.querySelector(".activity-task-detail-section--escalated"),
+    ).toBeNull();
+
+    const { container: b } = render(
+      <TasksTabDetailPanel
+        task={makeTask({
+          escalated_at: "2026-05-14T17:50:00Z",
+          escalation_reason: "needs human",
+        })}
+      />,
+    );
+    const block = b.querySelector(".activity-task-detail-section--escalated");
+    expect(block).not.toBeNull();
+    expect(block?.textContent).toContain("needs human");
+  });
+
+  it("renders Trace as a collapsed-by-default details element (no Path)", () => {
     const task = makeTask({
-      agent_name: "   ",
-      claimed_by_session_id: " session-456 ",
-    });
-    const { container } = render(<TasksTabDetailPanel task={task} />);
-
-    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
-    expect(owner?.textContent).toBe("session-456");
-    expect(owner?.className).toContain("activity-task-detail-hero__agent-name--mono");
-  });
-
-  it("renders 'Unassigned' in the hero when no agent or owner session exists", () => {
-    const task = makeTask({ agent_name: null });
-    const { container } = render(<TasksTabDetailPanel task={task} />);
-    const agent = container.querySelector(".activity-task-detail-hero__agent");
-    expect(agent?.textContent).toContain("Unassigned");
-  });
-
-  it("renders the Validation row with an explicit label when validation_status is set", () => {
-    const task = makeTask({
-      validation_status: "pending",
-      validation_fail_count: 0,
+      commits: ["abcdef1234567890", "0987654321fedcba"],
     });
     const { container, getByText } = render(
       <TasksTabDetailPanel task={task} />,
     );
-    const row = container.querySelector(".activity-task-detail-validation-row");
-    expect(row).not.toBeNull();
-    expect(getByText("Validation")).toBeTruthy();
+    const trace = container.querySelector(
+      "details.activity-task-detail-trace",
+    ) as HTMLDetailsElement;
+    expect(trace).not.toBeNull();
+    expect(trace.hasAttribute("open")).toBe(false);
+    expect(getByText("Trace")).toBeTruthy();
+    expect(getByText("abcdef1")).toBeTruthy();
   });
 
-  it("omits the Validation row entirely when validation_status is null (no floating chip)", () => {
-    const { container } = render(
+  it("links the PR inside Trace when repo metadata is present", () => {
+    const { getByText } = render(
+      <TasksTabDetailPanel
+        task={makeTask({ github_pr_number: 42, github_repo: "example/repo" })}
+      />,
+    );
+    const link = getByText("example/repo#42");
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute(
+      "href",
+      "https://github.com/example/repo/pull/42",
+    );
+  });
+
+  it("renders the editable core fields when an edit API is injected", () => {
+    const { getByLabelText } = render(
+      <TasksTabDetailPanel task={makeTask()} edit={makeEdit()} />,
+    );
+    expect(getByLabelText("Category")).toBeTruthy();
+    expect(getByLabelText("Priority")).toBeTruthy();
+    expect(getByLabelText("Labels")).toBeTruthy();
+    expect(getByLabelText("Description")).toBeTruthy();
+    expect(getByLabelText("Validation criteria")).toBeTruthy();
+  });
+
+  it("surfaces a single inline edit error with a dismiss control", () => {
+    const edit = makeEdit({ errorFor: () => "Couldn't save title: 500" });
+    const { getByRole, getByLabelText } = render(
+      <TasksTabDetailPanel task={makeTask()} edit={edit} />,
+    );
+    expect(getByRole("alert").textContent).toContain(
+      "Couldn't save title: 500",
+    );
+    fireEvent.click(getByLabelText("Dismiss error"));
+    expect(edit.clearError).toHaveBeenCalledWith(makeTask().id);
+  });
+
+  it("renders dependencies as the actual tasks, clickable, not bare counts", () => {
+    const onSelectTask = vi.fn();
+    const dependencies: DependencyTree = {
+      id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      blockers: [
+        { id: "dep-1", ref: "#900", title: "Upstream schema migration" },
+      ],
+      blocking: [{ id: "dep-2", ref: "#950", title: "Downstream consumer" }],
+    };
+    const { getByText } = render(
+      <TasksTabDetailPanel
+        task={makeTask()}
+        dependencies={dependencies}
+        onSelectTask={onSelectTask}
+      />,
+    );
+    expect(getByText("Blocked by (1)")).toBeTruthy();
+    expect(getByText("Upstream schema migration")).toBeTruthy();
+    const link = getByText("#900");
+    fireEvent.click(link);
+    expect(onSelectTask).toHaveBeenCalledWith("dep-1");
+    expect(getByText("Downstream consumer")).toBeTruthy();
+  });
+
+  it("renders the Validation row only when validation_status is set", () => {
+    const { container: a } = render(
       <TasksTabDetailPanel task={makeTask()} />,
     );
     expect(
-      container.querySelector(".activity-task-detail-validation-row"),
+      a.querySelector(".activity-task-detail-validation-row"),
     ).toBeNull();
-  });
 
-  it("renders a parent reference row whose title wraps freely (no nowrap overflow)", () => {
-    const parent: ParentTaskRef = {
-      id: "parent-1",
-      ref: "#12018",
-      title:
-        "Clean repo logging system before enforcing logging-format rules across the whole project",
-    };
-    const { container } = render(
-      <TasksTabDetailPanel task={makeTask()} parentTask={parent} />,
-    );
-    const parentTitle = container.querySelector(
-      ".activity-task-detail-kv-row .activity-task-detail-parent-title",
-    );
-    expect(parentTitle).not.toBeNull();
-    expect(parentTitle?.textContent).toContain("Clean repo logging system");
-    // The title sits inside a kv-row (which applies white-space: normal),
-    // not in the old auto-fit meta grid that forced nowrap overflow.
-    const enclosingRow = parentTitle?.closest(".activity-task-detail-kv-row");
-    expect(enclosingRow).not.toBeNull();
-  });
-
-  it("renders metadata as horizontal kv-rows, not as stacked uppercase headers", () => {
-    const { container, getByText } = render(
-      <TasksTabDetailPanel task={makeTask()} />,
-    );
-    expect(getByText("Claimed by")).toBeTruthy();
-    expect(getByText("Path")).toBeTruthy();
-    // Each metadata row uses the new horizontal kv-row, not the old meta-row
-    const rows = container.querySelectorAll(".activity-task-detail-kv-row");
-    expect(rows.length).toBeGreaterThanOrEqual(4);
-  });
-
-  it("wraps non-link metadata values in divs for block-safe content", () => {
-    const { getByText } = render(<TasksTabDetailPanel task={makeTask()} />);
-    const row = getByText("State").closest(".activity-task-detail-kv-row");
-    const value = row?.querySelector(".activity-task-detail-kv-row__value");
-
-    expect(value?.tagName).toBe("DIV");
-  });
-
-  it("renders PR labels without a link when repo metadata is missing", () => {
-    const { getByText } = render(
-      <TasksTabDetailPanel task={makeTask({ github_pr_number: 42 })} />,
-    );
-
-    const row = getByText("PR").closest(".activity-task-detail-kv-row");
-    const value = row?.querySelector(".activity-task-detail-kv-row__value");
-    expect(value?.tagName).toBe("DIV");
-    expect(value?.textContent).toBe("#42");
-  });
-
-  it("links PR labels when repo metadata is available", () => {
-    const { getByText } = render(
+    const { container: b, getByText } = render(
       <TasksTabDetailPanel
-        task={makeTask({
-          github_pr_number: 42,
-          github_repo: "example/repo",
-        })}
+        task={makeTask({ validation_status: "pending" })}
       />,
     );
-
-    const link = getByText("example/repo#42");
-    expect(link.tagName).toBe("A");
-    expect(link).toHaveAttribute("href", "https://github.com/example/repo/pull/42");
+    expect(
+      b.querySelector(".activity-task-detail-validation-row"),
+    ).not.toBeNull();
+    expect(getByText("Validation")).toBeTruthy();
   });
 });

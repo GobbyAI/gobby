@@ -736,20 +736,34 @@ describe("TasksTab", () => {
 
     render(<TasksTab projectId="proj-1" />);
 
-    await waitFor(() => {
-      expect(screen.getByText("Detail task description")).toBeTruthy();
-    });
+    // Detail pane loaded: header carries the ref; the title is the editable
+    // input (D4 inline edit hosted by D5).
+    const title = (await screen.findByLabelText(
+      "Task title",
+    )) as HTMLInputElement;
+    expect(title.value).toBe("Detail pane task");
+    expect(
+      document.querySelector(".activity-task-detail-header__ref")?.textContent,
+    ).toBe("#510");
 
-    expect(screen.getByText("Claimed by")).toBeTruthy();
-    expect(screen.getByText("State")).toBeTruthy();
-    expect(screen.getByText("Created")).toBeTruthy();
-    expect(screen.getByText("Updated")).toBeTruthy();
+    // Owner shown exactly once (the status line), never doubled.
+    expect(screen.getAllByText("Agent Delta")).toHaveLength(1);
+
+    // Editable core (PATCH-family) labels + values present inline.
     expect(screen.getByText("Category")).toBeTruthy();
-    expect(screen.getByText("Path")).toBeTruthy();
-    expect(screen.getAllByText("Agent Delta").length).toBeGreaterThan(0);
-    expect(screen.getByText("UI")).toBeTruthy();
-    expect(screen.getAllByText("Development: Needs Review").length).toBeGreaterThan(0);
-    expect(screen.getByText("Validation criteria")).toBeTruthy();
+    expect(screen.getByText("Priority")).toBeTruthy();
+    expect(screen.getByText("Labels")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
+    ).toBe("Detail task description");
+    expect(
+      (screen.getByLabelText("Validation criteria") as HTMLTextAreaElement)
+        .value,
+    ).toBe("Verify the lower pane layout");
+
+    // Removed legacy metadata + the old inline one-line summary are gone.
+    expect(screen.queryByText("Claimed by")).toBeNull();
+    expect(screen.queryByText("Path")).toBeNull();
     expect(screen.queryByText("Ready · Medium · bug")).toBeNull();
   });
 });

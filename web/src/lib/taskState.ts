@@ -23,8 +23,20 @@ export type TaskDisplayState =
   | 'review_approved'
   | 'closed'
 
+/**
+ * Friendly, human-readable owner-session identity resolved by the backend
+ * tasks serializer. The web UI renders `ref` (`#<seq_num>` or a short hash)
+ * and `source` — never the raw 36-char `session_id` UUID.
+ */
+export interface OwnerSessionRef {
+  session_id: string
+  ref: string
+  source: string | null
+}
+
 export interface CanonicalTaskState {
   owner_session_id: string | null
+  owner_session_ref: OwnerSessionRef | null
   current_stage: StageStateView | null
   is_claimed: boolean
   is_closed: boolean
@@ -46,6 +58,7 @@ export interface TaskCompatProjection {
 export interface TaskStateLike {
   assignee?: string | null
   claimed_by_session_id?: string | null
+  owner_session_ref?: OwnerSessionRef | null
   closed_at?: string | null
   closed_reason?: string | null
   closed_in_session_id?: string | null
@@ -150,6 +163,8 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
     task.claimed_by_session_id ??
     compatAssignee ??
     null
+  const ownerSessionRef =
+    task.owner_session_ref ?? task.state?.owner_session_ref ?? null
   const current = deriveCurrentStage(task)
   const currentState = current?.state ?? null
   const isClosed =
@@ -165,6 +180,7 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
 
   return {
     owner_session_id: ownerSessionId,
+    owner_session_ref: ownerSessionRef,
     current_stage: current,
     is_claimed: task.state?.is_claimed ?? (
       Boolean(ownerSessionId)
