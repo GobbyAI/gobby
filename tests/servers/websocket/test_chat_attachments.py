@@ -16,6 +16,7 @@ from gobby.servers.websocket.chat_attachments import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -38,6 +39,7 @@ def _attachment(
     chat_attachments.create_attachment(
         temp_db,
         attachment_id=attachment_id,
+        project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         filename=path.name,
         mime_type="text/plain",

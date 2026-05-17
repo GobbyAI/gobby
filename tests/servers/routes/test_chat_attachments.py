@@ -13,6 +13,7 @@ from gobby.servers.routes.chat_attachments import create_chat_attachments_router
 from gobby.storage.chat_attachments import bind_attachments
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -37,14 +38,17 @@ def client(
 
 
 def test_upload_persists_metadata_and_file(client: TestClient, temp_db: LocalDatabase) -> None:
+    project = LocalProjectManager(temp_db).create(name="attachment-project")
+
     response = client.post(
         "/api/chat/attachments",
         files={"file": ("note.txt", b"hello", "text/plain")},
-        data={"draft_id": "draft-1"},
+        data={"draft_id": "draft-1", "project_id": project.id},
     )
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["project_id"] == project.id
     assert payload["filename"] == "note.txt"
     assert payload["mime_type"] == "text/plain"
     assert payload["size_bytes"] == 5
@@ -52,8 +56,71 @@ def test_upload_persists_metadata_and_file(client: TestClient, temp_db: LocalDat
 
     row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (payload["id"],))
     assert row is not None
+    assert row["project_id"] == project.id
     assert row["draft_id"] == "draft-1"
-    assert Path(row["local_path"]).read_bytes() == b"hello"
+    stored_path = Path(row["local_path"])
+    assert stored_path.read_bytes() == b"hello"
+    assert stored_path.parent.name == payload["id"]
+    assert stored_path.parent.parent.name == payload["id"][:2]
+    assert stored_path.parent.parent.parent.name == "attachments"
+    assert stored_path.parent.parent.parent.parent.name == project.id
+
+
+def test_upload_without_project_id_uses_server_project(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    project = LocalProjectManager(temp_db).create(name="server-project")
+    server = create_http_server(
+        config=DaemonConfig(),
+        database=temp_db,
+        session_manager=None,
+        project_id=project.id,
+    )
+    server.services.config_store = ConfigStore(temp_db)
+    app = FastAPI()
+    app.include_router(create_chat_attachments_router(server))
+
+    response = TestClient(app).post(
+        "/api/chat/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project_id"] == project.id
+    row = temp_db.fetchone("SELECT project_id FROM chat_attachments WHERE id = ?", (payload["id"],))
+    assert row is not None
+    assert row["project_id"] == project.id
+
+
+def test_upload_without_project_id_falls_back_to_personal(client: TestClient) -> None:
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["project_id"] == PERSONAL_PROJECT_ID
+
+
+def test_upload_rejects_unknown_project_id_without_persisting(
+    client: TestClient,
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+        data={"project_id": "missing-project"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown project_id"
+    assert temp_db.fetchall("SELECT * FROM chat_attachments") == []
+    assert not (tmp_path / "gobby-home" / "projects").exists()
 
 
 def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(

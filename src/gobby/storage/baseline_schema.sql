@@ -1487,6 +1487,7 @@ CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
 
 CREATE TABLE chat_attachments (
     id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     draft_id TEXT,
     conversation_id TEXT,
     message_id TEXT,
@@ -1499,6 +1500,8 @@ CREATE TABLE chat_attachments (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     bound_at TEXT
 );
+
+CREATE INDEX idx_chat_attachments_project ON chat_attachments(project_id);
 
 CREATE INDEX idx_chat_attachments_draft ON chat_attachments(draft_id);
 

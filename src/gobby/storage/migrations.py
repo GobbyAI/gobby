@@ -470,6 +470,11 @@ def _apply_chat_attachments_schema(db: LocalDatabase) -> None:
             db.execute(statement)
 
 
+def _recreate_project_scoped_chat_attachments(db: LocalDatabase) -> None:
+    db.execute("DROP TABLE IF EXISTS chat_attachments")
+    _apply_chat_attachments_schema(db)
+
+
 def _apply_linear_project_binding_schema(db: LocalDatabase) -> None:
     columns = {row["name"] for row in db.fetchall("PRAGMA table_info(projects)")}
     if "linear_project_id" not in columns:
@@ -755,6 +760,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         _apply_cross_repo_delivery_profile_schema,
     ),
     (257, "Add stored chat attachments", _apply_chat_attachments_schema),
+    (
+        258,
+        "Recreate chat attachments with project scope",
+        _recreate_project_scoped_chat_attachments,
+    ),
 ]
 
 

@@ -28,6 +28,7 @@ export function uploadChatAttachment(
   file: File,
   options: {
     draftId?: string
+    projectId?: string | null
     onProgress?: (progress: number | null) => void
   } = {},
 ): Promise<ChatAttachment> {
@@ -36,6 +37,7 @@ export function uploadChatAttachment(
     const form = new FormData()
     form.append('file', file)
     if (options.draftId) form.append('draft_id', options.draftId)
+    if (options.projectId) form.append('project_id', options.projectId)
 
     xhr.open('POST', `${API_BASE_URL}/api/chat/attachments`)
     xhr.withCredentials = true

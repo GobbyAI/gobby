@@ -177,6 +177,7 @@ describe('MessageItem', () => {
               type: 'attachment',
               attachment: {
                 id: 'att-img',
+                project_id: 'proj-1',
                 filename: 'screen.png',
                 mime_type: 'image/png',
                 size_bytes: 12,
@@ -202,6 +203,7 @@ describe('MessageItem', () => {
               type: 'attachment',
               attachment: {
                 id: 'att-pdf',
+                project_id: 'proj-1',
                 filename: 'plan.pdf',
                 mime_type: 'application/pdf',
                 size_bytes: 2048,
@@ -227,6 +229,7 @@ describe('MessageItem', () => {
               type: 'attachment',
               attachment: {
                 id: 'att-doc',
+                project_id: 'proj-1',
                 filename: 'notes.txt',
                 mime_type: 'text/plain',
                 size_bytes: 12,

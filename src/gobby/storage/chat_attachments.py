@@ -13,6 +13,7 @@ from gobby.storage.database import DatabaseProtocol
 CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (
     id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     draft_id TEXT,
     conversation_id TEXT,
     message_id TEXT,
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS chat_attachments (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     bound_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_chat_attachments_project
+    ON chat_attachments(project_id);
 
 CREATE INDEX IF NOT EXISTS idx_chat_attachments_draft
     ON chat_attachments(draft_id);
@@ -43,6 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_attachments_target_session
 @dataclass(frozen=True)
 class ChatAttachmentRecord:
     id: str
+    project_id: str
     draft_id: str | None
     conversation_id: str | None
     message_id: str | None
@@ -63,6 +68,7 @@ class ChatAttachmentRecord:
 def _row_to_record(row: sqlite3.Row) -> ChatAttachmentRecord:
     return ChatAttachmentRecord(
         id=str(row["id"]),
+        project_id=str(row["project_id"]),
         draft_id=row["draft_id"],
         conversation_id=row["conversation_id"],
         message_id=row["message_id"],
@@ -84,6 +90,7 @@ def content_url(attachment_id: str) -> str:
 def to_api_dict(record: ChatAttachmentRecord) -> dict[str, Any]:
     return {
         "id": record.id,
+        "project_id": record.project_id,
         "draft_id": record.draft_id,
         "conversation_id": record.conversation_id,
         "message_id": record.message_id,
@@ -101,6 +108,7 @@ def to_api_dict(record: ChatAttachmentRecord) -> dict[str, Any]:
 def create_attachment(
     db: DatabaseProtocol,
     *,
+    project_id: str,
     draft_id: str | None,
     filename: str,
     mime_type: str,
@@ -113,11 +121,12 @@ def create_attachment(
     db.execute(
         """
         INSERT INTO chat_attachments (
-            id, draft_id, filename, mime_type, size_bytes, local_path, created_at, updated_at
+            id, project_id, draft_id, filename, mime_type, size_bytes, local_path,
+            created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (record_id, draft_id, filename, mime_type, size_bytes, local_path, now, now),
+        (record_id, project_id, draft_id, filename, mime_type, size_bytes, local_path, now, now),
     )
     record = get_attachment(db, record_id)
     if record is None:
@@ -128,7 +137,7 @@ def create_attachment(
 def get_attachment(db: DatabaseProtocol, attachment_id: str) -> ChatAttachmentRecord | None:
     row = db.fetchone(
         """
-        SELECT id, draft_id, conversation_id, message_id, target_session_id,
+        SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
                filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
           FROM chat_attachments
          WHERE id = ?
@@ -148,7 +157,7 @@ def get_attachments_by_ids(
     placeholders = ",".join("?" for _ in unique_ids)
     rows = db.fetchall(
         f"""
-        SELECT id, draft_id, conversation_id, message_id, target_session_id,
+        SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
                filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
           FROM chat_attachments
          WHERE id IN ({placeholders})

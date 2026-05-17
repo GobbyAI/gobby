@@ -329,6 +329,7 @@ export function ChatInput({
 
   const uploadQueuedFile = useCallback((id: string, file: File) => {
     void uploadChatAttachment(file, {
+      projectId,
       onProgress: (progress) => {
         setQueuedFiles((prev) =>
           prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
@@ -359,7 +360,7 @@ export function ChatInput({
           ),
         )
       })
-  }, [])
+  }, [projectId])
 
   const handleFilesSelected = useCallback((files: FileList | null) => {
     if (!files || attachmentsDisabled) return

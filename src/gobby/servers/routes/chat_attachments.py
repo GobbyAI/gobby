@@ -17,6 +17,8 @@ import gobby.storage.chat_attachments as chat_attachments
 from gobby.paths import get_gobby_home
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import DatabaseProtocol
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -31,8 +33,15 @@ def _safe_path_part(value: str, fallback: str) -> str:
     return cleaned or fallback
 
 
-def _attachment_dir(attachment_id: str) -> Path:
-    return get_gobby_home() / "chat_attachments" / attachment_id[:2] / attachment_id
+def _attachment_dir(project_id: str, attachment_id: str) -> Path:
+    return (
+        get_gobby_home()
+        / "projects"
+        / project_id
+        / "attachments"
+        / attachment_id[:2]
+        / attachment_id
+    )
 
 
 def _content_disposition(mime_type: str) -> str:
@@ -55,6 +64,26 @@ def _get_config_store(server: HTTPServer) -> ConfigStore:
     return ConfigStore(server.services.database)
 
 
+def _resolve_upload_project_id(
+    db: DatabaseProtocol,
+    requested_project_id: str | None,
+    service_project_id: str | None,
+) -> str:
+    project_manager = LocalProjectManager(db)
+    if requested_project_id:
+        project = project_manager.get(requested_project_id)
+        if project is None or project.deleted_at is not None:
+            raise ValueError("Unknown project_id")
+        return requested_project_id
+
+    if service_project_id:
+        project = project_manager.get(service_project_id)
+        if project is not None and project.deleted_at is None:
+            return service_project_id
+
+    return PERSONAL_PROJECT_ID
+
+
 def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     """Create routes for chat attachment upload and retrieval."""
     router = APIRouter(prefix="/api/chat/attachments", tags=["chat"])
@@ -63,12 +92,22 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     async def upload_attachment(
         file: UploadFile = File(...),
         draft_id: str | None = Form(default=None),
+        project_id: str | None = Form(default=None),
     ) -> dict[str, Any]:
         config_store = _get_config_store(server)
         limits = resolve_chat_attachment_limits(
             config_store=config_store,
             daemon_config=server.config,
         )
+        try:
+            resolved_project_id = await server.run_db(
+                _resolve_upload_project_id,
+                server.services.database,
+                project_id,
+                server.services.project_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         attachment_id = str(uuid4())
         filename = Path(file.filename or "attachment").name or "attachment"
@@ -76,7 +115,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         mime_type = (
             file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         )
-        target_dir = _attachment_dir(attachment_id)
+        target_dir = _attachment_dir(resolved_project_id, attachment_id)
         target_path = target_dir / safe_name
         temp_path = target_dir / f".{safe_name}.part"
         size = 0
@@ -100,6 +139,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                 chat_attachments.create_attachment,
                 server.services.database,
                 attachment_id=attachment_id,
+                project_id=resolved_project_id,
                 draft_id=draft_id,
                 filename=filename,
                 mime_type=mime_type,

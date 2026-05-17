@@ -444,6 +444,7 @@ describe("useChat proxy session messaging", () => {
           progress: 1,
           attachment: {
             id: "att-1",
+            project_id: "proj-1",
             filename: "note.txt",
             mime_type: "text/plain",
             size_bytes: 5,

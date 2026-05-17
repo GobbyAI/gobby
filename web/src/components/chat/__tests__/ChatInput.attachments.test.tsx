@@ -54,7 +54,7 @@ describe('ChatInput attachments', () => {
     const readAsDataURL = vi.fn()
     vi.stubGlobal('FileReader', vi.fn(() => ({ readAsDataURL })))
     const onSend = vi.fn()
-    const { container } = render(<ChatInput onSend={onSend} />)
+    const { container } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
 
@@ -62,10 +62,12 @@ describe('ChatInput attachments', () => {
 
     const xhr = MockXMLHttpRequest.instances[0]
     expect(xhr.requestBody).toBeInstanceOf(FormData)
+    expect((xhr.requestBody as FormData).get('project_id')).toBe('proj-1')
     expect(readAsDataURL).not.toHaveBeenCalled()
 
     xhr.respond({
       id: 'att-1',
+      project_id: 'proj-1',
       filename: 'note.txt',
       mime_type: 'text/plain',
       size_bytes: 5,
@@ -102,6 +104,7 @@ describe('ChatInput attachments', () => {
 
     MockXMLHttpRequest.instances[0].respond({
       id: 'att-1',
+      project_id: 'proj-1',
       filename: 'note.txt',
       mime_type: 'text/plain',
       size_bytes: 5,

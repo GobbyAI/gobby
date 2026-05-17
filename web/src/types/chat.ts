@@ -151,6 +151,7 @@ export interface ChatMessage {
 
 export interface ChatAttachment {
   id: string;
+  project_id: string;
   filename: string;
   mime_type: string;
   size_bytes: number;

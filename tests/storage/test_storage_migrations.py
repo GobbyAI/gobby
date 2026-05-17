@@ -41,7 +41,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 256
+    assert latest_known_version() == 258
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -60,13 +60,15 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         254,
         255,
         256,
+        257,
+        258,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 18
-    assert get_current_version(db) == 256
+    assert applied == 20
+    assert get_current_version(db) == 258
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -87,6 +89,8 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         254,
         255,
         256,
+        257,
+        258,
     ]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
@@ -97,6 +101,8 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     assert "workspace_role" in _column_names(db, "worktrees")
     assert "integration_branch" in _column_names(db, "task_artifacts")
     assert _table_exists(db, "integration_workspace_mutex")
+    assert "project_id" in _column_names(db, "chat_attachments")
+    assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -107,7 +113,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 256
+    assert get_current_version(db) == 258
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -128,6 +134,8 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
         254,
         255,
         256,
+        257,
+        258,
     ]
 
 
@@ -440,6 +448,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
         "code_content_chunks",
         "checkpoints",
         "chat_messages",
+        "chat_attachments",
         "comms_messages",
         "bin_update_state",
     }
@@ -486,6 +495,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
         _column_names(db, "token_events")
     )
     assert "content_blocks_json" in _column_names(db, "chat_messages")
+    assert "project_id" in _column_names(db, "chat_attachments")
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")
@@ -536,6 +546,7 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_token_events_dedup" in _index_names(db, "token_events")
     assert "idx_cc_target" in _index_names(db, "code_calls")
     assert "idx_plans_project_state" in _index_names(db, "plans")
+    assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
     assert {
         "tool_name",
         "installed_version",
@@ -759,6 +770,45 @@ def test_migration_256_adds_cross_repo_delivery_columns(tmp_path) -> None:
     )
     assert {"delivery_mode", "delivery_target_repo"}.issubset(_column_names(db, "build_profiles"))
     assert get_current_version(db) == 256
+
+
+def test_migration_258_recreates_chat_attachments_with_project_scope(tmp_path) -> None:
+    db = LocalDatabase(tmp_path / "project-scoped-chat-attachments.db")
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO schema_version (version) VALUES (257)")
+    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
+    db.execute(
+        """
+        CREATE TABLE chat_attachments (
+            id TEXT PRIMARY KEY,
+            draft_id TEXT,
+            conversation_id TEXT,
+            message_id TEXT,
+            target_session_id TEXT,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+            local_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            bound_at TEXT
+        )
+        """
+    )
+    db.execute(
+        """
+        INSERT INTO chat_attachments (id, filename, mime_type, size_bytes, local_path)
+        VALUES ('att-old', 'old.txt', 'text/plain', 3, '/tmp/old.txt')
+        """
+    )
+    migration_258 = [item for item in MIGRATIONS if item[0] == 258]
+
+    assert _run_migration_list(db, 257, migration_258) == 1
+
+    assert "project_id" in _column_names(db, "chat_attachments")
+    assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert db.fetchall("SELECT * FROM chat_attachments") == []
+    assert get_current_version(db) == 258
 
 
 def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:
