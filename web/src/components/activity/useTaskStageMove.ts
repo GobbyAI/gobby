@@ -10,9 +10,9 @@ import { optimisticMoveTaskToStage } from "../../lib/stageActions";
  * Mirrors the D4 `useTaskInlineEdit` contract: the hook owns no task store.
  * The host (TasksTab) injects snapshot lookup, its own optimistic-apply, a
  * rollback, and the PATCH transport, so there is no second store and no extra
- * fetch. `moveTaskToStage` is the exact `LifecycleBoard.onMoveTaskToStage`
- * signature, so the existing board/StageCard error-tooltip plumbing keeps
- * working (the rejection is re-thrown after rollback).
+ * fetch. `moveTaskToStage` is the `TasksBoardView` move signature, so the
+ * board/`TasksBoardCard` error-tooltip plumbing keeps working (the rejection
+ * is re-thrown after rollback).
  */
 
 export interface StageMovePayload {
@@ -122,7 +122,7 @@ export function useTaskStageMove({
               ? `Couldn't move stage: ${error.message}`
               : "Couldn't move stage.",
         }));
-        // Re-throw so the board / StageCard surfaces the transition reason.
+        // Re-throw so the board / card surfaces the transition reason.
         throw error;
       } finally {
         setPendingKey(taskId, false);

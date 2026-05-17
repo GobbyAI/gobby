@@ -1,5 +1,5 @@
 // Shared badge components for the task system.
-// Reusable across TasksPage, TaskDetail, Kanban cards, etc.
+// Reusable across the task tree, board cards, and the detail panel.
 
 import './task-execution.css'
 

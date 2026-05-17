@@ -51,7 +51,6 @@ import {
   ProjectsPage,
   ReportsPage,
   SkillsPage,
-  TasksPage,
   TracesPage,
   WorkflowsPage,
 } from "./components/app/AppPages";
@@ -841,8 +840,6 @@ export default function App() {
               />
             ) : activeTab === "projects" ? (
               <ProjectsPage projectId={effectiveProjectId} />
-            ) : activeTab === "tasks" ? (
-              <TasksPage projectFilter={effectiveProjectId} />
             ) : activeTab === "memory" ? (
               <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "cron" ? (

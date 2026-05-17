@@ -9,7 +9,6 @@ import {
   ProjectsIcon,
   ReportsIcon,
   SkillsIcon,
-  TasksIcon,
   TracesIcon,
   WorkflowsIcon,
 } from "../icons";
@@ -22,7 +21,6 @@ export interface AppNavItem {
 }
 
 export const APP_NAV_PAGES: Array<{ id: string; label: string }> = [
-  { id: "tasks", label: "Tasks" },
   { id: "workflows", label: "Workflows" },
   { id: "reports", label: "Reports" },
   { id: "cron", label: "Cron Jobs" },
@@ -37,7 +35,6 @@ export const APP_VALID_TABS = new Set([
   "dashboard",
   "chat",
   "projects",
-  "tasks",
   "workflows",
   "reports",
   "cron",
@@ -57,7 +54,6 @@ export function createAppNavItems(): AppNavItem[] {
       icon: <ProjectsIcon />,
       separator: true,
     },
-    { id: "tasks", label: "Tasks", icon: <TasksIcon /> },
     { id: "workflows", label: "Workflows", icon: <WorkflowsIcon /> },
     { id: "cron", label: "Cron Jobs", icon: <CronIcon /> },
     { id: "reports", label: "Reports", icon: <ReportsIcon /> },
