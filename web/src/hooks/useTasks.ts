@@ -207,6 +207,34 @@ function appendIncomingTasks(current: GobbyTask[], incoming: GobbyTask[]): Gobby
   return merged
 }
 
+function previewTaskEventPayload(taskData: Record<string, unknown>): Record<string, unknown> {
+  const safeKeys = [
+    'id',
+    'ref',
+    'status',
+    'task_type',
+    'parent_task_id',
+    'created_at',
+    'updated_at',
+    'project_id',
+  ] as const
+  return Object.fromEntries(
+    safeKeys.flatMap(key => taskData[key] === undefined ? [] : [[key, taskData[key]]])
+  )
+}
+
+function warnInvalidTaskPayload(
+  event: string,
+  taskId: unknown,
+  taskData: Record<string, unknown>,
+): void {
+  console.warn('Ignoring invalid task event payload', {
+    event,
+    taskId,
+    taskData: previewTaskEventPayload(taskData),
+  })
+}
+
 function applyTaskEvent(
   tasks: GobbyTask[],
   event: string,
@@ -217,13 +245,19 @@ function applyTaskEvent(
     return tasks.filter(task => task.id !== taskId)
   }
   if (event === 'task_created') {
-    if (!isRawTaskPayload(taskData)) return tasks
+    if (!isRawTaskPayload(taskData)) {
+      warnInvalidTaskPayload(event, taskId, taskData)
+      return tasks
+    }
     const newTask = normalizeTask(taskData)
     if (tasks.some(task => task.id === taskId)) return tasks
     return [...tasks, newTask]
   }
 
-  if (!isRawTaskPayload(taskData)) return tasks
+  if (!isRawTaskPayload(taskData)) {
+    warnInvalidTaskPayload(event, taskId, taskData)
+    return tasks
+  }
   const updated = taskData
   return tasks.map(task =>
     task.id === taskId ? normalizeTask({ ...task, ...updated }) : task

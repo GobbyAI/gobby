@@ -883,4 +883,77 @@ describe('useTasks', () => {
 
     await waitFor(() => expect(mockFetch.fn).toHaveBeenCalledTimes(1))
   })
+
+  it('warns before ignoring invalid task_created payloads', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const taskEventHandler = mockUseWebSocketEvent.mock.calls.find(
+      ([eventType]) => eventType === 'task_event',
+    )?.[1]
+
+    act(() => {
+      taskEventHandler?.({
+        event: 'task_created',
+        task_id: 'task-invalid',
+        task: {
+          id: 123,
+          title: 'Sensitive title should not be logged',
+          project_id: 'proj-1',
+        },
+      })
+    })
+
+    expect(result.current.allTasks.map(task => task.title)).not.toContain(
+      'Sensitive title should not be logged',
+    )
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Ignoring invalid task event payload',
+      expect.objectContaining({
+        event: 'task_created',
+        taskId: 123,
+        taskData: {
+          id: 123,
+          project_id: 'proj-1',
+        },
+      }),
+    )
+  })
+
+  it('warns before ignoring invalid task update payloads', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const taskEventHandler = mockUseWebSocketEvent.mock.calls.find(
+      ([eventType]) => eventType === 'task_event',
+    )?.[1]
+
+    act(() => {
+      taskEventHandler?.({
+        event: 'task_updated',
+        task_id: 'task-1',
+        task: {
+          id: 'task-1',
+          assignee: 123,
+          title: 'Sensitive title should not be logged',
+          project_id: 'proj-1',
+        },
+      })
+    })
+
+    expect(result.current.allTasks.find(task => task.id === 'task-1')?.title).toBe('Fix bug')
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Ignoring invalid task event payload',
+      expect.objectContaining({
+        event: 'task_updated',
+        taskId: 'task-1',
+        taskData: {
+          id: 'task-1',
+          project_id: 'proj-1',
+        },
+      }),
+    )
+  })
 })

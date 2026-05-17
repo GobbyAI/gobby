@@ -51,6 +51,36 @@ export function mergeTasksById(...taskGroups: GobbyTask[][]): GobbyTask[] {
   return [...taskMap.values()];
 }
 
+type AncestorOperation =
+  | "fetch"
+  | "parse"
+  | "extractTaskPayload"
+  | "normalizeActivityTask"
+  | "enqueueParent";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function sanitizeTaskForLogging(task: unknown): Record<string, unknown> {
+  const source = isRecord(task) && isRecord(task.task) ? task.task : task;
+  if (!isRecord(source)) return { payloadType: typeof task };
+
+  const safeKeys = [
+    "id",
+    "ref",
+    "status",
+    "task_type",
+    "parent_task_id",
+    "created_at",
+    "updated_at",
+    "project_id",
+  ] as const;
+  return Object.fromEntries(
+    safeKeys.flatMap((key) => (source[key] === undefined ? [] : [[key, source[key]]])),
+  );
+}
+
 export async function fetchMissingTaskAncestors(
   baseUrl: string,
   seedTasks: GobbyTask[],
@@ -71,18 +101,14 @@ export async function fetchMissingTaskAncestors(
 
   const logAncestorFailure = (
     parentId: string,
-    operation: "fetch" | "extractTaskPayload" | "normalizeActivityTask" | "enqueueParent",
+    operation: AncestorOperation,
     error: unknown,
   ) => {
     console.error("Failed to fetch task ancestor", { parentId, operation, error });
   };
 
   for (const task of seedTasks) {
-    try {
-      enqueueParent(task);
-    } catch (error) {
-      logAncestorFailure(task.parent_task_id ?? task.id, "enqueueParent", error);
-    }
+    enqueueParent(task);
   }
 
   while (parentQueue.length > 0) {
@@ -90,41 +116,33 @@ export async function fetchMissingTaskAncestors(
     if (!parentId || signal.aborted) break;
     queuedParentIds.delete(parentId);
 
+    let operation: AncestorOperation = "fetch";
     try {
-      let response: Response;
-      try {
-        response = await fetch(
-          `${baseUrl}/api/tasks/${encodeURIComponent(parentId)}`,
-          { signal },
-        );
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") throw error;
-        logAncestorFailure(parentId, "fetch", error);
-        continue;
-      }
+      const response = await fetch(
+        `${baseUrl}/api/tasks/${encodeURIComponent(parentId)}`,
+        { signal },
+      );
       if (!response.ok) continue;
+
+      operation = "parse";
       const data = await response.json();
+
+      operation = "extractTaskPayload";
       const raw = extractTaskPayload(data);
       if (!raw) {
-        logAncestorFailure(parentId, "extractTaskPayload", data);
+        logAncestorFailure(parentId, "extractTaskPayload", sanitizeTaskForLogging(data));
         continue;
       }
-      let parentTask: GobbyTask;
-      try {
-        parentTask = normalizeActivityTask(raw, taskMap.get(parentId) ?? null);
-      } catch (error) {
-        logAncestorFailure(parentId, "normalizeActivityTask", error);
-        continue;
-      }
+
+      operation = "normalizeActivityTask";
+      const parentTask = normalizeActivityTask(raw, taskMap.get(parentId) ?? null);
       taskMap.set(parentTask.id, parentTask);
-      try {
-        enqueueParent(parentTask);
-      } catch (error) {
-        logAncestorFailure(parentId, "enqueueParent", error);
-      }
+
+      operation = "enqueueParent";
+      enqueueParent(parentTask);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
-      logAncestorFailure(parentId, "fetch", err);
+      logAncestorFailure(parentId, operation, err);
     }
   }
 

@@ -17,6 +17,12 @@ MAX_PROXY_ATTACHMENT_COUNT = 10
 MAX_PROXY_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
+def _format_attachment_size_limit(byte_count: int) -> str:
+    if byte_count % (1024 * 1024) == 0:
+        return f"{byte_count // (1024 * 1024)} MB"
+    return f"{byte_count} bytes"
+
+
 def _safe_path_part(value: str, fallback: str) -> str:
     cleaned = value.replace("\x00", "").replace("/", "_").replace("\\", "_")
     cleaned = cleaned.lstrip(".")
@@ -56,7 +62,7 @@ def _declared_attachment_size(item: dict[str, Any], raw_name: str, raw_data: str
         return _estimated_base64_size(raw_data)
     if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size < 0:
         raise ValueError(f"Attachment {raw_name!r} has invalid size metadata")
-    return raw_size
+    return int(raw_size)
 
 
 def _validate_attachment_limits(attachments: list[Any]) -> list[tuple[str, str]]:
@@ -75,7 +81,8 @@ def _validate_attachment_limits(attachments: list[Any]) -> list[tuple[str, str]]
             raise ValueError(f"Attachment {raw_name!r} exceeds 25 MB")
         total_size += size
         if total_size > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
-            raise ValueError("Attachments exceed 25 MB total")
+            limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
+            raise ValueError(f"Attachments exceed {limit} total")
         prepared.append((raw_name, raw_data))
     return prepared
 
@@ -102,7 +109,8 @@ async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> li
         for raw_name, raw_data in prepared_attachments
     ]
     if sum(len(content) for _, content in decoded_attachments) > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
-        raise ValueError("Attachments exceed 25 MB total")
+        limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
+        raise ValueError(f"Attachments exceed {limit} total")
 
     target_dir = get_gobby_home() / "attachments" / "attached-sessions" / safe_session
     await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)

@@ -62,7 +62,8 @@ async def test_store_proxy_attachments_rejects_declared_total_size_before_writin
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr(attachment_helpers, "MAX_PROXY_TOTAL_ATTACHMENT_BYTES", 5)
 
-    with pytest.raises(ValueError, match="exceed 25 MB total"):
+    limit = attachment_helpers.MAX_PROXY_TOTAL_ATTACHMENT_BYTES
+    with pytest.raises(ValueError, match=rf"exceed {limit} bytes total"):
         await store_proxy_attachments(
             "session-1",
             [
@@ -82,7 +83,8 @@ async def test_store_proxy_attachments_rejects_estimated_total_size_before_writi
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr(attachment_helpers, "MAX_PROXY_TOTAL_ATTACHMENT_BYTES", 4)
 
-    with pytest.raises(ValueError, match="exceed 25 MB total"):
+    limit = attachment_helpers.MAX_PROXY_TOTAL_ATTACHMENT_BYTES
+    with pytest.raises(ValueError, match=rf"exceed {limit} bytes total"):
         await store_proxy_attachments(
             "session-1",
             [
