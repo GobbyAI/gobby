@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { BuildState, GobbyTask } from "../../hooks/useTasks";
 import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
 
 export type TaskMenuAction =
@@ -38,19 +38,6 @@ interface TaskQuickMenuProps {
   onReopenTask: () => void;
 }
 
-function hasBuildEvidence(task: GobbyTask): boolean {
-  const hasStageEvidence =
-    Boolean(task.current_stage) ||
-    Boolean(task.state?.current_stage) ||
-    (task.stages?.length ?? 0) > 0;
-  const hasBuildConfig =
-    Boolean(task.assigned_agent) ||
-    (task.additional_skills?.length ?? 0) > 0 ||
-    Boolean(task.yolo) ||
-    Boolean(task.isolation && task.isolation !== "none");
-  return hasStageEvidence || hasBuildConfig || (task.dispatch_failure_count ?? 0) > 0;
-}
-
 export function TaskQuickMenu({
   menu,
   chatSessionId,
@@ -69,11 +56,10 @@ export function TaskQuickMenu({
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
-  const buildRunning = task.allow_automation === true;
-  const buildPaused = !isClosed && !buildRunning && hasBuildEvidence(task);
-  const showStartBuild = !isClosed && !buildRunning && !buildPaused;
-  const showStopBuild = !isClosed && buildRunning;
-  const showResumeBuild = !isClosed && buildPaused;
+  const buildState: BuildState = task.build_state ?? "never_started";
+  const showStartBuild = !isClosed && buildState === "never_started";
+  const showStopBuild = !isClosed && buildState === "running";
+  const showResumeBuild = !isClosed && buildState === "paused";
   const showBuildControls = showStartBuild || showStopBuild || showResumeBuild;
   const menuStyle: CSSProperties = {
     position: "fixed",

@@ -65,7 +65,16 @@ export interface GobbyTask extends LifecycleTask {
   dispatch_failure_count?: number | null
   additional_skills?: string[] | null
   assigned_agent?: string | null
+  /**
+   * Definitive build lifecycle state from the backend (allow_automation +
+   * durable `gobby build` lifecycle event). Replaces the old client-side
+   * hasBuildEvidence heuristic. Optional only for resilience against an
+   * older payload; the serializer always populates it.
+   */
+  build_state?: BuildState | null
 }
+
+export type BuildState = 'never_started' | 'running' | 'paused'
 
 export interface GobbyTaskDetail extends GobbyTask {
   description: string | null

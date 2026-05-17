@@ -411,6 +411,8 @@ describe("TasksTab — events and row actions", () => {
     const activeBuildTask = {
       ...taskList[0],
       allow_automation: true,
+      // Automation on -> backend derives a running build_state.
+      build_state: "running",
     };
     setupTaskRoutes([activeBuildTask]);
     mockFetch.mockJsonResponse("/api/build/stop", { success: true });

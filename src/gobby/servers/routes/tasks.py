@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gobby.build.lifecycle import derive_build_state
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
@@ -219,6 +220,23 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
         return grouped
 
+    def _apply_build_state(task_dicts: list[dict[str, Any]]) -> None:
+        """Attach a definitive build_state to each serialized task.
+
+        Derived from allow_automation + the durable ``gobby build`` lifecycle
+        event — never from planning scaffolding (stages/agent/isolation) or
+        dispatch_failure_count, which misclassify a cleanly stopped build.
+        """
+        if not task_dicts:
+            return
+        ids = [item["id"] for item in task_dicts]
+        built = server.task_manager.lifecycle_events.tasks_with_build_event(ids)
+        for item in task_dicts:
+            item["build_state"] = derive_build_state(
+                allow_automation=bool(item.get("allow_automation")),
+                has_build_event=item["id"] in built,
+            )
+
     def _normalize_stage_filters(values: list[str] | None) -> list[str]:
         if not values:
             return []
@@ -397,6 +415,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
+            _apply_build_state(task_dicts)
 
             state_counts = server.task_manager.count_by_state(project_id=resolved_project)
             return {
@@ -444,7 +463,14 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Get a task by ID, seq_num (#N), or path (1.2.3)."""
         try:
             task = _resolve_task(task_id)
-            return task.to_dict()
+            data = task.to_dict()
+            data["build_state"] = derive_build_state(
+                allow_automation=bool(task.allow_automation),
+                has_build_event=server.task_manager.lifecycle_events.has_build_event(
+                    task.id
+                ),
+            )
+            return data
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
