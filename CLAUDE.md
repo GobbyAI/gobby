@@ -293,10 +293,11 @@ src/gobby/
 ### Templates vs Active Enforcement
 
 Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) are **templates**.
-They are bundled with the software and synced to the `workflow_definitions` DB table on first
-startup with `enabled: true` by default. Existing DB rows are never overwritten — drift is
-detected via hash comparison at runtime. The DB is the source of truth for what's active,
-not the YAML template files.
+They are bundled with the software and synced into DB registry tables on startup. On first
+install, template `enabled` values seed the installed rows. After that, Gobby-owned bundled
+rows are refreshed from templates when definition drift is detected, while preserving the
+user's enabled toggle for normal drift refreshes. User/project-owned rows are preserved.
+The DB is the source of truth for what's active, not the YAML template files.
 
 ### Dispatch Architecture
 
