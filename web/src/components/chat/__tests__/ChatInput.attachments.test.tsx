@@ -1,0 +1,113 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { ChatInput } from '../ChatInput'
+
+class MockXMLHttpRequest {
+  static instances: MockXMLHttpRequest[] = []
+
+  upload: { onprogress?: (event: ProgressEvent) => void } = {}
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+  onabort: (() => void) | null = null
+  status = 0
+  statusText = ''
+  responseText = ''
+  requestBody: XMLHttpRequestBodyInit | null = null
+  withCredentials = false
+
+  constructor() {
+    MockXMLHttpRequest.instances.push(this)
+  }
+
+  open = vi.fn()
+
+  send(body?: XMLHttpRequestBodyInit | null) {
+    this.requestBody = body ?? null
+  }
+
+  respond(body: unknown, status = 200) {
+    this.status = status
+    this.responseText = JSON.stringify(body)
+    this.onload?.()
+  }
+}
+
+describe('ChatInput attachments', () => {
+  const originalXHR = globalThis.XMLHttpRequest
+  const originalFileReader = globalThis.FileReader
+
+  beforeEach(() => {
+    MockXMLHttpRequest.instances = []
+    vi.stubGlobal('XMLHttpRequest', MockXMLHttpRequest)
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(
+      '00000000-0000-4000-8000-000000000001',
+    )
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.stubGlobal('XMLHttpRequest', originalXHR)
+    vi.stubGlobal('FileReader', originalFileReader)
+  })
+
+  it('uploads selected files with multipart form data without FileReader base64', async () => {
+    const readAsDataURL = vi.fn()
+    vi.stubGlobal('FileReader', vi.fn(() => ({ readAsDataURL })))
+    const onSend = vi.fn()
+    const { container } = render(<ChatInput onSend={onSend} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    const xhr = MockXMLHttpRequest.instances[0]
+    expect(xhr.requestBody).toBeInstanceOf(FormData)
+    expect(readAsDataURL).not.toHaveBeenCalled()
+
+    xhr.respond({
+      id: 'att-1',
+      filename: 'note.txt',
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      content_url: '/api/chat/attachments/att-1/content',
+    })
+
+    await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
+    fireEvent.click(screen.getByTitle('Send message'))
+
+    expect(onSend).toHaveBeenCalledWith(
+      '',
+      [
+        expect.objectContaining({
+          attachment: expect.objectContaining({ id: 'att-1' }),
+          status: 'uploaded',
+        }),
+      ],
+      expect.any(Object),
+    )
+  })
+
+  it('keeps submit disabled until upload finishes', async () => {
+    const onSend = vi.fn()
+    const { container } = render(<ChatInput onSend={onSend} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    const sendButton = screen.getByTitle('Send message')
+
+    expect(sendButton).toBeDisabled()
+    fireEvent.click(sendButton)
+    expect(onSend).not.toHaveBeenCalled()
+
+    MockXMLHttpRequest.instances[0].respond({
+      id: 'att-1',
+      filename: 'note.txt',
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      content_url: '/api/chat/attachments/att-1/content',
+    })
+
+    await waitFor(() => expect(sendButton).not.toBeDisabled())
+  })
+})

@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from gobby.storage.bin_update_state import BIN_UPDATE_STATE_SCHEMA
+from gobby.storage.chat_attachments import CHAT_ATTACHMENTS_SCHEMA
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migration_helpers import (
     _setup_code_content_fts,
@@ -462,6 +463,13 @@ def _apply_chat_message_content_blocks_schema(db: LocalDatabase) -> None:
         db.execute("ALTER TABLE chat_messages ADD COLUMN content_blocks_json TEXT")
 
 
+def _apply_chat_attachments_schema(db: LocalDatabase) -> None:
+    for statement in CHAT_ATTACHMENTS_SCHEMA.strip().split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
+
+
 def _apply_linear_project_binding_schema(db: LocalDatabase) -> None:
     columns = {row["name"] for row in db.fetchall("PRAGMA table_info(projects)")}
     if "linear_project_id" not in columns:
@@ -746,6 +754,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Add cross-repo delivery profile and campaign metadata",
         _apply_cross_repo_delivery_profile_schema,
     ),
+    (257, "Add stored chat attachments", _apply_chat_attachments_schema),
 ]
 
 

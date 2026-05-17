@@ -439,9 +439,18 @@ describe("useChat proxy session messaging", () => {
         {
           id: "file-1",
           file,
-          base64: "aGVsbG8=",
-          status: "ready",
-        } as any,
+          previewUrl: null,
+          status: "uploaded",
+          progress: 1,
+          attachment: {
+            id: "att-1",
+            filename: "note.txt",
+            mime_type: "text/plain",
+            size_bytes: 5,
+            content_url: "/api/chat/attachments/att-1/content",
+          },
+          error: null,
+        },
       ]);
     });
 
@@ -454,10 +463,7 @@ describe("useChat proxy session messaging", () => {
       content: "inspect this",
       attachments: [
         {
-          name: "note.txt",
-          mime_type: "text/plain",
-          size: 5,
-          base64: "aGVsbG8=",
+          id: "att-1",
         },
       ],
     });

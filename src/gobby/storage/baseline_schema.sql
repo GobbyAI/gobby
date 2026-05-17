@@ -1485,6 +1485,29 @@ CREATE TABLE chat_messages (
 
 CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
 
+CREATE TABLE chat_attachments (
+    id TEXT PRIMARY KEY,
+    draft_id TEXT,
+    conversation_id TEXT,
+    message_id TEXT,
+    target_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+    local_path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    bound_at TEXT
+);
+
+CREATE INDEX idx_chat_attachments_draft ON chat_attachments(draft_id);
+
+CREATE INDEX idx_chat_attachments_conversation ON chat_attachments(conversation_id);
+
+CREATE INDEX idx_chat_attachments_message ON chat_attachments(message_id);
+
+CREATE INDEX idx_chat_attachments_target_session ON chat_attachments(target_session_id);
+
 CREATE TABLE checkpoints (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

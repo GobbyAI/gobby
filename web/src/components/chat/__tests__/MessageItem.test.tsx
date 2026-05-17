@@ -167,6 +167,81 @@ describe('MessageItem', () => {
     expect(img.getAttribute('src')).toBe('https://example.test/generated.png')
   })
 
+  it('renders stored image attachments inline', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-img',
+                filename: 'screen.png',
+                mime_type: 'image/png',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-img/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    const img = screen.getByAltText('screen.png')
+    expect(img.getAttribute('src')).toBe('/api/chat/attachments/att-img/content')
+  })
+
+  it('renders stored PDF attachments in an embedded viewer', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-pdf',
+                filename: 'plan.pdf',
+                mime_type: 'application/pdf',
+                size_bytes: 2048,
+                content_url: '/api/chat/attachments/att-pdf/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByTitle('plan.pdf')).toBeTruthy()
+    expect(screen.getByText('Open')).toBeTruthy()
+  })
+
+  it('renders stored document attachments as file cards', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-doc',
+                filename: 'notes.txt',
+                mime_type: 'text/plain',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-doc/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(screen.getByText('Download')).toBeTruthy()
+  })
+
   it('shows streaming cursor when isStreaming', () => {
     const { container } = render(
       <MessageItem message={makeMessage()} isStreaming={true} />,

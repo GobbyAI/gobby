@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type {
   ChatMessage,
   ChatMode,
+  ContentBlock,
   FallbackContextMode,
   QueuedFile,
 } from "../../types/chat";
@@ -34,6 +35,23 @@ interface UseChatActionsParams extends Record<string, any> {
   }) => Promise<string | null>;
   setConversationSwitchKey: Setter<number>;
   setMessages: Setter<ChatMessage[]>;
+}
+
+function attachmentPayload(files?: QueuedFile[]): Array<{ id: string }> {
+  return (files ?? [])
+    .filter((qf) => qf.attachment)
+    .map((qf) => ({ id: qf.attachment!.id }));
+}
+
+function userContentBlocks(content: string, files?: QueuedFile[]): ContentBlock[] | undefined {
+  const blocks: ContentBlock[] = [];
+  if (content.trim()) blocks.push({ type: "text", content });
+  for (const qf of files ?? []) {
+    if (qf.attachment) {
+      blocks.push({ type: "attachment", attachment: qf.attachment });
+    }
+  }
+  return blocks.length > 0 ? blocks : undefined;
 }
 
 export function useChatActions(params: UseChatActionsParams) {
@@ -660,6 +678,7 @@ const sendMessage = useCallback(
       pendingMessagesRef.current.push({
         content,
         model,
+        files,
         projectId,
         reasoningEffort: normalizedReasoningEffort,
         ttsEnabled,
@@ -673,6 +692,7 @@ const sendMessage = useCallback(
           role: "user" as const,
           content,
           toolCalls: [],
+          contentBlocks: userContentBlocks(content, files),
           timestamp: new Date(),
         },
       ]);
@@ -703,25 +723,19 @@ const sendMessage = useCallback(
           id: messageId,
           role: "user",
           content,
+          contentBlocks: userContentBlocks(content, files),
           timestamp: new Date(),
         },
       ]);
       setProxyDeliveryNotice(null);
-      const attachmentPayload = (files ?? [])
-        .filter((qf) => qf.base64)
-        .map((qf) => ({
-          name: qf.file.name,
-          mime_type: qf.file.type || "application/octet-stream",
-          size: qf.file.size,
-          base64: qf.base64,
-        }));
+      const attachments = attachmentPayload(files);
       wsRef.current.send(
         JSON.stringify({
           type: "send_to_cli_session",
           session_id: proxySessionId,
           content,
           client_message_id: clientMessageId,
-          attachments: attachmentPayload,
+          attachments,
         }),
       );
       return true;
@@ -737,6 +751,7 @@ const sendMessage = useCallback(
         id: messageId,
         role: "user",
         content,
+        contentBlocks: userContentBlocks(content, files),
         timestamp: new Date(),
       },
     ]);
@@ -775,29 +790,9 @@ const sendMessage = useCallback(
       payload.provider = selectedProviderRef.current;
     }
 
-    if (files && files.length > 0) {
-      const contentBlocks: Array<Record<string, unknown>> = [];
-      for (const qf of files) {
-        if (qf.file.type.startsWith("image/") && qf.base64) {
-          contentBlocks.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: qf.file.type,
-              data: qf.base64,
-            },
-          });
-        } else if (qf.base64) {
-          contentBlocks.push({
-            type: "text",
-            text: `[File: ${qf.file.name}]\n${atob(qf.base64)}`,
-          });
-        }
-      }
-      if (content) {
-        contentBlocks.push({ type: "text", text: content });
-      }
-      payload.content_blocks = contentBlocks;
+    const attachments = attachmentPayload(files);
+    if (attachments.length > 0) {
+      payload.attachments = attachments;
     }
 
     console.log("Sending WebSocket message:", payload);

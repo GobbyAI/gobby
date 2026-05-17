@@ -106,6 +106,7 @@ export type ContentBlock =
   | { type: "thinking"; content: string }
   | { type: "tool_chain"; tool_calls: ToolCall[] }
   | { type: "tool_reference"; tool_name: string; server_name: string }
+  | { type: "attachment"; attachment: ChatAttachment }
   | {
       type: "image";
       source?: { media_type?: string; data?: string; [key: string]: unknown };
@@ -148,11 +149,22 @@ export interface ChatMessage {
   contentBlocks?: ContentBlock[];
 }
 
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  content_url: string;
+}
+
 export interface QueuedFile {
   id: string;
   file: File;
   previewUrl: string | null;
-  base64: string | null;
+  status: "uploading" | "uploaded" | "error";
+  progress: number | null;
+  attachment: ChatAttachment | null;
+  error: string | null;
 }
 
 export interface ChatSendOptions {

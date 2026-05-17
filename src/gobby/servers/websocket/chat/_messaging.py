@@ -19,6 +19,10 @@ from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import (
     LocalOpenAIModelWarmupError,
 )
+from gobby.servers.websocket.chat_attachments import (
+    PreparedMessageAttachments,
+    prepare_message_attachments,
+)
 from gobby.servers.websocket.db import run_db
 
 logger = logging.getLogger(__name__)
@@ -213,6 +217,8 @@ class ChatMessagingMixin:
         conversation_id = data.get("conversation_id") or str(uuid4())
         model = data.get("model")
         request_id = data.get("request_id", "")
+        raw_message_id = data.get("message_id")
+        message_id = raw_message_id if isinstance(raw_message_id, str) else None
         project_id = data.get("project_id")
         provider = data.get("provider")
         reasoning_effort = data.get("reasoning_effort")
@@ -260,6 +266,18 @@ class ChatMessagingMixin:
             for value in [pending_inject_context, explicit_inject_context]
             if isinstance(value, str) and value.strip()
         ]
+        try:
+            prepared_attachments = await prepare_message_attachments(
+                self,
+                data.get("attachments"),
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+        except ValueError as exc:
+            await self._send_error(websocket, str(exc), request_id=request_id)
+            return
+        if prepared_attachments.prompt_context:
+            inject_parts.append(prepared_attachments.prompt_context)
         inject_context = "\n\n".join(inject_parts) if inject_parts else None
 
         # Cancel any active stream for this conversation
@@ -278,6 +296,7 @@ class ChatMessagingMixin:
                 provider=provider,
                 reasoning_effort=reasoning_effort,
                 tts_enabled=tts_enabled if isinstance(tts_enabled, bool) else None,
+                attachments=prepared_attachments,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -307,6 +326,7 @@ class ChatMessagingMixin:
         provider: str | None = None,
         reasoning_effort: str | None = None,
         tts_enabled: bool | None = None,
+        attachments: PreparedMessageAttachments | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -547,7 +567,16 @@ class ChatMessagingMixin:
 
             # Persist user message to database
             user_text = content if isinstance(content, str) else json.dumps(content)
-            await _persist_message(session, "user", user_text)
+            user_content_blocks: list[dict[str, Any]] | None = None
+            if attachments and attachments.records:
+                if isinstance(content, list):
+                    user_content_blocks = list(content)
+                else:
+                    user_content_blocks = (
+                        [{"type": "text", "content": content}] if content.strip() else []
+                    )
+                user_content_blocks.extend(attachments.content_blocks)
+            await _persist_message(session, "user", user_text, user_content_blocks)
 
             # Mark session as active while streaming
             db_sid = getattr(session, "db_session_id", None)

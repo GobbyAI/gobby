@@ -1,7 +1,8 @@
 import { memo } from 'react'
-import type { ChatMessage } from '../../types/chat'
+import type { ChatAttachment, ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
+import { formatAttachmentSize, normalizeAttachmentUrl } from '../../lib/chatAttachments'
 import { MESSAGE_SPACING } from '../shared/spacing'
 import { GobbyLogo } from '../shared/GobbyLogo'
 import { Markdown } from './Markdown'
@@ -17,6 +18,40 @@ function renderImagePlaceholders(content: string): string {
     /\[Image: original (\d+)x(\d+), displayed at (\d+)x(\d+)[^\]]*\]/g,
     (_match, origW: string, origH: string) =>
       `\n\n> 🖼️ **Image** (${origW}×${origH})\n\n`,
+  )
+}
+
+function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
+  const resolved = normalizeAttachmentUrl(attachment)
+  const isImage = resolved.mime_type.startsWith('image/')
+  const isPdf = resolved.mime_type === 'application/pdf'
+
+  if (isImage) {
+    return (
+      <div className="my-2">
+        <img src={resolved.content_url} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" />
+      </div>
+    )
+  }
+
+  if (isPdf) {
+    return (
+      <div className="my-2 rounded-md border border-border overflow-hidden bg-muted/30">
+        <iframe title={resolved.filename} src={resolved.content_url} className="h-80 w-full bg-background" />
+        <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+          <span className="truncate font-medium">{resolved.filename}</span>
+          <a className="text-accent hover:underline" href={resolved.content_url} target="_blank" rel="noreferrer">Open</a>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
+      <span className="font-medium text-foreground truncate">{resolved.filename}</span>
+      <span className="text-muted-foreground">{formatAttachmentSize(resolved.size_bytes)}</span>
+      <a className="ml-auto text-accent hover:underline" href={resolved.content_url} download={resolved.filename}>Download</a>
+    </div>
   )
 }
 
@@ -180,6 +215,9 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     Referencing tool: {block.tool_name} ({block.server_name})
                   </div>
                 )
+              }
+              if (block.type === 'attachment') {
+                return <AttachmentBlock key={`${message.id}-b${i}`} attachment={block.attachment} />
               }
               if (block.type === 'image') {
                 const src = extractImageSrc(block)

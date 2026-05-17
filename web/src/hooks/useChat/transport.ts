@@ -153,7 +153,7 @@ const connect = useCallback(() => {
           sendMessageRef.current?.(
             msg.content,
             msg.model ?? null,
-            undefined,
+            msg.files,
             msg.projectId,
             undefined,
             msg.reasoningEffort,

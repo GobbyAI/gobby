@@ -15,6 +15,11 @@ from uuid import uuid4
 
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.servers.websocket.attachments import append_attachment_paths, store_proxy_attachments
+from gobby.servers.websocket.chat_attachments import (
+    append_prepared_attachment_context,
+    legacy_attachment_items,
+    prepare_message_attachments,
+)
 from gobby.servers.websocket.db import run_db
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
@@ -763,7 +768,14 @@ async def handle_send_to_cli_session(
 
     if attachment_items:
         try:
-            stored_paths = await store_proxy_attachments(str(session_id), attachment_items)
+            prepared = await prepare_message_attachments(
+                mixin,
+                attachment_items,
+                target_session_id=str(session_id),
+            )
+            content = append_prepared_attachment_context(content, prepared)
+            legacy_items = legacy_attachment_items(attachment_items)
+            stored_paths = await store_proxy_attachments(str(session_id), legacy_items)
         except ValueError as exc:
             await mixin._send_error(websocket, str(exc), code="INVALID_ATTACHMENT")
             return

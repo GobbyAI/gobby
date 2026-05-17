@@ -21,6 +21,11 @@ import {
   AUTO_REASONING_EFFORT,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
+import {
+  deleteChatAttachment,
+  formatAttachmentSize,
+  uploadChatAttachment,
+} from '../../lib/chatAttachments'
 
 interface ChatInputProps {
   onSend: (
@@ -219,9 +224,10 @@ export function ChatInput({
   useEffect(() => {
     attachmentsDisabledRef.current = attachmentsDisabled
   }, [attachmentsDisabled])
-  const clearQueuedFiles = useCallback(() => {
+  const clearQueuedFiles = useCallback((deleteUploaded = false) => {
     queuedFilesRef.current.forEach((qf) => {
       if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+      if (deleteUploaded && qf.attachment) void deleteChatAttachment(qf.attachment.id)
     })
     queuedFilesRef.current = []
     setQueuedFiles([])
@@ -235,7 +241,7 @@ export function ChatInput({
   }, [])
   useEffect(() => {
     if (attachmentsDisabled) {
-      clearQueuedFiles()
+      clearQueuedFiles(true)
     }
   }, [attachmentsDisabled, clearQueuedFiles])
 
@@ -276,6 +282,8 @@ export function ChatInput({
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim()
     const filesToSend = attachmentsDisabled ? [] : queuedFiles
+    const hasBlockingUpload = filesToSend.some((qf) => qf.status !== 'uploaded')
+    if (hasBlockingUpload) return
     const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
       if (ttsEnabled) {
@@ -319,42 +327,75 @@ export function ChatInput({
     }
   }, [onPaletteSelect, onInputChange])
 
+  const uploadQueuedFile = useCallback((id: string, file: File) => {
+    void uploadChatAttachment(file, {
+      onProgress: (progress) => {
+        setQueuedFiles((prev) =>
+          prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
+        )
+      },
+    })
+      .then((attachment) => {
+        setQueuedFiles((prev) => {
+          const stillQueued = prev.some((qf) => qf.id === id)
+          if (!stillQueued || attachmentsDisabledRef.current) {
+            void deleteChatAttachment(attachment.id)
+            return prev
+          }
+          return prev.map((qf) =>
+            qf.id === id
+              ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null }
+              : qf,
+          )
+        })
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Attachment upload failed'
+        setQueuedFiles((prev) =>
+          prev.map((qf) =>
+            qf.id === id
+              ? { ...qf, status: 'error', progress: null, attachment: null, error: message }
+              : qf,
+          ),
+        )
+      })
+  }, [])
+
   const handleFilesSelected = useCallback((files: FileList | null) => {
     if (!files || attachmentsDisabled) return
-    const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
     Array.from(files).forEach((file) => {
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        console.warn(`File "${file.name}" exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB limit, skipping`)
-        return
-      }
       const id = crypto.randomUUID()
       const isImage = file.type.startsWith('image/')
       const previewUrl = isImage ? URL.createObjectURL(file) : null
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        const base64 = result.split(',')[1] || null
-        if (attachmentsDisabledRef.current) {
-          if (previewUrl) URL.revokeObjectURL(previewUrl)
-          return
-        }
-        setQueuedFiles((prev) => [...prev, { id, file, previewUrl, base64 }])
-      }
-      reader.onerror = () => {
-        if (previewUrl) URL.revokeObjectURL(previewUrl)
-        console.error(`Failed to read file "${file.name}"`)
-      }
-      reader.readAsDataURL(file)
+      setQueuedFiles((prev) => [
+        ...prev,
+        { id, file, previewUrl, status: 'uploading', progress: null, attachment: null, error: null },
+      ])
+      uploadQueuedFile(id, file)
     })
-  }, [attachmentsDisabled])
+  }, [attachmentsDisabled, uploadQueuedFile])
 
   const removeFile = useCallback((id: string) => {
     setQueuedFiles((prev) => {
       const removed = prev.find((f) => f.id === id)
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      if (removed?.attachment) void deleteChatAttachment(removed.attachment.id)
       return prev.filter((f) => f.id !== id)
     })
   }, [])
+
+  const retryFile = useCallback((id: string) => {
+    const queued = queuedFilesRef.current.find((qf) => qf.id === id)
+    if (!queued) return
+    setQueuedFiles((prev) =>
+      prev.map((qf) =>
+        qf.id === id
+          ? { ...qf, status: 'uploading', progress: null, attachment: null, error: null }
+          : qf,
+      ),
+    )
+    uploadQueuedFile(id, queued.file)
+  }, [uploadQueuedFile])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
@@ -393,6 +434,8 @@ export function ChatInput({
     }
   }, [handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
+  const hasPendingUploads = queuedFiles.some((qf) => qf.status === 'uploading')
+  const hasUploadErrors = queuedFiles.some((qf) => qf.status === 'error')
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
   const {
@@ -559,7 +602,7 @@ export function ChatInput({
 
   const primaryButtonDisabled =
     primaryButtonKind === 'send'
-      ? !isStreaming && (disabled || !hasInput)
+      ? !isStreaming && (disabled || !hasInput || hasPendingUploads || hasUploadErrors)
       : primaryButtonKind === 'stop'
         ? false
         : disabled || !startRecording || !stopRecording || !cancelRecording
@@ -651,7 +694,7 @@ export function ChatInput({
         {queuedFiles.length > 0 && (
           <div className="flex gap-2 mb-2 flex-wrap">
             {queuedFiles.map((qf) => (
-              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
+              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted max-w-[180px]">
                 {qf.previewUrl ? (
                   <img src={qf.previewUrl} alt={qf.file.name} loading="lazy" decoding="async" className="w-16 h-16 object-cover" />
                 ) : (
@@ -660,6 +703,22 @@ export function ChatInput({
                     <span className="max-w-[100px] truncate">{qf.file.name}</span>
                   </div>
                 )}
+                <div className="px-2 pb-1 text-[10px] text-muted-foreground">
+                  <div className="truncate">{formatAttachmentSize(qf.attachment?.size_bytes ?? qf.file.size)}</div>
+                  {qf.status === 'uploading' && (
+                    <div>{qf.progress === null ? 'Uploading' : `${Math.round(qf.progress * 100)}%`}</div>
+                  )}
+                  {qf.status === 'error' && (
+                    <button
+                      type="button"
+                      className="text-destructive underline"
+                      onClick={() => retryFile(qf.id)}
+                      title={qf.error ?? 'Upload failed'}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   aria-label={`Remove ${qf.file.name}`}

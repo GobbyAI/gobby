@@ -62,7 +62,7 @@ def _declared_attachment_size(item: dict[str, Any], raw_name: str, raw_data: str
         return _estimated_base64_size(raw_data)
     if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size < 0:
         raise ValueError(f"Attachment {raw_name!r} has invalid size metadata")
-    return int(raw_size)
+    return raw_size
 
 
 def _validate_attachment_limits(attachments: list[Any]) -> list[tuple[str, str]]:

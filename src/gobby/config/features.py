@@ -273,6 +273,16 @@ class ChatConfig(FeatureDefaultConfig):
         default="plan",
         description="Default chat mode for new sessions. One of: normal, accept_edits, bypass, plan.",
     )
+    attachment_max_file_bytes: int = Field(
+        default=1_073_741_824,
+        ge=1,
+        description="Maximum size for one uploaded chat attachment in bytes.",
+    )
+    attachment_max_files_per_message: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum number of chat attachments accepted on one message.",
+    )
 
     @field_validator("default_mode")
     @classmethod
