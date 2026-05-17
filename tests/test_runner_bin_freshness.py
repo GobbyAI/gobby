@@ -47,6 +47,38 @@ async def test_bin_freshness_loop_initial_delay_interval_jitter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bin_freshness_loop_routes_updates_through_run_db() -> None:
+    sleeps: list[float] = []
+    run_db_calls: list[object] = []
+    shutdown = False
+
+    async def fake_sleep(duration: float) -> None:
+        nonlocal shutdown
+        sleeps.append(duration)
+        shutdown = True
+
+    def update_once(db: object, config: BinFreshnessConfig) -> list[object]:
+        assert config.enabled is True
+        return [db]
+
+    async def run_db(func, *args, **kwargs):
+        run_db_calls.append(func)
+        return func(*args, **kwargs)
+
+    await bin_freshness_loop(
+        object(),
+        BinFreshnessConfig(initial_delay_seconds=0, interval_seconds=10, jitter_seconds=0),
+        lambda: shutdown,
+        update_once=update_once,
+        run_db=run_db,
+        sleep=fake_sleep,
+    )
+
+    assert sleeps == [10]
+    assert run_db_calls == [update_once]
+
+
+@pytest.mark.asyncio
 async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> None:
     sleeps: list[float] = []
     updates = 0

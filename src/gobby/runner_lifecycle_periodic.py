@@ -82,6 +82,7 @@ def start_periodic_tasks(
                 runner.database,
                 bin_freshness_config,
                 lambda: runner._shutdown_requested,
+                run_db=getattr(db_executor, "run", None),
             ),
             name="bin-freshness",
         )

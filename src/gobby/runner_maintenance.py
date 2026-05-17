@@ -57,6 +57,7 @@ async def bin_freshness_loop(
     is_shutdown_requested: Callable[[], bool],
     *,
     update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,
 ) -> None:
@@ -77,7 +78,7 @@ async def bin_freshness_loop(
         )
         while not is_shutdown_requested():
             try:
-                await asyncio.to_thread(updater, db, config)
+                await _run_db(run_db, updater, db, config)
             except asyncio.CancelledError:
                 break
             except Exception as e:

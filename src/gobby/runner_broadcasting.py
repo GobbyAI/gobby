@@ -7,6 +7,7 @@ to WebSocket clients. Extracted from runner.py to reduce file size.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -186,13 +187,20 @@ def setup_pipeline_event_broadcasting(
 
             payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
             db = getattr(pipeline_executor, "db", None)
+            run_db = getattr(pipeline_executor, "run_db", None)
             try:
+                dispatch = _dispatch.on_pipeline_completed
                 if event == "pipeline_completed":
-                    await asyncio.to_thread(_dispatch.on_pipeline_completed, payload, db=db)
+                    dispatch = _dispatch.on_pipeline_completed
                 elif event == "pipeline_failed":
-                    await asyncio.to_thread(_dispatch.on_pipeline_failed, payload, db=db)
+                    dispatch = _dispatch.on_pipeline_failed
                 else:
-                    await asyncio.to_thread(_dispatch.on_pipeline_cancelled, payload, db=db)
+                    dispatch = _dispatch.on_pipeline_cancelled
+
+                if inspect.iscoroutinefunction(run_db):
+                    await run_db(dispatch, payload, db=db)
+                else:
+                    await asyncio.to_thread(dispatch, payload, db=db)
             except Exception as exc:
                 logger.warning(
                     "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",

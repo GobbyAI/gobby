@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -302,6 +303,48 @@ class TestSessionLifecycleManager:
             # s1 deferred (no summary), s2 processed (has summary)
             assert processed == 1
             assert mock_proc.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_pending_graph_memory_db_work_uses_memory_run_db(self, mock_db, mock_config):
+        """Queued graph memory DB work uses the bounded memory DB executor."""
+
+        class MemoryManagerStub:
+            def __init__(self) -> None:
+                self.kg_service = AsyncMock()
+                self.kg_service.add_to_graph.return_value = SimpleNamespace(status="success")
+                self.pending = [
+                    SimpleNamespace(id="mem-1", content="remember this", project_id="proj-1")
+                ]
+                self.marked: list[str] = []
+                self.run_db_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+            async def run_db(self, func, *args, **kwargs):
+                self.run_db_calls.append((func, args, kwargs))
+                return func(*args, **kwargs)
+
+            def get_pending_graph_memories(self, limit: int = 20):
+                assert limit == 3
+                return self.pending
+
+            def mark_graph_processed(self, memory_id: str) -> None:
+                self.marked.append(memory_id)
+
+        memory_manager = MemoryManagerStub()
+        with patch(_SESSION_MANAGER_PATCH):
+            manager = SessionLifecycleManager(mock_db, mock_config, memory_manager=memory_manager)
+
+        with patch(
+            "gobby.sessions.lifecycle.asyncio.to_thread", new_callable=AsyncMock
+        ) as to_thread:
+            processed = await manager._process_pending_graph_memories(batch_size=3)
+
+        assert processed == 1
+        assert memory_manager.marked == ["mem-1"]
+        assert [call[0] for call in memory_manager.run_db_calls] == [
+            memory_manager.get_pending_graph_memories,
+            memory_manager.mark_graph_processed,
+        ]
+        to_thread.assert_not_awaited()
 
 
 class TestBackgroundLoops:

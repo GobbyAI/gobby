@@ -719,6 +719,41 @@ class TestAgentEventBroadcasting:
             rb._agent_event_callback = old_callback
 
 
+class TestPipelineEventBroadcasting:
+    """Tests for setup_pipeline_event_broadcasting function."""
+
+    @pytest.mark.asyncio
+    async def test_terminal_dispatch_uses_pipeline_db_executor(self) -> None:
+        """Terminal pipeline hooks run through the bounded DB executor when available."""
+        from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
+
+        mock_ws_server = AsyncMock()
+        mock_pipeline_executor = MagicMock()
+        mock_pipeline_executor.db = object()
+        mock_pipeline_executor.run_db = AsyncMock()
+
+        setup_pipeline_event_broadcasting(mock_ws_server, mock_pipeline_executor)
+
+        with patch("gobby.hooks.event_handlers._dispatch.on_pipeline_completed") as handler:
+            await mock_pipeline_executor.event_callback(
+                "pipeline_completed",
+                "pe-123",
+                task_id="task-1",
+            )
+
+        mock_pipeline_executor.run_db.assert_awaited_once()
+        args, kwargs = mock_pipeline_executor.run_db.await_args
+        assert args[0] is handler
+        assert args[1].execution_id == "pe-123"
+        assert args[1].data == {"task_id": "task-1"}
+        assert kwargs == {"db": mock_pipeline_executor.db}
+        mock_ws_server.broadcast_pipeline_event.assert_awaited_once_with(
+            event="pipeline_completed",
+            execution_id="pe-123",
+            task_id="task-1",
+        )
+
+
 class TestMetricsCleanupLoop:
     """Tests for metrics_cleanup_loop function."""
 
