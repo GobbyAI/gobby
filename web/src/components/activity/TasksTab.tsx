@@ -849,6 +849,7 @@ export const TasksTab = memo(function TasksTab({
       <TasksTabToolbar
         search={search}
         onSearchChange={setSearch}
+        isMobile={isMobile}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         showFilterDropdown={showFilterDropdown}
