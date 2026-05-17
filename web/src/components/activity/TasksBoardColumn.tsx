@@ -48,11 +48,11 @@ export function TasksBoardColumn({
       data-stage-name={stageName ?? "__unstaged__"}
       aria-label={title}
       className={cn(
-        "flex w-72 shrink-0 flex-col rounded-lg border bg-[var(--bg-secondary)]",
+        "flex h-full min-h-0 w-72 shrink-0 flex-col overflow-hidden rounded-lg border bg-[var(--bg-secondary)]",
         isOver ? "border-accent" : "border-border",
       )}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span className="truncate text-[length:var(--text-sm)] font-semibold uppercase tracking-wide text-muted-foreground">
           {title}
         </span>

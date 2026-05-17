@@ -4,6 +4,7 @@ import { monitorForElements } from "@atlaskit/pragmatic-drag-and-drop/element/ad
 import type { GobbyTask } from "../../hooks/useTasks";
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
 import { canonicalBoardStage } from "../../lib/stageActions";
+import { isTaskClosed } from "../../lib/taskState";
 import { isRetiredStageName } from "../../lib/taskNormalization";
 import { TasksBoardColumn } from "./TasksBoardColumn";
 
@@ -47,10 +48,23 @@ export function TasksBoardView({
 
   const { byStage, unstaged } = useMemo(() => {
     const known = new Set(orderedStages.map((stage) => stage.name));
+    const firstStage = orderedStages[0]?.name ?? null;
+    const lastStage = orderedStages[orderedStages.length - 1]?.name ?? null;
     const grouped = new Map<string, GobbyTask[]>();
     const orphans: GobbyTask[] = [];
     for (const task of tasks) {
-      const stageName = canonicalBoardStage(task)?.name ?? null;
+      const canonical = canonicalBoardStage(task)?.name ?? null;
+      // Built tasks carry a real stage manifest. Unbuilt/backlog tasks have
+      // no stages, so place them by honest lifecycle position — closed at the
+      // terminal column, everything else at the first column — instead of a
+      // junk Unstaged lane. Category is deliberately NOT used: it only governs
+      // which stages a *build* skips, and an unbuilt task has no manifest.
+      const stageName =
+        canonical && known.has(canonical)
+          ? canonical
+          : isTaskClosed(task)
+            ? lastStage
+            : firstStage;
       if (stageName && known.has(stageName)) {
         const bucket = grouped.get(stageName);
         if (bucket) bucket.push(task);
@@ -97,7 +111,7 @@ export function TasksBoardView({
           {activeError}
         </div>
       )}
-      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto overflow-y-hidden p-3">
         {unstaged.length > 0 && (
           <TasksBoardColumn
             stageName={null}

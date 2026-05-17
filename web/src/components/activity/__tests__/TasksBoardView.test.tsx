@@ -95,7 +95,7 @@ describe("TasksBoardView (#14773 / D6)", () => {
     expect(buildColumn).not.toHaveTextContent("Plan it");
   });
 
-  it("buckets tasks with no registry stage into an Unstaged lane", () => {
+  it("places an unbuilt / unknown-stage open task in the first lifecycle column", () => {
     render(
       <TasksBoardView
         tasks={[makeTask("z", "Orphan", [stage("retired", 9, "ready")])]}
@@ -106,9 +106,36 @@ describe("TasksBoardView (#14773 / D6)", () => {
       />,
     );
 
+    // Honest lifecycle position, not a junk Unstaged lane.
+    expect(screen.getByRole("region", { name: "plan" })).toHaveTextContent(
+      "Orphan",
+    );
     expect(
-      screen.getByRole("region", { name: "Unstaged" }),
-    ).toHaveTextContent("Orphan");
+      screen.queryByRole("region", { name: "Unstaged" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("places a closed task with no stages in the terminal lifecycle column", () => {
+    const closed = {
+      ...makeTask("c", "Done thing", []),
+      closed_at: "2026-05-16T00:00:00Z",
+    } as GobbyTask;
+    render(
+      <TasksBoardView
+        tasks={[closed]}
+        stagesRegistry={registry}
+        selectedTaskId={null}
+        onSelectTask={vi.fn()}
+        onMoveTaskToStage={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "review" })).toHaveTextContent(
+      "Done thing",
+    );
+    expect(
+      screen.queryByRole("region", { name: "Unstaged" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shares selection — clicking a card calls onSelectTask", () => {
