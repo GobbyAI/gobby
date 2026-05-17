@@ -202,6 +202,8 @@ function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
     'escalated_at',
     'pre_escalation_status',
     'category',
+    'description',
+    'validation_criteria',
     'isolation',
     'assigned_agent',
   ]
@@ -218,6 +220,7 @@ function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
     (record.stages === undefined ||
       record.stages === null ||
       (Array.isArray(record.stages) && record.stages.every(isRecord))) &&
+    isStringArrayOrNull(record.labels) &&
     isStringArrayOrNull(record.additional_skills)
   )
 }

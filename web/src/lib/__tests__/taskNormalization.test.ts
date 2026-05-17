@@ -1,10 +1,38 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isRawTaskPayload,
   normalizeStageRow,
   normalizeStagesRegistryResponse,
   normalizeTaskPayload,
   parseReviewerAgentSelector,
 } from '../taskNormalization'
+
+describe('isRawTaskPayload optional field guard', () => {
+  it('accepts string, string array, and null optional task fields', () => {
+    expect(
+      isRawTaskPayload({
+        id: 'task-1',
+        description: 'Describe the task',
+        validation_criteria: null,
+        labels: ['web', 'tasks'],
+        additional_skills: null,
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects invalid optional task field values', () => {
+    const invalidPayloads = [
+      { id: 'task-1', description: 42 },
+      { id: 'task-1', validation_criteria: ['run tests'] },
+      { id: 'task-1', labels: 'web' },
+      { id: 'task-1', labels: ['web', 42] },
+    ]
+
+    invalidPayloads.forEach(payload => {
+      expect(isRawTaskPayload(payload)).toBe(false)
+    })
+  })
+})
 
 describe('normalizeStageRow display_name fallback', () => {
   it('preserves QA as an acronym when titleizing snake_case stage names', () => {
