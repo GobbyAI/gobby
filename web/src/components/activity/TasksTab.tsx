@@ -9,6 +9,7 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
 import {
@@ -27,15 +28,17 @@ import {
   compareTasksForDisplay,
   DEFAULT_FILTERS,
   filterTreeBySearch,
+  computeStagePivot,
   matchesTaskFilter,
   RECENT_CLOSED_TASK_LIMIT,
+  resolveActiveStagePivot,
   type TaskFilterKey,
 } from "./TasksTabModel";
 import {
-  TasksTabDetailPanel,
   type GobbyTaskDetail,
   type ParentTaskRef,
 } from "./TasksTabDetailPanel";
+import { TasksTabDetailSection } from "./TasksTabDetailSection";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { TaskCloseDialog } from "./TaskCloseDialog";
@@ -45,9 +48,11 @@ import {
   type TaskContextMenu,
   type TaskMenuAction,
 } from "./TaskQuickMenu";
-import { TasksTabToolbar, type TasksViewMode } from "./TasksTabToolbar";
+import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
 import { TasksBoardView } from "./TasksBoardView";
+import { TasksMobileStageChips } from "./TasksMobileStageChips";
+import { useEffectiveTasksViewMode } from "./useEffectiveTasksViewMode";
 import { useTaskStageMove } from "./useTaskStageMove";
 import {
   claimTaskForSession,
@@ -74,15 +79,6 @@ interface TasksTabProps {
   chatSessionId?: string | null;
 }
 
-const VIEW_MODE_KEY = "gobby-tasks-view-mode";
-
-function readPersistedViewMode(): TasksViewMode {
-  if (typeof window === "undefined") return "list";
-  return window.localStorage.getItem(VIEW_MODE_KEY) === "board"
-    ? "board"
-    : "list";
-}
-
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
@@ -91,9 +87,9 @@ export const TasksTab = memo(function TasksTab({
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<TasksViewMode>(
-    readPersistedViewMode,
-  );
+  const isMobile = useIsMobile();
+  const { viewMode, setViewMode, effectiveViewMode } =
+    useEffectiveTasksViewMode(isMobile);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
     () => new Set(),
@@ -426,6 +422,36 @@ export const TasksTab = memo(function TasksTab({
     [],
   );
 
+  // Mobile stage pivot drives the *same* selectedStageFilters the Filter
+  // dropdown and `filtered` use: `null` clears it, a name narrows to one stage.
+  const handleStagePivot = useCallback(
+    (stageName: string | null) => {
+      setSelectedStageFilters(
+        stageName === null
+          ? new Set(defaultStageFilters)
+          : new Set([stageName]),
+      );
+    },
+    [defaultStageFilters],
+  );
+
+  // Chips reuse the board column order and the list's own stage resolver, so
+  // a chip's count equals what tapping it shows. Logic lives in the model.
+  const stagePivot = useMemo(
+    () =>
+      computeStagePivot(
+        tasks,
+        statusFilters,
+        stagesRegistry,
+        getCurrentStageName,
+      ),
+    [stagesRegistry, statusFilters, tasks],
+  );
+  const activeStagePivot = resolveActiveStagePivot(
+    selectedStageFilters,
+    stageSelectionMatchesDefault,
+  );
+
   // Client-side filter + display ordering. The activity Tasks tree should read
   // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
@@ -541,11 +567,6 @@ export const TasksTab = memo(function TasksTab({
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(VIEW_MODE_KEY, viewMode);
-  }, [viewMode]);
 
   useEffect(() => {
     if (visibleRows.length === 0) {
@@ -850,7 +871,8 @@ export const TasksTab = memo(function TasksTab({
 
   // Board (jira) mode is full-height with no detail pane. Selection is
   // preserved across the switch, so returning to List restores the detail.
-  const showDetail = viewMode === "list" && selectedTaskId !== null;
+  // `effectiveViewMode` is always `list` on mobile (Board is desktop-only).
+  const showDetail = effectiveViewMode === "list" && selectedTaskId !== null;
 
   if (loading) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
@@ -861,6 +883,7 @@ export const TasksTab = memo(function TasksTab({
       <TasksTabToolbar
         search={search}
         onSearchChange={setSearch}
+        isMobile={isMobile}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         showFilterDropdown={showFilterDropdown}
@@ -872,6 +895,14 @@ export const TasksTab = memo(function TasksTab({
         onFiltersApply={handleFiltersApply}
         onCloseFilterDropdown={() => setShowFilterDropdown(false)}
       />
+      {isMobile && (
+        <TasksMobileStageChips
+          stages={stagePivot.chips}
+          totalCount={stagePivot.total}
+          activeStage={activeStagePivot}
+          onSelect={handleStagePivot}
+        />
+      )}
       {actionError && (
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"
@@ -887,7 +918,7 @@ export const TasksTab = memo(function TasksTab({
         className={`min-h-0 flex flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
         style={showDetail ? { height: `${topHeight}%` } : undefined}
       >
-        {viewMode === "board" ? (
+        {effectiveViewMode === "board" ? (
           <TasksBoardView
             tasks={filtered}
             stagesRegistry={stagesRegistry}
@@ -923,34 +954,19 @@ export const TasksTab = memo(function TasksTab({
 
       {/* Detail pane — List mode only; Board (jira) mode is full-height */}
       {showDetail && (
-        <div className="activity-task-detail-shell">
-          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
-            <span className="activity-task-pane-bar__title">
-              Task {headerRef ?? "—"}
-            </span>
-          </div>
-          {detailLoading ? (
-            <p className="activity-task-detail-loading">
-              Loading...
-            </p>
-          ) : taskDetail ? (
-            <TasksTabDetailPanel
-              task={taskDetail}
-              parentTask={parentTask}
-              onSelectTask={setSelectedTaskId}
-              dependencies={taskDependencies}
-              subtasks={taskSubtasks}
-              edit={inlineEdit}
-              onClaim={chatSessionId ? handleDetailClaim : undefined}
-              onRelease={handleDetailRelease}
-              claimBusy={activeTaskAction?.taskId === taskDetail.id}
-            />
-          ) : (
-            <p className="activity-task-detail-empty">
-              Task not found
-            </p>
-          )}
-        </div>
+        <TasksTabDetailSection
+          headerRef={headerRef}
+          loading={detailLoading}
+          task={taskDetail}
+          parentTask={parentTask}
+          onSelectTask={setSelectedTaskId}
+          dependencies={taskDependencies}
+          subtasks={taskSubtasks}
+          edit={inlineEdit}
+          onClaim={chatSessionId ? handleDetailClaim : undefined}
+          onRelease={handleDetailRelease}
+          claimBusy={activeTaskAction?.taskId === taskDetail?.id}
+        />
       )}
 
       {taskMenu && (

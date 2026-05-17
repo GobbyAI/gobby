@@ -5,8 +5,8 @@ import type { GobbyTask } from "../../hooks/useTasks";
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
 import { canonicalBoardStage } from "../../lib/stageActions";
 import { isTaskClosed } from "../../lib/taskState";
-import { isRetiredStageName } from "../../lib/taskNormalization";
 import { TasksBoardColumn } from "./TasksBoardColumn";
+import { getOrderedBoardStages } from "./TasksTabModel";
 
 interface TasksBoardViewProps {
   tasks: GobbyTask[];
@@ -34,15 +34,7 @@ export function TasksBoardView({
   moveErrors,
 }: TasksBoardViewProps) {
   const orderedStages = useMemo(
-    () =>
-      stagesRegistry
-        .filter((stage) => !isRetiredStageName(stage.name))
-        .slice()
-        .sort(
-          (a, b) =>
-            (a.sequence_order ?? a.position ?? 0) -
-            (b.sequence_order ?? b.position ?? 0),
-        ),
+    () => getOrderedBoardStages(stagesRegistry),
     [stagesRegistry],
   );
 
