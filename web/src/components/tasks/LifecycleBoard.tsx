@@ -96,12 +96,23 @@ export function LifecycleBoard({
         let moveResult: void | Promise<void>
         try {
           moveResult = onMoveTaskToStage(taskId, targetStageName)
-        } catch {
+        } catch (error) {
+          console.error('Failed to move lifecycle task to stage', {
+            taskId,
+            targetStageName,
+            error,
+          })
           pendingMoves.current.delete(taskId)
           return
         }
         Promise.resolve(moveResult)
-          .catch(() => undefined)
+          .catch(error => {
+            console.error('Failed to move lifecycle task to stage', {
+              taskId,
+              targetStageName,
+              error,
+            })
+          })
           .finally(() => {
             pendingMoves.current.delete(taskId)
           })

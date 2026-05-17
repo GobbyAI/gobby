@@ -7,6 +7,11 @@ import { buttonVariants } from './buttonVariants'
 export interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
+  /**
+   * Render through Radix Slot so caller-supplied elements receive button
+   * styling and state props. Loading disables the control, sets aria-busy,
+   * and injects a leading spinner before children.
+   */
   asChild?: boolean
   loading?: boolean
 }

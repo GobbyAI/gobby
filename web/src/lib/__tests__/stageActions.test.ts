@@ -169,6 +169,13 @@ describe('stageActions shared helper contract', () => {
     expect(canonicalBoardStage(moved)?.name).toBe('deploy')
   })
 
+  it('test_optimistic_move_exposes_typed_result_without_generic_cast', () => {
+    const source = readStageActionsSource()
+
+    expect(source).toMatch(/export\s+type\s+OptimisticMoveResult\b/)
+    expect(source).not.toMatch(/as\s+T\b/)
+  })
+
   it('test_module_is_only_authoring_site', () => {
     readStageActionsSource()
 

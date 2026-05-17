@@ -100,11 +100,25 @@ export function canonicalBoardStage(task: LifecycleTask): StageStateView | null 
   return currentStage(task) ?? terminalStage(task)
 }
 
+type OptimisticTaskState<T extends LifecycleTask> =
+  | T['state']
+  | (NonNullable<T['state']> & { escalation_reason: null })
+
+export type OptimisticMoveResult<T extends LifecycleTask> =
+  | T
+  | (Omit<T, 'closed_at' | 'current_stage' | 'escalated_at' | 'stages' | 'state'> & {
+    closed_at: null
+    current_stage: StageStateView | null
+    escalated_at: null
+    stages: StageStateView[]
+    state: OptimisticTaskState<T>
+  })
+
 export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   task: T,
   targetStageName: string,
   updatedAt: string = new Date().toISOString(),
-): T {
+): OptimisticMoveResult<T> {
   const target = task.stages.find(row => row.name === targetStageName)
   if (!target) return task
   const targetPosition = target.position ?? task.stages.indexOf(target)
@@ -138,5 +152,5 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
     closed_at: null,
     escalated_at: null,
     stages,
-  } as T
+  }
 }

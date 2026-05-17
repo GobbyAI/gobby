@@ -325,6 +325,35 @@ describe('LifecycleBoard Phase 6 contracts', () => {
     })
   })
 
+  it('test_move_failure_logs_context_and_clears_pending_guard', async () => {
+    const moveError = new Error('move failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onMoveTaskToStage = vi
+      .fn()
+      .mockRejectedValueOnce(moveError)
+      .mockResolvedValueOnce(undefined)
+    await renderBoard(
+      [task('task-1', 'Ready task', 'feature', [stage('build', 'ready')])],
+      onMoveTaskToStage,
+    )
+
+    dropCard('task-1', 'build', 'test')
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to move lifecycle task to stage', {
+        taskId: 'task-1',
+        targetStageName: 'test',
+        error: moveError,
+      })
+    })
+
+    dropCard('task-1', 'build', 'deploy')
+
+    await waitFor(() => {
+      expect(onMoveTaskToStage).toHaveBeenCalledTimes(2)
+    })
+  })
+
   it('test_keyboard_move_fallback_calls_move_to_stage', async () => {
     const onMoveTaskToStage = vi.fn()
     await renderBoard(

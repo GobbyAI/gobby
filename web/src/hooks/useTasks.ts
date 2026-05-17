@@ -247,6 +247,7 @@ function normalizeTaskWithStageRows(task: GobbyTask, stages: RawStagePayload[]):
 
 export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_PAGE_SIZE) {
   const [allTasks, setAllTasks] = useState<GobbyTask[]>([])
+  const allTasksRef = useRef<GobbyTask[]>([])
   const [serverTotal, setServerTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -343,6 +344,10 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const total = serverTotal
   const hasMore = allTasks.length < serverTotal
   const stats = useMemo(() => countTasksByState(allTasks), [allTasks])
+
+  useEffect(() => {
+    allTasksRef.current = allTasks
+  }, [allTasks])
 
   // Get single task detail
   const getTask = useCallback(async (taskId: string): Promise<GobbyTaskDetail | null> => {
@@ -485,10 +490,11 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const moveTaskToStage = useCallback(
     async (taskId: string, targetStageName: string): Promise<void> => {
       setError(null)
+      const previousTask = allTasksRef.current.find(task => task.id === taskId) ?? null
       setAllTasks(prev =>
         prev.map(task =>
           task.id === taskId
-            ? normalizeTask(optimisticMoveTaskToStage(task, targetStageName) as unknown as RawTaskPayload)
+            ? normalizeTask(optimisticMoveTaskToStage(task, targetStageName))
             : task
         )
       )
@@ -521,12 +527,16 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           )
         }
       } catch (errorPayload) {
-        await fetchTasks()
+        if (previousTask) {
+          setAllTasks(prev =>
+            prev.map(task => task.id === taskId ? previousTask : task)
+          )
+        }
         setError(stageMutationErrorMessage(errorPayload, 'Failed to move task'))
         throw errorPayload
       }
     },
-    [fetchTasks]
+    []
   )
 
   const startStage = useCallback(

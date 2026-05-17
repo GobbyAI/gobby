@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import re
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ def _decode_attachment_payload(item: dict[str, Any]) -> tuple[str, bytes]:
         raw_data = raw_data.split(",", 1)[1]
     try:
         content = base64.b64decode(raw_data, validate=True)
-    except Exception as exc:
+    except binascii.Error as exc:
         raise ValueError(f"Attachment {raw_name!r} has invalid base64 content") from exc
     if len(content) > MAX_PROXY_ATTACHMENT_BYTES:
         raise ValueError(f"Attachment {raw_name!r} exceeds 25 MB")
@@ -46,14 +47,17 @@ async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> li
         return []
 
     safe_session = _safe_path_part(session_id, "session")
+    decoded_attachments: list[tuple[str, bytes]] = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            raise ValueError("Attachment entries must be objects")
+        decoded_attachments.append(_decode_attachment_payload(item))
+
     target_dir = get_gobby_home() / "attachments" / "attached-sessions" / safe_session
     await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
 
     stored_paths: list[Path] = []
-    for item in attachments:
-        if not isinstance(item, dict):
-            raise ValueError("Attachment entries must be objects")
-        safe_name, content = _decode_attachment_payload(item)
+    for safe_name, content in decoded_attachments:
         target = target_dir / f"{uuid4().hex}_{safe_name}"
         await asyncio.to_thread(target.write_bytes, content)
         stored_paths.append(target)

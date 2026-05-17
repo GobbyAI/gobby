@@ -816,7 +816,7 @@ describe('useTasks', () => {
     ])
   })
 
-  it('test_move_task_to_stage_failure_refetches_and_rethrows', async () => {
+  it('test_move_task_to_stage_failure_restores_previous_task_without_refetch', async () => {
     const build = stageState('ready', 'build', 0)
     const deploy = stageState('ready', 'deploy', 1, 'optional')
     const stagedTask = {
@@ -826,7 +826,7 @@ describe('useTasks', () => {
       stages: [build, deploy],
     }
     const payload = { error: 'illegal_stage_transition', reason: 'target stage is unavailable' }
-    installFetchSpy(async (input) => {
+    const fetchSpy = installFetchSpy(async (input) => {
       const url = String(input)
       if (url.includes('/api/tasks?')) {
         return jsonResponse({ ...TASK_LIST_RESPONSE, tasks: [stagedTask], total: 1 })
@@ -842,6 +842,7 @@ describe('useTasks', () => {
 
     const { result } = renderHook(() => useTasks())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
+    fetchSpy.mockClear()
 
     let thrown: unknown
     await act(async () => {
@@ -857,6 +858,8 @@ describe('useTasks', () => {
       expect(result.current.error).toBe('target stage is unavailable')
       expect(result.current.tasks[0]?.current_stage?.name).toBe('build')
     })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain('/api/tasks/task-1/stages/deploy')
   })
 
   it('test_ws_stage_changed_refetches', async () => {

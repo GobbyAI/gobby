@@ -24,7 +24,7 @@ describe('Lifecycle board Tailwind contract', () => {
   it('test_no_accent_stripes_or_gradient_text', () => {
     const source = lifecycleSources.map(file => readFileSync(file, 'utf8')).join('\n')
 
-    expect(source).not.toMatch(/border-(left|right)|border(L|R)eft/)
+    expect(source).not.toMatch(/(?:border-(?:left|right)|border(?:Left|Right))/)
     expect(source).not.toMatch(/gradient|bg-clip-text|text-transparent/)
   })
 })

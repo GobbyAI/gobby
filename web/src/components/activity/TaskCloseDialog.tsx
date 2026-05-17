@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
 
 interface TaskCloseDialogProps {
@@ -16,11 +16,6 @@ export function TaskCloseDialog({
 }: TaskCloseDialogProps) {
   const [reason, setReason] = useState("");
   const [showReasonError, setShowReasonError] = useState(false);
-
-  useEffect(() => {
-    setReason("");
-    setShowReasonError(false);
-  }, [task?.id]);
 
   if (!task) return null;
 

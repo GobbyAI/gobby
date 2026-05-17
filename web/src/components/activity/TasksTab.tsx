@@ -891,6 +891,7 @@ export const TasksTab = memo(function TasksTab({
         />
       )}
       <TaskCloseDialog
+        key={closeDialogTask?.id ?? "none"}
         task={closeDialogTask}
         isSubmitting={activeTaskAction?.action === "close"}
         onCancel={() => setCloseDialogTask(null)}
