@@ -848,6 +848,10 @@ export const TasksTab = memo(function TasksTab({
     setSelectedTaskId(taskId);
   }, []);
 
+  // Board (jira) mode is full-height with no detail pane. Selection is
+  // preserved across the switch, so returning to List restores the detail.
+  const showDetail = viewMode === "list" && selectedTaskId !== null;
+
   if (loading) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
   }
@@ -880,8 +884,8 @@ export const TasksTab = memo(function TasksTab({
 
       {/* View pane — List or Board, sharing filter + selection */}
       <div
-        className={`min-h-0 flex flex-col ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
-        style={selectedTaskId ? { height: `${topHeight}%` } : undefined}
+        className={`min-h-0 flex flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
+        style={showDetail ? { height: `${topHeight}%` } : undefined}
       >
         {viewMode === "board" ? (
           <TasksBoardView
@@ -907,7 +911,7 @@ export const TasksTab = memo(function TasksTab({
       </div>
 
       {/* Resize handle */}
-      {selectedTaskId && (
+      {showDetail && (
         <ResizeHandle
           direction="vertical"
           onResize={setTopHeight}
@@ -917,8 +921,8 @@ export const TasksTab = memo(function TasksTab({
         />
       )}
 
-      {/* Detail pane */}
-      {selectedTaskId && (
+      {/* Detail pane — List mode only; Board (jira) mode is full-height */}
+      {showDetail && (
         <div className="activity-task-detail-shell">
           <div className="activity-task-pane-bar activity-task-pane-bar--detail">
             <span className="activity-task-pane-bar__title">
