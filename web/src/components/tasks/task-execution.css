@@ -307,6 +307,82 @@
   font-weight: var(--font-weight-medium);
 }
 
+.activity-task-close-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--surface-scrim);
+}
+
+.activity-task-close-dialog {
+  width: min(24rem, 100%);
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
+
+.activity-task-close-dialog h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.activity-task-close-dialog p {
+  margin: 0.25rem 0 0.75rem;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.activity-task-close-dialog label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.activity-task-close-reason {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  resize: vertical;
+}
+
+.activity-task-close-reason:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.activity-task-close-error {
+  margin-top: 0.4rem;
+  color: var(--color-error);
+  font-size: var(--text-xs);
+}
+
+.activity-task-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.activity-task-close-submit {
+  color: var(--color-error);
+}
+
 .activity-task-detail-shell {
   display: flex;
   flex: 1;

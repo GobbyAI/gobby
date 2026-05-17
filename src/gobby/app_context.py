@@ -72,6 +72,7 @@ class ServiceContainer:
 
     # Completion Events
     completion_registry: Any | None = None  # CompletionEventRegistry
+    wake_dispatcher: Any | None = None  # WakeDispatcher
 
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor

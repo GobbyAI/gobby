@@ -65,6 +65,7 @@ def setup_internal_registries(
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_sync_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
+    wake_dispatcher: Any | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
     mcp_manager: Any | None = None,
@@ -282,6 +283,7 @@ def setup_internal_registries(
                 command_manager=AgentCommandManager(db),
                 session_var_manager=SessionVariableManager(db),
                 db=db,
+                wake_dispatcher=wake_dispatcher,
             )
             logger.debug("Agent messaging tools added to agents registry")
 

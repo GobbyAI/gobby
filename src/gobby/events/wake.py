@@ -91,6 +91,25 @@ class WakeDispatcher:
         if not self._send_ism(session_id, message, result):
             return
 
+        await self.dispatch_live_wake(session_id, session=session)
+
+    async def dispatch_live_wake(
+        self,
+        session_id: str,
+        *,
+        session: Any | None = None,
+    ) -> dict[str, Any]:
+        """Send a live wake signal after durable mailbox storage is complete."""
+        session = session or self._session_manager.get(session_id)
+        if session is None:
+            logger.warning(f"Cannot wake session {session_id}: not found")
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": None,
+                "error": "session_not_found",
+            }
+
         agent_depth = getattr(session, "agent_depth", 0) or 0
         terminal_context = getattr(session, "terminal_context", None)
 
@@ -107,12 +126,23 @@ class WakeDispatcher:
                             tmux_socket_path,
                         )
                         self._record_pane_wake(session_id, session)
+                        return {
+                            "session_id": session_id,
+                            "delivered": True,
+                            "method": "tmux_pane",
+                        }
                     except Exception:
                         logger.warning(
                             f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
                             exc_info=True,
                         )
-            return
+                        return {
+                            "session_id": session_id,
+                            "delivered": False,
+                            "method": "tmux_pane",
+                            "error": "tmux_pane_wake_failed",
+                        }
+            return {"session_id": session_id, "delivered": False, "method": None}
 
         # Terminal agent → try tmux, then SDK. Both are wake signals only.
         if terminal_context and self._tmux_sender:
@@ -120,7 +150,11 @@ class WakeDispatcher:
             if tmux_session_name:
                 try:
                     await self._tmux_sender(tmux_session_name, CONTINUE_WAKE_SIGNAL)
-                    return
+                    return {
+                        "session_id": session_id,
+                        "delivered": True,
+                        "method": "tmux",
+                    }
                 except Exception:
                     logger.warning(
                         f"tmux wake failed for session {session_id} (tmux={tmux_session_name}), trying SDK resume",
@@ -133,12 +167,24 @@ class WakeDispatcher:
             if sdk_session_id:
                 try:
                     await self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL)
-                    return
+                    return {
+                        "session_id": session_id,
+                        "delivered": True,
+                        "method": "sdk",
+                    }
                 except Exception:
                     logger.warning(
                         f"SDK resume failed for session {session_id} (sdk={sdk_session_id})",
                         exc_info=True,
                     )
+                    return {
+                        "session_id": session_id,
+                        "delivered": False,
+                        "method": "sdk",
+                        "error": "sdk_resume_failed",
+                    }
+
+        return {"session_id": session_id, "delivered": False, "method": None}
 
     def _should_send_pane_wake(self, session_id: str, session: Any) -> bool:
         """Decide whether to send a live tmux pane wake to an interactive session.

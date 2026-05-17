@@ -6,6 +6,8 @@ create_http_server() with a real LocalTaskManager backed by temp_db.
 
 from __future__ import annotations
 
+import json
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -19,6 +21,15 @@ from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+class FakeWakeDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(session_id)
+        return {"session_id": session_id, "delivered": True, "method": "fake"}
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +591,44 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] == session_id
         assert data["state"]["owner_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
+
+    def test_claim_task_creates_assignment_mailbox_message_and_wake(
+        self,
+        client: TestClient,
+        server,
+        temp_db,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        wake_dispatcher = FakeWakeDispatcher()
+        server.services.wake_dispatcher = wake_dispatcher
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        messages = temp_db.fetchall(
+            """
+            SELECT *
+              FROM inter_session_messages
+             WHERE to_session = ?
+               AND message_type = 'task_assignment'
+            """,
+            (session_id,),
+        )
+        assert len(messages) == 1
+        message = messages[0]
+        assert message["priority"] == "high"
+        assert "#1 assigned: Sample task" in message["content"]
+        metadata = json.loads(message["metadata_json"])
+        assert metadata["task_id"] == sample_task["id"]
+        assert metadata["task_ref"] == sample_task["ref"]
+        assert metadata["task_title"] == "Sample task"
+        assert metadata["assigned_session_id"] == session_id
+        assert metadata["task_status"] in {"open", "ready"}
+        assert wake_dispatcher.calls == [session_id]
 
     def test_release_task_claim(
         self,

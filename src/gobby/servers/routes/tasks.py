@@ -230,6 +230,56 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 seen.add(stage_name)
         return stage_names
 
+    async def _send_task_assignment_message(
+        *,
+        task_dict: dict[str, Any],
+        to_session_id: str,
+    ) -> None:
+        """Persist and wake a task-assignment mailbox notification."""
+        if server.session_manager is None:
+            raise RuntimeError("Session manager not available")
+
+        from gobby.sessions.mailbox import MailboxService
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+        from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+        state = task_dict.get("state") if isinstance(task_dict.get("state"), dict) else {}
+        current_stage = state.get("current_stage") if isinstance(state, dict) else None
+        if state.get("is_closed"):
+            task_status = "closed"
+        elif state.get("is_escalated"):
+            task_status = "escalated"
+        elif isinstance(current_stage, dict) and current_stage.get("state"):
+            task_status = str(current_stage["state"])
+        else:
+            task_status = "open"
+
+        metadata = {
+            "task_id": task_dict["id"],
+            "task_ref": task_dict.get("ref"),
+            "task_title": task_dict.get("title"),
+            "task_status": task_status,
+            "task_stage": current_stage,
+            "assigned_session_id": to_session_id,
+        }
+        content = f"{task_dict.get('ref', task_dict['id'])} assigned: {task_dict.get('title', '')}"
+        mailbox = MailboxService(
+            db=server.services.database,
+            message_manager=InterSessionMessageManager(server.services.database),
+            session_manager=server.session_manager,
+            wake_dispatcher=server.services.wake_dispatcher,
+        )
+        await mailbox.send(
+            from_session_id=SYSTEM_SESSION_ID,
+            to_session_id=to_session_id,
+            content=content,
+            priority="high",
+            message_type="task_assignment",
+            metadata=metadata,
+            project_id=cast(str | None, task_dict.get("project_id")),
+            include_wakeup=True,
+        )
+
     register_task_stage_routes(
         router,
         server,
@@ -485,12 +535,18 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 force=request_data.force,
             )
             result = claimed_task.to_dict()
+            await _send_task_assignment_message(
+                task_dict=result,
+                to_session_id=resolved_session_id,
+            )
             await _broadcast_task("task_claimed", result)
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{task_id}/release-claim")
     async def release_task_claim(
