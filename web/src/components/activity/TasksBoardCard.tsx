@@ -25,6 +25,8 @@ export function TasksBoardCard({
   const ref = useRef<HTMLButtonElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const isBlocked = Boolean(task.is_blocked ?? task.state?.is_blocked);
+  const taskRefLabel =
+    task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : "No ref");
 
   useEffect(() => {
     const el = ref.current;
@@ -60,7 +62,7 @@ export function TasksBoardCard({
       <span className="flex items-center gap-2 text-[length:var(--text-sm)] text-muted-foreground">
         <TypeBadge type={task.task_type} />
         <span className="font-mono text-[length:var(--text-xs)]">
-          {task.ref ?? `#${task.seq_num ?? ""}`}
+          {taskRefLabel}
         </span>
         <PriorityGlyph priority={task.priority ?? 4} />
         <StatusDot task={task} />

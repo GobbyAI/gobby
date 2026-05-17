@@ -1,5 +1,3 @@
-import { useMemo } from "react";
-
 import { SegmentedControl } from "../ui/SegmentedControl";
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -53,6 +51,21 @@ function BoardGlyph() {
   );
 }
 
+const viewOptions = [
+  {
+    value: "list" as const,
+    label: <ListGlyph />,
+    ariaLabel: "List view",
+    title: "List view",
+  },
+  {
+    value: "board" as const,
+    label: <BoardGlyph />,
+    ariaLabel: "Board view",
+    title: "Board view (lifecycle stages)",
+  },
+] as const;
+
 interface TasksTabToolbarProps {
   search: string;
   onSearchChange: (value: string) => void;
@@ -88,25 +101,6 @@ export function TasksTabToolbar({
   onFiltersApply,
   onCloseFilterDropdown,
 }: TasksTabToolbarProps) {
-  const viewOptions = useMemo(
-    () =>
-      [
-        {
-          value: "list" as const,
-          label: <ListGlyph />,
-          ariaLabel: "List view",
-          title: "List view",
-        },
-        {
-          value: "board" as const,
-          label: <BoardGlyph />,
-          ariaLabel: "Board view",
-          title: "Board view (lifecycle stages)",
-        },
-      ] as const,
-    [],
-  );
-
   return (
     <div className="activity-panel-toolbar">
       <ActivityPanelSearch

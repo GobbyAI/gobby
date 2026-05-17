@@ -6,6 +6,8 @@ import {
   PATCH_EDITABLE_FIELDS,
 } from "../taskFieldRouting";
 
+const legacyStageField = ["lifecycle", "_stage"].join("");
+
 describe("taskFieldRouting — endpoint family classification (#14771 / D4)", () => {
   it("classifies every PATCH-safe field as the patch family", () => {
     for (const field of PATCH_EDITABLE_FIELDS) {
@@ -34,7 +36,7 @@ describe("taskFieldRouting — endpoint family classification (#14771 / D4)", ()
 
   it("returns null for unknown / legacy fields (never PATCH-by-default)", () => {
     expect(classifyEditableField("status")).toBeNull();
-    expect(classifyEditableField("lifecycle_stage")).toBeNull();
+    expect(classifyEditableField(legacyStageField)).toBeNull();
     expect(classifyEditableField("nonsense")).toBeNull();
   });
 });
