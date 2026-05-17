@@ -138,6 +138,22 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     assert temp_db.fetchall("SELECT * FROM chat_attachments") == []
 
 
+def test_upload_rejects_mismatched_mime_without_persisting(
+    client: TestClient,
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("screen.png", b"%PDF-1.7\nbody", "image/png")},
+    )
+
+    assert response.status_code == 415
+    assert "application/pdf" in response.json()["detail"]
+    assert temp_db.fetchall("SELECT * FROM chat_attachments") == []
+    assert not any((tmp_path / "gobby-home").rglob("screen.png"))
+
+
 @pytest.mark.parametrize(
     ("filename", "content_type", "expected_disposition"),
     [
@@ -152,15 +168,20 @@ def test_content_route_sets_disposition_by_mime_type(
     content_type: str,
     expected_disposition: str,
 ) -> None:
+    content_by_type = {
+        "image/png": b"\x89PNG\r\n\x1a\npayload",
+        "application/pdf": b"%PDF-1.7\npayload",
+        "text/plain": b"hello",
+    }
     created = client.post(
         "/api/chat/attachments",
-        files={"file": (filename, b"hello", content_type)},
+        files={"file": (filename, content_by_type[content_type], content_type)},
     ).json()
 
     response = client.get(f"/api/chat/attachments/{created['id']}/content")
 
     assert response.status_code == 200
-    assert response.content == b"hello"
+    assert response.content == content_by_type[content_type]
     assert response.headers["content-disposition"].startswith(expected_disposition)
 
 

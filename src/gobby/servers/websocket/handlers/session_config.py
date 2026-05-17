@@ -122,7 +122,14 @@ async def _validate_persona_agent(
     if agent_body is None:
         await mixin._send_error(websocket, f"Unknown agent definition '{agent_name}'")
         return False
-    if not agent_body.supports_surface("persona"):
+    supports_surface = getattr(agent_body, "supports_surface", None)
+    if not callable(supports_surface):
+        await mixin._send_error(
+            websocket,
+            f"Agent definition '{agent_name}' is invalid: missing supports_surface",
+        )
+        return False
+    if not supports_surface("persona"):
         await mixin._send_error(
             websocket,
             f"Agent definition '{agent_name}' is not persona-capable",
@@ -185,7 +192,12 @@ async def _set_attached_session_agent(
             f"/gobby persona {agent_name}\n",
         )
     except Exception as exc:
-        logger.warning("tmux persona send_keys failed for %s: %s", tmux_pane, exc)
+        logger.warning(
+            "tmux persona send_keys failed for %s: %s",
+            tmux_pane,
+            exc,
+            exc_info=True,
+        )
         ok = False
     if not ok:
         await mixin._send_error(websocket, "Failed to send persona command to attached session")

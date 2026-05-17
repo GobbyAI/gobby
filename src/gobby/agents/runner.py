@@ -10,7 +10,7 @@ The AgentRunner coordinates:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from gobby.agents import runner_queries as _queries
 from gobby.agents.session import ChildSessionManager
@@ -19,6 +19,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
+    from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import SessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -61,7 +62,7 @@ class AgentRunner:
 
         # Workflow handler for hook evaluation on spawned agent tool calls
         self._workflow_handler: WorkflowHookHandler | None = None
-        self.agent_lifecycle_monitor: Any | None = None
+        self.agent_lifecycle_monitor: AgentLifecycleMonitor | None = None
 
     @property
     def workflow_handler(self) -> WorkflowHookHandler | None:
@@ -95,7 +96,7 @@ class AgentRunner:
         """
         return self._child_session_manager.can_spawn_child(parent_session_id)
 
-    def get_run(self, run_id: str) -> Any | None:
+    def get_run(self, run_id: str) -> AgentRun | None:
         """Get an agent run by ID. Delegates to runner_queries."""
         return _queries.get_run(self, run_id)
 
@@ -108,7 +109,7 @@ class AgentRunner:
         parent_session_id: str,
         status: str | None = None,
         limit: int = 100,
-    ) -> list[Any]:
+    ) -> list[AgentRun]:
         """List agent runs for a session. Delegates to runner_queries."""
         return _queries.list_runs(self, parent_session_id, status=status, limit=limit)
 

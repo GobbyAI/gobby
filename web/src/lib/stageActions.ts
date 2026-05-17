@@ -38,10 +38,33 @@ export interface LifecycleTask {
   title: string
   task_type: string
   stages: StageStateView[]
-  state?: { is_blocked?: boolean; escalation_reason?: string | null } | null
+  state?: {
+    owner_session_id?: string | null
+    owner_session_ref?: unknown | null
+    is_claimed?: boolean
+    is_closed?: boolean
+    is_escalated?: boolean
+    is_blocked?: boolean
+    closed_at?: string | null
+    closed_reason?: string | null
+    closed_in_session_id?: string | null
+    closed_commit_sha?: string | null
+    escalated_at?: string | null
+    escalation_reason?: string | null
+  } | null
   is_blocked?: boolean
   blocked_reason?: string | null
+  assignee?: string | null
+  claimed_by_session_id?: string | null
+  closed_at?: string | null
+  closed_reason?: string | null
+  closed_in_session_id?: string | null
+  closed_commit_sha?: string | null
+  validation_fail_count?: number | null
+  dispatch_failure_count?: number | null
   escalation_reason?: string | null
+  escalated_at?: string | null
+  is_escalated?: boolean
   ref?: string
   priority?: number | null
 }
@@ -106,12 +129,37 @@ type OptimisticTaskState<T extends LifecycleTask> =
 
 export type OptimisticMoveResult<T extends LifecycleTask> =
   | T
-  | (Omit<T, 'closed_at' | 'current_stage' | 'escalated_at' | 'stages' | 'state'> & {
+  | (Omit<
+    T,
+    | 'assignee'
+    | 'claimed_by_session_id'
+    | 'closed_at'
+    | 'closed_commit_sha'
+    | 'closed_in_session_id'
+    | 'closed_reason'
+    | 'current_stage'
+    | 'dispatch_failure_count'
+    | 'escalated_at'
+    | 'escalation_reason'
+    | 'is_escalated'
+    | 'stages'
+    | 'state'
+    | 'validation_fail_count'
+  > & {
+    assignee: null
+    claimed_by_session_id: null
     closed_at: null
+    closed_commit_sha: null
+    closed_in_session_id: null
+    closed_reason: null
     current_stage: StageStateView | null
+    dispatch_failure_count: 0
     escalated_at: null
+    escalation_reason: null
+    is_escalated: false
     stages: StageStateView[]
     state: OptimisticTaskState<T>
+    validation_fail_count: 0
   })
 
 export function optimisticMoveTaskToStage<T extends LifecycleTask>(
@@ -148,9 +196,33 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   return {
     ...task,
     current_stage,
-    state: task.state ? { ...task.state, escalation_reason: null } : task.state,
+    state: task.state
+      ? {
+        ...task.state,
+        owner_session_id: null,
+        owner_session_ref: null,
+        is_claimed: false,
+        is_closed: false,
+        is_escalated: false,
+        closed_at: null,
+        closed_reason: null,
+        closed_in_session_id: null,
+        closed_commit_sha: null,
+        escalated_at: null,
+        escalation_reason: null,
+      }
+      : task.state,
+    assignee: null,
+    claimed_by_session_id: null,
     closed_at: null,
+    closed_reason: null,
+    closed_in_session_id: null,
+    closed_commit_sha: null,
     escalated_at: null,
+    escalation_reason: null,
+    is_escalated: false,
+    validation_fail_count: 0,
+    dispatch_failure_count: 0,
     stages,
   }
 }

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.sessions.mailbox import WakeDispatcherProtocol
     from gobby.storage.agent_commands import AgentCommandManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -81,7 +82,7 @@ def add_messaging_tools(
     session_var_manager: SessionVariableManager,
     db: DatabaseProtocol,
     broadcast_fn: BroadcastFn | None = None,
-    wake_dispatcher: Any | None = None,
+    wake_dispatcher: WakeDispatcherProtocol | None = None,
 ) -> None:
     """Add inter-agent messaging and command tools to a registry.
 

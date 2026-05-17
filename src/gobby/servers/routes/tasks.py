@@ -298,15 +298,30 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 seen.add(stage_name)
         return stage_names
 
+    assignment_message_manager: InterSessionMessageManager | None = None
+    assignment_mailbox: MailboxService | None = None
+
+    def _assignment_mailbox() -> MailboxService:
+        nonlocal assignment_mailbox, assignment_message_manager
+        if server.session_manager is None:
+            raise RuntimeError("Session manager not available")
+        if assignment_message_manager is None:
+            assignment_message_manager = InterSessionMessageManager(server.services.database)
+        if assignment_mailbox is None:
+            assignment_mailbox = MailboxService(
+                db=server.services.database,
+                message_manager=assignment_message_manager,
+                session_manager=server.session_manager,
+                wake_dispatcher=server.services.wake_dispatcher,
+            )
+        return assignment_mailbox
+
     async def _send_task_assignment_message(
         *,
         task_dict: dict[str, Any],
         to_session_id: str,
     ) -> None:
         """Persist and wake a task-assignment mailbox notification."""
-        if server.session_manager is None:
-            raise RuntimeError("Session manager not available")
-
         raw_state = task_dict.get("state")
         state = cast(dict[str, Any], raw_state) if isinstance(raw_state, dict) else {}
         current_stage = state.get("current_stage")
@@ -328,12 +343,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             "assigned_session_id": to_session_id,
         }
         content = f"{task_dict.get('ref', task_dict['id'])} assigned: {task_dict.get('title', '')}"
-        mailbox = MailboxService(
-            db=server.services.database,
-            message_manager=InterSessionMessageManager(server.services.database),
-            session_manager=server.session_manager,
-            wake_dispatcher=server.services.wake_dispatcher,
-        )
+        mailbox = _assignment_mailbox()
         log_context = {
             "task_id": task_dict["id"],
             "task_ref": task_dict.get("ref"),
@@ -636,11 +646,27 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 force=request_data.force,
             )
             result = claimed_task.to_dict()
-            await _send_task_assignment_message(
-                task_dict=result,
-                to_session_id=resolved_session_id,
-            )
-            await _broadcast_task("task_claimed", result)
+            try:
+                await _send_task_assignment_message(
+                    task_dict=result,
+                    to_session_id=resolved_session_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Task claim committed but assignment notification failed",
+                    extra={
+                        "task_id": resolved_id,
+                        "task_ref": result.get("ref"),
+                        "to_session_id": resolved_session_id,
+                    },
+                )
+            try:
+                await _broadcast_task("task_claimed", result)
+            except Exception:
+                logger.exception(
+                    "Task claim committed but broadcast failed",
+                    extra={"task_id": resolved_id, "task_ref": result.get("ref")},
+                )
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

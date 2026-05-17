@@ -60,7 +60,7 @@ const buildLabels = ["Build", "Build Quick", "Stop Build", "Resume Build"];
 
 function visibleBuildButtons(): string[] {
   return buildLabels.filter((label) =>
-    screen.queryByRole("button", { name: label }),
+    screen.queryByRole("menuitem", { name: label }),
   );
 }
 
@@ -86,6 +86,13 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
     );
   });
 
+  it("renders menu semantics for task actions", () => {
+    renderMenu(makeTask({ build_state: "never_started" }));
+    expect(screen.getByRole("menu", { name: "Task actions" })).toBeTruthy();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toContain("Build");
+    expect(screen.getAllByRole("separator").length).toBeGreaterThan(0);
+  });
+
   it("does not treat planning scaffolding as a started build (#12010/#13909)", () => {
     // The exact regression: stages + assigned_agent + isolation present, but
     // the build was never started. The old hasBuildEvidence heuristic showed
@@ -108,8 +115,8 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
         },
       }),
     );
-    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Build" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Build" })).toBeTruthy();
   });
 
   it("hides all build controls on a closed task", () => {

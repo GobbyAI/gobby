@@ -182,47 +182,64 @@ function isStringArrayOrNull(value: unknown): boolean {
   )
 }
 
-function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
-  const stringFields = [
-    'ref',
-    'title',
-    'status',
-    'task_type',
-    'type',
-    'parent_task_id',
-    'created_at',
-    'updated_at',
-    'path_cache',
-    'assignee',
-    'agent_name',
-    'start_date',
-    'due_date',
-    'project_id',
-    'closed_at',
-    'closed_in_session_id',
-    'escalated_at',
-    'pre_escalation_status',
-    'category',
-    'description',
-    'validation_criteria',
-    'isolation',
-    'assigned_agent',
-  ]
-  const numberFields = ['priority', 'seq_num', 'sequence_order', 'dispatch_failure_count']
-  const booleanFields = ['allow_automation', 'yolo']
-
+function isOptionalOwnerSessionRef(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (!isRecord(value)) return false
   return (
-    stringFields.every(field => isOptionalString(record[field])) &&
-    numberFields.every(field => isOptionalNumber(record[field])) &&
-    booleanFields.every(field => isOptionalBoolean(record[field])) &&
-    isOptionalRecord(record.current_stage) &&
-    isOptionalRecord(record.state) &&
-    isOptionalRecord(record.compat) &&
+    typeof value.session_id === 'string' &&
+    typeof value.ref === 'string' &&
+    (value.source === null || typeof value.source === 'string')
+  )
+}
+
+type OptionalTaskFieldValidator = (value: unknown) => boolean
+
+const OPTIONAL_TASK_FIELD_VALIDATORS = {
+  ref: isOptionalString,
+  title: isOptionalString,
+  status: isOptionalString,
+  task_type: isOptionalString,
+  type: isOptionalString,
+  parent_task_id: isOptionalString,
+  created_at: isOptionalString,
+  updated_at: isOptionalString,
+  path_cache: isOptionalString,
+  assignee: isOptionalString,
+  agent_name: isOptionalString,
+  start_date: isOptionalString,
+  due_date: isOptionalString,
+  project_id: isOptionalString,
+  closed_at: isOptionalString,
+  closed_in_session_id: isOptionalString,
+  escalated_at: isOptionalString,
+  pre_escalation_status: isOptionalString,
+  category: isOptionalString,
+  description: isOptionalString,
+  validation_criteria: isOptionalString,
+  isolation: isOptionalString,
+  assigned_agent: isOptionalString,
+  priority: isOptionalNumber,
+  seq_num: isOptionalNumber,
+  sequence_order: isOptionalNumber,
+  dispatch_failure_count: isOptionalNumber,
+  allow_automation: isOptionalBoolean,
+  yolo: isOptionalBoolean,
+  current_stage: isOptionalRecord,
+  state: isOptionalRecord,
+  compat: isOptionalRecord,
+  owner_session_ref: isOptionalOwnerSessionRef,
+  labels: isStringArrayOrNull,
+  additional_skills: isStringArrayOrNull,
+} satisfies Partial<Record<keyof RawTaskPayload, OptionalTaskFieldValidator>>
+
+function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
+  return (
+    Object.entries(OPTIONAL_TASK_FIELD_VALIDATORS).every(([field, validate]) =>
+      validate(record[field]),
+    ) &&
     (record.stages === undefined ||
       record.stages === null ||
-      (Array.isArray(record.stages) && record.stages.every(isRecord))) &&
-    isStringArrayOrNull(record.labels) &&
-    isStringArrayOrNull(record.additional_skills)
+      (Array.isArray(record.stages) && record.stages.every(isRecord)))
   )
 }
 

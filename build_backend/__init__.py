@@ -184,8 +184,16 @@ def _load_manifest_module() -> ModuleType:
 
 
 def _stage_bundled_content_manifest() -> Path:
-    manifest_module = cast(_ManifestModule, _load_manifest_module())
-    manifest_path = manifest_module.write_bundled_content_manifest(_INSTALL_DEST)
+    manifest_module = _load_manifest_module()
+    write_manifest = getattr(manifest_module, "write_bundled_content_manifest", None)
+    if not callable(write_manifest):
+        raise RuntimeError(
+            "Bundled content manifest helper is missing callable "
+            f"write_bundled_content_manifest: {_MANIFEST_MODULE}"
+        )
+    manifest_path = cast(_ManifestModule, manifest_module).write_bundled_content_manifest(
+        _INSTALL_DEST
+    )
     logger.info("Staged bundled content manifest at %s", manifest_path)
     return manifest_path
 

@@ -639,9 +639,17 @@ class VoiceMixin:
     async def feed_attached_session_tts(
         self, session_id: str, message: dict[str, Any], *, complete: bool = False
     ) -> None:
-        from gobby.servers.websocket.voice_attached import feed_attached_session_tts
+        from gobby.servers.websocket.voice_attached import (
+            AttachedVoiceServer,
+            feed_attached_session_tts,
+        )
 
-        await feed_attached_session_tts(self, session_id, message, complete=complete)
+        await feed_attached_session_tts(
+            cast(AttachedVoiceServer, self),
+            session_id,
+            message,
+            complete=complete,
+        )
 
     async def _cancel_tts(self, conversation_id: str) -> None:
         """Cancel active TTS for a conversation. Called on barge-in/interruption."""

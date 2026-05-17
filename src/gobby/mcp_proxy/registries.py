@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.events.wake import WakeDispatcher
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -65,7 +66,7 @@ def setup_internal_registries(
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_sync_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
-    wake_dispatcher: Any | None = None,
+    wake_dispatcher: WakeDispatcher | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
     mcp_manager: Any | None = None,

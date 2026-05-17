@@ -231,6 +231,23 @@ class TestSetAgentPersonaValidation:
         server._send_error.assert_awaited_once()
         assert "not persona-capable" in server._send_error.call_args.args[1]
 
+    async def test_invalid_agent_shape_errors(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                lambda *_a, **_k: MagicMock(spec=[]),
+            )
+            await server._handle_set_agent(
+                ws,
+                {"conversation_id": "conv-1", "agent_name": "broken-agent"},
+            )
+
+        server._send_error.assert_awaited_once()
+        assert "missing supports_surface" in server._send_error.call_args.args[1]
+
 
 class TestSetAgentAttachedSession:
     async def test_routes_persona_switch_to_attached_terminal_pane(self) -> None:

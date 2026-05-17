@@ -753,6 +753,39 @@ class TestPipelineEventBroadcasting:
             task_id="task-1",
         )
 
+    @pytest.mark.asyncio
+    async def test_terminal_dispatch_uses_sync_pipeline_db_executor(self) -> None:
+        """Sync run_db adapters still wrap terminal hooks instead of bypassing them."""
+        from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
+
+        mock_ws_server = AsyncMock()
+        mock_pipeline_executor = MagicMock()
+        mock_pipeline_executor.db = object()
+        run_db = MagicMock()
+        mock_pipeline_executor.run_db = run_db
+
+        setup_pipeline_event_broadcasting(mock_ws_server, mock_pipeline_executor)
+
+        with patch("gobby.hooks.event_handlers._dispatch.on_pipeline_failed") as handler:
+            await mock_pipeline_executor.event_callback(
+                "pipeline_failed",
+                "pe-124",
+                task_id="task-2",
+            )
+
+        run_db.assert_called_once()
+        args, kwargs = run_db.call_args
+        assert args[0] is handler
+        assert args[1].execution_id == "pe-124"
+        assert args[1].data == {"task_id": "task-2"}
+        assert kwargs == {"db": mock_pipeline_executor.db}
+        handler.assert_not_called()
+        mock_ws_server.broadcast_pipeline_event.assert_awaited_once_with(
+            event="pipeline_failed",
+            execution_id="pe-124",
+            task_id="task-2",
+        )
+
 
 class TestMetricsCleanupLoop:
     """Tests for metrics_cleanup_loop function."""

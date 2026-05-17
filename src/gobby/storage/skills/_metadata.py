@@ -172,12 +172,13 @@ class SkillMetadataMixin:
         Raises:
             ValueError: If skill not found
         """
-        if include_deleted:
-            row = self.db.fetchone("SELECT * FROM skills WHERE id = ?", (skill_id,))
-        else:
-            row = self.db.fetchone(
-                "SELECT * FROM skills WHERE id = ? AND deleted_at IS NULL", (skill_id,)
-            )
+        with self.db.transaction() as conn:
+            if include_deleted:
+                row = conn.execute("SELECT * FROM skills WHERE id = ?", (skill_id,)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM skills WHERE id = ? AND deleted_at IS NULL", (skill_id,)
+                ).fetchone()
         if not row:
             raise ValueError(f"Skill {skill_id} not found")
         return Skill.from_row(row)

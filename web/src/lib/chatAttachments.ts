@@ -48,7 +48,11 @@ export function uploadChatAttachment(
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(normalizeAttachmentUrl(JSON.parse(xhr.responseText) as ChatAttachment))
+        try {
+          resolve(normalizeAttachmentUrl(JSON.parse(xhr.responseText) as ChatAttachment))
+        } catch {
+          reject(new Error('Attachment upload returned invalid JSON'))
+        }
         return
       }
       reject(new Error(errorFromResponse(xhr)))
@@ -63,14 +67,20 @@ export function uploadChatAttachment(
   })
 }
 
-export function deleteChatAttachment(attachmentId: string): Promise<Response> {
-  return fetch(`${API_BASE_URL}/api/chat/attachments/${attachmentId}`, {
+export async function deleteChatAttachment(attachmentId: string): Promise<Response> {
+  const response = await fetch(`${API_BASE_URL}/api/chat/attachments/${encodeURIComponent(attachmentId)}`, {
     method: 'DELETE',
     credentials: 'include',
   })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body || response.statusText || `Attachment delete failed (${response.status})`)
+  }
+  return response
 }
 
 export function formatAttachmentSize(bytes: number): string {
+  if (bytes <= 0) return '0 B'
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${bytes} B`

@@ -41,6 +41,8 @@ export function usePlanArtifactCallbacks() {
     onChatClearedRef.current = fn;
   }, []);
 
+  // Internal handoff between plan-approval actions and transport handlers;
+  // actions set it, the next outbound chat frame consumes and clears it.
   const pendingPlanFeedbackRef = useRef<string | null>(null);
 
   return {

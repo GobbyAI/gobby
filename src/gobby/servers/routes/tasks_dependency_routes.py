@@ -48,7 +48,7 @@ def register_task_dependency_routes(
             if node_id not in cache:
                 try:
                     cache[node_id] = server.task_manager.get_task(node_id)
-                except Exception:  # noqa: BLE001 - boundary; degrade to id only
+                except (ValueError, TaskNotFoundError):
                     cache[node_id] = None
             resolved = cache[node_id]
             if resolved is not None:

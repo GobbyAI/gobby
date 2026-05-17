@@ -24,6 +24,22 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+_GENERIC_BINARY_MIME_TYPES = {"application/octet-stream", "binary/octet-stream"}
+_TEXT_COMPATIBLE_MIME_TYPES = {
+    "application/json",
+    "application/javascript",
+    "application/typescript",
+    "application/xml",
+    "application/x-yaml",
+    "application/yaml",
+}
+_ZIP_CONTAINER_MIME_TYPES = {
+    "application/epub+zip",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 def _safe_path_part(value: str, fallback: str) -> str:
@@ -48,6 +64,60 @@ def _content_disposition(mime_type: str) -> str:
     if mime_type.startswith("image/") or mime_type == "application/pdf":
         return "inline"
     return "attachment"
+
+
+def _declared_mime_type(value: str) -> str:
+    return value.split(";", 1)[0].strip().lower() or "application/octet-stream"
+
+
+def _sniff_mime_type(sample: bytes) -> str | None:
+    if not sample:
+        return None
+    if sample.startswith(b"%PDF-"):
+        return "application/pdf"
+    if sample.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if sample.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if sample.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(sample) >= 12 and sample[:4] == b"RIFF" and sample[8:12] == b"WEBP":
+        return "image/webp"
+    if sample.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return "application/zip"
+    if b"\x00" not in sample:
+        try:
+            sample.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return "text/plain"
+    return None
+
+
+def _mime_matches_declared(declared: str, sniffed: str | None) -> bool:
+    if sniffed is None or declared in _GENERIC_BINARY_MIME_TYPES:
+        return True
+    if declared == sniffed:
+        return True
+    if sniffed == "text/plain" and (declared.startswith("text/") or declared in _TEXT_COMPATIBLE_MIME_TYPES):
+        return True
+    if sniffed == "application/zip" and declared in _ZIP_CONTAINER_MIME_TYPES:
+        return True
+    return False
+
+
+async def _validate_declared_mime(path: Path, declared: str) -> None:
+    def read_sample() -> bytes:
+        with path.open("rb") as handle:
+            return handle.read(512)
+
+    sniffed = _sniff_mime_type(await asyncio.to_thread(read_sample))
+    if _mime_matches_declared(declared, sniffed):
+        return
+    raise HTTPException(
+        status_code=415,
+        detail=f"Uploaded file content appears to be {sniffed}, not {declared}",
+    )
 
 
 async def _remove_path(path: Path) -> None:
@@ -112,7 +182,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         attachment_id = str(uuid4())
         filename = Path(file.filename or "attachment").name or "attachment"
         safe_name = _safe_path_part(filename, "attachment")
-        mime_type = (
+        mime_type = _declared_mime_type(
             file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         )
         target_dir = _attachment_dir(resolved_project_id, attachment_id)
@@ -134,6 +204,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                         )
                     await out.write(chunk)
 
+            await _validate_declared_mime(temp_path, mime_type)
             await asyncio.to_thread(temp_path.replace, target_path)
             record = await server.run_db(
                 chat_attachments.create_attachment,

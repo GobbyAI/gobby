@@ -139,7 +139,14 @@ _SQL_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class _ThreadConnectionLease:
-    """Weakref-able owner for a thread-local SQLite connection."""
+    """Weakref-able owner for a thread-local SQLite connection.
+
+    ``threading.local`` cannot notify us when a worker thread exits, so each
+    per-thread connection gets a tiny lease object stored in that thread-local
+    state. ``LocalDatabase`` registers a weakref finalizer against the lease;
+    when the thread-local state is collected, the finalizer closes and untracks
+    the SQLite connection even if the owning thread has already disappeared.
+    """
 
     __slots__ = ("__weakref__",)
 

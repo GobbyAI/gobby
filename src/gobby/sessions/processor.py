@@ -24,6 +24,14 @@ if TYPE_CHECKING:
     class WebSocketServer(Protocol):
         async def broadcast(self, message: dict[str, Any]) -> None: ...
 
+        async def feed_attached_session_tts(
+            self,
+            session_id: str,
+            message: dict[str, Any],
+            *,
+            complete: bool = False,
+        ) -> None: ...
+
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -81,6 +89,27 @@ class SessionMessageProcessor:
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    async def _feed_attached_session_tts(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool,
+    ) -> None:
+        if self.websocket_server is None:
+            return
+        tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
+        if not callable(tts_feed):
+            return
+        try:
+            await tts_feed(session_id, rendered, complete=complete)
+        except Exception:
+            logger.debug(
+                "Attached-session TTS feed failed for session %s",
+                session_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _build_codex_hook_event(
@@ -367,11 +396,9 @@ class SessionMessageProcessor:
         self._render_states[session_id] = render_state
 
         if self.websocket_server:
-            tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
             for rendered_msg in completed:
                 rendered = rendered_msg.to_dict()
-                if callable(tts_feed):
-                    await tts_feed(session_id, rendered, complete=True)
+                await self._feed_attached_session_tts(session_id, rendered, complete=True)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
@@ -383,8 +410,7 @@ class SessionMessageProcessor:
             # Broadcast in-progress turn for live updates (upsert by ID)
             if render_state.current_message:
                 rendered = render_state.current_message.to_dict()
-                if callable(tts_feed):
-                    await tts_feed(session_id, rendered, complete=False)
+                await self._feed_attached_session_tts(session_id, rendered, complete=False)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
@@ -475,11 +501,9 @@ class SessionMessageProcessor:
         self._render_states[session_id] = render_state
 
         if self.websocket_server:
-            tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
             for rendered_msg in completed:
                 rendered = rendered_msg.to_dict()
-                if callable(tts_feed):
-                    await tts_feed(session_id, rendered, complete=True)
+                await self._feed_attached_session_tts(session_id, rendered, complete=True)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",
@@ -490,8 +514,7 @@ class SessionMessageProcessor:
                 )
             if render_state.current_message:
                 rendered = render_state.current_message.to_dict()
-                if callable(tts_feed):
-                    await tts_feed(session_id, rendered, complete=False)
+                await self._feed_attached_session_tts(session_id, rendered, complete=False)
                 await self.websocket_server.broadcast(
                     {
                         "type": "session_message",

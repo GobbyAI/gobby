@@ -227,11 +227,24 @@ class ChatMessagingMixin:
                 websocket, f"Invalid provider '{provider}'", request_id=request_id
             )
             return
+        try:
+            prepared_attachments = await prepare_message_attachments(
+                self,
+                data.get("attachments"),
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+        except ValueError as exc:
+            await self._send_error(websocket, str(exc), request_id=request_id)
+            return
 
         # Use content_blocks (multimodal) if provided, otherwise plain text
         if content_blocks and isinstance(content_blocks, list):
             content = content_blocks
-        elif not content or not isinstance(content, str) or not content.strip():
+        elif not isinstance(content, str):
+            await self._send_error(websocket, "Missing or invalid 'content' field")
+            return
+        elif not content.strip() and not prepared_attachments.records:
             await self._send_error(websocket, "Missing or invalid 'content' field")
             return
 
@@ -266,16 +279,6 @@ class ChatMessagingMixin:
             for value in [pending_inject_context, explicit_inject_context]
             if isinstance(value, str) and value.strip()
         ]
-        try:
-            prepared_attachments = await prepare_message_attachments(
-                self,
-                data.get("attachments"),
-                conversation_id=conversation_id,
-                message_id=message_id,
-            )
-        except ValueError as exc:
-            await self._send_error(websocket, str(exc), request_id=request_id)
-            return
         if prepared_attachments.prompt_context:
             inject_parts.append(prepared_attachments.prompt_context)
         inject_context = "\n\n".join(inject_parts) if inject_parts else None

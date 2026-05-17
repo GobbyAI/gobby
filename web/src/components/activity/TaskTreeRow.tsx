@@ -53,7 +53,7 @@ export function TaskTreeRow({
       style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
       className={taskRowClass}
       role="treeitem"
-      tabIndex={0}
+      tabIndex={isSelected ? 0 : -1}
       aria-level={row.depth + 1}
       aria-expanded={row.isInternal ? row.isOpen : undefined}
       aria-label={`${ref ?? task.ref} ${task.title}: ${stateSummary}`}

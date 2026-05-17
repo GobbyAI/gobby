@@ -16,6 +16,7 @@ import {
   type TaskDisplayState,
 } from '../../lib/taskState'
 import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
+import { taskPriorityLabel } from '../../lib/taskOptions'
 import { cn } from '../../lib/utils'
 
 // =============================================================================
@@ -33,13 +34,13 @@ const STATUS_COLORS: Record<string, string> = {
 
 const PRIORITY_STYLES: Record<
   number,
-  { bg: string; color: string; label: string }
+  { bg: string; color: string }
 > = {
-  0: { bg: "var(--color-error-soft)", color: "var(--color-error)", label: "Critical" },
-  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)", label: "High" },
-  2: { bg: "var(--color-info-soft)", color: "var(--color-info)", label: "Medium" },
-  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)", label: "Low" },
-  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)", label: "Backlog" },
+  0: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
+  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)" },
+  2: { bg: "var(--color-info-soft)", color: "var(--color-info)" },
+  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)" },
+  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
 };
 
 const TASK_BADGE_CLS =
@@ -118,10 +119,9 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 
 export function PriorityBadge({ priority }: { priority: number }) {
   const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
-  const style = PRIORITY_STYLES[normalizedPriority];
   return (
     <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
-      {style.label}
+      {taskPriorityLabel(normalizedPriority)}
     </span>
   );
 }
@@ -144,13 +144,14 @@ const PRIORITY_GLYPH_PATHS: Record<number, string> = {
 export function PriorityGlyph({ priority }: { priority: number }) {
   const p = priority in PRIORITY_STYLES ? priority : 2;
   const style = PRIORITY_STYLES[p];
+  const label = taskPriorityLabel(p);
   const filled = p <= 1;
   return (
     <span
       className="priority-glyph"
       style={{ color: style.color }}
-      title={`${style.label} priority`}
-      aria-label={`${style.label} priority`}
+      title={`${label} priority`}
+      aria-label={`${label} priority`}
       role="img"
     >
       <svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true">

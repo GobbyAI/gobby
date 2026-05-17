@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -162,9 +161,8 @@ class TestAgentWorkflowCompletion:
         runner = MagicMock()
         runner.run_storage = MagicMock()
         runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
-        runner.agent_lifecycle_monitor = SimpleNamespace(
-            terminalize_successful_run=AsyncMock(return_value=True)
-        )
+        runner.agent_lifecycle_monitor = MagicMock()
+        runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -398,6 +396,7 @@ class TestAgentWorkflowCompletion:
         assert result["workflow"] == "plan-adversary-steps"
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_workflow_termination_cleans_child_not_dispatcher_launcher(
         self, db: LocalDatabase
     ) -> None:

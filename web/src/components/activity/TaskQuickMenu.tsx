@@ -70,9 +70,15 @@ export function TaskQuickMenu({
   return (
     <>
       <div className="session-ctx-backdrop" onClick={onClose} />
-      <div className="session-ctx-menu" style={menuStyle}>
+      <div
+        className="session-ctx-menu"
+        style={menuStyle}
+        role="menu"
+        aria-label="Task actions"
+      >
         <button
           className="session-ctx-item"
+          role="menuitem"
           onClick={() => {
             void onAssignToMainChat();
           }}
@@ -82,14 +88,15 @@ export function TaskQuickMenu({
         </button>
         {showBuildControls && (
           <>
-            <div className="session-ctx-divider" />
+            <div className="session-ctx-divider" role="separator" />
             {showStartBuild && (
               <>
-                <button className="session-ctx-item" onClick={onBuild} disabled={busy}>
+                <button className="session-ctx-item" role="menuitem" onClick={onBuild} disabled={busy}>
                   Build
                 </button>
                 <button
                   className="session-ctx-item"
+                  role="menuitem"
                   onClick={onBuildQuick}
                   disabled={busy}
                 >
@@ -98,12 +105,12 @@ export function TaskQuickMenu({
               </>
             )}
             {showStopBuild && (
-              <button className="session-ctx-item" onClick={onStopBuild} disabled={busy}>
+              <button className="session-ctx-item" role="menuitem" onClick={onStopBuild} disabled={busy}>
                 Stop Build
               </button>
             )}
             {showResumeBuild && (
-              <button className="session-ctx-item" onClick={onResumeBuild} disabled={busy}>
+              <button className="session-ctx-item" role="menuitem" onClick={onResumeBuild} disabled={busy}>
                 Resume Build
               </button>
             )}
@@ -111,9 +118,10 @@ export function TaskQuickMenu({
         )}
         {isClaimed && (
           <>
-            <div className="session-ctx-divider" />
+            <div className="session-ctx-divider" role="separator" />
             <button
               className="session-ctx-item"
+              role="menuitem"
               onClick={onReleaseClaim}
               disabled={isClosed || busy}
             >
@@ -121,14 +129,15 @@ export function TaskQuickMenu({
             </button>
           </>
         )}
-        <div className="session-ctx-divider" />
+        <div className="session-ctx-divider" role="separator" />
         {isClosed ? (
-          <button className="session-ctx-item" onClick={onReopenTask} disabled={busy}>
+          <button className="session-ctx-item" role="menuitem" onClick={onReopenTask} disabled={busy}>
             Reopen
           </button>
         ) : (
           <button
             className="session-ctx-item session-ctx-item--destructive"
+            role="menuitem"
             onClick={onCloseTask}
             disabled={busy}
           >

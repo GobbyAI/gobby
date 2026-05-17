@@ -164,6 +164,36 @@ class TestHandleChatMessage:
         assert "Missing or invalid 'content' field" in ws.send.call_args[0][0]
 
     @pytest.mark.asyncio
+    async def test_files_only_message_is_allowed(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ):
+        mixin.clients[ws] = {"connected": True}
+        prepared = SimpleNamespace(prompt_context="Attached files:\n- /tmp/a.txt", records=[object()])
+
+        with (
+            patch(
+                "gobby.servers.websocket.chat._messaging.prepare_message_attachments",
+                new=AsyncMock(return_value=prepared),
+            ),
+            patch.object(mixin, "_stream_chat_response", new_callable=AsyncMock) as mock_stream,
+        ):
+            await mixin._handle_chat_message(
+                ws,
+                {
+                    "content": "",
+                    "conversation_id": "c1",
+                    "attachments": [{"id": "att-1"}],
+                },
+            )
+            await mixin._active_chat_tasks["c1"]
+
+        mock_stream.assert_awaited_once()
+        assert mock_stream.await_args.kwargs["attachments"] is prepared
+        assert mock_stream.await_args.kwargs["inject_context"] == "Attached files:\n- /tmp/a.txt"
+
+    @pytest.mark.asyncio
     async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         # mixin.clients is empty
         await mixin._handle_chat_message(ws, {"content": "hi"})

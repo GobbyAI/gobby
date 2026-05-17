@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
+
+
+class AttachedTtsPipeline(Protocol):
+    def feed_text(self, text: str) -> None: ...
+
+    async def flush(self) -> None: ...
+
+
+class AttachedVoiceServer(Protocol):
+    _attached_tts_offsets: dict[str, int]
+    _active_tts_pipelines: dict[str, AttachedTtsPipeline]
+
+    def _is_voice_mode(self, session_id: str) -> bool: ...
+
+    def _create_tts_pipeline(self, session_id: str) -> AttachedTtsPipeline | None: ...
 
 
 async def feed_attached_session_tts(
-    server: Any,
+    server: AttachedVoiceServer,
     session_id: str,
     message: dict[str, Any],
     *,
@@ -28,7 +46,14 @@ async def feed_attached_session_tts(
         server._attached_tts_offsets[offset_key] = len(content)
         pipeline = pipeline or server._create_tts_pipeline(session_id)
         if pipeline and delta.strip():
-            pipeline.feed_text(delta)
+            try:
+                pipeline.feed_text(delta)
+            except Exception:
+                logger.debug(
+                    "Failed to feed attached-session TTS for session %s",
+                    session_id,
+                    exc_info=True,
+                )
 
     if complete:
         server._attached_tts_offsets.pop(offset_key, None)

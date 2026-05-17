@@ -12,6 +12,16 @@ export function getBaseUrl(): string {
 
 export { extractTaskPayload };
 
+export type ApiTaskResponse = RawTaskPayload | { task: RawTaskPayload };
+
+export function isApiTaskResponse(data: unknown): data is ApiTaskResponse {
+  return extractTaskPayload(data) !== null;
+}
+
+export function extractApiTaskResponse(data: unknown): RawTaskPayload | null {
+  return extractTaskPayload(data);
+}
+
 export function normalizeActivityTask(
   raw: RawTaskPayload,
   fallback?: GobbyTask | null,
@@ -122,13 +132,20 @@ export async function fetchMissingTaskAncestors(
         `${baseUrl}/api/tasks/${encodeURIComponent(parentId)}`,
         { signal },
       );
-      if (!response.ok) continue;
+      if (!response.ok) {
+        console.error("Failed to fetch task ancestor", {
+          parentId,
+          operation,
+          status: response.status,
+        });
+        continue;
+      }
 
       operation = "parse";
       const data = await response.json();
 
       operation = "extractTaskPayload";
-      const raw = extractTaskPayload(data);
+      const raw = extractApiTaskResponse(data);
       if (!raw) {
         logAncestorFailure(parentId, "extractTaskPayload", sanitizeTaskForLogging(data));
         continue;

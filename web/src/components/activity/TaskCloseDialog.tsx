@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
 
 interface TaskCloseDialogProps {
@@ -17,6 +17,17 @@ export function TaskCloseDialog({
   const [reason, setReason] = useState("");
   const [showReasonError, setShowReasonError] = useState(false);
 
+  useEffect(() => {
+    if (!task) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isSubmitting) {
+        onCancel();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isSubmitting, onCancel, task]);
+
   if (!task) return null;
 
   const submit = () => {
@@ -29,14 +40,22 @@ export function TaskCloseDialog({
   };
 
   return (
-    <div className="activity-task-close-backdrop" role="presentation">
+    <div
+      className="activity-task-close-backdrop"
+      role="presentation"
+      onClick={() => {
+        if (!isSubmitting) onCancel();
+      }}
+    >
       <form
         className="activity-task-close-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="activity-task-close-title"
+        onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
+          event.stopPropagation();
           submit();
         }}
       >

@@ -1,9 +1,12 @@
 import type { GobbyTaskDetail } from "../../../hooks/useTasks";
 import {
+  TASK_CATEGORY_OPTIONS,
+  TASK_PRIORITY_OPTIONS,
+} from "../../../lib/taskOptions";
+import {
   TaskSelectField,
   TaskTagsField,
   TaskTextAreaField,
-  type TaskSelectOption,
 } from "../TaskFieldEditors";
 import type { TaskInlineEditApi } from "./taskDetailFormat";
 
@@ -14,27 +17,10 @@ import type { TaskInlineEditApi } from "./taskDetailFormat";
  * are action controls elsewhere, never free-text PATCH inputs here.
  */
 
-// Mirrors backend VALID_CATEGORIES (storage/tasks/_models.py). "" clears it.
-const CATEGORY_OPTIONS: TaskSelectOption[] = [
-  { value: "", label: "Uncategorized" },
-  { value: "code", label: "Code" },
-  { value: "config", label: "Config" },
-  { value: "docs", label: "Docs" },
-  { value: "refactor", label: "Refactor" },
-  { value: "test", label: "Test" },
-  { value: "research", label: "Research" },
-  { value: "planning", label: "Planning" },
-  { value: "manual", label: "Manual" },
-];
-
-// Mirrors PRIORITY_STYLES in TaskBadges.
-const PRIORITY_OPTIONS: TaskSelectOption[] = [
-  { value: "0", label: "Critical" },
-  { value: "1", label: "High" },
-  { value: "2", label: "Medium" },
-  { value: "3", label: "Low" },
-  { value: "4", label: "Backlog" },
-];
+const PRIORITY_SELECT_OPTIONS = TASK_PRIORITY_OPTIONS.map(option => ({
+  value: String(option.value),
+  label: option.label,
+}));
 
 function StaticBlock({ label, value }: { label: string; value: string }) {
   return (
@@ -83,7 +69,7 @@ export function TaskDetailEditableCore({
         <TaskSelectField
           value={task.category ?? ""}
           ariaLabel="Category"
-          options={CATEGORY_OPTIONS}
+          options={[...TASK_CATEGORY_OPTIONS]}
           disabled={edit.isFieldPending(task.id, "category")}
           onCommit={(value) =>
             edit.commitField({ task, field: "category", value })
@@ -96,7 +82,7 @@ export function TaskDetailEditableCore({
         <TaskSelectField
           value={String(task.priority ?? 4)}
           ariaLabel="Priority"
-          options={PRIORITY_OPTIONS}
+          options={PRIORITY_SELECT_OPTIONS}
           disabled={edit.isFieldPending(task.id, "priority")}
           onCommit={(value) =>
             edit.commitField({ task, field: "priority", value: Number(value) })

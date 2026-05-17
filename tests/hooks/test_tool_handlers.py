@@ -422,7 +422,7 @@ class TestSkillToolInterception:
     ) -> None:
         """Exception during skill resolution is logged and falls through."""
         skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
-        caplog.set_level(logging.ERROR, logger="test")
+        caplog.set_level(logging.ERROR)
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},

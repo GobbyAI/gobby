@@ -38,13 +38,15 @@ export interface CommitFieldArgs {
   value: PatchFieldValue;
 }
 
+type EditableFieldMap = {
+  [K in PatchEditableField]: PatchFieldValue | null | undefined;
+};
+
 function currentFieldValue(
-  task: GobbyTask,
+  task: GobbyTask & Partial<EditableFieldMap>,
   field: PatchEditableField,
 ): PatchFieldValue | null | undefined {
-  return (
-    task as unknown as Record<string, PatchFieldValue | null | undefined>
-  )[field];
+  return task[field];
 }
 
 function sameValue(

@@ -169,6 +169,81 @@ describe('stageActions shared helper contract', () => {
     expect(canonicalBoardStage(moved)?.name).toBe('deploy')
   })
 
+  it('test_optimistic_move_clears_backend_task_reset_fields', async () => {
+    const { optimisticMoveTaskToStage } = await loadStageActions()
+    const moved = optimisticMoveTaskToStage(
+      {
+        id: 'task-1',
+        title: 'Build task',
+        task_type: 'feature',
+        assignee: 'agent-1',
+        claimed_by_session_id: 'session-1',
+        closed_at: '2026-05-01T00:00:00Z',
+        closed_reason: 'completed',
+        closed_in_session_id: 'session-1',
+        closed_commit_sha: 'abc123',
+        escalated_at: '2026-05-01T00:00:00Z',
+        escalation_reason: 'blocked',
+        is_escalated: true,
+        validation_fail_count: 3,
+        dispatch_failure_count: 2,
+        state: {
+          owner_session_id: 'session-1',
+          owner_session_ref: { session_id: 'session-1', ref: '#9', source: 'codex' },
+          is_claimed: true,
+          is_closed: true,
+          is_escalated: true,
+          closed_at: '2026-05-01T00:00:00Z',
+          closed_reason: 'completed',
+          closed_in_session_id: 'session-1',
+          closed_commit_sha: 'abc123',
+          escalated_at: '2026-05-01T00:00:00Z',
+          escalation_reason: 'blocked',
+        },
+        stages: [
+          {
+            name: 'build',
+            display_name: 'Build',
+            category: 'delivery',
+            state: 'done',
+            review_policy: 'required',
+            position: 0,
+            updated_at: '2026-05-02T00:00:00Z',
+          },
+        ],
+      },
+      'build',
+      '2026-05-03T00:00:00Z',
+    )
+
+    expect(moved).toMatchObject({
+      assignee: null,
+      claimed_by_session_id: null,
+      closed_at: null,
+      closed_reason: null,
+      closed_in_session_id: null,
+      closed_commit_sha: null,
+      escalated_at: null,
+      escalation_reason: null,
+      is_escalated: false,
+      validation_fail_count: 0,
+      dispatch_failure_count: 0,
+      state: {
+        owner_session_id: null,
+        owner_session_ref: null,
+        is_claimed: false,
+        is_closed: false,
+        is_escalated: false,
+        closed_at: null,
+        closed_reason: null,
+        closed_in_session_id: null,
+        closed_commit_sha: null,
+        escalated_at: null,
+        escalation_reason: null,
+      },
+    })
+  })
+
   it('test_optimistic_move_exposes_typed_result_without_generic_cast', () => {
     const source = readStageActionsSource()
 

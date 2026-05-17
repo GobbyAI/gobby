@@ -3,38 +3,56 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const ACTIVE_AGENT_KEY = "gobby-active-agent";
 const SELECTED_PROVIDER_KEY = "gobby-selected-provider";
 
+function storageGet(key: string): string | null {
+  try {
+    if (typeof globalThis.localStorage === "undefined") return null;
+    return globalThis.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): "stored" | "unavailable" | "failed" {
+  try {
+    if (typeof globalThis.localStorage === "undefined") return "unavailable";
+    globalThis.localStorage.setItem(key, value);
+    return "stored";
+  } catch {
+    return "failed";
+  }
+}
+
+function storageRemove(key: string): void {
+  try {
+    if (typeof globalThis.localStorage !== "undefined") {
+      globalThis.localStorage.removeItem(key);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function useProviderAgentState() {
   const [activeAgent, setActiveAgent] = useState<string>(
-    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default",
+    () => storageGet(ACTIVE_AGENT_KEY) || "default",
   );
   const activeAgentRef = useRef(activeAgent);
 
   useEffect(() => {
     activeAgentRef.current = activeAgent;
-    localStorage.setItem(ACTIVE_AGENT_KEY, activeAgent);
+    if (storageSet(ACTIVE_AGENT_KEY, activeAgent) === "failed") {
+      console.warn("Failed to persist active agent selection");
+    }
   }, [activeAgent]);
 
   const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
-    () => {
-      try {
-        return localStorage.getItem(SELECTED_PROVIDER_KEY) || null;
-      } catch {
-        return null;
-      }
-    },
+    () => storageGet(SELECTED_PROVIDER_KEY) || null,
   );
 
   const setSelectedProvider = useCallback((provider: string | null) => {
     setSelectedProviderRaw(provider);
-    try {
-      if (provider) {
-        localStorage.setItem(SELECTED_PROVIDER_KEY, provider);
-      } else {
-        localStorage.removeItem(SELECTED_PROVIDER_KEY);
-      }
-    } catch {
-      /* ignore */
-    }
+    if (provider) storageSet(SELECTED_PROVIDER_KEY, provider);
+    else storageRemove(SELECTED_PROVIDER_KEY);
   }, []);
 
   const selectedProviderRef = useRef<string | null>(selectedProvider);

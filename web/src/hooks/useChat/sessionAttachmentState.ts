@@ -10,6 +10,8 @@ import {
   type PendingProxyMessage,
 } from "./core";
 
+const AGENT_NAME_RESOLVE_TIMEOUT_MS = 5_000;
+
 export function useSessionAttachmentState() {
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(() =>
     loadViewingSessionId(),
@@ -78,9 +80,17 @@ export function useSessionAttachmentState() {
     }
 
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), AGENT_NAME_RESOLVE_TIMEOUT_MS);
     try {
-      const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`);
+      const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) {
+        console.warn("Failed to resolve agent name", {
+          agentRunId,
+          status: res.status,
+        });
         agentNameCacheRef.current.set(agentRunId, null);
         return null;
       }
@@ -89,9 +99,12 @@ export function useSessionAttachmentState() {
         data?.run?.agent_name || data?.run?.workflow_name || null;
       agentNameCacheRef.current.set(agentRunId, resolved);
       return resolved;
-    } catch {
+    } catch (error) {
+      console.warn("Failed to resolve agent name", { agentRunId, error });
       agentNameCacheRef.current.set(agentRunId, null);
       return null;
+    } finally {
+      window.clearTimeout(timeout);
     }
   }, []);
 

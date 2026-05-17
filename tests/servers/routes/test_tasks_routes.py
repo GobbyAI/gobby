@@ -630,6 +630,28 @@ class TestLifecycleMutations:
         assert metadata["task_status"] in {"open", "ready"}
         assert wake_dispatcher.calls == [session_id]
 
+    def test_claim_task_returns_success_when_assignment_notification_fails(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        async def fail_send(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("mailbox down")
+
+        monkeypatch.setattr("gobby.sessions.mailbox.MailboxService.send", fail_send)
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert data["state"]["is_claimed"] is True
+
     def test_release_task_claim(
         self,
         client: TestClient,

@@ -7,7 +7,7 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         InterSessionMessage,
         InterSessionMessageManager,
     )
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
 
@@ -24,6 +25,10 @@ ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
 DELIVERABLE_SESSION_STATUSES = ("active", "paused")
 
 logger = logging.getLogger(__name__)
+
+
+class WakeDispatcherProtocol(Protocol):
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -64,7 +69,7 @@ class MailboxService:
         db: DatabaseProtocol,
         message_manager: InterSessionMessageManager,
         session_manager: SessionManager,
-        wake_dispatcher: Any | None = None,
+        wake_dispatcher: WakeDispatcherProtocol | None = None,
     ) -> None:
         self._db = db
         self._message_manager = message_manager
@@ -160,7 +165,7 @@ class MailboxService:
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id:
             return project_id
-        sender = self._session_manager.get(from_session_id)
+        sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
             raise ValueError(f"Sender session not found: {from_session_id}")
         if from_session_id == SYSTEM_SESSION_ID:
@@ -174,16 +179,18 @@ class MailboxService:
         to_session_id: str,
         project_id: str | None,
     ) -> str:
-        sender = self._session_manager.get(from_session_id)
+        sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
             raise ValueError(f"Sender session not found: {from_session_id}")
 
-        recipient = self._session_manager.get(to_session_id)
+        recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")
 
         if project_id and recipient.project_id != project_id:
             raise ValueError("Recipient session is outside the target project")
+        # System-originated messages are internal daemon notifications scoped by
+        # explicit project_id, so they bypass sender/recipient project equality.
         if from_session_id != SYSTEM_SESSION_ID and sender.project_id != recipient.project_id:
             raise ValueError(
                 "Cross-project messaging not allowed. "
@@ -280,6 +287,8 @@ class MailboxService:
                 "delivered": False,
                 "method": None,
                 "error": "wake_dispatcher_unavailable",
+                "error_code": "wake_dispatcher_unavailable",
+                "error_message": "Wake dispatcher is unavailable",
             }
         try:
             result = await dispatch(session_id)
@@ -289,6 +298,8 @@ class MailboxService:
                 "delivered": False,
                 "method": None,
                 "error": str(exc),
+                "error_code": "wake_dispatch_failed",
+                "error_message": str(exc),
             }
         if isinstance(result, dict):
             return result

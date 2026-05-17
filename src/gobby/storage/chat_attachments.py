@@ -182,7 +182,8 @@ def get_attachments_by_ids(
         """,  # nosec B608 # placeholders are generated from the validated ID count only.
         tuple(unique_ids),
     )
-    by_id = {_row_to_record(row).id: _row_to_record(row) for row in rows}
+    records = [_row_to_record(row) for row in rows]
+    by_id = {record.id: record for record in records}
     return [by_id[attachment_id] for attachment_id in unique_ids if attachment_id in by_id]
 
 

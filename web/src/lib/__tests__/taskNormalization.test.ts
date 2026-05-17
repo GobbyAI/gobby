@@ -26,11 +26,25 @@ describe('isRawTaskPayload optional field guard', () => {
       { id: 'task-1', validation_criteria: ['run tests'] },
       { id: 'task-1', labels: 'web' },
       { id: 'task-1', labels: ['web', 42] },
+      { id: 'task-1', owner_session_ref: { session_id: 'sess-1' } },
     ]
 
     invalidPayloads.forEach(payload => {
       expect(isRawTaskPayload(payload)).toBe(false)
     })
+  })
+
+  it('accepts resolved owner session refs', () => {
+    expect(
+      isRawTaskPayload({
+        id: 'task-1',
+        owner_session_ref: {
+          session_id: 'sess-1',
+          ref: '#12',
+          source: 'codex',
+        },
+      }),
+    ).toBe(true)
   })
 })
 
