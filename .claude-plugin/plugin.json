@@ -1,0 +1,5 @@
+{
+  "name": "gcode",
+  "description": "AST-aware code search, symbol navigation, and dependency graph analysis",
+  "version": "0.1.0"
+}
