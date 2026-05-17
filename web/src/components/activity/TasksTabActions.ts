@@ -41,6 +41,43 @@ export async function patchTaskFields(
   return extractTaskPayload(await response.json());
 }
 
+/**
+ * PATCH /api/tasks/{id}/stages/{name} with `{action:'move_to'}` — the stage
+ * move endpoint the board's drag uses. Throws on non-2xx (the message carries
+ * the route's transition-reason payload so the StageCard tooltip can show it);
+ * resolves to the route's `{stages}` manifest body on success.
+ */
+export async function moveTaskStage(
+  baseUrl: string,
+  taskId: string,
+  targetStageName: string,
+): Promise<{ stages?: unknown }> {
+  const response = await fetch(
+    `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(targetStageName)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "move_to" }),
+    },
+  );
+  if (!response.ok) {
+    let detail = `Failed to move stage (${response.status})`;
+    try {
+      const payload = (await response.json()) as Record<string, unknown>;
+      const reason =
+        (typeof payload.detail === "string" && payload.detail) ||
+        (typeof payload.error === "string" && payload.error) ||
+        (typeof payload.attempted_transition === "string" &&
+          `${payload.attempted_transition} not allowed`);
+      if (reason) detail = reason;
+    } catch {
+      /* keep the status-derived message */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as { stages?: unknown };
+}
+
 export function taskActionRef(task: GobbyTask): string {
   if (task.seq_num != null) return `#${task.seq_num}`;
   return task.ref || task.id;

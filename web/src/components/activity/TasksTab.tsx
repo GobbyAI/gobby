@@ -31,15 +31,13 @@ import {
   RECENT_CLOSED_TASK_LIMIT,
   type TaskFilterKey,
 } from "./TasksTabModel";
-import { TasksTabFilters } from "./TasksTabFilters";
 import {
   TasksTabDetailPanel,
   type GobbyTaskDetail,
   type ParentTaskRef,
 } from "./TasksTabDetailPanel";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
-import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { TaskCloseDialog } from "./TaskCloseDialog";
 import {
   type ActiveTaskAction,
@@ -47,9 +45,13 @@ import {
   type TaskContextMenu,
   type TaskMenuAction,
 } from "./TaskQuickMenu";
-import { TaskTreeRow } from "./TaskTreeRow";
+import { TasksTabToolbar, type TasksViewMode } from "./TasksTabToolbar";
+import { TasksTabList } from "./TasksTabList";
+import { TasksBoardView } from "./TasksBoardView";
+import { useTaskStageMove } from "./useTaskStageMove";
 import {
   claimTaskForSession,
+  moveTaskStage,
   patchTaskFields,
   type PatchTaskFields,
   postBuildControl,
@@ -72,6 +74,15 @@ interface TasksTabProps {
   chatSessionId?: string | null;
 }
 
+const VIEW_MODE_KEY = "gobby-tasks-view-mode";
+
+function readPersistedViewMode(): TasksViewMode {
+  if (typeof window === "undefined") return "list";
+  return window.localStorage.getItem(VIEW_MODE_KEY) === "board"
+    ? "board"
+    : "list";
+}
+
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
@@ -80,6 +91,9 @@ export const TasksTab = memo(function TasksTab({
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<TasksViewMode>(
+    readPersistedViewMode,
+  );
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
     () => new Set(),
@@ -179,6 +193,11 @@ export const TasksTab = memo(function TasksTab({
   // ref breaks the declaration-order cycle (handleTaskEvent is defined before
   // the inline-edit hook, which itself depends on applyRawTaskUpdate).
   const reconcileInlineEditRef = useRef<(taskId: string) => void>(() => {});
+  // Same WS-supersedes-optimistic guarantee for board stage moves.
+  const reconcileStageMoveRef = useRef<(taskId: string) => void>(() => {});
+  // Latest tasks snapshot for stage-move rollback, without rebinding the hook
+  // on every store change.
+  const tasksRef = useRef<GobbyTask[]>([]);
 
   const fetchTasks = useCallback(() => {
     abortRef.current?.abort();
@@ -282,9 +301,10 @@ export const TasksTab = memo(function TasksTab({
       // Abort any previous in-flight detail fetch so a stale response can't
       // overwrite a newer one (or land after the component unmounts).
       if (taskId === selectedTaskId && event !== "task_deleted") {
-        // Server truth landed: drop in-flight optimistic-edit bookkeeping so a
-        // slow PATCH resolve/reject can't stomp this WS update.
+        // Server truth landed: drop in-flight optimistic-edit / stage-move
+        // bookkeeping so a slow PATCH resolve/reject can't stomp this update.
         reconcileInlineEditRef.current(taskId);
+        reconcileStageMoveRef.current(taskId);
         detailFetchControllerRef.current?.abort();
         const controller = new AbortController();
         detailFetchControllerRef.current = controller;
@@ -519,6 +539,15 @@ export const TasksTab = memo(function TasksTab({
   }, [selectedTaskId]);
 
   useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
     if (visibleRows.length === 0) {
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
@@ -589,6 +618,27 @@ export const TasksTab = memo(function TasksTab({
   useEffect(() => {
     reconcileInlineEditRef.current = inlineEdit.reconcile;
   }, [inlineEdit.reconcile]);
+
+  // D6 store-agnostic board stage move, wired to the same optimistic store
+  // (no second store, no extra fetch — mirrors the D4 inline-edit contract).
+  const stageMove = useTaskStageMove({
+    patchMove: useCallback(
+      (taskId: string, targetStageName: string) =>
+        moveTaskStage(getBaseUrl(), taskId, targetStageName),
+      [],
+    ),
+    getTask: useCallback(
+      (taskId: string) =>
+        tasksRef.current.find((task) => task.id === taskId) ?? null,
+      [],
+    ),
+    applyRawTaskUpdate,
+    rollback: rollbackTask,
+  });
+
+  useEffect(() => {
+    reconcileStageMoveRef.current = stageMove.reconcile;
+  }, [stageMove.reconcile]);
 
   const runMenuAction = useCallback(
     async (
@@ -791,55 +841,33 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
+  // Shared selection: List and Board both drive the same D5 detail pane.
+  const handleSelectTask = useCallback((taskId: string) => {
+    userSelectedRef.current = true;
+    setActionError(null);
+    setSelectedTaskId(taskId);
+  }, []);
+
   if (loading) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
   }
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Toolbar */}
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
-          value={search}
-          onChange={setSearch}
-          placeholder="Search"
-        />
-        <button
-          type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
-          onClick={() => setShowFilterDropdown((v) => !v)}
-          title="Filter by task state"
-          aria-label="Filter tasks"
-          aria-expanded={showFilterDropdown}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {activeFilterCount > 0 && (
-            <span className="activity-filter-badge">{activeFilterCount}</span>
-          )}
-        </button>
-        {showFilterDropdown && (
-          <TasksTabFilters
-            filters={statusFilters}
-            stages={stagesRegistry}
-            selectedStages={selectedStageFilters}
-            onApply={handleFiltersApply}
-            onClose={() => setShowFilterDropdown(false)}
-          />
-        )}
-      </div>
+      <TasksTabToolbar
+        search={search}
+        onSearchChange={setSearch}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        showFilterDropdown={showFilterDropdown}
+        onToggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
+        activeFilterCount={activeFilterCount}
+        statusFilters={statusFilters}
+        stagesRegistry={stagesRegistry}
+        selectedStageFilters={selectedStageFilters}
+        onFiltersApply={handleFiltersApply}
+        onCloseFilterDropdown={() => setShowFilterDropdown(false)}
+      />
       {actionError && (
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"
@@ -850,45 +878,31 @@ export const TasksTab = memo(function TasksTab({
         </div>
       )}
 
-      {/* Tree pane */}
+      {/* View pane — List or Board, sharing filter + selection */}
       <div
-        className={`activity-tasks-pane min-h-0 overflow-y-auto ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
+        className={`min-h-0 flex flex-col ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
         style={selectedTaskId ? { height: `${topHeight}%` } : undefined}
-        role={filtered.length > 0 ? "tree" : undefined}
-        aria-label={filtered.length > 0 ? "Tasks" : undefined}
-        data-testid={filtered.length > 0 ? "task-tree" : undefined}
       >
-        {filtered.length === 0 ? (
-          <ActivityPanelEmpty
-            icon={<TasksEmptyIcon />}
-            heading="Tasks"
-            body={
-              tasks.length > 0
-                ? "Tasks exist, but none match the current filters"
-                : "Tasks appear here as they are created"
-            }
+        {viewMode === "board" ? (
+          <TasksBoardView
+            tasks={filtered}
+            stagesRegistry={stagesRegistry}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={handleSelectTask}
+            onMoveTaskToStage={stageMove.moveTaskToStage}
+            moveErrors={stageMove.errors}
           />
         ) : (
-          <>
-            {visibleRows.map((row) => {
-              const task = row.node.task;
-              return (
-                <TaskTreeRow
-                  key={task.id}
-                  row={row}
-                  isSelected={selectedTaskId === task.id}
-                  isBusy={activeTaskAction?.taskId === task.id}
-                  onSelect={(taskId) => {
-                    userSelectedRef.current = true;
-                    setActionError(null);
-                    setSelectedTaskId(taskId);
-                  }}
-                  onToggleOpen={toggleTaskOpen}
-                  onMenuButtonClick={handleMenuButtonClick}
-                />
-              );
-            })}
-          </>
+          <TasksTabList
+            visibleRows={visibleRows}
+            isEmpty={filtered.length === 0}
+            hasAnyTasks={tasks.length > 0}
+            selectedTaskId={selectedTaskId}
+            activeTaskActionId={activeTaskAction?.taskId ?? null}
+            onSelect={handleSelectTask}
+            onToggleOpen={toggleTaskOpen}
+            onMenuButtonClick={handleMenuButtonClick}
+          />
         )}
       </div>
 
