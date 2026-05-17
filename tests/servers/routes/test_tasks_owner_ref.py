@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from gobby.config import DaemonConfig
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
@@ -31,7 +32,7 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 
 @pytest.fixture
-def session(temp_db, project_id: str):
+def session(temp_db, project_id: str) -> Session:
     return SessionManager(temp_db).register(
         external_id="owner-ref-session",
         machine_id="test-machine",

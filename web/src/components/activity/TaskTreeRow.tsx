@@ -34,10 +34,11 @@ export function TaskTreeRow({
   const taskState = getCanonicalTaskState(task);
   const currentStage = taskState.current_stage;
   const stateSummary = getTaskStateSummary(task);
+  const priority = task.priority ?? 3;
   const textColor =
-    PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
+    PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
   const textWeight =
-    PRIORITY_TEXT_WEIGHTS[task.priority ?? 3] ?? "var(--font-weight-normal)";
+    PRIORITY_TEXT_WEIGHTS[priority] ?? "var(--font-weight-normal)";
   const ref = task.seq_num != null ? `#${task.seq_num}` : null;
   const taskRowClass = [
     "activity-task-row",
@@ -95,7 +96,7 @@ export function TaskTreeRow({
       ) : (
         <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
       )}
-      <PriorityGlyph priority={task.priority ?? 4} />
+      <PriorityGlyph priority={priority} />
       <StatusDot task={task} />
       {ref && <span className="activity-task-row-ref">{ref}</span>}
       <span
