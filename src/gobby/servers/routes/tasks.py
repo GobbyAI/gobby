@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
+from gobby.sessions.mailbox import MailboxService
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
@@ -239,10 +242,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         if server.session_manager is None:
             raise RuntimeError("Session manager not available")
 
-        from gobby.sessions.mailbox import MailboxService
-        from gobby.storage.inter_session_messages import InterSessionMessageManager
-        from gobby.storage.sessions import SYSTEM_SESSION_ID
-
         raw_state = task_dict.get("state")
         state = cast(dict[str, Any], raw_state) if isinstance(raw_state, dict) else {}
         current_stage = state.get("current_stage")
@@ -270,15 +269,41 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             session_manager=server.session_manager,
             wake_dispatcher=server.services.wake_dispatcher,
         )
-        await mailbox.send(
-            from_session_id=SYSTEM_SESSION_ID,
-            to_session_id=to_session_id,
-            content=content,
-            priority="high",
-            message_type="task_assignment",
-            metadata=metadata,
-            project_id=cast(str | None, task_dict.get("project_id")),
-            include_wakeup=True,
+        log_context = {
+            "task_id": task_dict["id"],
+            "task_ref": task_dict.get("ref"),
+            "to_session_id": to_session_id,
+            "project_id": task_dict.get("project_id"),
+            "message_type": "task_assignment",
+        }
+        logger.info(
+            "Sending task assignment mailbox message",
+            extra=log_context,
+        )
+        try:
+            send_result = await mailbox.send(
+                from_session_id=SYSTEM_SESSION_ID,
+                to_session_id=to_session_id,
+                content=content,
+                priority="high",
+                message_type="task_assignment",
+                metadata=metadata,
+                project_id=cast(str | None, task_dict.get("project_id")),
+                include_wakeup=True,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send task assignment mailbox message",
+                extra=log_context,
+            )
+            raise
+        logger.info(
+            "Sent task assignment mailbox message",
+            extra={
+                **log_context,
+                "message_ids": send_result.message_ids,
+                "wake_results": send_result.wake_results,
+            },
         )
 
     register_task_stage_routes(

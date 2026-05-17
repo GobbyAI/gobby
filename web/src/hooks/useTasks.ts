@@ -11,6 +11,7 @@ import { optimisticMoveTaskToStage } from '../lib/stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
 import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
 import {
+  isRawTaskPayload,
   normalizeTaskPayload,
   normalizeTaskPayloads,
   type RawStagePayload,
@@ -58,6 +59,12 @@ export interface GobbyTask extends LifecycleTask {
   category?: string | null
   current_stage: StageStateView | null
   stages: StageStateView[]
+  allow_automation?: boolean | null
+  yolo?: boolean | null
+  isolation?: string | null
+  dispatch_failure_count?: number | null
+  additional_skills?: string[] | null
+  assigned_agent?: string | null
 }
 
 export interface GobbyTaskDetail extends GobbyTask {
@@ -210,12 +217,14 @@ function applyTaskEvent(
     return tasks.filter(task => task.id !== taskId)
   }
   if (event === 'task_created') {
-    const newTask = normalizeTask(taskData as unknown as RawTaskPayload)
+    if (!isRawTaskPayload(taskData)) return tasks
+    const newTask = normalizeTask(taskData)
     if (tasks.some(task => task.id === taskId)) return tasks
     return [...tasks, newTask]
   }
 
-  const updated = taskData as unknown as RawTaskPayload
+  if (!isRawTaskPayload(taskData)) return tasks
+  const updated = taskData
   return tasks.map(task =>
     task.id === taskId ? normalizeTask({ ...task, ...updated }) : task
   )
@@ -233,12 +242,13 @@ function stageMutationErrorMessage(error: unknown, fallback: string): string {
 }
 
 function normalizeTaskWithStageRows(task: GobbyTask, stages: RawStagePayload[]): GobbyTask {
-  return normalizeTask({
+  const payload: RawTaskPayload = {
     ...task,
     current_stage: null,
     state: task.state ? { ...task.state, current_stage: null } : null,
     stages,
-  } as unknown as RawTaskPayload)
+  }
+  return normalizeTask(payload)
 }
 
 // =============================================================================

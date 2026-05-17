@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -114,6 +115,40 @@ class TestMailboxDirectSend:
 
 
 class TestMailboxBroadcast:
+    @pytest.mark.asyncio
+    async def test_send_to_all_with_no_recipients_logs_empty_broadcast(
+        self,
+        temp_db: Any,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        caplog.set_level(logging.INFO, logger="gobby.sessions.mailbox")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            send_to_all=True,
+            content="Broadcast",
+            project_id=sample_project["id"],
+        )
+
+        assert result.recipient_session_ids == []
+        assert result.message_ids == []
+        assert result.broadcast_id
+        assert result.to_dict()["success"] is True
+        assert result.to_dict()["failed_broadcasts"] == []
+        assert temp_db.fetchone("SELECT id FROM inter_session_messages LIMIT 1") is None
+
+        log_record = next(
+            record
+            for record in caplog.records
+            if record.message == "Mailbox broadcast resolved no recipients"
+        )
+        assert log_record.from_session_id == sender.id
+        assert log_record.resolved_project_id == sample_project["id"]
+        assert log_record.broadcast_id == result.broadcast_id
+
     @pytest.mark.asyncio
     async def test_send_to_all_fans_out_to_active_project_agent_sessions(
         self,

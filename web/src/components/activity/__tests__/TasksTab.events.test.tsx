@@ -48,16 +48,16 @@ vi.mock("../../chat/artifacts/ResizeHandle", () => ({
 
 let mockFetch: MockFetchInstance;
 
-function reviewTaskRow(): HTMLElement {
+function taskRow(title: string): HTMLElement {
   const row = screen
-    .getAllByText("Review approved task")[0]
+    .getAllByText(title)[0]
     .closest('[role="treeitem"]');
   expect(row).toBeTruthy();
   return row as HTMLElement;
 }
 
-async function openReviewTaskMenu(): Promise<void> {
-  const row = reviewTaskRow();
+async function openTaskMenu(title: string): Promise<void> {
+  const row = taskRow(title);
   fireEvent.click(
     within(row).getByRole("button", {
       name: "Task actions",
@@ -66,12 +66,47 @@ async function openReviewTaskMenu(): Promise<void> {
   await screen.findByRole("button", { name: "Assign to Main Chat" });
 }
 
+async function openReviewTaskMenu(): Promise<void> {
+  await openTaskMenu("Review approved task");
+}
+
 function findPostCall(path: string) {
   return mockFetch.fn.mock.calls.find(
     ([url, init]) =>
       String(url).includes(path) &&
       (init as RequestInit | undefined)?.method === "POST",
   );
+}
+
+function setupTaskRoutes(tasks: Array<Record<string, unknown>>): void {
+  mockFetch.resetRoutes();
+  mockFetch.mockJsonResponse("/api/stages/registry", {
+    stages: [
+      {
+        name: "development",
+        display_label: "Development",
+        category: "implementation",
+        review_policy: "required",
+        position_hint: 10,
+      },
+      {
+        name: "operator_review",
+        display_label: "Operator Review",
+        category: "verification",
+        review_policy: "required",
+        position_hint: 20,
+      },
+    ],
+  });
+  mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks });
+  mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+    task: {
+      ...tasks[0],
+      description: "Task detail",
+      category: null,
+      validation_criteria: null,
+    },
+  });
 }
 
 describe("TasksTab — events and row actions", () => {
@@ -177,6 +212,29 @@ describe("TasksTab — events and row actions", () => {
     expect(screen.queryByText("Other project task")).toBeNull();
   });
 
+  it("ignores task events with invalid task payloads", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Open task 1")).toBeTruthy();
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_created",
+        task_id: "task-invalid",
+        task: {
+          id: 123,
+          title: "Invalid task payload",
+          project_id: "proj-1",
+        },
+      });
+    });
+
+    expect(screen.queryByText("Invalid task payload")).toBeNull();
+  });
+
   it("assigns a task to the active main chat from the row actions menu", async () => {
     mockFetch.mockJsonResponse("/api/tasks/task-review/claim", {
       task: {
@@ -247,7 +305,7 @@ describe("TasksTab — events and row actions", () => {
     );
   });
 
-  it("shows operational task menu actions with disabled assign when no chat session exists", async () => {
+  it("shows resume build for paused task evidence and disables assign without chat", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -256,35 +314,51 @@ describe("TasksTab — events and row actions", () => {
     await openReviewTaskMenu();
 
     expect(screen.getByRole("button", { name: "Assign to Main Chat" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Build" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Build Quick" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Stop Build" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Resume Build" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
     expect(screen.getByRole("button", { name: "Close..." })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Release Claim" })).toBeNull();
   });
 
-  it("sends build and build-control payloads from the quick menu", async () => {
+  it("sends build payloads from the quick menu when no build evidence exists", async () => {
+    const startableTask = {
+      ...taskList[1],
+      id: "task-build",
+      ref: "#501",
+      title: "Startable build task",
+      state: { current_stage: null },
+      current_stage: null,
+      stages: [],
+      seq_num: 501,
+      path_cache: "501",
+    };
+    setupTaskRoutes([startableTask]);
     mockFetch.mockJsonResponse("/api/build/stop", { success: true });
-    mockFetch.mockJsonResponse("/api/build/resume", { success: true });
     mockFetch.mockJsonResponse("/api/build", { success: true });
 
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Startable build task")).toBeTruthy();
     });
 
-    await openReviewTaskMenu();
+    await openTaskMenu("Startable build task");
+    expect(screen.getByRole("button", { name: "Build" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Build Quick" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
+
     fireEvent.click(screen.getByRole("button", { name: "Build" }));
     await waitFor(() => {
       expect(findPostCall("/api/build")).toBeTruthy();
     });
     expect(findPostCall("/api/build")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#401" }),
+      body: JSON.stringify({ input_ref: "#501" }),
     });
 
-    await openReviewTaskMenu();
+    await openTaskMenu("Startable build task");
     fireEvent.click(screen.getByRole("button", { name: "Build Quick" }));
     await waitFor(() => {
       const buildCalls = mockFetch.fn.mock.calls.filter(
@@ -303,17 +377,28 @@ describe("TasksTab — events and row actions", () => {
     );
     expect(buildCalls[buildCalls.length - 1]?.[1]).toMatchObject({
       body: JSON.stringify({
-        input_ref: "#401",
+        input_ref: "#501",
         quick: true,
-        stage: ["development"],
+        stage: [],
       }),
     });
     expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#401" }),
+      body: JSON.stringify({ input_ref: "#501" }),
     });
+  });
 
+  it("resumes paused task-scoped build automation from the quick menu", async () => {
+    mockFetch.mockJsonResponse("/api/build/resume", { success: true });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
     await openReviewTaskMenu();
+    expect(screen.getByRole("button", { name: "Resume Build" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Resume Build" }));
+
     await waitFor(() => {
       expect(findPostCall("/api/build/resume")).toBeTruthy();
     });
@@ -323,6 +408,11 @@ describe("TasksTab — events and row actions", () => {
   });
 
   it("stops task-scoped build automation from the quick menu", async () => {
+    const activeBuildTask = {
+      ...taskList[0],
+      allow_automation: true,
+    };
+    setupTaskRoutes([activeBuildTask]);
     mockFetch.mockJsonResponse("/api/build/stop", { success: true });
 
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
@@ -331,6 +421,10 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
     await openReviewTaskMenu();
+    expect(screen.getByRole("button", { name: "Stop Build" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Stop Build" }));
 
     await waitFor(() => {
@@ -461,10 +555,10 @@ describe("TasksTab — events and row actions", () => {
         name: "Task actions",
       }),
     );
-    expect(screen.getByRole("button", { name: "Build" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Build Quick" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Stop Build" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Resume Build" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
 
     await waitFor(() => {

@@ -254,16 +254,20 @@ export const TasksTab = memo(function TasksTab({
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
-        const newTask = normalizeActivityTask(taskData as RawTaskPayload);
+        const rawTask = extractTaskPayload(taskData);
+        if (!rawTask) return;
+        const newTask = normalizeActivityTask(rawTask);
         setTasks((prev) => {
           if (prev.some((t) => t.id === taskId)) return prev;
           return [...prev, newTask];
         });
       } else {
         // task_updated, task_closed, task_reopened, task_de_escalated
+        const rawTask = extractTaskPayload(taskData);
+        if (!rawTask) return;
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === taskId ? normalizeActivityTask(taskData as RawTaskPayload, t) : t,
+            t.id === taskId ? normalizeActivityTask(rawTask, t) : t,
           ),
         );
       }

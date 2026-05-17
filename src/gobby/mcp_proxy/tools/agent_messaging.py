@@ -181,6 +181,7 @@ def add_messaging_tools(
                     logger.warning(f"Failed to write to agent_runs.result: {e}")
 
             # Broadcast agent_message event
+            failed_broadcasts: list[dict[str, Any]] = []
             if broadcast_fn:
                 for recipient_id in send_result.recipient_session_ids:
                     try:
@@ -191,7 +192,22 @@ def add_messaging_tools(
                             to_session=recipient_id,
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to broadcast agent_message: {e}")
+                        logger.warning(
+                            "Failed to broadcast agent_message",
+                            extra={
+                                "from_session": from_id,
+                                "to_session": recipient_id,
+                                "broadcast_id": send_result.broadcast_id,
+                            },
+                            exc_info=True,
+                        )
+                        failed_broadcasts.append(
+                            {
+                                "recipient_session_id": recipient_id,
+                                "error": str(e),
+                            }
+                        )
+            send_result.failed_broadcasts = failed_broadcasts
 
             payload = send_result.to_dict()
             payload["message"] = msg.to_dict() if msg is not None else None

@@ -38,6 +38,19 @@ interface TaskQuickMenuProps {
   onReopenTask: () => void;
 }
 
+function hasBuildEvidence(task: GobbyTask): boolean {
+  const hasStageEvidence =
+    Boolean(task.current_stage) ||
+    Boolean(task.state?.current_stage) ||
+    (task.stages?.length ?? 0) > 0;
+  const hasBuildConfig =
+    Boolean(task.assigned_agent) ||
+    (task.additional_skills?.length ?? 0) > 0 ||
+    Boolean(task.yolo) ||
+    Boolean(task.isolation && task.isolation !== "none");
+  return hasStageEvidence || hasBuildConfig || (task.dispatch_failure_count ?? 0) > 0;
+}
+
 export function TaskQuickMenu({
   menu,
   chatSessionId,
@@ -56,6 +69,12 @@ export function TaskQuickMenu({
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
+  const buildRunning = task.allow_automation === true;
+  const buildPaused = !isClosed && !buildRunning && hasBuildEvidence(task);
+  const showStartBuild = !isClosed && !buildRunning && !buildPaused;
+  const showStopBuild = !isClosed && buildRunning;
+  const showResumeBuild = !isClosed && buildPaused;
+  const showBuildControls = showStartBuild || showStopBuild || showResumeBuild;
   const menuStyle: CSSProperties = {
     position: "fixed",
     left: menu.x,
@@ -75,31 +94,35 @@ export function TaskQuickMenu({
         >
           Assign to Main Chat
         </button>
-        <div className="session-ctx-divider" />
-        <button className="session-ctx-item" onClick={onBuild} disabled={isClosed || busy}>
-          Build
-        </button>
-        <button
-          className="session-ctx-item"
-          onClick={onBuildQuick}
-          disabled={isClosed || busy}
-        >
-          Build Quick
-        </button>
-        <button
-          className="session-ctx-item"
-          onClick={onStopBuild}
-          disabled={isClosed || busy}
-        >
-          Stop Build
-        </button>
-        <button
-          className="session-ctx-item"
-          onClick={onResumeBuild}
-          disabled={isClosed || busy}
-        >
-          Resume Build
-        </button>
+        {showBuildControls && (
+          <>
+            <div className="session-ctx-divider" />
+            {showStartBuild && (
+              <>
+                <button className="session-ctx-item" onClick={onBuild} disabled={busy}>
+                  Build
+                </button>
+                <button
+                  className="session-ctx-item"
+                  onClick={onBuildQuick}
+                  disabled={busy}
+                >
+                  Build Quick
+                </button>
+              </>
+            )}
+            {showStopBuild && (
+              <button className="session-ctx-item" onClick={onStopBuild} disabled={busy}>
+                Stop Build
+              </button>
+            )}
+            {showResumeBuild && (
+              <button className="session-ctx-item" onClick={onResumeBuild} disabled={busy}>
+                Resume Build
+              </button>
+            )}
+          </>
+        )}
         {isClaimed && (
           <>
             <div className="session-ctx-divider" />

@@ -120,6 +120,12 @@ export type RawTaskPayload = {
   stages?: RawStagePayload[] | null
   state?: Partial<CanonicalTaskState> | null
   compat?: TaskCompatProjection | null
+  allow_automation?: boolean | null
+  yolo?: boolean | null
+  isolation?: string | null
+  dispatch_failure_count?: number | null
+  additional_skills?: string[] | null
+  assigned_agent?: string | null
 }
 
 export type NormalizedTaskPayload = Omit<RawTaskPayload, 'current_stage' | 'stages' | 'state'> & {
@@ -142,6 +148,88 @@ export type NormalizedTaskPayload = Omit<RawTaskPayload, 'current_stage' | 'stag
   current_stage: StageStateView | null
   stages: StageStateView[]
   state: CanonicalTaskState
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string'
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'number'
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'boolean'
+}
+
+function isOptionalRecord(value: unknown): boolean {
+  return value === undefined || value === null || isRecord(value)
+}
+
+function isStringArrayOrNull(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && value.every(item => typeof item === 'string'))
+  )
+}
+
+function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
+  const stringFields = [
+    'ref',
+    'title',
+    'status',
+    'task_type',
+    'type',
+    'parent_task_id',
+    'created_at',
+    'updated_at',
+    'path_cache',
+    'assignee',
+    'agent_name',
+    'start_date',
+    'due_date',
+    'project_id',
+    'closed_at',
+    'closed_in_session_id',
+    'escalated_at',
+    'pre_escalation_status',
+    'category',
+    'isolation',
+    'assigned_agent',
+  ]
+  const numberFields = ['priority', 'seq_num', 'sequence_order', 'dispatch_failure_count']
+  const booleanFields = ['allow_automation', 'yolo']
+
+  return (
+    stringFields.every(field => isOptionalString(record[field])) &&
+    numberFields.every(field => isOptionalNumber(record[field])) &&
+    booleanFields.every(field => isOptionalBoolean(record[field])) &&
+    isOptionalRecord(record.current_stage) &&
+    isOptionalRecord(record.state) &&
+    isOptionalRecord(record.compat) &&
+    (record.stages === undefined ||
+      record.stages === null ||
+      (Array.isArray(record.stages) && record.stages.every(isRecord))) &&
+    isStringArrayOrNull(record.additional_skills)
+  )
+}
+
+export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
+  return isRecord(value) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    hasValidOptionalTaskFields(value)
+}
+
+export function extractTaskPayload(data: unknown): RawTaskPayload | null {
+  if (isRawTaskPayload(data)) return data
+  if (isRecord(data) && isRawTaskPayload(data.task)) return data.task
+  return null
 }
 
 function isStageState(value: unknown): value is StageState5 {

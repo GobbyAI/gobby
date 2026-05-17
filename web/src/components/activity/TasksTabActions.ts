@@ -1,5 +1,8 @@
 import type { GobbyTask } from "../../hooks/useTasks";
-import type { RawTaskPayload } from "../../lib/taskNormalization";
+import {
+  extractTaskPayload,
+  type RawTaskPayload,
+} from "../../lib/taskNormalization";
 import { getCanonicalTaskState } from "../../lib/taskState";
 
 export type TaskActionEndpoint = "release-claim" | "close" | "reopen";
@@ -95,14 +98,4 @@ async function postBuildRequest(
   if (!response.ok) {
     throw new Error(`Build failed (${response.status})`);
   }
-}
-
-function extractTaskPayload(data: unknown): RawTaskPayload | null {
-  if (!data || typeof data !== "object") return null;
-  const record = data as { id?: unknown; task?: unknown };
-  if (typeof record.id === "string") return record as RawTaskPayload;
-  if (record.task && typeof record.task === "object") {
-    return record.task as RawTaskPayload;
-  }
-  return null;
 }

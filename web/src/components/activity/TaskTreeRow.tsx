@@ -49,7 +49,6 @@ export function TaskTreeRow({
 
   return (
     <div
-      key={task.id}
       style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
       className={taskRowClass}
       role="treeitem"

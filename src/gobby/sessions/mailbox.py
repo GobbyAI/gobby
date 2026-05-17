@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
 ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
 DELIVERABLE_SESSION_STATUSES = ("active", "paused")
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class MailboxSendResult:
@@ -31,18 +34,24 @@ class MailboxSendResult:
     recipient_session_ids: list[str] = field(default_factory=list)
     broadcast_id: str | None = None
     wake_results: list[dict[str, Any]] = field(default_factory=list)
+    failed_broadcasts: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def message_ids(self) -> list[str]:
         return [message.id for message in self.messages]
 
+    @property
+    def success(self) -> bool:
+        return not self.failed_broadcasts
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "success": True,
+            "success": self.success,
             "message_ids": self.message_ids,
             "recipient_session_ids": self.recipient_session_ids,
             "broadcast_id": self.broadcast_id,
             "wake_results": self.wake_results,
+            "failed_broadcasts": self.failed_broadcasts,
         }
 
 
@@ -92,6 +101,19 @@ class MailboxService:
                 project_id=resolved_project_id,
             )
             broadcast_id = str(uuid.uuid4())
+            if not recipient_ids:
+                logger.info(
+                    "Mailbox broadcast resolved no recipients",
+                    extra={
+                        "from_session_id": from_session_id,
+                        "resolved_project_id": resolved_project_id,
+                        "broadcast_id": broadcast_id,
+                    },
+                )
+                return MailboxSendResult(
+                    recipient_session_ids=[],
+                    broadcast_id=broadcast_id,
+                )
         else:
             resolved_project_id = project_id
             assert to_session_id is not None
