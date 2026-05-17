@@ -116,6 +116,9 @@ export type RawTaskPayload = {
   escalated_at?: string | null
   pre_escalation_status?: string | null
   category?: string | null
+  description?: string | null
+  labels?: string[] | null
+  validation_criteria?: string | null
   current_stage?: RawStagePayload | null
   stages?: RawStagePayload[] | null
   state?: Partial<CanonicalTaskState> | null

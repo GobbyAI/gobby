@@ -7,6 +7,40 @@ import { getCanonicalTaskState } from "../../lib/taskState";
 
 export type TaskActionEndpoint = "release-claim" | "close" | "reopen";
 
+/**
+ * PATCH-safe task fields only. Mirrors the backend TaskUpdateRequest subset
+ * that the PATCH route accepts without 400ing (it rejects `assignee`,
+ * `status`, and stage keys — those route to dedicated endpoints instead).
+ */
+export type PatchTaskFields = {
+  title?: string;
+  description?: string;
+  priority?: number;
+  task_type?: string;
+  category?: string;
+  labels?: string[];
+  validation_criteria?: string;
+};
+
+export async function patchTaskFields(
+  baseUrl: string,
+  taskId: string,
+  fields: PatchTaskFields,
+): Promise<RawTaskPayload | null> {
+  const response = await fetch(
+    `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to update task (${response.status})`);
+  }
+  return extractTaskPayload(await response.json());
+}
+
 export function taskActionRef(task: GobbyTask): string {
   if (task.seq_num != null) return `#${task.seq_num}`;
   return task.ref || task.id;
