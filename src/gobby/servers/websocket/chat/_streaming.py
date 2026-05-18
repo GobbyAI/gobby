@@ -23,9 +23,11 @@ from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWar
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
 
 if TYPE_CHECKING:
+    from websockets.asyncio.server import ServerConnection
+
     from gobby.servers.websocket.chat._message_validation import ChatContent
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
 
 
 class ChatStreamingMixin:
@@ -33,6 +35,7 @@ class ChatStreamingMixin:
 
     _chat_sessions: dict[str, ChatSessionProtocol]
     _active_chat_tasks: dict[str, asyncio.Task[None]]
+    clients: dict[ServerConnection, dict[str, Any]]
     web_chat_session_registry: Any
 
     if TYPE_CHECKING:
@@ -147,10 +150,10 @@ class ChatStreamingMixin:
                 pass
 
         except (ConnectionClosed, ConnectionClosedError):
-            logger.debug(f"Client disconnected during chat stream for {conversation_id}")
+            logger.debug("Client disconnected during chat stream for %s", conversation_id)
 
         except Exception as exc:
-            logger.exception(f"Chat error for conversation {conversation_id}")
+            logger.exception("Chat error for conversation %s", conversation_id)
             error_msg, error_code = self._classify_chat_error(exc)
             try:
                 await transport.send_direct(
@@ -271,7 +274,7 @@ class ChatStreamingMixin:
                 }
             )
         except Exception as exc:
-            logger.warning(f"Failed to switch model to {model}: {exc}")
+            logger.warning("Failed to switch model to %s: %s", model, exc)
             await transport.send_direct(
                 transport.base_msg(
                     type="chat_error",
@@ -312,7 +315,7 @@ class ChatStreamingMixin:
             return
         try:
             await aclose()
-        except BaseException:
+        except Exception:
             pass
 
     def _clear_active_task(self, conversation_id: str) -> None:

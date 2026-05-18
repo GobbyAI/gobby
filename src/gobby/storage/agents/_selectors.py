@@ -31,7 +31,11 @@ class _AgentRunSelectorMixin:
         *,
         limit: bool = False,
     ) -> str:
-        """Build an agent-run SELECT that overlays live session stats for active runs."""
+        """Build an agent-run SELECT that overlays live session stats.
+
+        ``where_clause`` and ``order_by`` must be trusted static SQL fragments
+        assembled by this module's query helpers. User values belong in params.
+        """
         sql = f"""
             SELECT
                 ar.id,

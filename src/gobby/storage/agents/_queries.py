@@ -197,5 +197,6 @@ class _AgentRunQueryMixin:
 
     def delete(self: _AgentRunQueryHost, run_id: str) -> bool:
         """Delete an agent run."""
-        cursor = self.db.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
+        with self.db.transaction() as conn:
+            cursor = conn.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
         return bool(_positive_rowcount(cursor))

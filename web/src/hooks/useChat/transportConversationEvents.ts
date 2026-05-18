@@ -151,7 +151,12 @@ export function handleSessionContinued(
         if (!session || ctx.dbSessionIdRef.current !== nextDbSessionId) return;
         ctx.applyMainSessionMeta(session);
       })
-      .catch(() => {});
+      .catch((error) => {
+        console.warn("Failed to fetch continued session metadata", {
+          sessionId: nextDbSessionId,
+          error,
+        });
+      });
   }
   ctx.clearContinuationRollback();
   const resumeNotice =
@@ -167,7 +172,9 @@ export function handleSessionContinued(
       },
     ]);
   }
-  console.log("Session continued:", data);
+  if (import.meta.env.DEV) {
+    console.debug("Session continued:", data);
+  }
 }
 
 export function handleTransportError(
@@ -202,16 +209,22 @@ export function handleConnectionEstablished(
 ) {
   const serverConversations = (data.conversation_ids as string[]) || [];
   if (serverConversations.includes(ctx.conversationIdRef.current)) {
-    console.log(
-      "Reconnected to existing conversation:",
-      ctx.conversationIdRef.current,
-    );
+    if (import.meta.env.DEV) {
+      console.debug(
+        "Reconnected to existing conversation:",
+        ctx.conversationIdRef.current,
+      );
+    }
   }
-  console.log("Connection established:", data);
+  if (import.meta.env.DEV) {
+    console.debug("Connection established:", data);
+  }
 }
 
 export function handleSubscribeSuccess(data: Record<string, unknown>) {
-  console.log("Subscribed to events:", data);
+  if (import.meta.env.DEV) {
+    console.debug("Subscribed to events:", data);
+  }
 }
 
 export function handleChatDeleted(
@@ -219,7 +232,9 @@ export function handleChatDeleted(
   ctx: UseChatTransportParams,
 ) {
   const cid = data.conversation_id as string;
-  console.log("Chat deleted confirmed:", cid);
+  if (import.meta.env.DEV) {
+    console.debug("Chat deleted confirmed:", cid);
+  }
   ctx.onChatDeletedRef.current?.(cid);
 }
 
@@ -228,6 +243,8 @@ export function handleChatCleared(
   ctx: UseChatTransportParams,
 ) {
   const cid = data.conversation_id as string;
-  console.log("Chat cleared confirmed:", cid);
+  if (import.meta.env.DEV) {
+    console.debug("Chat cleared confirmed:", cid);
+  }
   ctx.onChatClearedRef.current?.(cid);
 }

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _mcp_manager_is_connected(mcp_manager: Any, name: str) -> bool:
-    is_connected = getattr(type(mcp_manager), "is_connected", None)
+    is_connected = getattr(mcp_manager, "is_connected", None)
     if callable(is_connected):
         return bool(mcp_manager.is_connected(name))
 

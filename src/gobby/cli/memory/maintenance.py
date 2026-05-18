@@ -2,15 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from collections.abc import Awaitable
 from types import ModuleType
+from typing import Protocol
 
 import click
 
 from ._formatting import truncate
 
 
+class _MemoryDeleteManager(Protocol):
+    def delete_memory(self, memory_id: str) -> Awaitable[bool]: ...
+
+
 def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
+
+
+async def _delete_memories(manager: _MemoryDeleteManager, memory_ids: list[str]) -> int:
+    deleted = 0
+    for memory_id in memory_ids:
+        if await manager.delete_memory(memory_id):
+            deleted += 1
+    return deleted
 
 
 @click.command("dedupe")
@@ -71,10 +85,7 @@ def dedupe_memories(ctx: click.Context, dry_run: bool) -> None:
         click.echo(f"\nFound {duplicate_count} duplicate memories.")
         click.echo("Run without --dry-run to delete them.")
     else:
-        deleted = 0
-        for memory_id in duplicates_to_delete:
-            if asyncio.run(manager.delete_memory(memory_id)):
-                deleted += 1
+        deleted = asyncio.run(_delete_memories(manager, duplicates_to_delete))
 
         click.echo(f"Deleted {deleted} duplicate memories.")
 
@@ -128,6 +139,7 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
                     f"  Would fix {memory_id[:12]}: set project_id={session.project_id[:12]}"
                 )
                 click.echo(f"    Content: {content_preview}...")
+                fixed += 1
             else:
                 with db.transaction() as conn:
                     conn.execute(

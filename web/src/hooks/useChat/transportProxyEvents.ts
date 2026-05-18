@@ -295,5 +295,7 @@ export function handleCliSessionSendResult(
   ctx.setProxyDeliveryNotice(
     data.delivered === false ? "Message queued until the session yields." : null,
   );
-  console.log("Message sent to CLI session:", data.delivery_method);
+  if (import.meta.env.DEV) {
+    console.debug("Message sent to CLI session:", data.delivery_method);
+  }
 }

@@ -456,7 +456,9 @@ class WorkflowHookHandler:
                     eval_lock_acquired = True
 
                 self._sync_tool_context(event, session_id)
-                if isinstance(event.data, dict):
+                if isinstance(event.data, dict) and not event.metadata.get(
+                    "_tool_context_rehydrated"
+                ):
                     from gobby.hooks.normalization import normalize_tool_fields
 
                     normalize_tool_fields(event.data)
@@ -601,6 +603,12 @@ class WorkflowHookHandler:
             logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
             raise
 
+    async def evaluate_async(self, event: HookEvent) -> HookResponse:
+        """Evaluate rules asynchronously for callers that already own the loop."""
+        if not self._enabled:
+            return HookResponse(decision="allow")
+        return await self._evaluate_rules(event)
+
     def evaluate(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event.
 
@@ -625,7 +633,7 @@ class WorkflowHookHandler:
                 logger.warning("Could not run workflow engine: Event loop is already running.")
                 return HookResponse(decision="allow")
             except RuntimeError:
-                return asyncio.run(self._evaluate_rules(event))
+                return asyncio.run(self.evaluate_async(event))
 
         except concurrent.futures.CancelledError:
             return self._handle_cancelled(event)

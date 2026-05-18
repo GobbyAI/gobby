@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.mcp_proxy.models import MCPServerConfig
 
 
+class _SecretResolvingManager(Protocol):
+    mcp_db_manager: Any | None
+
+
 def resolve_secrets_in_config(
-    manager: Any,
+    manager: _SecretResolvingManager,
     config: MCPServerConfig,
     logger: logging.Logger,
 ) -> MCPServerConfig:
@@ -59,6 +63,6 @@ def resolve_secrets_in_config(
         if config.env:
             updates["env"] = strip_unresolved_secrets(config.env, "env")
         return dataclasses.replace(config, **updates)
-    except Exception as exc:
+    except (ImportError, AttributeError, TypeError, ValueError, RuntimeError, OSError) as exc:
         logger.debug("Secret resolution skipped for %s: %s", config.name, exc)
         return config

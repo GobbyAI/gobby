@@ -99,6 +99,23 @@ def _memory_fuzzy_bucket_key(normalized_content: str) -> str:
     return normalized_content[:_MEMORY_FUZZY_PREFIX_LENGTH]
 
 
+def _find_fuzzy_duplicate(
+    normalized: str,
+    *,
+    fuzzy_buckets: dict[str, list[str]],
+    normalized_by_key: dict[str, str],
+) -> str | None:
+    """Find an existing near-duplicate record key for normalized content."""
+    fuzzy_bucket = fuzzy_buckets.get(_memory_fuzzy_bucket_key(normalized), [])
+    for key in fuzzy_bucket:
+        existing_normalized = normalized_by_key.get(key)
+        if existing_normalized is None:
+            continue
+        if _is_fuzzy_memory_duplicate(normalized, existing_normalized):
+            return key
+    return None
+
+
 def _memory_type_rank(record: Mapping[str, Any]) -> int:
     memory_type = str(record.get("type") or record.get("memory_type") or "fact").lower()
     return _MEMORY_TYPE_RANK.get(memory_type, 0)
@@ -458,15 +475,10 @@ class MemoryBackupManager:
             content_key = _normalized_memory_hash(content)
             existing_key = content_key if content_key in canonical_by_content else None
             if existing_key is None:
-                fuzzy_bucket = fuzzy_buckets.get(_memory_fuzzy_bucket_key(normalized), [])
-                existing_key = next(
-                    (
-                        key
-                        for key in fuzzy_bucket
-                        if (existing_normalized := normalized_by_key.get(key)) is not None
-                        if _is_fuzzy_memory_duplicate(normalized, existing_normalized)
-                    ),
-                    None,
+                existing_key = _find_fuzzy_duplicate(
+                    normalized,
+                    fuzzy_buckets=fuzzy_buckets,
+                    normalized_by_key=normalized_by_key,
                 )
             if existing_key is None:
                 canonical_by_content[content_key] = record

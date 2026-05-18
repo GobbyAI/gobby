@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 import click
@@ -65,10 +64,8 @@ def resolve_memory_id(
 __all__ = [
     "LocalDatabase",
     "MemoryManager",
-    "_get_daemon_client",
     "get_memory_manager",
     "memory",
     "resolve_memory_id",
     "resolve_project_ref",
-    "time",
 ]

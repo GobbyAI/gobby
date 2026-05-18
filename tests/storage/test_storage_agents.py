@@ -257,7 +257,11 @@ class TestLocalAgentRunManager:
                 prompt="Debug log test",
             )
             mock_logger.debug.assert_called()
-            assert f"Created agent run {agent_run.id}" in str(mock_logger.debug.call_args_list[-1])
+            assert mock_logger.debug.call_args_list[-1].args == (
+                "Created agent run %s for session %s",
+                agent_run.id,
+                sample_session["id"],
+            )
 
     def test_create_raises_on_failed_retrieval(
         self,

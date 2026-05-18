@@ -200,7 +200,7 @@ class KnowledgeGraphService:
                 embedding = await self._embed_fn(entity.name)
                 entity_embeddings[entity.entity_key] = embedding
                 await self._writer.set_entity_vector(
-                    entity_key=entity.entity_key,
+                    node_key=entity.entity_key,
                     embedding=embedding,
                 )
                 made_progress = True

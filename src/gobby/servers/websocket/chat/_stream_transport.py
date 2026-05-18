@@ -5,19 +5,24 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
+from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
+
+
+class ChatStreamOwner(Protocol):
+    clients: dict[ServerConnection, dict[str, Any]]
 
 
 @dataclass
 class ChatStreamTransport:
     """Request-scoped WebSocket message builder and sender."""
 
-    owner: Any
-    websocket: Any
+    owner: ChatStreamOwner
+    websocket: ServerConnection
     conversation_id: str
     request_id: str
     ws_connected: bool = True
@@ -52,6 +57,7 @@ class ChatStreamTransport:
         if not any_sent:
             self.ws_connected = False
             logger.debug(
-                f"All clients disconnected during chat stream for {self.conversation_id[:8]}"
+                "All clients disconnected during chat stream for %s",
+                self.conversation_id[:8],
             )
         return any_sent

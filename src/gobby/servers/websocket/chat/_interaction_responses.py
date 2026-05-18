@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
 
 
 class ChatInteractionResponsesMixin:

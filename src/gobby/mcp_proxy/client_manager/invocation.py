@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, cast
+from typing import Any
 
 from opentelemetry.trace import Status, StatusCode
+from pydantic import AnyUrl
 
 from gobby.telemetry.tracing import create_span
 
@@ -37,7 +38,8 @@ async def call_tool(
                 )
             else:
                 result = await session.call_tool(tool_name, arguments or {})
-            manager.health[server_name].record_success()
+            if server_name in manager.health:
+                manager.health[server_name].record_success()
             success = True
             if span.is_recording():
                 span.set_attribute("success", True)
@@ -78,8 +80,9 @@ async def read_resource(manager: Any, server_name: str, uri: str) -> Any:
     """Read a resource from a downstream MCP server."""
     try:
         session = await manager.get_client_session(server_name)
-        result = await session.read_resource(cast(Any, str(uri)))
-        manager.health[server_name].record_success()
+        result = await session.read_resource(AnyUrl(uri))
+        if server_name in manager.health:
+            manager.health[server_name].record_success()
         return result
     except Exception as exc:
         if server_name in manager.health:

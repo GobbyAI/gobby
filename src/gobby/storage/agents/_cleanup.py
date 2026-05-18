@@ -109,26 +109,27 @@ class _AgentRunCleanupMixin:
     ) -> int:
         """Mark stale pending agent runs as failed."""
         now = utc_now_iso()
-        cursor = self.db.execute(
-            """
-            UPDATE agent_runs
-            SET status = 'error',
-                error = CASE
-                    WHEN tmux_session_name IS NULL THEN 'Pending run never started'
-                    ELSE 'Pending tmux-initialized run never started'
-                END,
-                completed_at = ?,
-                updated_at = ?
-            WHERE status = 'pending'
-            AND (
-                tmux_session_name IS NULL
-                AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
-                OR tmux_session_name IS NOT NULL
-                AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_runs
+                SET status = 'error',
+                    error = CASE
+                        WHEN tmux_session_name IS NULL THEN 'Pending run never started'
+                        ELSE 'Pending tmux-initialized run never started'
+                    END,
+                    completed_at = ?,
+                    updated_at = ?
+                WHERE status = 'pending'
+                AND (
+                    tmux_session_name IS NULL
+                    AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+                    OR tmux_session_name IS NOT NULL
+                    AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+                )
+                """,
+                (now, now, f"-{timeout_minutes}", f"-{long_timeout_minutes}"),
             )
-            """,
-            (now, now, f"-{timeout_minutes}", f"-{long_timeout_minutes}"),
-        )
         count = _positive_rowcount(cursor)
         if count > 0:
             get_logger().info(

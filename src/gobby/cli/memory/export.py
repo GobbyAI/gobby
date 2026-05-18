@@ -11,6 +11,12 @@ def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
 
 
+def _default_backup_path(project_ctx: dict[str, object] | None) -> Path:
+    project_path = project_ctx.get("project_path") if project_ctx else None
+    root = Path(str(project_path)).expanduser().resolve() if project_path else Path.cwd().resolve()
+    return root / ".gobby" / "memories.jsonl"
+
+
 @click.command("export")
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
 @click.option(
@@ -89,15 +95,16 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context(cwd=Path.cwd())
-    project_id = project_ctx.get("id") if project_ctx else None
+    raw_project_id = project_ctx.get("id") if project_ctx else None
+    project_id = str(raw_project_id) if raw_project_id else None
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
 
     if output_path:
-        export_path = Path(output_path)
+        export_path = Path(output_path).expanduser().resolve()
     else:
-        export_path = Path(".gobby/memories.jsonl")
+        export_path = _default_backup_path(project_ctx)
 
     config = MemoryBackupConfig(enabled=True, export_path=export_path)
     backup_mgr = MemoryBackupManager(
@@ -122,8 +129,9 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
     help="Input file path (default: .gobby/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
+@click.option("--force", is_flag=True, help="Import even when the database has as many memories")
 @click.pass_context
-def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) -> None:
+def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, force: bool) -> None:
     """Restore memories from a JSONL backup file.
 
     Imports memories from a JSONL file into the database. This runs synchronously
@@ -134,13 +142,19 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
         gobby memory restore
 
         gobby memory restore --input ~/backups/mem.jsonl
+
+        gobby memory restore --force
     """
     from gobby.config.persistence import MemoryBackupConfig
     from gobby.sync.memories import MemoryBackupManager
+    from gobby.utils.project_context import get_project_context
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
-    restore_path = Path(input_path) if input_path else Path(".gobby/memories.jsonl")
+    project_ctx = get_project_context(cwd=Path.cwd())
+    restore_path = (
+        Path(input_path).expanduser().resolve() if input_path else _default_backup_path(project_ctx)
+    )
     if not restore_path.is_file():
         if input_path:
             raise click.ClickException(f"Memory backup not found: {restore_path}")
@@ -154,7 +168,7 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
         config=config,
     )
 
-    count = backup_mgr.import_sync(force=True)
+    count = backup_mgr.import_sync(force=force)
     if not quiet:
         if count > 0:
             click.echo(f"Restored {count} memories from {restore_path}")

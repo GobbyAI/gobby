@@ -17,14 +17,18 @@ export function connectChatTransport(
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
 
-  console.log("Connecting to WebSocket:", wsUrl);
+  if (import.meta.env.DEV) {
+    console.debug("Connecting to WebSocket:", wsUrl);
+  }
   const ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer"; // For TTS audio binary frames
   ctx.wsRef.current = ws;
 
   ws.onopen = () => {
     if (ctx.wsRef.current !== ws) return;
-    console.log("WebSocket connected");
+    if (import.meta.env.DEV) {
+      console.debug("WebSocket connected");
+    }
     ctx.setIsConnected(true);
     ctx.setIsReconnecting(false);
 
@@ -103,7 +107,9 @@ export function connectChatTransport(
   ws.onclose = () => {
     if (ctx.wsRef.current !== ws) return;
     ctx.wsRef.current = null;
-    console.log("WebSocket disconnected");
+    if (import.meta.env.DEV) {
+      console.debug("WebSocket disconnected");
+    }
     ctx.setIsConnected(false);
     ctx.setIsReconnecting(true);
     // Don't clear isStreaming/isThinking/activeRequestIdRef — the backend
@@ -132,6 +138,13 @@ export function connectChatTransport(
 
   ws.onmessage = (event) => {
     if (ctx.wsRef.current !== ws) return;
-    routeTransportMessage(event as MessageEvent<string | ArrayBuffer>, ctx);
+    try {
+      routeTransportMessage(event as MessageEvent<string | ArrayBuffer>, ctx);
+    } catch (error) {
+      console.error("WebSocket message routing failed", {
+        payload: event.data,
+        error,
+      });
+    }
   };
 }

@@ -70,16 +70,50 @@ class KnowledgeGraphExtractor:
         )
         response = await self._llm.generate_json(prompt, model=self._model)
         raw_relations = response.get("relations", [])
-        return [
-            Relationship(
-                source=r["source"],
-                target=r["destination"],
-                relationship=r["relationship"],
+        if not isinstance(raw_relations, list):
+            logger.warning(
+                "Relationship extraction dropped relations payload: expected list, got %s",
+                type(raw_relations).__name__,
             )
-            for r in raw_relations
-            if isinstance(r, dict)
-            and all(k in r for k in ("source", "relationship", "destination"))
-        ]
+            return []
+        relations: list[Relationship] = []
+        for index, raw_relation in enumerate(raw_relations):
+            if not isinstance(raw_relation, dict):
+                logger.warning(
+                    "Relationship extraction dropped relation %d: expected object",
+                    index,
+                )
+                continue
+            missing = [
+                key for key in ("source", "relationship", "destination") if key not in raw_relation
+            ]
+            if missing:
+                logger.warning(
+                    "Relationship extraction dropped relation %d: missing %s",
+                    index,
+                    ", ".join(missing),
+                )
+                continue
+            invalid = [
+                key
+                for key in ("source", "relationship", "destination")
+                if key in raw_relation and not isinstance(raw_relation[key], str)
+            ]
+            if invalid:
+                logger.warning(
+                    "Relationship extraction dropped relation %d: invalid %s",
+                    index,
+                    ", ".join(invalid),
+                )
+                continue
+            relations.append(
+                Relationship(
+                    source=raw_relation["source"],
+                    target=raw_relation["destination"],
+                    relationship=raw_relation["relationship"],
+                )
+            )
+        return relations
 
     async def select_outdated_relations(
         self,

@@ -18,7 +18,7 @@ from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersisten
 from gobby.servers.websocket.chat._stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -170,8 +170,8 @@ class ChatStreamEventHandler:
         pending = self.state.pending_tool_calls.pop(event.tool_call_id, {})
         if not pending:
             logger.warning(
-                f"ToolResultEvent for {event.tool_call_id} arrived before ToolCallEvent "
-                "(tool_name will be 'unknown')",
+                "ToolResultEvent for %s arrived before ToolCallEvent (tool_name will be 'unknown')",
+                event.tool_call_id,
             )
         self.assistant_blocks.complete_tool_call(
             tool_call_id=event.tool_call_id,

@@ -12,6 +12,8 @@ from gobby.telemetry.tracing import create_span
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
 FormatDiscoveryResult = Callable[[dict[str, Any]], str]
 
+MIN_SKILL_RELEVANCE = 0.65
+
 
 class WorkflowRuleEvaluator:
     """Evaluate workflow rules and process their MCP side effects."""
@@ -218,8 +220,6 @@ class WorkflowRuleEvaluator:
 
     def dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
         """Filter already-suggested skills and low-relevance results."""
-        min_relevance = 0.65
-
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
@@ -234,7 +234,7 @@ class WorkflowRuleEvaluator:
             filtered = [
                 item
                 for item in results_list
-                if item.get("score", 0) >= min_relevance
+                if item.get("score", 0) >= MIN_SKILL_RELEVANCE
                 and item.get("skill_name", "") not in already_suggested
             ]
 

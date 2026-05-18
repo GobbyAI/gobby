@@ -38,7 +38,7 @@ def reindex_embeddings(ctx: click.Context) -> None:
         click.echo(f"Error: Could not reach daemon — is it running? ({e})")
         raise SystemExit(1) from e
 
-    if result.get("success", True):
+    if result.get("success", False):
         total = result.get("total_memories", 0)
         generated = result.get("embeddings_generated", 0)
         click.echo(f"Reindexed {generated}/{total} memory embeddings.")

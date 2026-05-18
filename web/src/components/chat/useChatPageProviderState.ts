@@ -176,7 +176,9 @@ export function useChatPageProviderState({
         chatMode: viewingMeta?.chatMode ?? null,
         fallbackContext: "auto",
       },
-    );
+    ).catch((error) => {
+      console.error("Failed to resume viewed session in chat:", error);
+    });
   }, [
     chat,
     effectiveInputModel,
@@ -282,7 +284,8 @@ export function useChatPageProviderState({
   );
 
   useEffect(() => {
-    fetch("/api/providers")
+    const controller = new AbortController();
+    fetch("/api/providers", { signal: controller.signal })
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Provider fetch failed with ${response.status}`);
@@ -295,7 +298,15 @@ export function useChatPageProviderState({
           .map((provider: { name: string }) => provider.name);
         setAvailableProviders(names);
       })
-      .catch(() => setAvailableProviders([effectiveInputProvider || "claude"]));
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setAvailableProviders([effectiveInputProvider || "claude"]);
+      });
+    return () => {
+      controller.abort();
+    };
   }, [effectiveInputProvider]);
 
   useEffect(() => {

@@ -42,13 +42,17 @@ __all__ = [
     "HealthState",
     "MCPConnectionHealth",
     "MCPError",
+    "truncate_tool_brief",
 ]
 
 logger = logging.getLogger("gobby.mcp.manager")
 
 
-def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
-    return server_registry._truncate_tool_brief(text, max_chars=max_chars)
+def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
+    return server_registry.truncate_tool_brief(text, max_chars=max_chars)
+
+
+_truncate_tool_brief = truncate_tool_brief
 
 
 class MCPClientManager:

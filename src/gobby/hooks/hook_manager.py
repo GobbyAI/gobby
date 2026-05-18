@@ -144,21 +144,6 @@ class HookManager:
         self._hook_assembler = components.hook_assembler
         self._event_handlers = components.event_handlers
 
-        self._workflow_rule_evaluator = WorkflowRuleEvaluator(
-            workflow_handler=self._workflow_handler,
-            dispatch_mcp_calls=lambda calls, event: self._dispatch_mcp_calls(calls, event),
-            format_discovery_result=self._format_discovery_result,
-            database=self._database,
-            logger=self.logger,
-        )
-        self._session_summary_dispatcher = SessionSummaryDispatcher(
-            session_manager=self._session_manager,
-            llm_service=self._llm_service,
-            database=self._database,
-            loop=self._loop,
-            logger=self.logger,
-        )
-
         # Wire callback for session summary generation (method lives on HookManager,
         # called from EventHandlers mixins during session-end and before-agent).
         self._event_handlers._dispatch_session_summaries_fn = self._dispatch_session_summaries
@@ -407,8 +392,7 @@ class HookManager:
         mcp_calls: list[dict[str, Any]],
     ) -> None:
         """Log workflow decisions, keeping routine allow decisions at debug level."""
-        self._sync_rule_evaluator_dependencies()
-        self._workflow_rule_evaluator._log_workflow_evaluation(
+        self._create_rule_evaluator()._log_workflow_evaluation(
             event,
             workflow_response,
             mcp_calls,
@@ -416,13 +400,17 @@ class HookManager:
 
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
-        self._sync_rule_evaluator_dependencies()
-        return self._workflow_rule_evaluator.evaluate(event)
+        return self._create_rule_evaluator().evaluate(event)
 
-    def _sync_rule_evaluator_dependencies(self) -> None:
-        self._workflow_rule_evaluator.workflow_handler = self._workflow_handler
-        self._workflow_rule_evaluator.database = self._database
-        self._workflow_rule_evaluator.logger = self.logger
+    def _create_rule_evaluator(self) -> WorkflowRuleEvaluator:
+        """Create a rule evaluator bound to the manager's current dependencies."""
+        return WorkflowRuleEvaluator(
+            workflow_handler=self._workflow_handler,
+            dispatch_mcp_calls=lambda calls, event: self._dispatch_mcp_calls(calls, event),
+            format_discovery_result=self._format_discovery_result,
+            database=self._database,
+            logger=self.logger,
+        )
 
     def _evaluate_blocking_webhooks(self, event: HookEvent) -> HookResponse | None:
         """Evaluate blocking webhooks before handler execution."""
@@ -465,13 +453,11 @@ class HookManager:
 
     def _dedup_memory_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
         """Filter already-injected memories and track newly-injected IDs."""
-        self._sync_rule_evaluator_dependencies()
-        return self._workflow_rule_evaluator.dedup_memory_results(result, session_id)
+        return self._create_rule_evaluator().dedup_memory_results(result, session_id)
 
     def _dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
         """Filter already-suggested skills and low-relevance results."""
-        self._sync_rule_evaluator_dependencies()
-        return self._workflow_rule_evaluator.dedup_skill_results(result, session_id)
+        return self._create_rule_evaluator().dedup_skill_results(result, session_id)
 
     def _dispatch_session_summaries(
         self,
@@ -481,12 +467,14 @@ class HookManager:
         set_handoff_ready: bool = False,
     ) -> None:
         """Fire session summary generation."""
-        self._session_summary_dispatcher.session_manager = self._session_manager
-        self._session_summary_dispatcher.llm_service = self._llm_service
-        self._session_summary_dispatcher.database = self._database
-        self._session_summary_dispatcher.loop = self._loop
-        self._session_summary_dispatcher.logger = self.logger
-        self._session_summary_dispatcher.dispatch(
+        dispatcher = SessionSummaryDispatcher(
+            session_manager=self._session_manager,
+            llm_service=self._llm_service,
+            database=self._database,
+            loop=self._loop,
+            logger=self.logger,
+        )
+        dispatcher.dispatch(
             session_id,
             background=background,
             done_event=done_event,

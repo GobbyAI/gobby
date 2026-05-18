@@ -8,6 +8,8 @@ from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.session_types import HookSessionManager
 from gobby.utils.session_refs import try_resolve_session_field
 
+# Variable tools intentionally keep their own session_id scope; resolving it
+# here would redirect cross-session variable reads/writes.
 VARIABLE_TOOLS = {"mcp__gobby__set_variable", "mcp__gobby__get_variable"}
 
 

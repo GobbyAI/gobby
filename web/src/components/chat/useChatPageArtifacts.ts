@@ -44,6 +44,20 @@ export interface UseChatPageArtifactsResult {
   planPendingApproval: boolean;
 }
 
+interface PlanArtifactState {
+  switchKey: number;
+  planArtifactId: string | null;
+  pendingPlanArtifactId: string | null;
+}
+
+function emptyPlanArtifactState(switchKey: number): PlanArtifactState {
+  return {
+    switchKey,
+    planArtifactId: null,
+    pendingPlanArtifactId: null,
+  };
+}
+
 export function useChatPageArtifacts({
   chat,
   showTab,
@@ -62,31 +76,32 @@ export function useChatPageArtifacts({
     setVersion,
   } = useArtifacts();
 
-  const [planArtifactId, setPlanArtifactId] = useState<string | null>(null);
-  const [pendingPlanArtifactId, setPendingPlanArtifactId] = useState<
-    string | null
-  >(null);
+  const conversationSwitchKey = chat.conversationSwitchKey ?? 0;
+  const [planState, setPlanState] = useState<PlanArtifactState>(() =>
+    emptyPlanArtifactState(conversationSwitchKey),
+  );
   const planArtifactIdRef = useRef<string | null>(null);
+  const planStateRef = useRef<PlanArtifactState>(planState);
   const lastPlanArtifactContentRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    planArtifactIdRef.current = planArtifactId;
-  }, [planArtifactId]);
+  const planArtifactId =
+    planState.switchKey === conversationSwitchKey ? planState.planArtifactId : null;
+  const pendingPlanArtifactId =
+    planState.switchKey === conversationSwitchKey
+      ? planState.pendingPlanArtifactId
+      : null;
 
-  const [prevSwitchKey, setPrevSwitchKey] = useState(
-    chat.conversationSwitchKey,
-  );
-  if (prevSwitchKey !== chat.conversationSwitchKey) {
-    setPrevSwitchKey(chat.conversationSwitchKey);
-    setPlanArtifactId(null);
-    setPendingPlanArtifactId(null);
-  }
+  useEffect(() => {
+    planStateRef.current = planState;
+    planArtifactIdRef.current = planArtifactId;
+  }, [planArtifactId, planState]);
 
   useEffect(() => {
     clearArtifacts();
     planArtifactIdRef.current = null;
+    planStateRef.current = emptyPlanArtifactState(conversationSwitchKey);
     lastPlanArtifactContentRef.current = null;
-  }, [chat.conversationSwitchKey, clearArtifacts]);
+  }, [conversationSwitchKey, clearArtifacts]);
 
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
@@ -107,12 +122,22 @@ export function useChatPageArtifacts({
   const onPlanReady = useCallback(
     (content: string | null) => {
       if (!content) return;
-      const existingArtifactId = planArtifactIdRef.current;
+      const currentPlanState = planStateRef.current;
+      const existingArtifactId =
+        currentPlanState.switchKey === conversationSwitchKey
+          ? currentPlanState.planArtifactId
+          : null;
       if (
         existingArtifactId &&
         content === lastPlanArtifactContentRef.current
       ) {
-        setPendingPlanArtifactId(existingArtifactId);
+        const nextPlanState: PlanArtifactState = {
+          switchKey: conversationSwitchKey,
+          planArtifactId: existingArtifactId,
+          pendingPlanArtifactId: existingArtifactId,
+        };
+        planStateRef.current = nextPlanState;
+        setPlanState(nextPlanState);
         openArtifact(existingArtifactId);
         showTab("plans");
         return;
@@ -132,11 +157,23 @@ export function useChatPageArtifacts({
       }
       planArtifactIdRef.current = nextArtifactId;
       lastPlanArtifactContentRef.current = content;
-      setPlanArtifactId(nextArtifactId);
-      setPendingPlanArtifactId(nextArtifactId);
+      const nextPlanState: PlanArtifactState = {
+        switchKey: conversationSwitchKey,
+        planArtifactId: nextArtifactId,
+        pendingPlanArtifactId: nextArtifactId,
+      };
+      planStateRef.current = nextPlanState;
+      setPlanState(nextPlanState);
       showTab("plans");
     },
-    [artifacts, createArtifact, openArtifact, showTab, updateArtifact],
+    [
+      artifacts,
+      conversationSwitchKey,
+      createArtifact,
+      openArtifact,
+      showTab,
+      updateArtifact,
+    ],
   );
 
   useEffect(() => {
@@ -158,18 +195,32 @@ export function useChatPageArtifacts({
   }, [chat, onArtifactEvent]);
 
   const handleApprovePlan = useCallback(() => {
-    setPendingPlanArtifactId(null);
+    setPlanState((prev) => {
+      const nextPlanState =
+        prev.switchKey === conversationSwitchKey
+          ? { ...prev, pendingPlanArtifactId: null }
+          : emptyPlanArtifactState(conversationSwitchKey);
+      planStateRef.current = nextPlanState;
+      return nextPlanState;
+    });
     chat.onApprovePlan?.();
     dismissOnMobile();
-  }, [chat, dismissOnMobile]);
+  }, [chat, conversationSwitchKey, dismissOnMobile]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
-      setPendingPlanArtifactId(null);
+      setPlanState((prev) => {
+        const nextPlanState =
+          prev.switchKey === conversationSwitchKey
+            ? { ...prev, pendingPlanArtifactId: null }
+            : emptyPlanArtifactState(conversationSwitchKey);
+        planStateRef.current = nextPlanState;
+        return nextPlanState;
+      });
       chat.onRequestPlanChanges?.(feedback);
       dismissOnMobile();
     },
-    [chat, dismissOnMobile],
+    [chat, conversationSwitchKey, dismissOnMobile],
   );
 
   const handleCloseArtifact = useCallback(() => {

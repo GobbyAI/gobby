@@ -10,6 +10,20 @@ from typing import Any
 from gobby.mcp_proxy.models import HealthState
 
 
+def _reconnect_done_callback(
+    task: asyncio.Task[Any],
+    reconnect_tasks: set[asyncio.Task[Any]],
+    logger: logging.Logger,
+) -> None:
+    reconnect_tasks.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.debug("Reconnect task was cancelled")
+    except Exception:
+        logger.exception("Reconnect task failed")
+
+
 async def health_check_all(manager: Any) -> dict[str, Any]:
     """Perform an immediate health check on all connected transports."""
     tasks: list[Awaitable[Any]] = []
@@ -95,7 +109,13 @@ async def monitor_health(
                         logger.info("Attempting reconnection for unhealthy server: %s", name)
                         task = asyncio.create_task(manager._reconnect(name))
                         manager._reconnect_tasks.add(task)
-                        task.add_done_callback(manager._reconnect_tasks.discard)
+                        task.add_done_callback(
+                            lambda done_task: _reconnect_done_callback(
+                                done_task,
+                                manager._reconnect_tasks,
+                                logger,
+                            )
+                        )
                 else:
                     manager.health[name].record_success()
         except asyncio.CancelledError:

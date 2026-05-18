@@ -83,7 +83,7 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
         },
     )
 
-    load_response = await handler._evaluate_rules(raw_get_skill_after_tool)
+    load_response = await handler.evaluate_async(raw_get_skill_after_tool)
 
     assert load_response.decision == "allow"
     assert raw_get_skill_after_tool.data["mcp_server"] == "gobby-skills"
@@ -115,8 +115,8 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
         },
     )
 
-    schema_response = await handler._evaluate_rules(schema_event)
-    call_response = await handler._evaluate_rules(call_event)
+    schema_response = await handler.evaluate_async(schema_event)
+    call_response = await handler.evaluate_async(call_event)
 
     assert schema_response.decision == "allow"
     assert call_response.decision == "allow"

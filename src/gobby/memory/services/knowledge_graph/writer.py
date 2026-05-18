@@ -73,10 +73,10 @@ class KnowledgeGraphWriter:
             rel_type=relationship.relationship,
         )
 
-    async def set_entity_vector(self, entity_key: str, embedding: list[float]) -> None:
+    async def set_entity_vector(self, node_key: str, embedding: list[float]) -> None:
         """Set an entity node embedding vector."""
         await self._neo4j.set_node_vector(
-            entity_key=entity_key,
+            entity_key=node_key,
             embedding=embedding,
         )
 
@@ -97,27 +97,37 @@ class KnowledgeGraphWriter:
         self,
         relations: list[dict[str, Any]],
         project_id: str | None,
-    ) -> None:
-        """Delete selected relationships from Neo4j."""
+    ) -> list[dict[str, Any]]:
+        """Delete selected relationships from Neo4j and return failed entries."""
+        failures: list[dict[str, Any]] = []
         for rel in relations:
             source = rel.get("source", "")
             relationship = rel.get("relationship", "")
             destination = rel.get("destination", "")
-            if source and relationship and destination:
-                try:
-                    await self._neo4j.query(
-                        "MATCH (a:_Entity {entity_key: $source_key})-[r]->"
-                        "(b:_Entity {entity_key: $target_key}) "
-                        "WHERE type(r) = $rel_type DELETE r",
-                        {
-                            "source_key": entity_key(project_id, source),
-                            "target_key": entity_key(project_id, destination),
-                            "rel_type": relationship,
-                        },
-                    )
-                except Neo4jConnectionError as e:
-                    logger.warning(f"Neo4j unreachable during relation delete: {e}")
-                    return
+            if not (source and relationship and destination):
+                logger.warning("Skipping malformed relation delete request: %s", rel)
+                failures.append(
+                    {"relation": rel, "error": "missing source/relationship/destination"}
+                )
+                continue
+            try:
+                await self._neo4j.query(
+                    "MATCH (a:_Entity {entity_key: $source_key})-[r]->"
+                    "(b:_Entity {entity_key: $target_key}) "
+                    "WHERE type(r) = $rel_type DELETE r",
+                    {
+                        "source_key": entity_key(project_id, source),
+                        "target_key": entity_key(project_id, destination),
+                        "rel_type": relationship,
+                    },
+                )
+            except Neo4jConnectionError as e:
+                logger.warning("Neo4j unreachable during relation delete: %s", e)
+                failures.append({"relation": rel, "error": str(e)})
+            except Exception as e:
+                logger.warning("Failed to delete relation %s: %s", rel, e)
+                failures.append({"relation": rel, "error": str(e)})
+        return failures
 
     async def link_entities_to_memory(
         self,
@@ -134,10 +144,13 @@ class KnowledgeGraphWriter:
             "m.updated_at = datetime()",
             {"memory_id": memory_id, "project_id": project_id},
         )
-        for entity in entities:
-            await self._neo4j.query(
-                "MATCH (e:_Entity {entity_key: $entity_key}), "
-                "(m:Memory {memory_id: $memory_id}) "
-                "MERGE (e)-[:MENTIONED_IN]->(m)",
-                {"entity_key": entity.entity_key, "memory_id": memory_id},
-            )
+        entity_keys = [entity.entity_key for entity in entities]
+        if not entity_keys:
+            return
+        await self._neo4j.query(
+            "UNWIND $entity_keys AS entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key}), "
+            "(m:Memory {memory_id: $memory_id}) "
+            "MERGE (e)-[:MENTIONED_IN]->(m)",
+            {"entity_keys": entity_keys, "memory_id": memory_id},
+        )

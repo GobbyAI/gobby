@@ -36,12 +36,12 @@ def test_memory_package_exports_compatibility_symbols() -> None:
     from gobby.cli.memory import (
         LocalDatabase,
         MemoryManager,
+        __all__,
         _get_daemon_client,
         get_memory_manager,
         memory,
         resolve_memory_id,
         resolve_project_ref,
-        time,
     )
 
     assert memory.name == "memory"
@@ -51,7 +51,8 @@ def test_memory_package_exports_compatibility_symbols() -> None:
     assert callable(resolve_project_ref)
     assert LocalDatabase is not None
     assert MemoryManager is not None
-    assert callable(time.time)
+    assert "_get_daemon_client" not in __all__
+    assert "time" not in __all__
 
 
 # =============================================================================
@@ -372,7 +373,7 @@ class TestRebuildGraph:
         assert "background=true" in call_args[0][0]
         assert "gobby memory rebuild-graph --wait -p myproj" in result.output
 
-    @patch("gobby.cli.memory.time.time", side_effect=[0, 11])
+    @patch("gobby.cli.memory.graph.time.time", side_effect=[0, 11])
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_wait_times_out(
         self,

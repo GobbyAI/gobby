@@ -66,7 +66,7 @@ class _AgentRunLifecycleMixin:
 
         self.db.execute(
             """
-            INSERT OR REPLACE INTO agent_runs (
+            INSERT INTO agent_runs (
                 id, parent_session_id, child_session_id, claimed_session_id,
                 workflow_name, agent_name,
                 provider, model, is_local,
@@ -100,7 +100,11 @@ class _AgentRunLifecycleMixin:
             ),
         )
 
-        get_logger().debug(f"Created agent run {run_id} for session {parent_session_id}")
+        get_logger().debug(
+            "Created agent run %s for session %s",
+            run_id,
+            parent_session_id,
+        )
         agent_run = self.get(run_id)
         if agent_run is None:
             raise RuntimeError(f"Failed to retrieve newly created agent run: {run_id}")

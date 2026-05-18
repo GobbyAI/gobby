@@ -7,7 +7,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEventType
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
 
 
 class ChatPendingMessagesMixin:
@@ -48,7 +48,11 @@ class ChatPendingMessagesMixin:
                 try:
                     inter_session_msg_manager.mark_delivered(msg.id)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Failed to mark inter-session message %s delivered",
+                        getattr(msg, "id", None),
+                        exc_info=True,
+                    )
 
             sections: list[str] = []
             for msg_type, msgs in groups.items():
@@ -62,7 +66,7 @@ class ChatPendingMessagesMixin:
 
             return "\n\n".join(sections)
         except Exception as exc:
-            logger.debug(f"Inter-session message piggyback failed: {exc}")
+            logger.debug("Inter-session message piggyback failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod

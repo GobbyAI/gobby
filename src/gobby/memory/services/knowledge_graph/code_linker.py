@@ -69,7 +69,11 @@ class KnowledgeGraphCodeLinker:
                             }
                         )
             except Exception as e:
-                logger.debug(f"Code symbol search failed for entity '{entity.name}': {e}")
+                logger.debug(
+                    "Code symbol search failed for entity %s: %s",
+                    entity.name,
+                    e,
+                )
                 continue
 
         if not links:
@@ -84,8 +88,12 @@ class KnowledgeGraphCodeLinker:
                 "SET r.score = link.score, r.updated_at = datetime()",
                 {"links": links, "project_id": project_id},
             )
-            logger.debug(f"Wrote {len(links)} RELATES_TO_CODE edges for project {project_id}")
+            logger.debug(
+                "Wrote %d RELATES_TO_CODE edges for project %s",
+                len(links),
+                project_id,
+            )
         except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable during RELATES_TO_CODE write: {e}")
+            logger.warning("Neo4j unreachable during RELATES_TO_CODE write: %s", e)
         except Exception as e:
-            logger.warning(f"Failed to write RELATES_TO_CODE edges: {e}")
+            logger.warning("Failed to write RELATES_TO_CODE edges: %s", e)

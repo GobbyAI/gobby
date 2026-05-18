@@ -10,7 +10,7 @@ from mcp import ClientSession
 from gobby.mcp_proxy.connection_cleanup import describe_exception, discard_connection
 from gobby.mcp_proxy.models import MCPError
 
-from .server_registry import _truncate_tool_brief
+from .server_registry import truncate_tool_brief
 
 
 async def list_tools(
@@ -56,7 +56,8 @@ async def list_tools_for_server(
             await manager._retry_list_tools_after_failure(server_name, initial_error),
         )
 
-    manager.health[server_name].record_success()
+    if server_name in manager.health:
+        manager.health[server_name].record_success()
     manager._cache_discovered_tools(server_name, tool_list)
     return cast(list[dict[str, Any]], tool_list)
 
@@ -88,7 +89,8 @@ async def retry_list_tools_after_failure(
             f"reconnect retry failed: {retry_message}"
         ) from retry_error
 
-    manager.health[server_name].record_success()
+    if server_name in manager.health:
+        manager.health[server_name].record_success()
     manager._cache_discovered_tools(server_name, tool_list)
     return cast(list[dict[str, Any]], tool_list)
 
@@ -117,7 +119,7 @@ def cache_discovered_tools(manager: Any, server_name: str, tools: list[dict[str,
     try:
         manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
         config.tools = [
-            {"name": tool["name"], "brief": _truncate_tool_brief(tool.get("description"))}
+            {"name": tool["name"], "brief": truncate_tool_brief(tool.get("description"))}
             for tool in tools
         ]
     except Exception as exc:
@@ -143,8 +145,10 @@ async def get_tool_info(manager: Any, server_name: str, tool_name: str) -> dict[
     server_tools = await manager._list_tools_for_server(server_name)
 
     for tool in server_tools:
-        found_name = getattr(tool, "name", tool.get("name") if isinstance(tool, dict) else None)
-        if found_name == tool_name and isinstance(tool, dict):
+        if not isinstance(tool, dict):
+            continue
+        found_name = tool.get("name")
+        if found_name == tool_name:
             result: dict[str, Any] = {"name": found_name}
             if "description" in tool and tool["description"]:
                 result["description"] = tool["description"]

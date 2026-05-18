@@ -586,7 +586,7 @@ class ChatSessionMixin:
             if runtime_mode and runtime_mode != "plan":
                 session.chat_mode = runtime_mode
             if existing_db_session.usage_output_tokens:
-                session._accumulated_output_tokens = existing_db_session.usage_output_tokens
+                session.set_accumulated_output_tokens(existing_db_session.usage_output_tokens)
                 if existing_db_session.approved_tools_json:
                     try:
                         session._approved_tools = normalize_approved_tool_keys(
@@ -639,7 +639,7 @@ class ChatSessionMixin:
                 if runtime_mode and runtime_mode != "plan":
                     session.chat_mode = runtime_mode
                 if db_session.usage_output_tokens:
-                    session._accumulated_output_tokens = db_session.usage_output_tokens
+                    session.set_accumulated_output_tokens(db_session.usage_output_tokens)
                 if db_session.approved_tools_json:
                     try:
                         session._approved_tools = normalize_approved_tool_keys(

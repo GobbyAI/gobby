@@ -50,9 +50,13 @@ class ProjectIdResolver:
         from gobby.utils.project_context import get_project_context
 
         project_context = get_project_context(working_dir)
-        if project_context and project_context.get("id"):
-            self._ensure_project(project_context)
-            return str(project_context["id"])
+        if project_context:
+            project_context_id = _as_nonempty_str(project_context.get("id"))
+            if project_context_id:
+                self._ensure_project(project_context)
+                return project_context_id
+            if self.logger:
+                self.logger.warning("Project context at %s is missing a non-empty id", working_dir)
 
         raise ValueError(
             f"No .gobby/project.json found in {working_dir}. "

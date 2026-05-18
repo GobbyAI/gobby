@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import time
 import urllib.parse
 from types import ModuleType
 
@@ -161,10 +162,10 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
     click.echo("Polling knowledge graph rebuild progress...")
     last_snapshot: tuple[object, ...] | None = None
     status_params = urllib.parse.urlencode({"job_id": str(job_id)})
-    start_time = memory_module.time.time()
+    start_time = time.time()
 
     while True:
-        elapsed = memory_module.time.time() - start_time
+        elapsed = time.time() - start_time
         if elapsed > timeout:
             raise click.ClickException(f"Rebuild job {job_id} timed out after {timeout} seconds")
         status_response = client.call_http_api(
@@ -222,7 +223,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
             detail = status_data.get("error") or "unknown error"
             raise click.ClickException(f"Rebuild job {job_id} failed: {detail}")
 
-        memory_module.time.sleep(3)
+        time.sleep(3)
 
 
 @click.command("invalidate")

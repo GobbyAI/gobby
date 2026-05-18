@@ -434,7 +434,7 @@ export function AgentsTab({
       {ConfirmDialogElement}
       {toastMessage && (
         <div
-          className={`agent-defs-toast fixed right-5 top-[60px] z-[1000] cursor-pointer rounded-md px-4 py-2 text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease] ${toastMessage.type === 'success' ? 'agent-defs-toast--success bg-[var(--color-success-foreground)]' : 'bg-[var(--color-error)]'}`}
+          className={`agent-defs-toast fixed right-5 top-[60px] z-[1000] cursor-pointer rounded-md px-4 py-2 text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fade-in_0.2s_ease] ${toastMessage.type === 'success' ? 'agent-defs-toast--success bg-[var(--color-success-foreground)]' : 'bg-[var(--color-error)]'}`}
           onClick={() => setToastMessage(null)}
         >
           {toastMessage.text}

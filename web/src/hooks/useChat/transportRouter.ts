@@ -36,6 +36,57 @@ import {
 } from "./transportVoiceEvents";
 import type { UseChatTransportParams } from "./transportTypes";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isChatStreamChunk(data: unknown): data is ChatStreamChunk {
+  return (
+    isRecord(data) &&
+    data.type === "chat_stream" &&
+    typeof data.message_id === "string" &&
+    typeof data.content === "string" &&
+    typeof data.done === "boolean"
+  );
+}
+
+function isChatError(data: unknown): data is ChatError {
+  return (
+    isRecord(data) &&
+    data.type === "chat_error" &&
+    typeof data.error === "string"
+  );
+}
+
+function isToolStatusMessage(data: unknown): data is ToolStatusMessage {
+  return (
+    isRecord(data) &&
+    data.type === "tool_status" &&
+    typeof data.message_id === "string" &&
+    typeof data.tool_call_id === "string" &&
+    typeof data.status === "string"
+  );
+}
+
+function isChatThinkingMessage(data: unknown): data is ChatThinkingMessage {
+  return (
+    isRecord(data) &&
+    data.type === "chat_thinking" &&
+    typeof data.message_id === "string" &&
+    typeof data.conversation_id === "string"
+  );
+}
+
+function isModelSwitchedMessage(data: unknown): data is ModelSwitchedMessage {
+  return (
+    isRecord(data) &&
+    data.type === "model_switched" &&
+    typeof data.conversation_id === "string" &&
+    typeof data.old_model === "string" &&
+    typeof data.new_model === "string"
+  );
+}
+
 export function routeTransportMessage(
   event: MessageEvent<string | ArrayBuffer>,
   ctx: UseChatTransportParams,
@@ -51,24 +102,34 @@ export function routeTransportMessage(
   }
 
   try {
-    const data = JSON.parse(event.data) as WebSocketMessage;
-    console.log("WebSocket message:", data.type, data);
+    const parsed: unknown = JSON.parse(event.data);
+    if (!isRecord(parsed) || typeof parsed.type !== "string") {
+      return;
+    }
+    const data = parsed as WebSocketMessage;
+    if (import.meta.env.DEV) {
+      console.debug("WebSocket message:", data.type, data);
+    }
 
     switch (data.type) {
       case "chat_stream":
-        ctx.handleChatStreamRef.current(data as unknown as ChatStreamChunk);
+        if (isChatStreamChunk(data)) ctx.handleChatStreamRef.current(data);
         return;
       case "chat_error":
-        ctx.handleChatErrorRef.current(data as unknown as ChatError);
+        if (isChatError(data)) ctx.handleChatErrorRef.current(data);
         return;
       case "tool_status":
-        ctx.handleToolStatusRef.current(data as unknown as ToolStatusMessage);
+        if (isToolStatusMessage(data)) ctx.handleToolStatusRef.current(data);
         return;
       case "chat_thinking":
-        ctx.handleChatThinkingRef.current(data as unknown as ChatThinkingMessage);
+        if (isChatThinkingMessage(data)) {
+          ctx.handleChatThinkingRef.current(data);
+        }
         return;
       case "model_switched":
-        ctx.handleModelSwitchedRef.current(data as unknown as ModelSwitchedMessage);
+        if (isModelSwitchedMessage(data)) {
+          ctx.handleModelSwitchedRef.current(data);
+        }
         return;
       case "plan_pending_approval":
         handlePlanPendingApproval(data, ctx);

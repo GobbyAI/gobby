@@ -5,35 +5,16 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.services._manager_compat import (
+    disconnect_manager_server,
+    manager_is_connected,
+)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
 
 logger = logging.getLogger("gobby.mcp.server")
-
-
-def _manager_has_method(mcp_manager: Any, method_name: str) -> bool:
-    return callable(getattr(type(mcp_manager), method_name, None))
-
-
-def _manager_is_connected(mcp_manager: Any, name: str) -> bool:
-    if _manager_has_method(mcp_manager, "is_connected"):
-        return bool(mcp_manager.is_connected(name))
-
-    connections = getattr(mcp_manager, "connections", None)
-    return isinstance(connections, dict) and name in connections
-
-
-async def _disconnect_manager_server(mcp_manager: Any, name: str) -> None:
-    if _manager_has_method(mcp_manager, "disconnect_server"):
-        await mcp_manager.disconnect_server(name)
-        return
-
-    connections = getattr(mcp_manager, "connections", None)
-    connection = connections.pop(name, None) if isinstance(connections, dict) else None
-    if connection is not None and getattr(connection, "is_connected", False):
-        await connection.disconnect()
 
 
 class ServerManagementService:
@@ -139,9 +120,9 @@ class ServerManagementService:
         """
         try:
             # First disconnect if connected
-            if _manager_is_connected(self._mcp_manager, name):
+            if manager_is_connected(self._mcp_manager, name):
                 try:
-                    await _disconnect_manager_server(self._mcp_manager, name)
+                    await disconnect_manager_server(self._mcp_manager, name)
                     logger.info(f"Disconnected server {name} before removal")
                 except Exception as e:
                     logger.warning(f"Error disconnecting server {name}: {e}")

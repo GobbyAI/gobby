@@ -62,6 +62,13 @@ class _FakeSession:
         self._last_model = None
         self._events = [] if events is None else events
 
+    def add_output_tokens(self, tokens: int) -> int:
+        self._accumulated_output_tokens += max(0, tokens)
+        return self._accumulated_output_tokens
+
+    def set_accumulated_output_tokens(self, tokens: int) -> None:
+        self._accumulated_output_tokens = max(0, tokens)
+
     async def send_message(self, content: ChatContent) -> AsyncIterator[ChatEvent]:
         for event in self._events:
             yield event

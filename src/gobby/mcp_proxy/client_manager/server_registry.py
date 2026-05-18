@@ -9,8 +9,10 @@ from gobby.mcp_proxy.bundled import normalize_bundled_server_config
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
+LOGGER = logging.getLogger("gobby.mcp.manager")
 
-def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
+
+def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
     if not text:
         return ""
     if max_chars <= 0:
@@ -20,6 +22,9 @@ def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
     if max_chars == 1:
         return "…"
     return f"{text[: max_chars - 1]}…"
+
+
+_truncate_tool_brief = truncate_tool_brief
 
 
 def load_tools_from_db(
@@ -36,7 +41,7 @@ def load_tools_from_db(
         return [
             {
                 "name": tool.name,
-                "brief": _truncate_tool_brief(tool.description),
+                "brief": truncate_tool_brief(tool.description),
             }
             for tool in tools
         ]
@@ -159,7 +164,7 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
                         }
                     )
             except Exception as exc:
-                logging.getLogger("gobby.mcp.manager").warning(
+                LOGGER.warning(
                     "Failed to list tools for %s: %s",
                     config.name,
                     exc,

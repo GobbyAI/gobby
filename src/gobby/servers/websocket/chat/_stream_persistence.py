@@ -11,7 +11,7 @@ from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
 from gobby.servers.websocket.db import run_db
 
-logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+logger = logging.getLogger(__name__)
 
 
 class ChatStreamPersistence:
@@ -59,7 +59,7 @@ class ChatStreamPersistence:
                     content_blocks_json=blocks_json,
                 )
         except Exception as exc:
-            logger.debug(f"Failed to persist chat message: {exc}")
+            logger.debug("Failed to persist chat message: %s", exc)
 
     async def persist_user_message(
         self,
@@ -137,9 +137,7 @@ class ChatStreamPersistence:
         has_usage = event.total_input_tokens is not None or event.output_tokens is not None
         if has_usage:
             try:
-                prev_output = getattr(session, "_accumulated_output_tokens", 0)
-                new_output = prev_output + (event.output_tokens or 0)
-                session._accumulated_output_tokens = new_output
+                new_output = session.add_output_tokens(event.output_tokens or 0)
 
                 await run_db(
                     self.owner,
@@ -153,7 +151,7 @@ class ChatStreamPersistence:
                     model=getattr(session, "_last_model", None),
                 )
             except Exception:
-                logger.warning(f"Failed to persist usage for {db_sid}", exc_info=True)
+                logger.warning("Failed to persist usage for %s", db_sid, exc_info=True)
         else:
             await self._persist_context_window_and_model(session, db_sid, event)
 
@@ -187,4 +185,4 @@ class ChatStreamPersistence:
                     (db_sid,),
                 )
         except Exception:
-            logger.debug(f"Failed to persist context_window for {db_sid}", exc_info=True)
+            logger.debug("Failed to persist context_window for %s", db_sid, exc_info=True)

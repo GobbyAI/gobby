@@ -122,13 +122,21 @@ jobs:
 
           version="${TAG_NAME#v}"
           api_status=0
-          api_response=$(gh api repos/GobbyAI/homebrew-tap/dispatches \
+          payload=$(jq -nc \
+            --arg tag "$TAG_NAME" \
+            --arg version "$version" \
+            '{
+              event_type: "gobby-release",
+              client_payload: {
+                tag: $tag,
+                version: $version,
+                gobby_repo: "GobbyAI/gobby",
+                helper_repo: "GobbyAI/gobby-cli"
+              }
+            }')
+          api_response=$(printf '%s' "$payload" | gh api repos/GobbyAI/homebrew-tap/dispatches \
             --method POST \
-            -f event_type=gobby-release \
-            -F "client_payload[tag]=$TAG_NAME" \
-            -F "client_payload[version]=$version" \
-            -F "client_payload[gobby_repo]=GobbyAI/gobby" \
-            -F "client_payload[helper_repo]=GobbyAI/gobby-cli" 2>&1) || api_status=$?
+            --input - 2>&1) || api_status=$?
 
           if [ "$api_status" -ne 0 ]; then
             echo "::error::Failed to dispatch Homebrew tap update for ${TAG_NAME} (${version})"
