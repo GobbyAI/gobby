@@ -95,7 +95,7 @@ export function TaskDetailStatusLine({
       {(showClaim || showRelease) && (
         <button
           type="button"
-          className="btn btn-sm activity-task-detail-statusline__action"
+          className="btn btn-accent btn-sm activity-task-detail-statusline__action"
           disabled={claimBusy}
           onClick={showRelease ? onRelease : onClaim}
         >
