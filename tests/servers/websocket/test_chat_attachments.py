@@ -9,6 +9,7 @@ import pytest
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.config.app import DaemonConfig
+from gobby.servers.chat_attachment_limits import ChatAttachmentLimits
 from gobby.servers.websocket.chat_attachments import (
     append_prepared_attachment_context,
     legacy_attachment_items,
@@ -20,6 +21,19 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_file_bytes": 0},
+        {"max_total_bytes_per_message": 0},
+        {"max_files_per_message": 0},
+    ],
+)
+def test_chat_attachment_limits_reject_non_positive_values(kwargs: dict[str, int]) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        ChatAttachmentLimits(**kwargs)
 
 
 def _owner(temp_db: LocalDatabase) -> SimpleNamespace:

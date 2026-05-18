@@ -26,6 +26,13 @@ class ChatAttachmentLimits:
     max_files_per_message: int = DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE
 
     def __post_init__(self) -> None:
+        for field_name, value in (
+            ("max_file_bytes", self.max_file_bytes),
+            ("max_total_bytes_per_message", self.max_total_bytes_per_message),
+            ("max_files_per_message", self.max_files_per_message),
+        ):
+            if value <= 0:
+                raise ValueError(f"{field_name} must be positive")
         product_cap = self.max_file_bytes * self.max_files_per_message
         requested_total = self.max_total_bytes_per_message
         if requested_total > product_cap:

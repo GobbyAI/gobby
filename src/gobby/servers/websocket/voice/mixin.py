@@ -61,12 +61,6 @@ def _is_session_control_host(value: Any) -> TypeGuard[SessionControlMixin]:
     return hasattr(value, "session_manager") and callable(getattr(value, "_send_error", None))
 
 
-def _voice_transcription_timeout_seconds() -> float:
-    from gobby.servers.websocket import voice as voice_facade
-
-    return voice_facade.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS
-
-
 class VoiceMixin(VoiceWarmupMixin):
     """Mixin providing voice chat methods for WebSocketServer.
 
@@ -271,7 +265,10 @@ class VoiceMixin(VoiceWarmupMixin):
             json.dumps(_voice_status_payload(conversation_id, request_id, "transcribing"))
         )
 
-        timeout_seconds = _voice_transcription_timeout_seconds()
+        voice_config = self._get_voice_config()
+        timeout_seconds = (
+            voice_config.transcription_timeout_seconds if voice_config is not None else 120.0
+        )
         try:
             start = time.monotonic()
             audio_bytes = base64.b64decode(audio_data_b64)

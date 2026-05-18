@@ -133,11 +133,8 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                 continue
 
             raw_name = data.get("name")
-            name = (
-                raw_name.strip()
-                if isinstance(raw_name, str) and raw_name.strip()
-                else yaml_file.stem
-            )
+            stripped_name = raw_name.strip() if isinstance(raw_name, str) else ""
+            name = stripped_name or yaml_file.stem
             on_disk.add(name)
             data["name"] = name
 

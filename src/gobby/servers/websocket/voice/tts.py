@@ -105,6 +105,10 @@ class TTSPipeline:
 
     async def cancel(self) -> None:
         """Cancel queued and active TTS work."""
+        if not self._worker_task.done():
+            self._worker_task.cancel()
+        await asyncio.gather(self._worker_task, return_exceptions=True)
+
         self.sentence_buffer.clear()
         while not self._queue.empty():
             try:
@@ -112,10 +116,6 @@ class TTSPipeline:
                 self._queue.task_done()
             except asyncio.QueueEmpty:
                 break
-
-        if not self._worker_task.done():
-            self._worker_task.cancel()
-        await asyncio.gather(self._worker_task, return_exceptions=True)
 
     async def _run_worker(self) -> None:
         """Serialize sentence synthesis so later sentences cannot overtake earlier ones."""

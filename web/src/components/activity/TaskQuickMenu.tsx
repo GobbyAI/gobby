@@ -88,12 +88,15 @@ export function TaskQuickMenu({
   useEffect(() => {
     const items = refreshEnabledMenuItems();
     items[0]?.focus();
+  }, [menu.task.id, menu.x, menu.y, refreshEnabledMenuItems]);
+
+  useEffect(() => {
+    refreshEnabledMenuItems();
   }, [
     busy,
     chatSessionId,
     isClaimed,
     isClosed,
-    menu.task.id,
     refreshEnabledMenuItems,
     showBuildControls,
     showResumeBuild,

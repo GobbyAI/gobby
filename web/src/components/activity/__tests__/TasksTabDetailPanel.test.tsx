@@ -158,6 +158,27 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     expect(getByLabelText("Validation criteria")).toBeTruthy();
   });
 
+  it("surfaces invalid priority edits without committing", () => {
+    const edit = makeEdit();
+    const { getByLabelText, getByRole } = render(
+      <TasksTabDetailPanel task={makeTask()} edit={edit} />,
+    );
+    const prioritySelect = getByLabelText("Priority") as HTMLSelectElement;
+    const invalidOption = document.createElement("option");
+    invalidOption.value = "not-a-priority";
+    invalidOption.textContent = "Invalid";
+    prioritySelect.appendChild(invalidOption);
+
+    fireEvent.change(prioritySelect, {
+      target: { value: "not-a-priority" },
+    });
+
+    expect(getByRole("alert").textContent).toContain(
+      "Invalid priority value: not-a-priority",
+    );
+    expect(edit.commitField).not.toHaveBeenCalled();
+  });
+
   it("does not render read-only details solely for labels", () => {
     const { getByText, container } = render(
       <TasksTabDetailPanel

@@ -159,7 +159,7 @@ def test_patch_move_to_stage_force_overrides_claim(
 
     response = stage_client.patch(
         f"/api/tasks/{task.id}/stages/pr",
-        json={"action": "move_to", "force": True},
+        json={"action": "move_to", "force": True, "notes": "operator secret"},
         headers={"X-Gobby-Session-Id": "session-header-1"},
     )
 
@@ -173,6 +173,8 @@ def test_patch_move_to_stage_force_overrides_claim(
     assert forced_log.task_id == task.id
     assert forced_log.stage_name == "pr"
     assert forced_log.force is True
+    assert forced_log.notes_present is True
+    assert not hasattr(forced_log, "notes")
     assert forced_log.request_session_id == "session-header-1"
 
 

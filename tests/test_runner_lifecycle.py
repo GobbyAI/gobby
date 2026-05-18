@@ -786,6 +786,34 @@ class TestPipelineEventBroadcasting:
         )
 
     @pytest.mark.asyncio
+    async def test_terminal_dispatch_omits_db_for_run_db_without_db_parameter(self) -> None:
+        """run_db signature controls whether the terminal dispatch receives db."""
+        from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
+
+        calls: list[tuple[object, object]] = []
+
+        def run_db(dispatch: object, payload: object) -> None:
+            calls.append((dispatch, payload))
+
+        mock_ws_server = AsyncMock()
+        mock_pipeline_executor = MagicMock()
+        mock_pipeline_executor.db = object()
+        mock_pipeline_executor.run_db = run_db
+
+        setup_pipeline_event_broadcasting(mock_ws_server, mock_pipeline_executor)
+
+        with patch("gobby.hooks.event_handlers._dispatch.on_pipeline_failed") as handler:
+            await mock_pipeline_executor.event_callback("pipeline_failed", "pe-124")
+
+        assert len(calls) == 1
+        assert calls[0][0] is handler
+        assert calls[0][1].execution_id == "pe-124"
+        mock_ws_server.broadcast_pipeline_event.assert_awaited_once_with(
+            event="pipeline_failed",
+            execution_id="pe-124",
+        )
+
+    @pytest.mark.asyncio
     async def test_terminal_dispatch_awaits_async_callable_object_run_db(self) -> None:
         """Callable objects returning awaitables are handled like async functions."""
         from gobby.runner_broadcasting import setup_pipeline_event_broadcasting

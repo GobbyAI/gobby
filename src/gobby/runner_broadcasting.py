@@ -33,6 +33,24 @@ class PipelineTerminalPayload:
     data: dict[str, Any]
 
 
+def _callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool:
+    """Return whether ``callback`` can be called with ``keyword=...``."""
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        return True
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if (
+            parameter.kind
+            in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            and parameter.name == keyword
+        ):
+            return True
+    return False
+
+
 async def _dispatch_pipeline_terminal_event(
     run_db: RunDbHook | None,
     dispatch: Callable[..., Any],
@@ -42,30 +60,22 @@ async def _dispatch_pipeline_terminal_event(
 ) -> None:
     """Run terminal pipeline hooks through run_db when available."""
 
-    def invoke_with_db_fallback(hook: Callable[..., Any]) -> Any:
-        try:
+    def invoke_run_db(hook: Callable[..., Any]) -> Any:
+        if _callable_accepts_keyword(hook, "db"):
             return hook(dispatch, payload, db=db)
-        except TypeError as exc:
-            if "db" not in str(exc):
-                raise
-            return hook(dispatch, payload)
+        return hook(dispatch, payload)
 
     def invoke_dispatch() -> Any:
-        try:
+        if _callable_accepts_keyword(dispatch, "db"):
             return dispatch(payload, db=db)
-        except TypeError as exc:
-            if "db" not in str(exc):
-                raise
-            return dispatch(payload)
+        return dispatch(payload)
 
     if callable(run_db):
         is_async = inspect.iscoroutinefunction(run_db) or inspect.iscoroutinefunction(
             type(run_db).__call__
         )
         result = (
-            invoke_with_db_fallback(run_db)
-            if is_async
-            else await asyncio.to_thread(invoke_with_db_fallback, run_db)
+            invoke_run_db(run_db) if is_async else await asyncio.to_thread(invoke_run_db, run_db)
         )
     else:
         is_async_dispatch = inspect.iscoroutinefunction(dispatch) or inspect.iscoroutinefunction(

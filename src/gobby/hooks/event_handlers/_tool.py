@@ -27,8 +27,11 @@ class SkillResolutionError(RuntimeError):
 
 _EXPECTED_SKILL_RESOLUTION_ERRORS = (
     ConnectionError,
+    # Skill lookup may touch filesystem-backed skill stores; only the expected
+    # path/permission failures should fall through to the native Skill handler.
+    FileNotFoundError,
     LookupError,
-    OSError,
+    PermissionError,
     TimeoutError,
 )
 

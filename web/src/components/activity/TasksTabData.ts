@@ -105,6 +105,10 @@ export async function fetchMissingTaskAncestors(
         { signal },
       );
       if (!response.ok) {
+        console.warn("Failed to fetch missing task parent", {
+          parentId,
+          status: response.status,
+        });
         continue;
       }
 
@@ -112,6 +116,9 @@ export async function fetchMissingTaskAncestors(
 
       const raw = extractApiTaskResponse(data);
       if (!raw) {
+        console.warn("Failed to normalize missing task parent payload", {
+          parentId,
+        });
         continue;
       }
 
@@ -121,6 +128,7 @@ export async function fetchMissingTaskAncestors(
       enqueueParent(parentTask, depth);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
+      console.warn("Failed to load missing task parent", { parentId, error: err });
     }
   }
 

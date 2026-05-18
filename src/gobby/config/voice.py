@@ -73,6 +73,11 @@ class VoiceConfig(BaseModel):
         default=True,
         description="Enable speech-to-text (requires enabled=True).",
     )
+    transcription_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="Maximum seconds to wait for a single speech-to-text transcription.",
+    )
     whisper_model_size: str = Field(
         default="base",
         description="Whisper model size: tiny, base, small, medium.",

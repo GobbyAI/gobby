@@ -154,6 +154,7 @@ def register_task_stage_routes(
         try:
             task = resolve_task(task_id)
             manager = server.task_manager.stage_states
+            request_session_id = request.headers.get("x-gobby-session-id")
             if request_data.action == "start":
                 stage_row = manager.start_stage(
                     task.id, stage_name, by_session_id=None, notes=request_data.notes
@@ -205,7 +206,7 @@ def register_task_stage_routes(
                 stage_row = manager.move_to_stage(
                     task.id,
                     stage_name,
-                    by_session_id=None,
+                    by_session_id=request_session_id if request_data.force else None,
                     notes=request_data.notes,
                     force=request_data.force,
                 )
@@ -214,10 +215,9 @@ def register_task_stage_routes(
                         "event": "task_stage_forced_move_to",
                         "task_id": task.id,
                         "stage_name": stage_name,
-                        "notes": request_data.notes,
+                        "notes_present": bool(request_data.notes),
                         "force": request_data.force,
                     }
-                    request_session_id = request.headers.get("x-gobby-session-id")
                     if request_session_id:
                         log_extra["request_session_id"] = request_session_id
                     logger.info("Forced task stage move", extra=log_extra)

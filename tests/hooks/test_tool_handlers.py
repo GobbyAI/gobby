@@ -436,7 +436,7 @@ class TestSkillToolInterception:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Expected resolution failures are logged and fall through."""
-        skill_manager.resolve_skill_name.side_effect = OSError("temporary miss")
+        skill_manager.resolve_skill_name.side_effect = FileNotFoundError("temporary miss")
         caplog.set_level(logging.WARNING)
         event = make_event(
             HookEventType.BEFORE_TOOL,
@@ -447,6 +447,21 @@ class TestSkillToolInterception:
         assert response.decision == "allow"
         assert "Failed to resolve Skill tool call" in caplog.text
         assert any(record.exc_info is not None for record in caplog.records)
+
+    def test_skill_tool_unexpected_os_error_is_not_swallowed(
+        self,
+        handlers_with_skills: EventHandlers,
+        skill_manager: MagicMock,
+    ) -> None:
+        """Unexpected generic OS errors should keep their traceback."""
+        skill_manager.resolve_skill_name.side_effect = OSError("disk full")
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+        )
+
+        with pytest.raises(OSError, match="disk full"):
+            handlers_with_skills.handle_before_tool(event)
 
     def test_skill_tool_value_error_is_not_swallowed(
         self,

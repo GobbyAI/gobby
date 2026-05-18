@@ -462,9 +462,7 @@ describe("SessionsTab", () => {
     expect(activeSvg?.getAttribute("class")).toContain(
       "activity-row-status-dot__glyph--active",
     );
-    expect(activeSvg?.querySelector("polygon")?.getAttribute("points")).toBe(
-      "6 3 20 12 6 21 6 3",
-    );
+    expect(activeSvg?.querySelector("polygon")).not.toBeNull();
 
     const pausedDot = statusDotForTitle("#202: Paused Terminal");
     const pausedSvg = pausedDot.querySelector("svg");

@@ -367,7 +367,7 @@ class VoiceWarmupMixin:
             from gobby.voice.dep_check import ensure_stt_deps
 
             return await ensure_stt_deps(voice_config)
-        except Exception:
+        except (ImportError, RuntimeError, OSError):
             logger.debug("STT dep check failed", exc_info=True)
             return False
 
@@ -377,7 +377,7 @@ class VoiceWarmupMixin:
             from gobby.voice.dep_check import ensure_tts_deps
 
             return await ensure_tts_deps(voice_config)
-        except Exception:
+        except (ImportError, RuntimeError, OSError):
             logger.debug("TTS dep check failed", exc_info=True)
             return False
 

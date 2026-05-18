@@ -20,7 +20,9 @@ interface TaskTreeRowProps {
   isBusy: boolean;
   onSelect: (taskId: string) => void;
   onToggleOpen: (taskId: string) => void;
+  onNavigate: (taskId: string, key: "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight") => void;
   onMenuButtonClick: (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => void;
+  rowRef: (node: HTMLDivElement | null) => void;
 }
 
 const TASK_ROW_BASE_INDENT_REM = 0.75;
@@ -32,7 +34,9 @@ export function TaskTreeRow({
   isBusy,
   onSelect,
   onToggleOpen,
+  onNavigate,
   onMenuButtonClick,
+  rowRef,
 }: TaskTreeRowProps) {
   const task = row.node.task;
   const taskState = getCanonicalTaskState(task);
@@ -56,6 +60,7 @@ export function TaskTreeRow({
 
   return (
     <div
+      ref={rowRef}
       style={{
         paddingLeft: `${row.depth * TASK_ROW_DEPTH_INDENT_REM + TASK_ROW_BASE_INDENT_REM}rem`,
       }}
@@ -71,6 +76,14 @@ export function TaskTreeRow({
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onSelect(task.id);
+        } else if (
+          event.key === "ArrowDown" ||
+          event.key === "ArrowUp" ||
+          event.key === "ArrowLeft" ||
+          event.key === "ArrowRight"
+        ) {
+          event.preventDefault();
+          onNavigate(task.id, event.key);
         }
       }}
     >

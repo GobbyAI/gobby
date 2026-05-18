@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { GobbyTaskDetail } from "../../../hooks/useTasks";
 import {
   TASK_CATEGORY_OPTIONS,
@@ -44,6 +45,7 @@ export function TaskDetailEditableCore({
   const labels = task.labels?.filter(Boolean) ?? [];
   const description = task.description ?? "";
   const validationCriteria = task.validation_criteria ?? "";
+  const [priorityError, setPriorityError] = useState<string | null>(null);
 
   if (!edit) {
     const hasBody = Boolean(description) || Boolean(validationCriteria);
@@ -99,12 +101,20 @@ export function TaskDetailEditableCore({
           disabled={edit.isFieldPending(task.id, "priority")}
           onCommit={(value) => {
             const priority = Number(value);
-            if (Number.isInteger(priority)) {
-              edit.commitField({ task, field: "priority", value: priority });
+            if (!value.trim() || !Number.isInteger(priority)) {
+              setPriorityError(`Invalid priority value: ${value}`);
+              return;
             }
+            setPriorityError(null);
+            edit.commitField({ task, field: "priority", value: priority });
           }}
         />
       </div>
+      {priorityError && (
+        <div className="activity-task-detail-edit-error" role="alert">
+          <span>{priorityError}</span>
+        </div>
+      )}
 
       <div className="activity-task-detail-core-row">
         <span className="activity-task-detail-core-row__label">Labels</span>

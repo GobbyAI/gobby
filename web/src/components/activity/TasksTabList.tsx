@@ -1,3 +1,4 @@
+import { useCallback, useRef } from "react";
 import type { MouseEvent } from "react";
 
 import type { GobbyTask } from "../../hooks/useTasks";
@@ -37,6 +38,65 @@ export function TasksTabList({
   onToggleOpen,
   onMenuButtonClick,
 }: TasksTabListProps) {
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  const setRowRef = useCallback((taskId: string, node: HTMLDivElement | null) => {
+    if (node) {
+      rowRefs.current.set(taskId, node);
+    } else {
+      rowRefs.current.delete(taskId);
+    }
+  }, []);
+
+  const selectAndFocusTask = useCallback((taskId: string) => {
+    onSelect(taskId);
+    requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
+  }, [onSelect]);
+
+  const handleNavigate = useCallback((
+    taskId: string,
+    key: "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight",
+  ) => {
+    const index = visibleRows.findIndex((row) => row.node.task.id === taskId);
+    if (index === -1) return;
+    const row = visibleRows[index];
+
+    if (key === "ArrowDown") {
+      const next = visibleRows[index + 1];
+      if (next) selectAndFocusTask(next.node.task.id);
+      return;
+    }
+
+    if (key === "ArrowUp") {
+      const previous = visibleRows[index - 1];
+      if (previous) selectAndFocusTask(previous.node.task.id);
+      return;
+    }
+
+    if (key === "ArrowRight") {
+      if (row.isInternal && !row.isOpen) {
+        onToggleOpen(taskId);
+        requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
+        return;
+      }
+      const child = visibleRows[index + 1];
+      if (row.isInternal && row.isOpen && child && child.depth > row.depth) {
+        selectAndFocusTask(child.node.task.id);
+      }
+      return;
+    }
+
+    if (row.isInternal && row.isOpen) {
+      onToggleOpen(taskId);
+      requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
+      return;
+    }
+    const parent = [...visibleRows.slice(0, index)]
+      .reverse()
+      .find((candidate) => candidate.depth === row.depth - 1);
+    if (parent) selectAndFocusTask(parent.node.task.id);
+  }, [onToggleOpen, selectAndFocusTask, visibleRows]);
+
   return (
     <div
       className="activity-tasks-pane min-h-0 h-full overflow-y-auto"
@@ -67,7 +127,9 @@ export function TasksTabList({
               isBusy={activeTaskActionId === task.id}
               onSelect={onSelect}
               onToggleOpen={onToggleOpen}
+              onNavigate={handleNavigate}
               onMenuButtonClick={onMenuButtonClick}
+              rowRef={(node) => setRowRef(task.id, node)}
             />
           );
         })

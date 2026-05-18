@@ -70,25 +70,30 @@ async def _feed_attached_session_tts_locked(
             try:
                 pipeline.feed_text(delta)
             except EXPECTED_TTS_FEED_ERRORS as e:
+                server._attached_tts_offsets[offset_key] = len(content)
                 logger.warning(
-                    "Failed to feed attached-session TTS for session %s (%s)",
+                    "Failed to feed attached-session TTS for session %s offset=%s->%s (%s)",
                     session_id,
+                    offset,
+                    len(content),
                     type(e).__name__,
                     exc_info=True,
                 )
                 return
             except Exception:
+                server._attached_tts_offsets[offset_key] = len(content)
                 logger.warning(
-                    "Unexpected attached-session TTS feed failure for session %s",
+                    "Unexpected attached-session TTS feed failure for session %s offset=%s->%s",
                     session_id,
+                    offset,
+                    len(content),
                     exc_info=True,
                 )
                 return
         server._attached_tts_offsets[offset_key] = len(content)
 
     if complete:
-        server._attached_tts_offsets.pop(offset_key, None)
-        pipeline = server._active_tts_pipelines.pop(session_id, None)
+        pipeline = server._active_tts_pipelines.get(session_id)
         if pipeline:
             try:
                 await pipeline.flush()
@@ -99,9 +104,13 @@ async def _feed_attached_session_tts_locked(
                     type(e).__name__,
                     exc_info=True,
                 )
+                return
             except Exception:
                 logger.warning(
                     "Unexpected attached-session TTS flush failure for session %s",
                     session_id,
                     exc_info=True,
                 )
+                return
+        server._attached_tts_offsets.pop(offset_key, None)
+        server._active_tts_pipelines.pop(session_id, None)

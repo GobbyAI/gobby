@@ -184,11 +184,14 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   targetStageName: string,
   updatedAt: string = new Date().toISOString(),
 ): OptimisticMoveResult<T> {
-  const target = task.stages.find(row => row.name === targetStageName)
+  const indexedStages = task.stages.map((row, index) => ({
+    row,
+    position: row.position ?? index,
+  }))
+  const target = indexedStages.find(({ row }) => row.name === targetStageName)
   if (!target) return task
-  const targetPosition = target.position ?? task.stages.indexOf(target)
-  const stages = task.stages.map((row, index) => {
-    const position = row.position ?? index
+  const targetPosition = target.position
+  const stages = indexedStages.map(({ row, position }) => {
     if (position < targetPosition) {
       return {
         ...row,

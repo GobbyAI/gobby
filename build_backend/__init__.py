@@ -28,7 +28,7 @@ import zipfile
 from importlib import util as importlib_util
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol, cast
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +65,6 @@ _WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
 _INSTALL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "install"
 _MANIFEST_MODULE: Path = _INSTALL_DEST / "manifest.py"
 _WHEEL_CONTENT_MANIFEST: str = "gobby/install/bundled_content_manifest.json"
-
-
-class _ManifestModule(Protocol):
-    def write_bundled_content_manifest(self, install_dir: Path) -> Path: ...
 
 
 def _parse_npm_build_timeout(raw_value: str | None) -> int:
@@ -192,9 +188,7 @@ def _stage_bundled_content_manifest() -> None:
             f"write_bundled_content_manifest: {_MANIFEST_MODULE}"
         )
     try:
-        manifest_path = cast(_ManifestModule, manifest_module).write_bundled_content_manifest(
-            _INSTALL_DEST
-        )
+        manifest_path = write_manifest(_INSTALL_DEST)
     except Exception as exc:
         raise RuntimeError(
             f"Bundled content manifest helper failed while writing {_INSTALL_DEST}: {exc}"

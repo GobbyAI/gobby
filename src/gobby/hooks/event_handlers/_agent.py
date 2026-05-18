@@ -104,6 +104,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and stripped_prompt:
+            # ``stripped_prompt`` is truthy here, so split() always has a first token.
             skill_identifier = stripped_prompt.split(None, 1)[0]
             try:
                 skill_context = self._intercept_skill_command(stripped_prompt, session_id)

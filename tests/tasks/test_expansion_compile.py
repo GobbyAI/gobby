@@ -19,10 +19,8 @@ def test_invalid_compiled_priority_logs_raw_and_converted_value(
     priority = _compile._coerce_compiled_task_priority("task-1", "urgent")
 
     assert priority == 2
-    record = next(
-        entry
-        for entry in caplog.records
-        if getattr(entry, "task_id", None) == "task-1"
-    )
+    matches = [entry for entry in caplog.records if getattr(entry, "task_id", None) == "task-1"]
+    assert len(matches) == 1
+    record = matches[0]
     assert record.raw_priority == "urgent"
     assert record.converted_priority == 2

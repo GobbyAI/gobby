@@ -26,6 +26,7 @@ from gobby.servers.websocket.voice.warmup import (
     VoiceWarmupMixin,
 )
 
+# Kept as a public default for callers that imported the previous timeout constant.
 VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
 
 __all__ = [

@@ -563,13 +563,15 @@ class TestVoiceWarmup:
     @pytest.mark.asyncio
     async def test_voice_audio_timeout_sends_error_with_request_id(
         self,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Hung STT transcription should time out without forwarding chat."""
-        monkeypatch.setattr(
-            "gobby.servers.websocket.voice.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS", 0.01
+        mixin = DummyVoiceMixin(
+            VoiceConfig(
+                enabled=True,
+                stt_enabled=True,
+                transcription_timeout_seconds=0.01,
+            )
         )
-        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
         stt = MagicMock()
 
         async def transcribe_forever(_audio_bytes: bytes, _mime_type: str) -> str:

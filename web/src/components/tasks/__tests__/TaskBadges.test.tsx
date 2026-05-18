@@ -60,7 +60,9 @@ describe('StatusDot — honest task-state glyphs (#14769 / D2)', () => {
       const { container, unmount } = render(<StatusDot status={status} />)
       const span = container.querySelector(
         'span.activity-row-status-dot',
-      ) as HTMLSpanElement
+      )
+      expect(span).not.toBeNull()
+      if (!span) throw new Error('Status dot span not found')
       const svg = span.querySelector('svg')
       expect(svg?.getAttribute('data-glyph')).toBe(glyph)
       expect(span.getAttribute('data-kind')).toBe(kind)

@@ -192,7 +192,7 @@ class TestHandleChatMessage:
 
         with (
             patch(
-                "gobby.servers.websocket.chat._messaging.prepare_message_attachments",
+                "gobby.servers.websocket.chat._attachment_preparation.prepare_message_attachments",
                 new=AsyncMock(return_value=prepared),
             ),
             patch.object(mixin, "_stream_chat_response", new_callable=AsyncMock) as mock_stream,
@@ -210,6 +210,36 @@ class TestHandleChatMessage:
         mock_stream.assert_awaited_once()
         assert mock_stream.await_args.kwargs["attachments"] is prepared
         assert mock_stream.await_args.kwargs["inject_context"] == "Attached files:\n- /tmp/a.txt"
+
+    @pytest.mark.asyncio
+    async def test_unexpected_attachment_prepare_error_is_request_scoped(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ) -> None:
+        mixin.clients[ws] = {"connected": True}
+
+        with patch(
+            "gobby.servers.websocket.chat._attachment_preparation.prepare_message_attachments",
+            new=AsyncMock(side_effect=RuntimeError("storage offline")),
+        ):
+            await mixin._handle_chat_message(
+                ws,
+                {
+                    "content": "hi",
+                    "conversation_id": "c1",
+                    "request_id": "req-attachments",
+                    "attachments": [{"id": "att-1"}],
+                },
+            )
+
+        payload = json.loads(ws.send.await_args.args[0])
+        assert payload == {
+            "error": "Failed to prepare attachments. Check daemon logs for details.",
+            "request_id": "req-attachments",
+            "code": "ATTACHMENT_PREP_FAILED",
+        }
+        assert "c1" not in mixin._active_chat_tasks
 
     @pytest.mark.asyncio
     async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock):

@@ -19,7 +19,7 @@ export function useDaemonRestart() {
       return true
     } catch (err) {
       console.error('Failed to restart daemon:', err)
-      const message = err instanceof Error && err.message ? err.message : 'Failed to restart daemon'
+      const message = err instanceof Error ? err.message : 'Failed to restart daemon'
       setRestartError(message)
       return false
     }

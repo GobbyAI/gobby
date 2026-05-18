@@ -14,6 +14,9 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.websocket.chat._attachment_preparation import (
+    prepare_chat_attachments_or_error,
+)
 from gobby.servers.websocket.chat._message_validation import (
     as_optional_str,
     validate_chat_content,
@@ -26,7 +29,6 @@ from gobby.servers.websocket.chat.local_openai_warmup import (
 from gobby.servers.websocket.chat_attachments import (
     AttachmentSessionManager,
     PreparedMessageAttachments,
-    prepare_message_attachments,
 )
 from gobby.servers.websocket.db import run_db
 
@@ -183,7 +185,6 @@ class ChatMessagingMixin:
 
         Sessions are keyed by conversation_id (stable across reconnections).
         Each session maintains full multi-turn context including tool calls.
-
         Message format:
         {
             "type": "chat_message",
@@ -193,7 +194,6 @@ class ChatMessagingMixin:
             "model": "optional-model-override",
             "request_id": "client-uuid-for-stream-correlation"
         }
-
         Response format (streamed):
         {
             "type": "chat_stream",
@@ -249,15 +249,16 @@ class ChatMessagingMixin:
             )
             return
 
-        try:
-            prepared_attachments = await prepare_message_attachments(
-                self,
-                data.get("attachments"),
-                conversation_id=conversation_id,
-                message_id=message_id,
-            )
-        except ValueError as exc:
-            await self._send_error(websocket, str(exc), request_id=request_id)
+        prepared_attachments = await prepare_chat_attachments_or_error(
+            self,
+            websocket,
+            data.get("attachments"),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            request_id=request_id,
+            send_error=self._send_error,
+        )
+        if prepared_attachments is None:
             return
 
         validated_content, content_error = validate_chat_content(
