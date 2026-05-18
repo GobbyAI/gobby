@@ -264,13 +264,17 @@ const switchProvider = useCallback(
       return;
     }
 
-    await ensureMainSession({
-      projectId: projectIdRef.current,
-      provider: newProvider,
-      model: options?.model ?? null,
-      reasoningEffort: options?.reasoningEffort ?? null,
-      forceNew: true,
-    });
+    try {
+      await ensureMainSession({
+        projectId: projectIdRef.current,
+        provider: newProvider,
+        model: options?.model ?? null,
+        reasoningEffort: options?.reasoningEffort ?? null,
+        forceNew: true,
+      });
+    } catch (error) {
+      console.error("Failed to create chat session for provider change:", error);
+    }
   },
   [
     bindActiveSession,
@@ -680,6 +684,17 @@ const sendMessage = useCallback(
           normalizedReasoningEffort,
           ttsEnabled,
         );
+      }).catch((error) => {
+        console.error("Failed to create chat session before send:", error);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `system-session-create-${uuid()}`,
+            role: "system" as const,
+            content: "Failed to create chat session",
+            timestamp: new Date(),
+          },
+        ]);
       });
       return true;
     }

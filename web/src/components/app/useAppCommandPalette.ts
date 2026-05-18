@@ -90,7 +90,10 @@ export function useAppCommandPalette({
       } catch (err) {
         console.error("Restart request failed:", err);
         if (showFailureMessage) {
-          addSystemMessage("Failed to restart daemon");
+          const message = err instanceof Error && err.message
+            ? err.message
+            : "Failed to restart daemon";
+          addSystemMessage(`Failed to restart daemon: ${message}`);
         }
       }
     },

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -67,7 +68,9 @@ class TestRegisterAndNotify:
         assert registry.get_result("nonexistent") is None
 
     @pytest.mark.asyncio
-    async def test_duplicate_notify_keeps_first_result_and_wakes_once(self) -> None:
+    async def test_duplicate_notify_keeps_first_result_and_wakes_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         woken: list[tuple[str, str, dict]] = []
 
         async def wake(session_id: str, message: str, result: dict) -> None:
@@ -76,11 +79,13 @@ class TestRegisterAndNotify:
         registry = CompletionEventRegistry(wake_callback=wake)
         registry.register("pe-abc123", subscribers=["sess-1"])
 
-        await registry.notify("pe-abc123", {"status": "first"}, message="first")
-        await registry.notify("pe-abc123", {"status": "second"}, message="second")
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            await registry.notify("pe-abc123", {"status": "first"}, message="first")
+            await registry.notify("pe-abc123", {"status": "second"}, message="second")
 
         assert registry.get_result("pe-abc123") == {"status": "first"}
         assert woken == [("sess-1", "first", {"status": "first"})]
+        assert "notify() called for completed ID pe-abc123 - ignoring duplicate" in caplog.text
 
     @pytest.mark.asyncio
     async def test_wait_unregistered_raises(self, registry: CompletionEventRegistry) -> None:

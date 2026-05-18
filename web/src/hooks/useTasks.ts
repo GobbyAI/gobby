@@ -274,14 +274,19 @@ function applyTaskEvent(
     return [...tasks, newTask]
   }
 
-  if (!isRawTaskPayload(taskData)) {
-    warnInvalidTaskPayload(event, taskId, taskData)
-    return tasks
-  }
-  const updated = taskData
-  return tasks.map(task =>
-    task.id === taskId ? normalizeTask({ ...task, ...updated }) : task
-  )
+  let matched = false
+  const nextTasks = tasks.map(task => {
+    if (task.id !== taskId) return task
+    matched = true
+    const merged = { ...task, ...taskData }
+    if (!isRawTaskPayload(merged)) {
+      warnInvalidTaskPayload(event, taskId, taskData)
+      return task
+    }
+    return normalizeTask(merged)
+  })
+  if (matched || !isRawTaskPayload(taskData)) return nextTasks
+  return [...nextTasks, normalizeTask(taskData)]
 }
 
 function stageMutationErrorMessage(error: unknown, fallback: string): string {
@@ -747,12 +752,20 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const handleTaskEvent = useCallback((event: string, taskData: Record<string, unknown>) => {
     const taskId = taskData.id as string
     if (!taskId) return
+    const eventProjectId = taskData.project_id
+    if (
+      filters.projectId &&
+      typeof eventProjectId === 'string' &&
+      eventProjectId !== filters.projectId
+    ) {
+      return
+    }
 
     setAllTasks(prev => applyTaskEvent(prev, event, taskData))
 
     // Debounced full refetch to sync stats, total, and filter accuracy
     scheduleRefetch()
-  }, [scheduleRefetch])
+  }, [filters.projectId, scheduleRefetch])
 
   useEffect(() => {
     handleTaskEventRef.current = handleTaskEvent

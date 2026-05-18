@@ -100,7 +100,10 @@ def _validate_uuid_param(value: str, name: str) -> None:
 
 
 def _ensure_disk_space(directory: Path, incoming_bytes: int) -> None:
-    usage = shutil.disk_usage(directory)
+    try:
+        usage = shutil.disk_usage(directory)
+    except OSError as exc:
+        raise HTTPException(status_code=507, detail="Attachment storage unavailable") from exc
     if usage.free < incoming_bytes:
         raise HTTPException(status_code=507, detail="Insufficient disk space for attachment")
 
@@ -215,7 +218,7 @@ async def _remove_path(path: Path) -> bool:
         return True
     except FileNotFoundError:
         return True
-    except Exception:
+    except OSError:
         logger.warning("Failed to remove chat attachment path %s", path, exc_info=True)
         return False
 
@@ -290,9 +293,10 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         target_path = target_dir / safe_name
         temp_path = target_dir / _temp_upload_name(safe_name)
         size = 0
+        replace_completed = False
 
-        await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
         try:
+            await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
             await asyncio.to_thread(_ensure_disk_space, target_dir, limits.max_file_bytes)
             async with aiofiles.open(temp_path, "wb") as out:
                 while True:
@@ -310,7 +314,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                                 f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
                             ),
                         )
-                    _ensure_disk_space(target_dir, len(chunk))
+                    await asyncio.to_thread(_ensure_disk_space, target_dir, len(chunk))
                     await out.write(chunk)
 
             await _validate_declared_mime(
@@ -320,6 +324,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                 attachment_id=attachment_id,
             )
             await asyncio.to_thread(temp_path.replace, target_path)
+            replace_completed = True
             record = await server.run_db(
                 chat_attachments.create_attachment,
                 server.services.database,
@@ -331,9 +336,23 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                 size_bytes=size,
                 local_path=str(target_path),
             )
+        except HTTPException:
+            await _remove_path(temp_path)
+            if replace_completed:
+                await _remove_path(target_path)
+            await _remove_empty_directory(target_dir)
+            raise
+        except OSError as exc:
+            logger.warning("Attachment upload storage operation failed", exc_info=True)
+            await _remove_path(temp_path)
+            if replace_completed:
+                await _remove_path(target_path)
+            await _remove_empty_directory(target_dir)
+            raise HTTPException(status_code=507, detail="Attachment storage unavailable") from exc
         except Exception:
             await _remove_path(temp_path)
-            await _remove_path(target_path)
+            if replace_completed:
+                await _remove_path(target_path)
             await _remove_empty_directory(target_dir)
             raise
 

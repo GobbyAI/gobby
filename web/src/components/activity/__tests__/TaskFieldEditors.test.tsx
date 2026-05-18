@@ -114,7 +114,7 @@ describe("TaskSelectField (#14771 / D4)", () => {
 });
 
 describe("TaskTagsField (#14771 / D4)", () => {
-  it("adds a tag on Enter and commits the set on blur", () => {
+  it("adds a tag on Enter and commits the set immediately", () => {
     const onCommit = vi.fn();
     render(
       <TaskTagsField value={["web"]} onCommit={onCommit} ariaLabel="Labels" />,
@@ -122,7 +122,6 @@ describe("TaskTagsField (#14771 / D4)", () => {
     const input = screen.getByLabelText("Add label");
     fireEvent.change(input, { target: { value: "ui" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.blur(input);
     expect(onCommit).toHaveBeenCalledWith(["web", "ui"]);
   });
 
@@ -148,7 +147,6 @@ describe("TaskTagsField (#14771 / D4)", () => {
     );
     const input = screen.getByLabelText("Add label");
     fireEvent.change(input, { target: { value: "extra" } });
-    fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onCommit).not.toHaveBeenCalled();
   });

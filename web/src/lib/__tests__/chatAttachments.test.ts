@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  ATTACHMENT_DELETE_TIMEOUT_MS,
   ATTACHMENT_UPLOAD_TIMEOUT_MS,
   MAX_ATTACHMENT_SIZE_BYTES,
   deleteChatAttachment,
@@ -128,6 +129,27 @@ describe('uploadChatAttachment', () => {
     })
   })
 
+  it('normalizes same-origin absolute content URLs to paths', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
+    const xhr = FakeXMLHttpRequest.instances[0]
+    xhr.status = 201
+    xhr.responseText = JSON.stringify({
+      id: 'att-1',
+      project_id: 'proj-1',
+      filename: 'note.txt',
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      content_url: `${window.location.origin}/api/chat/attachments/att-1/content?download=1`,
+    })
+    xhr.onload?.()
+
+    await expect(upload.promise).resolves.toMatchObject({
+      content_url: '/api/chat/attachments/att-1/content?download=1',
+    })
+  })
+
   it('returns an abort handle that cancels the XHR', async () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
     const onProgress = vi.fn()
@@ -153,7 +175,7 @@ describe('uploadChatAttachment', () => {
     xhr.status = 200
     xhr.responseText = JSON.stringify({ id: 'att-1' })
     const rejection = expect(upload.promise).rejects.toThrow(
-      'Attachment upload returned invalid payload',
+      'Attachment upload response field project_id must be a string',
     )
     xhr.onload?.()
 
@@ -204,7 +226,7 @@ describe('deleteChatAttachment', () => {
     const result = expect(deleteChatAttachment('att-1')).rejects.toThrow(
       'Attachment delete timed out',
     )
-    await vi.advanceTimersByTimeAsync(ATTACHMENT_UPLOAD_TIMEOUT_MS)
+    await vi.advanceTimersByTimeAsync(ATTACHMENT_DELETE_TIMEOUT_MS)
     await result
     vi.useRealTimers()
   })

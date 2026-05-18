@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -27,6 +27,14 @@ class DependencyAddRequest(BaseModel):
     dep_type: Literal["blocks", "related", "discovered-from"] = Field(
         default="blocks", description="Dependency type"
     )
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichmentTaskView:
+    id: str
+    seq_num: int | None
+    title: str
+    task_type: str
 
 
 def register_task_dependency_routes(
@@ -99,13 +107,13 @@ def register_task_dependency_routes(
             tuple(ids),
         )
         loaded = {row["id"]: row for row in rows}
-        cache: dict[str, Any | None] = {}
+        cache: dict[str, EnrichmentTaskView | None] = {}
         for task_id in ids:
             row = loaded.get(task_id)
             if row is None:
                 cache[task_id] = None
                 continue
-            cache[task_id] = SimpleNamespace(
+            cache[task_id] = EnrichmentTaskView(
                 id=row["id"],
                 seq_num=row["seq_num"],
                 title=row["title"],

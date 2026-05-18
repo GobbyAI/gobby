@@ -103,10 +103,12 @@ class SessionMessageProcessor:
         if self.websocket_server is None:
             return
         tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
-        if not inspect.iscoroutinefunction(tts_feed):
+        if not callable(tts_feed):
             return
         try:
-            await tts_feed(session_id, rendered, complete=complete)
+            result = tts_feed(session_id, rendered, complete=complete)
+            if inspect.isawaitable(result):
+                await result
         except Exception:
             inc_counter("tts_feed_failures_total")
             logger.warning(
@@ -114,6 +116,25 @@ class SessionMessageProcessor:
                 session_id,
                 exc_info=True,
             )
+
+    async def _broadcast_rendered_session_message(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool,
+    ) -> None:
+        if self.websocket_server is None:
+            return
+        await self._feed_attached_session_tts(session_id, rendered, complete=complete)
+        await self.websocket_server.broadcast(
+            {
+                "type": "session_message",
+                "session_id": session_id,
+                "message": rendered,
+                "complete": complete,
+            }
+        )
 
     @staticmethod
     def _build_codex_hook_event(
@@ -401,27 +422,17 @@ class SessionMessageProcessor:
 
         if self.websocket_server:
             for rendered_msg in completed:
-                rendered = rendered_msg.to_dict()
-                await self._feed_attached_session_tts(session_id, rendered, complete=True)
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered,
-                        "complete": True,
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    rendered_msg.to_dict(),
+                    complete=True,
                 )
             # Broadcast in-progress turn for live updates (upsert by ID)
             if render_state.current_message:
-                rendered = render_state.current_message.to_dict()
-                await self._feed_attached_session_tts(session_id, rendered, complete=False)
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered,
-                        "complete": False,
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    render_state.current_message.to_dict(),
+                    complete=False,
                 )
 
         # Update in-memory state
@@ -506,26 +517,16 @@ class SessionMessageProcessor:
 
         if self.websocket_server:
             for rendered_msg in completed:
-                rendered = rendered_msg.to_dict()
-                await self._feed_attached_session_tts(session_id, rendered, complete=True)
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered,
-                        "complete": True,
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    rendered_msg.to_dict(),
+                    complete=True,
                 )
             if render_state.current_message:
-                rendered = render_state.current_message.to_dict()
-                await self._feed_attached_session_tts(session_id, rendered, complete=False)
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered,
-                        "complete": False,
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    render_state.current_message.to_dict(),
+                    complete=False,
                 )
 
         # Update in-memory state

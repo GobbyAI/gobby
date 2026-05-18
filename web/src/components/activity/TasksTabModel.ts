@@ -109,7 +109,12 @@ function parentWouldCreateCycle(
     parentId = nodeMap.get(parentId)?.task.parent_task_id ?? null
     depth += 1
   }
-  return depth >= MAX_TASK_TREE_DEPTH
+  if (depth < MAX_TASK_TREE_DEPTH) return false
+  console.warn('Task tree depth limit reached; treating task as a root', {
+    taskId: task.id,
+    maxDepth: MAX_TASK_TREE_DEPTH,
+  })
+  return true
 }
 
 function taskMatchesSearch(task: GobbyTask, term: string): boolean {

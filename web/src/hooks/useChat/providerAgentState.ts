@@ -9,7 +9,7 @@ function isExpectedStorageError(error: unknown): boolean {
 }
 
 function logUnexpectedStorageError(action: string, key: string, error: unknown) {
-  if (!isExpectedStorageError(error)) {
+  if (!isExpectedStorageError(error) && import.meta.env.DEV) {
     console.warn("Unexpected localStorage error", { action, key, error });
   }
 }
@@ -87,6 +87,7 @@ export function useProviderAgentState() {
     selectedProvider,
     selectedProviderRef,
     setActiveAgent,
+    setProvider: setSelectedProvider,
     setSelectedProvider,
   };
 }

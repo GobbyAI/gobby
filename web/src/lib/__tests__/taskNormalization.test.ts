@@ -81,6 +81,12 @@ describe('extractTaskPayload', () => {
       extractTaskPayload({ data: { data: { data: { data: { task: { id: 'task-1' } } } } } }),
     ).toEqual({ id: 'task-1' })
   })
+
+  it('returns null for circular wrapper payloads', () => {
+    const payload: Record<string, unknown> = {}
+    payload.data = payload
+    expect(extractTaskPayload(payload)).toBeNull()
+  })
 })
 
 describe('normalizeStageRow display_name fallback', () => {

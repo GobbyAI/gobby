@@ -14,6 +14,7 @@ from gobby.storage.migrations import (
     migrations_needed,
     run_migrations,
 )
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 
 pytestmark = pytest.mark.unit
@@ -37,17 +38,17 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    assert BASELINE_VERSION == 258
-    assert latest_known_version() == 258
-    assert MIGRATIONS == []
+    assert BASELINE_VERSION == 259
+    assert latest_known_version() == 259
+    assert [version for version, _, _ in MIGRATIONS] == [259]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
     assert applied == 1
-    assert get_current_version(db) == 258
+    assert get_current_version(db) == 259
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [258]
+    assert versions == [259]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
@@ -69,9 +70,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 258
+    assert get_current_version(db) == 259
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [258]
+    assert versions == [259]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -146,7 +147,7 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
 
     message = str(exc_info.value)
     assert f"Database version {legacy_version}" in message
-    assert "current SQLite baseline 258" in message
+    assert "current SQLite baseline 259" in message
     assert "reset" in message
     assert "manually recover" in message
     assert "~/.gobby/gobby-hub.db" in message
@@ -306,6 +307,7 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_cc_target" in _index_names(db, "code_calls")
     assert "idx_plans_project_state" in _index_names(db, "plans")
     assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
     assert {
         "tool_name",
         "installed_version",
@@ -322,6 +324,74 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
+
+
+def test_v259_adds_inter_session_completion_lookup_index(tmp_path) -> None:
+    """Existing v258 databases receive the mailbox completion lookup index."""
+    db_path = tmp_path / "mailbox_index.db"
+    db = LocalDatabase(db_path)
+    db.execute(
+        """
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute("INSERT INTO schema_version (version) VALUES (258)")
+    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+    db.execute(
+        "INSERT INTO projects (id, name) VALUES (?, ?)",
+        (PERSONAL_PROJECT_ID, "_personal"),
+    )
+    db.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            external_id TEXT NOT NULL,
+            machine_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            title TEXT,
+            status TEXT DEFAULT 'active',
+            agent_depth INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE task_dispatch_mutex (
+            task_id TEXT PRIMARY KEY,
+            lease_until TEXT,
+            lease_holder TEXT,
+            run_id TEXT,
+            action_kind TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE inter_session_messages (
+            id TEXT PRIMARY KEY,
+            from_session TEXT NOT NULL,
+            to_session TEXT NOT NULL,
+            content TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'normal',
+            sent_at TEXT NOT NULL,
+            read_at TEXT,
+            message_type TEXT NOT NULL DEFAULT 'message',
+            metadata_json TEXT,
+            delivered_at TEXT
+        )
+        """
+    )
+
+    assert run_migrations(db) == 1
+    assert get_current_version(db) == 259
+    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
 
 
 def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:

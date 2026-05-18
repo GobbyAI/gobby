@@ -189,4 +189,48 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     expect(result.current.errorFor("task-1")).toBeNull();
     expect(result.current.isFieldPending("task-1", "title")).toBe(false);
   });
+
+  it("tracks in-flight generations per field", async () => {
+    const titleGate = deferred<RawTaskPayload | null>();
+    const descriptionGate = deferred<RawTaskPayload | null>();
+    const patchTask = vi
+      .fn<PatchFn>()
+      .mockReturnValueOnce(titleGate.promise)
+      .mockReturnValueOnce(descriptionGate.promise);
+    const { result } = renderHook(() =>
+      useTaskInlineEdit({ patchTask, applyRawTaskUpdate, rollback }),
+    );
+
+    let titleCommit!: Promise<void>;
+    let descriptionCommit!: Promise<void>;
+    act(() => {
+      titleCommit = result.current.commitField({
+        task: makeTask(),
+        field: "title",
+        value: "New title",
+      });
+      descriptionCommit = result.current.commitField({
+        task: makeTask(),
+        field: "description",
+        value: "New description",
+      });
+    });
+
+    await act(async () => {
+      descriptionGate.resolve({ id: "task-1", description: "New description" } as RawTaskPayload);
+      await descriptionCommit;
+      titleGate.resolve({ id: "task-1", title: "New title" } as RawTaskPayload);
+      await titleCommit;
+    });
+
+    expect(applyRawTaskUpdate).toHaveBeenCalledWith("task-1", {
+      id: "task-1",
+      description: "New description",
+    });
+    expect(applyRawTaskUpdate).toHaveBeenCalledWith("task-1", {
+      id: "task-1",
+      title: "New title",
+    });
+    expect(rollback).not.toHaveBeenCalled();
+  });
 });

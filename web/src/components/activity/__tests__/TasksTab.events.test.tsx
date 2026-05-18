@@ -179,6 +179,30 @@ describe("TasksTab — events and row actions", () => {
     });
   });
 
+  it("merges partial task update WebSocket payloads into existing rows", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Open task 1")).toBeTruthy();
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-1",
+        task: {
+          id: "task-1",
+          title: "Updated by WS",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Updated by WS")).toBeTruthy();
+    });
+  });
+
   it("ignores WebSocket events for other projects", async () => {
     render(<TasksTab projectId="proj-1" />);
 

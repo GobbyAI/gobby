@@ -198,14 +198,18 @@ def register_task_lifecycle_routes(
             )
 
             if body.commit_sha:
-                server.task_manager.link_commit(resolved_id, body.commit_sha)
-
-            closed = server.task_manager.close_task(
-                resolved_id,
-                reason=body.reason,
-                closed_in_session_id=resolved_session_id,
-                closed_commit_sha=body.commit_sha,
-            )
+                closed = server.task_manager.close_task_with_commit(
+                    resolved_id,
+                    body.commit_sha,
+                    reason=body.reason,
+                    closed_in_session_id=resolved_session_id,
+                )
+            else:
+                closed = server.task_manager.close_task(
+                    resolved_id,
+                    reason=body.reason,
+                    closed_in_session_id=resolved_session_id,
+                )
             result = closed.to_dict()
             warnings = await broadcast_with_warning("task_closed", result)
             if warnings:

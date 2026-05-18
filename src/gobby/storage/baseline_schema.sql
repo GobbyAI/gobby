@@ -712,6 +712,9 @@ CREATE INDEX idx_inter_session_messages_unread ON inter_session_messages(to_sess
 CREATE INDEX idx_ism_undelivered ON inter_session_messages(to_session, delivered_at)
     WHERE delivered_at IS NULL;
 
+CREATE INDEX idx_ism_completion_lookup ON inter_session_messages(to_session, message_type)
+    WHERE metadata_json IS NOT NULL;
+
 CREATE TABLE agent_commands (
     id TEXT PRIMARY KEY,
     from_session TEXT NOT NULL,

@@ -44,10 +44,12 @@ export function TaskTextField({
   const [committed, setCommitted] = useState(value);
   const [draft, setDraft] = useState(value);
   const skipNextBlurCommitRef = useRef(false);
-  if (committed !== value) {
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setDraft(value);
-  }
+  }, [value]);
 
   const commit = useCallback(() => {
     const next = draft.trim();
@@ -118,12 +120,12 @@ export function TaskTextAreaField({
     }
   }, []);
 
-  if (committed !== value) {
-    // eslint-disable-next-line react-hooks/refs
+  useEffect(() => {
     clearTimer();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setDraft(value);
-  }
+  }, [clearTimer, value]);
 
   useEffect(() => clearTimer, [clearTimer]);
 
@@ -239,10 +241,12 @@ export function TaskTagsField({
   const [tags, setTags] = useState<string[]>(value);
   const [entry, setEntry] = useState("");
   const skipNextBlurCommitRef = useRef(false);
-  if (!sameTags(committed, value)) {
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setTags(value);
-  }
+  }, [value]);
 
   const commit = useCallback(
     (next: string[]) => {
@@ -259,9 +263,11 @@ export function TaskTagsField({
       setEntry("");
       return;
     }
-    setTags((prev) => [...prev, tag]);
+    const next = [...tags, tag];
+    setTags(next);
     setEntry("");
-  }, [entry, tags]);
+    commit(next);
+  }, [commit, entry, tags]);
 
   const removeTag = useCallback((tag: string) => {
     const next = tags.filter((existing) => existing !== tag);

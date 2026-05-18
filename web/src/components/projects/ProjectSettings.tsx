@@ -27,6 +27,8 @@ const DELETE_BTN_CONFIRM_CLS =
 
 const RULES_CLS = 'flex flex-col gap-3'
 const RULE_ROW_CLS = 'flex items-center gap-3 [&_button]:min-w-[96px]'
+const GITHUB_REPO_RE =
+  /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$/
 
 type ApprovalRuleRow = { id: string; value: string }
 
@@ -64,11 +66,16 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const isProtected = ['_personal', '_orphaned', '_migrated', 'gobby'].includes(project.name)
 
   const handleSave = useCallback(async () => {
+    const trimmedGithubRepo = githubRepo.trim()
+    if (trimmedGithubRepo && !GITHUB_REPO_RE.test(trimmedGithubRepo)) {
+      setMessage({ type: 'error', text: 'GitHub repo must be owner/repo' })
+      return
+    }
     setSaving(true)
     setMessage(null)
     const ok = await onSave({
       github_url: githubUrl || null,
-      github_repo: githubRepo || null,
+      github_repo: trimmedGithubRepo || null,
       linear_team_id: linearTeamId || null,
       linear_project_id: linearProjectId || null,
       approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),

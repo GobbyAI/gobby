@@ -164,6 +164,14 @@ class TestHandleChatMessage:
         assert "Missing or invalid 'content' field" in ws.send.call_args[0][0]
 
     @pytest.mark.asyncio
+    async def test_invalid_content_blocks_message_is_specific(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ):
+        await mixin._handle_chat_message(ws, {"content_blocks": "bad"})
+        ws.send.assert_called_once()
+        assert "Invalid 'content_blocks' field: expected a list" in ws.send.call_args[0][0]
+
+    @pytest.mark.asyncio
     async def test_files_only_message_is_allowed(
         self,
         mixin: DummyMessagingMixin,

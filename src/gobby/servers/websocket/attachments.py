@@ -26,6 +26,7 @@ PROXY_ATTACHMENT_RETENTION_DAYS = 7
 PROXY_ATTACHMENT_RETENTION_SECONDS = PROXY_ATTACHMENT_RETENTION_DAYS * 24 * 60 * 60
 _SAFE_PATH_PART_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _SAFE_PATH_PART_MAX_LENGTH = 120
+_BASE64_WRITE_CHUNK_CHARS = 256 * 1024
 
 
 def _format_attachment_size_limit(byte_count: int) -> str:
@@ -110,14 +111,50 @@ def _validate_attachment_limits(attachments: list[Any]) -> list[tuple[str, str]]
     return prepared
 
 
-def _decode_attachment_payload(raw_name: str, raw_data: str) -> tuple[str, bytes]:
+def _safe_attachment_name(raw_name: str) -> str:
+    return _safe_path_part(raw_name, "attachment")
+
+
+def _write_base64_attachment(target: Path, raw_name: str, raw_data: str) -> int:
+    written = 0
+    chunk_size = _BASE64_WRITE_CHUNK_CHARS - (_BASE64_WRITE_CHUNK_CHARS % 4)
     try:
-        content = base64.b64decode(raw_data, validate=True)
-    except binascii.Error as exc:
-        raise ValueError(f"Attachment {raw_name!r} has invalid base64 content") from exc
-    if len(content) > MAX_PROXY_ATTACHMENT_BYTES:
-        raise ValueError(f"Attachment {raw_name!r} exceeds 25 MB")
-    return _safe_path_part(raw_name, "attachment"), content
+        with target.open("wb") as handle:
+            for start in range(0, len(raw_data), chunk_size):
+                chunk = raw_data[start : start + chunk_size]
+                try:
+                    decoded = base64.b64decode(chunk, validate=True)
+                except binascii.Error as exc:
+                    raise ValueError(
+                        f"Attachment {raw_name!r} has invalid base64 content"
+                    ) from exc
+                written += len(decoded)
+                if written > MAX_PROXY_ATTACHMENT_BYTES:
+                    raise ValueError(f"Attachment {raw_name!r} exceeds 25 MB")
+                handle.write(decoded)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return written
+
+
+def _remove_empty_attachment_dirs(target_dir: Path) -> None:
+    root = get_gobby_home() / "attachments"
+    current = target_dir
+    while True:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        if current == root:
+            return
+        current = current.parent
+
+
+def _cleanup_failed_attachment_write(paths: list[Path], target_dir: Path) -> None:
+    for path in paths:
+        path.unlink(missing_ok=True)
+    _remove_empty_attachment_dirs(target_dir)
 
 
 def _attached_session_dir(session_id: str) -> Path:
@@ -137,23 +174,34 @@ async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> li
         return []
 
     prepared_attachments = _validate_attachment_limits(attachments)
-    decoded_attachments = [
-        _decode_attachment_payload(raw_name, raw_data)
-        for raw_name, raw_data in prepared_attachments
-    ]
-    # Defensive recheck: declared sizes and base64 payloads can disagree.
-    if sum(len(content) for _, content in decoded_attachments) > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
-        limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
-        raise ValueError(f"Attachments exceed {limit} total")
-
     target_dir = _attached_session_dir(session_id)
     await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
 
     stored_paths: list[Path] = []
-    for safe_name, content in decoded_attachments:
-        target = target_dir / f"{uuid4().hex}_{safe_name}"
-        await asyncio.to_thread(target.write_bytes, content)
-        stored_paths.append(target)
+    active_target: Path | None = None
+    total_written = 0
+    try:
+        for raw_name, raw_data in prepared_attachments:
+            safe_name = _safe_attachment_name(raw_name)
+            active_target = target_dir / f"{uuid4().hex}_{safe_name}"
+            written = await asyncio.to_thread(
+                _write_base64_attachment,
+                active_target,
+                raw_name,
+                raw_data,
+            )
+            total_written += written
+            if total_written > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
+                limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
+                raise ValueError(f"Attachments exceed {limit} total")
+            stored_paths.append(active_target)
+            active_target = None
+    except Exception:
+        cleanup_paths = list(stored_paths)
+        if active_target is not None:
+            cleanup_paths.append(active_target)
+        await asyncio.to_thread(_cleanup_failed_attachment_write, cleanup_paths, target_dir)
+        raise
     return stored_paths
 
 

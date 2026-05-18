@@ -436,7 +436,7 @@ class TestSkillToolInterception:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Expected resolution failures are logged and fall through."""
-        skill_manager.resolve_skill_name.side_effect = ValueError("temporary miss")
+        skill_manager.resolve_skill_name.side_effect = OSError("temporary miss")
         caplog.set_level(logging.WARNING)
         event = make_event(
             HookEventType.BEFORE_TOOL,
@@ -447,6 +447,21 @@ class TestSkillToolInterception:
         assert response.decision == "allow"
         assert "Failed to resolve Skill tool call" in caplog.text
         assert any(record.exc_info is not None for record in caplog.records)
+
+    def test_skill_tool_value_error_is_not_swallowed(
+        self,
+        handlers_with_skills: EventHandlers,
+        skill_manager: MagicMock,
+    ) -> None:
+        """ValueError means the resolver rejected input, not an expected transient miss."""
+        skill_manager.resolve_skill_name.side_effect = ValueError("bad skill payload")
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+        )
+
+        with pytest.raises(ValueError, match="bad skill payload"):
+            handlers_with_skills.handle_before_tool(event)
 
     def test_skill_tool_tier2_mcp_fallback(
         self, mock_dependencies: dict[str, Any], skill_manager: MagicMock

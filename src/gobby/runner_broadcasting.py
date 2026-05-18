@@ -33,6 +33,35 @@ class PipelineTerminalPayload:
     data: dict[str, Any]
 
 
+async def _dispatch_pipeline_terminal_event(
+    run_db: RunDbHook | None,
+    dispatch: Callable[..., Any],
+    payload: PipelineTerminalPayload,
+    *,
+    db: Any,
+) -> None:
+    """Run terminal pipeline hooks through run_db when available."""
+    def invoke_with_db_fallback(hook: Callable[..., Any]) -> Any:
+        try:
+            return hook(dispatch, payload, db=db)
+        except TypeError as exc:
+            if "db" not in str(exc):
+                raise
+            return hook(dispatch, payload)
+
+    if callable(run_db):
+        is_async = inspect.iscoroutinefunction(run_db) or inspect.iscoroutinefunction(
+            type(run_db).__call__
+        )
+        result = invoke_with_db_fallback(run_db) if is_async else await asyncio.to_thread(
+            invoke_with_db_fallback, run_db
+        )
+    else:
+        result = await asyncio.to_thread(invoke_with_db_fallback, dispatch)
+    if inspect.isawaitable(result):
+        await result
+
+
 def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
     """Set up WebSocket broadcasting for agent lifecycle events, PTY reading, and tmux streaming."""
     from gobby.agents.pty_reader import get_pty_reader_manager
@@ -190,7 +219,7 @@ def setup_pipeline_event_broadcasting(
 
             payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
             db = getattr(pipeline_executor, "db", None)
-            # run_db hooks may be async (daemon executor) or sync (tests/adapters).
+            # run_db may be an async callable object; inspect the returned value.
             run_db: RunDbHook | None = getattr(pipeline_executor, "run_db", None)
             try:
                 if event == "pipeline_completed":
@@ -200,12 +229,7 @@ def setup_pipeline_event_broadcasting(
                 else:
                     dispatch = _dispatch.on_pipeline_cancelled
 
-                if inspect.iscoroutinefunction(run_db):
-                    await run_db(dispatch, payload, db=db)
-                elif callable(run_db):
-                    await asyncio.to_thread(run_db, dispatch, payload, db=db)
-                else:
-                    await asyncio.to_thread(dispatch, payload, db=db)
+                await _dispatch_pipeline_terminal_event(run_db, dispatch, payload, db=db)
             except Exception as exc:
                 logger.warning(
                     "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",

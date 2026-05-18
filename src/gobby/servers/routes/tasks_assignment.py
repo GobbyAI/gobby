@@ -40,14 +40,22 @@ class TaskAssignmentNotifier:
 
     async def send(self, *, task_dict: dict[str, Any], to_session_id: str) -> None:
         """Persist and wake a task-assignment mailbox notification."""
+        raw_task_id = task_dict.get("id")
+        if not isinstance(raw_task_id, str) or not raw_task_id.strip():
+            raise ValueError("Task assignment notification requires task id")
+        if not isinstance(to_session_id, str) or not to_session_id.strip():
+            raise ValueError("Task assignment notification requires target session id")
+        task_id = raw_task_id.strip()
+        target_session_id = to_session_id.strip()
+
         mailbox = self._mailbox_service()
         if mailbox is None:
             logger.debug(
                 "Skipping task assignment mailbox message; session manager unavailable",
                 extra={
-                    "task_id": task_dict["id"],
+                    "task_id": task_id,
                     "task_ref": task_dict.get("ref"),
-                    "to_session_id": to_session_id,
+                    "to_session_id": target_session_id,
                     "project_id": task_dict.get("project_id"),
                 },
             )
@@ -70,18 +78,18 @@ class TaskAssignmentNotifier:
         raw_title = task_dict.get("title")
         task_title = raw_title if isinstance(raw_title, str) and raw_title.strip() else "(Untitled)"
         metadata = {
-            "task_id": task_dict["id"],
+            "task_id": task_id,
             "task_ref": task_ref,
             "task_title": task_title,
             "task_status": task_status,
             "task_stage": current_stage,
-            "assigned_session_id": to_session_id,
+            "assigned_session_id": target_session_id,
         }
         content = f"{task_ref} assigned: {task_title}"
         log_context = {
-            "task_id": task_dict["id"],
+            "task_id": task_id,
             "task_ref": task_ref,
-            "to_session_id": to_session_id,
+            "to_session_id": target_session_id,
             "project_id": task_dict.get("project_id"),
             "message_type": "task_assignment",
         }
@@ -92,7 +100,7 @@ class TaskAssignmentNotifier:
         try:
             send_result = await mailbox.send(
                 from_session_id=SYSTEM_SESSION_ID,
-                to_session_id=to_session_id,
+                to_session_id=target_session_id,
                 content=content,
                 priority="high",
                 message_type="task_assignment",

@@ -30,7 +30,6 @@ _EXPECTED_SKILL_RESOLUTION_ERRORS = (
     LookupError,
     OSError,
     TimeoutError,
-    ValueError,
 )
 
 

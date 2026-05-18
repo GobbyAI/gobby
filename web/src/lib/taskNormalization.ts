@@ -254,12 +254,18 @@ export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
     hasValidOptionalTaskFields(value)
 }
 
-export function extractTaskPayload(data: unknown, depth = 0): RawTaskPayload | null {
+export function extractTaskPayload(
+  data: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): RawTaskPayload | null {
   if (depth >= MAX_TASK_PAYLOAD_EXTRACT_DEPTH) return null
   if (isRawTaskPayload(data)) return data
-  if (isRecord(data) && isRawTaskPayload(data.task)) return data.task
-  if (isRecord(data) && isRecord(data.data)) {
-    return extractTaskPayload(data.data, depth + 1)
+  if (isRecord(data)) {
+    if (seen.has(data)) return null
+    seen.add(data)
+    if (isRawTaskPayload(data.task)) return data.task
+    if (isRecord(data.data)) return extractTaskPayload(data.data, depth + 1, seen)
   }
   return null
 }

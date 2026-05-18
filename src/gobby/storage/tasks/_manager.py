@@ -503,19 +503,7 @@ class LocalTaskManager:
         closed_commit_sha: str | None = None,
         validation_override_reason: str | None = None,
     ) -> Task:
-        """Close a task.
-
-        Args:
-            task_id: The task ID to close
-            reason: Optional reason for closing
-            force: If True, close even if there are open children (default: False)
-            closed_in_session_id: Session ID where task was closed
-            closed_commit_sha: Git commit SHA at time of closing
-            validation_override_reason: Why agent bypassed validation (if applicable)
-
-        Raises:
-            ValueError: If task not found or has open children (and force=False)
-        """
+        """Close a task."""
         _close_task(
             self.db,
             task_id=task_id,
@@ -525,6 +513,28 @@ class LocalTaskManager:
             closed_commit_sha=closed_commit_sha,
             validation_override_reason=validation_override_reason,
         )
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def close_task_with_commit(
+        self,
+        task_id: str,
+        commit_sha: str,
+        *,
+        reason: str | None = None,
+        closed_in_session_id: str | None = None,
+        cwd: str | Path | None = None,
+    ) -> Task:
+        """Link a commit and close the task in one transaction."""
+        with self.db.transaction_immediate():
+            _link_commit(self.db, task_id, commit_sha, cwd)
+            _close_task(
+                self.db,
+                task_id=task_id,
+                reason=reason,
+                closed_in_session_id=closed_in_session_id,
+                closed_commit_sha=commit_sha,
+            )
         self._notify_listeners()
         return self.get_task(task_id)
 

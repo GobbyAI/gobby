@@ -755,7 +755,7 @@ class TestPipelineEventBroadcasting:
 
     @pytest.mark.asyncio
     async def test_terminal_dispatch_uses_thread_for_sync_run_db(self) -> None:
-        """Sync DB bridge is invoked in a worker thread when run_db is not awaitable."""
+        """Sync DB bridge is invoked when run_db is not awaitable."""
         from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
 
         mock_ws_server = AsyncMock()
@@ -784,6 +784,40 @@ class TestPipelineEventBroadcasting:
             execution_id="pe-124",
             task_id="task-2",
         )
+
+    @pytest.mark.asyncio
+    async def test_terminal_dispatch_awaits_async_callable_object_run_db(self) -> None:
+        """Callable objects returning awaitables are handled like async functions."""
+        from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
+
+        class AsyncRunDb:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+            def __call__(self, dispatch: object, payload: object, **kwargs: object) -> object:
+                self.calls.append((dispatch, payload, kwargs))
+
+                async def _run() -> None:
+                    return None
+
+                return _run()
+
+        mock_ws_server = AsyncMock()
+        mock_pipeline_executor = MagicMock()
+        mock_pipeline_executor.db = object()
+        run_db = AsyncRunDb()
+        mock_pipeline_executor.run_db = run_db
+
+        setup_pipeline_event_broadcasting(mock_ws_server, mock_pipeline_executor)
+
+        with patch("gobby.hooks.event_handlers._dispatch.on_pipeline_cancelled") as handler:
+            await mock_pipeline_executor.event_callback("pipeline_cancelled", "pe-125")
+
+        assert len(run_db.calls) == 1
+        dispatch, payload, kwargs = run_db.calls[0]
+        assert dispatch is handler
+        assert payload.execution_id == "pe-125"
+        assert kwargs == {"db": mock_pipeline_executor.db}
 
 
 class TestMetricsCleanupLoop:

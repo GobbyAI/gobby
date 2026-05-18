@@ -61,6 +61,28 @@ async def test_store_proxy_attachments_validates_all_before_writing(
 
 
 @pytest.mark.asyncio
+async def test_store_proxy_attachments_cleans_partial_file_after_write_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    def fail_write(target: Path, *_args: object) -> int:
+        target.write_bytes(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(attachment_helpers, "_write_base64_attachment", fail_write)
+
+    with pytest.raises(OSError, match="disk full"):
+        await store_proxy_attachments(
+            "session-1",
+            [{"name": "one.txt", "base64": "MQ=="}],
+        )
+
+    assert not (tmp_path / "attachments").exists()
+
+
+@pytest.mark.asyncio
 async def test_store_proxy_attachments_rejects_too_many_before_writing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

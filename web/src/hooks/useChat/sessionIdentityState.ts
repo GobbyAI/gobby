@@ -167,7 +167,7 @@ export function useSessionIdentityState({
         })
         .catch((error) => {
           console.error("Failed to create web chat session:", error);
-          return null;
+          throw error;
         })
         .finally(() => {
           creatingSessionIdRef.current = null;

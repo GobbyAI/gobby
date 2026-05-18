@@ -132,7 +132,12 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                 logger.warning(f"Skipping non-dict YAML file: {yaml_file}")
                 continue
 
-            name = data.get("name", yaml_file.stem)
+            raw_name = data.get("name")
+            name = (
+                raw_name.strip()
+                if isinstance(raw_name, str) and raw_name.strip()
+                else yaml_file.stem
+            )
             on_disk.add(name)
             data["name"] = name
 

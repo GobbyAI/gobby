@@ -56,11 +56,21 @@ class MigrationUnsupportedError(Exception):
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 
-BASELINE_VERSION = 258
-_MIN_MIGRATION_VERSION = BASELINE_VERSION
+BASELINE_VERSION = 259
+_MIN_MIGRATION_VERSION = 258
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 
-MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
+    (
+        259,
+        "Add inter-session completion notification lookup index",
+        """
+        CREATE INDEX IF NOT EXISTS idx_ism_completion_lookup
+            ON inter_session_messages(to_session, message_type)
+            WHERE metadata_json IS NOT NULL;
+        """,
+    ),
+]
 
 
 def get_current_version(db: LocalDatabase) -> int:

@@ -75,6 +75,25 @@ class TestSyncBundledAgents:
             assert result2["updated"] == 0
 
     @pytest.mark.unit
+    def test_sync_uses_filename_when_yaml_name_is_null(self, tmp_path: Path) -> None:
+        """A null name should not become a managed orphan key."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "filename-agent.yaml").write_text(
+            "name: null\ndescription: From filename\nprovider: claude\nmode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["success"] is True
+        assert result["synced"] == 1
+        row = LocalWorkflowDefinitionManager(db).get_by_name("filename-agent")
+        assert row is not None
+
+    @pytest.mark.unit
     def test_sync_updates_existing_installed_definition(self, tmp_path: Path) -> None:
         """Installed bundled agents should update when the template definition changes."""
         db = _setup_db(tmp_path)

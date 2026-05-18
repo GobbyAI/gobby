@@ -69,15 +69,22 @@ export function useTaskInlineEdit({
 }: UseTaskInlineEditOptions) {
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   const [pending, setPending] = useState<Set<string>>(() => new Set());
-  // Per-task generation token: bumped by each commit and by reconcile() so a
-  // slower in-flight request cannot stomp WS truth or a newer edit.
+  // Per-field generation token: a slower in-flight request cannot stomp WS
+  // truth or a newer edit for the same field.
   const generationRef = useRef<Map<string, number>>(new Map());
 
-  const bumpGeneration = useCallback((taskId: string): number => {
-    const next = (generationRef.current.get(taskId) ?? 0) + 1;
-    generationRef.current.set(taskId, next);
+  const bumpGeneration = useCallback((key: string): number => {
+    const next = (generationRef.current.get(key) ?? 0) + 1;
+    generationRef.current.set(key, next);
     return next;
   }, []);
+
+  const bumpPendingGenerationsForTask = useCallback((taskId: string) => {
+    const prefix = `${taskId}:`;
+    for (const key of generationRef.current.keys()) {
+      if (key.startsWith(prefix)) bumpGeneration(key);
+    }
+  }, [bumpGeneration]);
 
   const setPendingKey = useCallback((key: string, on: boolean) => {
     setPending((prev) => {
@@ -111,11 +118,11 @@ export function useTaskInlineEdit({
    */
   const reconcile = useCallback(
     (taskId: string) => {
-      bumpGeneration(taskId);
+      bumpPendingGenerationsForTask(taskId);
       clearError(taskId);
       clearPendingForTask(taskId);
     },
-    [bumpGeneration, clearError, clearPendingForTask],
+    [bumpPendingGenerationsForTask, clearError, clearPendingForTask],
   );
 
   const commitField = useCallback(
@@ -127,7 +134,7 @@ export function useTaskInlineEdit({
       const taskId = task.id;
       const pendingKey = `${taskId}:${field}`;
       const snapshot = { ...task };
-      const generation = bumpGeneration(taskId);
+      const generation = bumpGeneration(pendingKey);
 
       clearError(taskId);
       setPendingKey(pendingKey, true);
@@ -140,10 +147,10 @@ export function useTaskInlineEdit({
         const serverRaw = await patchTask(taskId, {
           [field]: value,
         } as PatchTaskFields);
-        if (generationRef.current.get(taskId) !== generation) return;
+        if (generationRef.current.get(pendingKey) !== generation) return;
         applyRawTaskUpdate(taskId, serverRaw);
       } catch (error) {
-        if (generationRef.current.get(taskId) !== generation) return;
+        if (generationRef.current.get(pendingKey) !== generation) return;
         rollback(taskId, snapshot);
         setErrors((prev) => ({
           ...prev,
@@ -153,7 +160,7 @@ export function useTaskInlineEdit({
               : `Couldn't save ${field}.`,
         }));
       } finally {
-        if (generationRef.current.get(taskId) === generation) {
+        if (generationRef.current.get(pendingKey) === generation) {
           setPendingKey(pendingKey, false);
         }
       }
