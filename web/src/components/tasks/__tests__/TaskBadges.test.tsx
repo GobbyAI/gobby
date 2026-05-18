@@ -40,6 +40,54 @@ describe('StatusDot', () => {
   })
 })
 
+describe('StatusDot — honest task-state glyphs (#14769 / D2)', () => {
+  // status string -> [expected data-glyph, expected data-kind].
+  // data-kind is the OKLCH lightness band; it must NOT be remapped, so
+  // in_progress stays 'warning' (L≈78) and blocked stays 'error' (L≈65)
+  // even though their shapes are now honest.
+  const cases: Array<[string, string, string]> = [
+    ['open', 'circle', 'info'],
+    ['in_progress', 'activity', 'warning'],
+    ['needs_review', 'eye', 'info'],
+    ['blocked', 'lock', 'error'],
+    ['review_approved', 'check', 'success'],
+    ['closed', 'dash', 'disabled'],
+  ]
+
+  it('maps every state to a distinct, non-alarm shape with its lightness band intact', () => {
+    const seenGlyphs = new Set<string>()
+    for (const [status, glyph, kind] of cases) {
+      const { container, unmount } = render(<StatusDot status={status} />)
+      const span = container.querySelector(
+        'span.activity-row-status-dot',
+      )
+      expect(span).not.toBeNull()
+      if (!span) throw new Error('Status dot span not found')
+      const svg = span.querySelector('svg')
+      expect(svg?.getAttribute('data-glyph')).toBe(glyph)
+      expect(span.getAttribute('data-kind')).toBe(kind)
+      seenGlyphs.add(glyph)
+      unmount()
+    }
+    expect(seenGlyphs.size).toBe(cases.length)
+  })
+
+  it('never paints in_progress as a caution triangle or blocked as a failure X', () => {
+    const { container: working } = render(<StatusDot status="in_progress" />)
+    const workingSvg = working.querySelector('svg')
+    expect(workingSvg?.getAttribute('data-glyph')).toBe('activity')
+    expect(workingSvg?.querySelector('rect')).toBeNull()
+
+    const { container: blocked } = render(<StatusDot status="blocked" />)
+    const blockedSvg = blocked.querySelector('svg')
+    expect(blockedSvg?.getAttribute('data-glyph')).toBe('lock')
+    // The lock has a rect body and no circle; the old error X was a circle
+    // with two crossing strokes.
+    expect(blockedSvg?.querySelector('rect')).not.toBeNull()
+    expect(blockedSvg?.querySelector('circle')).toBeNull()
+  })
+})
+
 describe('PriorityBadge', () => {
   it('renders priority labels', () => {
     const labels: Record<number, string> = {

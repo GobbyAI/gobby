@@ -55,6 +55,7 @@ def init_servers(runner: GobbyRunner) -> None:
         workflow_loader=runner.workflow_loader,
         pipeline_execution_manager=runner.pipeline_execution_manager,
         completion_registry=runner.completion_registry,
+        wake_dispatcher=runner.wake_dispatcher,
         agent_lifecycle_monitor=runner.agent_lifecycle_monitor,
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,

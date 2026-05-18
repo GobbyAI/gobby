@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import sys
 import zipfile
@@ -39,6 +40,24 @@ def _write_wheel(path: Path, members: list[str]) -> None:
     with zipfile.ZipFile(path, "w") as wheel:
         for member in members:
             wheel.writestr(member, "")
+
+
+def _copy_manifest_module(repo_root: Path) -> None:
+    real_module = (
+        Path(__file__).resolve().parent.parent / "src" / "gobby" / "install" / "manifest.py"
+    )
+    target = repo_root / "src" / "gobby" / "install" / "manifest.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(real_module.read_text())
+
+
+def _write_shared_content(repo_root: Path) -> Path:
+    shared_file = (
+        repo_root / "src" / "gobby" / "install" / "shared" / "skills" / "demo" / "SKILL.md"
+    )
+    shared_file.parent.mkdir(parents=True, exist_ok=True)
+    shared_file.write_text("demo skill", encoding="utf-8")
+    return shared_file
 
 
 def test_stage_ui_copies_dist_to_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -284,7 +303,7 @@ def test_stage_ui_npm_failure_raises_output_context(
 def test_build_wheel_accepts_wheel_with_ui_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Wheels containing the staged UI index should be accepted."""
+    """Wheels containing required staged assets should be accepted."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -294,6 +313,7 @@ def test_build_wheel_accepts_wheel_with_ui_index(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+    monkeypatch.setattr(backend, "_stage_bundled_content_manifest", lambda: None)
 
     def fake_build_wheel(
         wheel_directory: str,
@@ -301,7 +321,13 @@ def test_build_wheel_accepts_wheel_with_ui_index(
         metadata_directory: str | None,
     ) -> str:
         wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
-        _write_wheel(wheel_path, ["gobby/ui/web/dist/index.html"])
+        _write_wheel(
+            wheel_path,
+            [
+                "gobby/ui/web/dist/index.html",
+                "gobby/install/bundled_content_manifest.json",
+            ],
+        )
         return wheel_path.name
 
     monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
@@ -322,6 +348,7 @@ def test_build_wheel_rejects_wheel_missing_ui_index(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+    monkeypatch.setattr(backend, "_stage_bundled_content_manifest", lambda: None)
 
     def fake_build_wheel(
         wheel_directory: str,
@@ -329,12 +356,150 @@ def test_build_wheel_rejects_wheel_missing_ui_index(
         metadata_directory: str | None,
     ) -> str:
         wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
-        _write_wheel(wheel_path, ["gobby/__init__.py"])
+        _write_wheel(wheel_path, ["gobby/install/bundled_content_manifest.json"])
         return wheel_path.name
 
     monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
 
     with pytest.raises(RuntimeError, match="gobby/ui/web/dist/index.html"):
+        backend.build_wheel(str(wheel_dir))
+
+
+def test_stage_bundled_content_manifest_writes_manifest(tmp_path: Path) -> None:
+    """Build backend should generate the packaged bundled-content manifest."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    _copy_manifest_module(repo_root)
+    _write_shared_content(repo_root)
+
+    backend = _load_backend(repo_root)
+
+    result = backend._stage_bundled_content_manifest()
+
+    assert result is None
+    manifest_path = repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["hash_algorithm"] == "sha256"
+    assert manifest["root"] == "shared"
+    assert list(manifest["files"]) == ["skills/demo/SKILL.md"]
+
+
+def test_stage_bundled_content_manifest_rejects_invalid_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build backend should fail clearly when the manifest helper shape is invalid."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+
+    backend = _load_backend(repo_root)
+    backend._MANIFEST_MODULE.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        backend,
+        "_load_manifest_module",
+        lambda: SimpleNamespace(write_bundled_content_manifest="not-callable"),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_bundled_content_manifest()
+
+    message = str(exc_info.value)
+    assert "write_bundled_content_manifest" in message
+    assert str(backend._MANIFEST_MODULE) in message
+
+
+def test_stage_bundled_content_manifest_wraps_helper_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build backend should include helper context when manifest generation fails."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+
+    backend = _load_backend(repo_root)
+
+    def fail_manifest(_install_dir: Path) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        backend,
+        "_load_manifest_module",
+        lambda: SimpleNamespace(write_bundled_content_manifest=fail_manifest),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_bundled_content_manifest()
+
+    message = str(exc_info.value)
+    assert "Bundled content manifest helper failed" in message
+    assert "disk full" in message
+
+
+def test_build_sdist_generates_bundled_content_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sdist builds should stage a fresh bundled-content manifest."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    _copy_manifest_module(repo_root)
+    _write_shared_content(repo_root)
+    sdist_dir = repo_root / "dist"
+    sdist_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+
+    def fake_build_sdist(
+        sdist_directory: str,
+        config_settings: dict[str, object] | None,
+    ) -> str:
+        assert sdist_directory == str(sdist_dir)
+        assert config_settings is None
+        manifest = repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json"
+        assert manifest.is_file()
+        return "gobby-0.tar.gz"
+
+    monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_sdist=fake_build_sdist))
+
+    assert backend.build_sdist(str(sdist_dir)) == "gobby-0.tar.gz"
+
+
+def test_build_wheel_rejects_wheel_missing_bundled_content_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wheel verification should reject artifacts without the manifest."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    wheel_dir = repo_root / "dist"
+    wheel_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+    monkeypatch.setattr(backend, "_stage_bundled_content_manifest", lambda: None)
+
+    def fake_build_wheel(
+        wheel_directory: str,
+        config_settings: dict[str, object] | None,
+        metadata_directory: str | None,
+    ) -> str:
+        wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
+        _write_wheel(wheel_path, ["gobby/ui/web/dist/index.html"])
+        return wheel_path.name
+
+    monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
+
+    with pytest.raises(RuntimeError, match="gobby/install/bundled_content_manifest.json"):
         backend.build_wheel(str(wheel_dir))
 
 

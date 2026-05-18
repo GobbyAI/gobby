@@ -12,6 +12,7 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from random import SystemRandom
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
+_CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 
 
 async def _run_db(
@@ -57,6 +59,7 @@ async def bin_freshness_loop(
     is_shutdown_requested: Callable[[], bool],
     *,
     update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,
 ) -> None:
@@ -77,7 +80,7 @@ async def bin_freshness_loop(
         )
         while not is_shutdown_requested():
             try:
-                await asyncio.to_thread(updater, db, config)
+                await _run_db(run_db, updater, db, config)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -291,6 +294,85 @@ async def cleanup_comms_messages_loop(
             break
         except Exception as e:
             logger.error(f"Error in comms message cleanup loop: {e}")
+
+
+def _remove_stale_chat_attachment_file(local_path: str) -> bool:
+    path = Path(local_path)
+    removed = False
+    try:
+        path.unlink()
+        removed = True
+    except FileNotFoundError:
+        removed = True
+    except OSError:
+        logger.warning("Failed to remove stale chat attachment file %s", path, exc_info=True)
+        return False
+
+    # Empty upload directories are scratch structure; pruning is best effort
+    # because concurrent uploads may share parent buckets.
+    root = get_gobby_home() / "projects"
+    current = path.parent
+    while current != root and root in current.parents:
+        try:
+            current.rmdir()
+        except FileNotFoundError:
+            break
+        except OSError:
+            break
+        current = current.parent
+    return removed
+
+
+async def cleanup_chat_attachments_loop(
+    db: Any,
+    is_shutdown_requested: Callable[[], bool],
+    *,
+    retention_hours: int = 24,
+    interval_minutes: int = 60,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
+    from gobby.storage import chat_attachments
+
+    interval_seconds = max(1, interval_minutes) * 60
+
+    async def cleanup_once() -> None:
+        cutoff = datetime.now(UTC) - timedelta(hours=max(1, retention_hours))
+        records = await _run_db(
+            run_db,
+            chat_attachments.delete_stale_unbound_attachments,
+            db,
+            cutoff=cutoff,
+            limit=_CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT,
+        )
+        if not records:
+            return
+        removed_files = 0
+        for record in records:
+            if await asyncio.to_thread(_remove_stale_chat_attachment_file, record.local_path):
+                removed_files += 1
+        logger.info(
+            "Removed %s stale unbound chat attachment row(s), %s file(s)",
+            len(records),
+            removed_files,
+        )
+
+    try:
+        await cleanup_once()
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        logger.error(f"Error in initial chat attachment cleanup: {e}")
+
+    while not is_shutdown_requested():
+        try:
+            await sleep(interval_seconds)
+            await cleanup_once()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in chat attachment cleanup loop: {e}")
 
 
 async def expire_approval_timeouts_loop(

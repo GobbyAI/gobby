@@ -94,6 +94,25 @@ The main React owners are `web/src/hooks/useChat/*`,
 `web/src/components/chat/ChatPage.tsx`, and provider controls under
 `web/src/components/chat/`.
 
+### Chat Attachments
+
+Stored chat attachments upload through `POST /api/chat/attachments`, are
+referenced in WebSocket `chat_message` or `send_to_cli_session` frames as
+`attachments: [{ "id": "..." }]`, and are bound when a message is accepted.
+Clients should retry only after the user changes the attachment set when the
+server returns `INVALID_ATTACHMENT`; this code means the attachment payload,
+count, ID, type, or size is invalid. `ATTACHMENT_ERROR` means processing failed
+after validation, so clients may offer a normal retry.
+
+Limits are enforced on both HTTP upload and WebSocket binding:
+
+- Web chat stored attachments use the configured per-file, per-message count,
+  and per-message total limits from chat configuration.
+- Terminal proxy attachments accept at most 10 legacy base64 files per message,
+  each up to 25 MB, with a 250 MB total cap.
+- MIME sniffing must match the declared type except for generic binary types,
+  text-compatible types, and recognized zip container formats.
+
 ## Dashboard
 
 The dashboard aggregates runtime health, task counts, sessions, token usage,

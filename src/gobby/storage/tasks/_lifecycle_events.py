@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from gobby.storage.database import DatabaseProtocol
+
+# Reason recorded by ``gobby build`` (see gobby.build.lifecycle._record_build_event).
+# This is the durable, append-only signal that automation was ever started for a
+# task; stopping a build clears ``allow_automation`` but never removes this row,
+# so it remains the source of truth for "has this task ever been built".
+BUILD_EVENT_REASON = "gobby build"
 
 
 @dataclass(frozen=True)
@@ -135,6 +142,47 @@ class TaskLifecycleEventManager:
             limit=limit,
             newest_first=newest_first,
         )
+
+    def has_build_event(self, task_id: str) -> bool:
+        """Return True if ``gobby build`` was ever started for this task.
+
+        Durable, append-only signal: a stopped build keeps this row, so it
+        distinguishes a never-built task from a paused one.
+        """
+        return bool(
+            self.db.fetchone(
+                """
+                SELECT 1
+                  FROM task_lifecycle_events
+                 WHERE task_id = ?
+                   AND reason = ?
+                 LIMIT 1
+                """,
+                (task_id, BUILD_EVENT_REASON),
+            )
+        )
+
+    def tasks_with_build_event(self, task_ids: Sequence[str]) -> set[str]:
+        """Batched form of :meth:`has_build_event` for list serialization."""
+        ids = list(task_ids)
+        if not ids:
+            return set()
+        placeholders = ", ".join("?" for _ in ids)
+        query = (
+            """
+            SELECT DISTINCT task_id
+              FROM task_lifecycle_events
+             WHERE reason = ?
+               AND task_id IN (
+            """
+            + placeholders
+            + ")"
+        )
+        rows = self.db.fetchall(
+            query,
+            (BUILD_EVENT_REASON, *ids),
+        )
+        return {row["task_id"] for row in rows}
 
 
 def record_lifecycle_event(

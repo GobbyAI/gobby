@@ -40,7 +40,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
     ) -> None:
-        await ws.send(json.dumps({"error": msg}))
+        await ws.send(json.dumps({"error": msg, "request_id": request_id, "code": code}))
 
     async def _cancel_active_chat(self, cid: str) -> None:
         pass
@@ -159,16 +159,98 @@ class TestInjectPendingMessages:
 class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_no_content(self, mixin: DummyMessagingMixin, ws: AsyncMock):
-        await mixin._handle_chat_message(ws, {"content": ""})
+        mixin.clients[ws] = {"connected": True}
+
+        await mixin._handle_chat_message(ws, {"content": "", "request_id": "req-1"})
+
         ws.send.assert_called_once()
-        assert "Missing or invalid 'content' field" in ws.send.call_args[0][0]
+        payload = json.loads(ws.send.call_args[0][0])
+        assert "Missing or invalid 'content' field" in payload["error"]
+        assert payload["request_id"] == "req-1"
+
+    @pytest.mark.asyncio
+    async def test_invalid_content_blocks_message_is_specific(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ):
+        mixin.clients[ws] = {"connected": True}
+
+        await mixin._handle_chat_message(ws, {"content_blocks": "bad"})
+
+        ws.send.assert_called_once()
+        assert "Invalid 'content_blocks' field: expected a list" in ws.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_files_only_message_is_allowed(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ):
+        mixin.clients[ws] = {"connected": True}
+        prepared = SimpleNamespace(
+            prompt_context="Attached files:\n- /tmp/a.txt", records=[object()]
+        )
+
+        with (
+            patch(
+                "gobby.servers.websocket.chat._attachment_preparation.prepare_message_attachments",
+                new=AsyncMock(return_value=prepared),
+            ),
+            patch.object(mixin, "_stream_chat_response", new_callable=AsyncMock) as mock_stream,
+        ):
+            await mixin._handle_chat_message(
+                ws,
+                {
+                    "content": "",
+                    "conversation_id": "c1",
+                    "attachments": [{"id": "att-1"}],
+                },
+            )
+            await mixin._active_chat_tasks["c1"]
+
+        mock_stream.assert_awaited_once()
+        assert mock_stream.await_args.kwargs["attachments"] is prepared
+        assert mock_stream.await_args.kwargs["inject_context"] == "Attached files:\n- /tmp/a.txt"
+
+    @pytest.mark.asyncio
+    async def test_unexpected_attachment_prepare_error_is_request_scoped(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ) -> None:
+        mixin.clients[ws] = {"connected": True}
+
+        with patch(
+            "gobby.servers.websocket.chat._attachment_preparation.prepare_message_attachments",
+            new=AsyncMock(side_effect=RuntimeError("storage offline")),
+        ):
+            await mixin._handle_chat_message(
+                ws,
+                {
+                    "content": "hi",
+                    "conversation_id": "c1",
+                    "request_id": "req-attachments",
+                    "attachments": [{"id": "att-1"}],
+                },
+            )
+
+        payload = json.loads(ws.send.await_args.args[0])
+        assert payload == {
+            "error": "Failed to prepare attachments. Check daemon logs for details.",
+            "request_id": "req-attachments",
+            "code": "ATTACHMENT_PREP_FAILED",
+        }
+        assert "c1" not in mixin._active_chat_tasks
 
     @pytest.mark.asyncio
     async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         # mixin.clients is empty
-        await mixin._handle_chat_message(ws, {"content": "hi"})
-        # Should return silently after warning log
-        assert not ws.send.called
+        await mixin._handle_chat_message(ws, {"content": "hi", "request_id": "req-2"})
+
+        ws.send.assert_called_once()
+        payload = json.loads(ws.send.call_args[0][0])
+        assert payload["error"] == "Client is not registered for chat messages"
+        assert payload["request_id"] == "req-2"
+        assert payload["code"] == "UNREGISTERED_CLIENT"
 
     @pytest.mark.asyncio
     async def test_success_dispatch(self, mixin: DummyMessagingMixin, ws: AsyncMock):

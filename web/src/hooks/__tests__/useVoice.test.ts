@@ -602,6 +602,26 @@ describe('useVoice', () => {
     expect(voiceAudio).not.toHaveProperty('project_id')
   })
 
+  it('uses the supplied attached session id for PTT voice audio payloads', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'term-attached',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    expect(voiceAudioPayloads()).toEqual([
+      expect.objectContaining({
+        type: 'voice_audio',
+        conversation_id: 'term-attached',
+      }),
+    ])
+  })
+
   it('includes the selected project in PTT voice audio payloads', async () => {
     projectIdRef.current = 'project-ptt'
     const { result } = renderHook(() => useVoice(

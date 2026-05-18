@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { isSafeImageSrc } from '../../../lib/imageSources'
-import { Button } from '../ui/Button'
+import { Button } from '../../shared/Button'
 
 interface ArtifactImageViewProps {
   content: string

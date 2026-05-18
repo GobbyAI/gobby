@@ -1,5 +1,5 @@
 import "./styles.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type {
@@ -21,6 +21,10 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
+import {
+  getVisibleActivitySessions,
+  toSwappedSessionTarget,
+} from "../activity/activitySessionVisibility";
 import type { SessionsFilters } from "../activity/sessionsFilters";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import { AgentStatusBar } from "./AgentStatusBar";
@@ -149,21 +153,27 @@ export function ChatPage({
 
   const isMobile = useIsMobile();
   const canvas = useCanvasPanel();
-  const activity = useActivityPanel();
+  const activity = useActivityPanel(isMobile);
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const { openCanvas, closeCanvas, activeCanvas } = canvas;
   const {
     activeTab: activityTab,
     closeIfAutoOpened,
-    isPinned,
+    dismissOnMobile,
+    effectiveMode,
     panelWidth,
     setActiveTab: setActivityTab,
-    setIsPinned,
     setPanelWidth,
     showTab,
-    togglePanel,
+    toggleFromChat,
+    toggleFromPanel,
   } = activity;
+  const panelVisible = effectiveMode !== "chat";
+  // Desktop 'panel' mode hides the chat column entirely. On mobile the panel
+  // is an overlay, so the chat column stays mounted underneath (preserves
+  // scroll position and input state across toggles).
+  const showChatColumn = isMobile || effectiveMode !== "panel";
   const {
     onApprovePlan,
     onPaletteSelect,
@@ -179,24 +189,11 @@ export function ChatPage({
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
   }, []);
-  const prevIsMobileRef = useRef(isMobile);
-  const isPinnedRef = useRef(isPinned);
   const onSendRef = useRef(onSend);
-
-  useEffect(() => {
-    isPinnedRef.current = isPinned;
-  }, [isPinned]);
 
   useEffect(() => {
     onSendRef.current = onSend;
   }, [onSend]);
-
-  useEffect(() => {
-    if (!prevIsMobileRef.current && isMobile && isPinnedRef.current) {
-      setIsPinned(false);
-    }
-    prevIsMobileRef.current = isMobile;
-  }, [isMobile, setIsPinned]);
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
@@ -221,19 +218,15 @@ export function ChatPage({
         if (targetSession) {
           conversations.onSelectSession(targetSession);
         }
-        if (isMobile && isPinned) {
-          setIsPinned(false);
-        }
+        dismissOnMobile();
         return;
       }
 
       chat.viewSession?.(target.sessionId, { forceRefresh: true });
       chat.observeSession?.(target.sessionId, "observe");
-      if (isMobile && isPinned) {
-        setIsPinned(false);
-      }
+      dismissOnMobile();
     },
-    [chat, conversations, isMobile, isPinned, parkCurrentSession, setIsPinned],
+    [chat, conversations, dismissOnMobile, parkCurrentSession],
   );
 
   const handleResumeSessionFromActivity = useCallback(
@@ -340,11 +333,35 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
+  const handleInputModeChange =
+    isProxyAttached && chat.onAttachedModeChange
+      ? chat.onAttachedModeChange
+      : chat.onModeChange;
   // Anchor the activity-panel session list to whichever session is currently
   // showing in the main area so a swapped/attached session cannot also appear
   // in the panel list.
   const activityPanelChatSessionId =
     chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId;
+  const commandPaletteSessions = useMemo(
+    () =>
+      getVisibleActivitySessions(activitySessions ?? allProjectSessions, {
+        chatSessionId: activityPanelChatSessionId,
+        liveOnly: true,
+      }),
+    [activityPanelChatSessionId, activitySessions, allProjectSessions],
+  );
+  const handleCommandPaletteSelectSession = useCallback(
+    (session: GobbySession) => handleSwapSession(toSwappedSessionTarget(session)),
+    [handleSwapSession],
+  );
+  const handleCommandPaletteDeleteSession = useCallback(
+    (session: GobbySession) => {
+      if (session.session_type === "web_chat") {
+        conversations.onDeleteSession?.(session);
+      }
+    },
+    [conversations],
+  );
 
   const handleResumeViewedSession = useCallback(() => {
     if (
@@ -653,16 +670,22 @@ export function ChatPage({
     setOnArtifactEvent?.(onArtifactEvent);
   }, [onArtifactEvent, setOnArtifactEvent]);
 
-  // Intercept toggle_panel palette action before forwarding to App.tsx
+  // Intercept panel/chat layout palette actions before forwarding to App.tsx
   const handlePaletteSelect = useCallback(
     (item: PaletteItem) => {
-      if (item.kind === "command" && item.action === "toggle_panel") {
-        togglePanel();
-        return;
+      if (item.kind === "command") {
+        if (item.action === "toggle_panel") {
+          toggleFromChat();
+          return;
+        }
+        if (item.action === "toggle_chat") {
+          toggleFromPanel();
+          return;
+        }
       }
       onPaletteSelect?.(item);
     },
-    [onPaletteSelect, togglePanel],
+    [onPaletteSelect, toggleFromChat, toggleFromPanel],
   );
 
   // Add file to chat from Files tab (right-click "Add to chat")
@@ -673,20 +696,16 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    if (isMobile && isPinned) {
-      setIsPinned(false);
-    }
-  }, [isMobile, isPinned, onApprovePlan, setIsPinned]);
+    dismissOnMobile();
+  }, [dismissOnMobile, onApprovePlan]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
       setPendingPlanArtifactId(null);
       onRequestPlanChanges?.(feedback);
-      if (isMobile && isPinned) {
-        setIsPinned(false);
-      }
+      dismissOnMobile();
     },
-    [isMobile, isPinned, onRequestPlanChanges, setIsPinned],
+    [dismissOnMobile, onRequestPlanChanges],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
@@ -725,13 +744,13 @@ export function ChatPage({
       // Cmd+` — Toggle Activity Panel
       if ((e.metaKey || e.ctrlKey) && e.key === "`") {
         e.preventDefault();
-        togglePanel();
+        toggleFromChat();
         return;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [togglePanel]);
+  }, [toggleFromChat]);
 
   const voiceInputMode = voice.voiceInputMode ?? "ptt";
   const wantsVoiceStatusSlot = Boolean(
@@ -761,6 +780,7 @@ export function ChatPage({
       <Heading level={1} className="sr-only">Chat</Heading>
       {ConfirmDialogElement}
       {/* Main chat column */}
+      {showChatColumn && (
       <div className="chat-column flex flex-col flex-1 min-w-[320px]">
         {/* Command Bar */}
         <CommandBar
@@ -773,8 +793,8 @@ export function ChatPage({
             null
           }
           onOpenPalette={() => setShowCommandPalette(true)}
-          onTogglePanel={togglePanel}
-          isPanelPinned={isPinned}
+          onTogglePanel={toggleFromChat}
+          panelVisible={panelVisible}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
@@ -851,8 +871,8 @@ export function ChatPage({
               paletteItems={chat.paletteItems}
               onPaletteSelect={handlePaletteSelect}
               mode={chat.mode}
-              onModeChange={chat.onModeChange}
-              modeDisabled={isProxyAttached}
+              onModeChange={handleInputModeChange}
+              modeDisabled={isAutonomousSession}
               modeOptions={
                 isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined
               }
@@ -863,7 +883,7 @@ export function ChatPage({
               worktreePickerDisabled={isProxyAttached}
               agentName={effectiveAgentName}
               onAgentChange={chat.onAgentChange}
-              agentPickerDisabled={isProxyAttached}
+              agentPickerDisabled={isAutonomousSession}
               agentDefinitions={agentDefinitions}
               agentGlobalDefs={agentGlobalDefs}
               agentProjectDefs={agentProjectDefs}
@@ -914,16 +934,16 @@ export function ChatPage({
               }
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
-              isAttached={isProxyAttached}
             />
           )}
         </ArtifactContext.Provider>
       </div>
+      )}
 
       {/* Activity Panel */}
       <ActivityPanel
-        isPinned={isPinned}
-        onPinnedChange={setIsPinned}
+        mode={effectiveMode}
+        onToggleChat={toggleFromPanel}
         panelWidth={panelWidth}
         onWidthChange={setPanelWidth}
         activeTab={activityTab}
@@ -967,10 +987,10 @@ export function ChatPage({
       <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
-        sessions={conversations.sessions}
-        activeSessionId={conversations.activeSessionId}
-        onSelectSession={conversations.onSelectSession}
-        onDeleteSession={conversations.onDeleteSession}
+        sessions={commandPaletteSessions}
+        activeSessionId={activityPanelChatSessionId ?? conversations.activeSessionId}
+        onSelectSession={handleCommandPaletteSelectSession}
+        onDeleteSession={handleCommandPaletteDeleteSession}
         onRenameSession={conversations.onRenameSession}
         actions={paletteActions}
       />

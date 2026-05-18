@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.5"
+version = "0.4.6"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Gemini, Qwen, and Droid. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "Apache-2.0"
@@ -92,10 +92,11 @@ constraint-dependencies = [
     # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
     "torch>=2.8.0",
 ]
-# torch, diffusers, and safetensors are exact-pinned by chatterbox-tts==0.1.7 to
-# vulnerable or incompatible versions, so constraints are unsatisfiable on their own;
-# overrides force fixed versions and unify the voice-extra resolution. Voice extra is
-# opt-in; revisit if chatterbox-tts surfaces ABI/API drift at runtime.
+# torch, torchaudio, diffusers, and safetensors are exact-pinned by
+# chatterbox-tts==0.1.7 to vulnerable or incompatible versions, so constraints are
+# unsatisfiable on their own; overrides force fixed versions and unify the
+# voice-extra resolution. Voice extra is opt-in; revisit if chatterbox-tts
+# surfaces ABI/API drift at runtime.
 # Voice-extra watch note (gobby-#14569). PyPI checked 2026-05-13:
 # stable latest is 0.7.0 and 0.8.0rc0 remains a pre-release, so the RC floor is intentional.
 # Removal checklist:
@@ -103,7 +104,8 @@ constraint-dependencies = [
 # - run the CI "Voice Extra (safetensors rc0)" job with uv sync --extra voice
 # - run focused voice route/STT tests and update this note with the replacement date
 override-dependencies = [
-    "torch>=2.8.0",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
     # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
     "diffusers>=0.38.0",
     # Temporary chatterbox-tts==0.1.7 override; keep until the checklist above passes.
@@ -127,6 +129,7 @@ gobby = [
     "install/gemini/**/*",
     "install/codex/**/*",
     "install/qwen/**/*",
+    "install/bundled_content_manifest.json",
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",

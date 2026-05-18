@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
+import { isValidGithubRepoSlug } from '../../lib/githubRepo'
 import { cn } from '../../lib/utils'
 import { Heading } from '../shared/Heading'
 
@@ -64,11 +65,16 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const isProtected = ['_personal', '_orphaned', '_migrated', 'gobby'].includes(project.name)
 
   const handleSave = useCallback(async () => {
+    const trimmedGithubRepo = githubRepo.trim()
+    if (trimmedGithubRepo && !isValidGithubRepoSlug(trimmedGithubRepo)) {
+      setMessage({ type: 'error', text: 'GitHub repo must be owner/repo' })
+      return
+    }
     setSaving(true)
     setMessage(null)
     const ok = await onSave({
       github_url: githubUrl || null,
-      github_repo: githubRepo || null,
+      github_repo: trimmedGithubRepo || null,
       linear_team_id: linearTeamId || null,
       linear_project_id: linearProjectId || null,
       approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),

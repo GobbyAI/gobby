@@ -6,7 +6,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from './ui/Dialog'
-import { Button } from './ui/Button'
+import { Button } from '../shared/Button'
 
 interface ToolResultImageProps {
   src: string

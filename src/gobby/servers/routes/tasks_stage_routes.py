@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.storage.tasks._stage_types import (
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.storage.tasks._models import Task
 
+logger = logging.getLogger(__name__)
+
 
 class StagePatchRequest(BaseModel):
     """Request body for mutating a task stage row."""
@@ -32,6 +35,7 @@ class StagePatchRequest(BaseModel):
         "reject_review",
         "complete",
         "fail",
+        "move_to",
         "add",
         "remove",
     ]
@@ -42,6 +46,16 @@ class StagePatchRequest(BaseModel):
     artifact_updates: dict[str, str] | None = None
     validation_override_reason: str | None = None
     position: int | None = None
+    force: bool = Field(
+        default=False,
+        description="Explicitly override stage move guards for operator-driven recovery.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_force_scope(self) -> StagePatchRequest:
+        if "force" in self.model_fields_set and self.action != "move_to":
+            raise ValueError("force is only supported for action='move_to'")
+        return self
 
 
 class StageStateView(BaseModel):
@@ -134,11 +148,13 @@ def register_task_stage_routes(
         task_id: str,
         stage_name: str,
         request_data: StagePatchRequest,
+        request: Request,
     ) -> Any:
         """Apply a stage transition or structural manifest mutation."""
         try:
             task = resolve_task(task_id)
             manager = server.task_manager.stage_states
+            request_session_id = request.headers.get("x-gobby-session-id")
             if request_data.action == "start":
                 stage_row = manager.start_stage(
                     task.id, stage_name, by_session_id=None, notes=request_data.notes
@@ -185,6 +201,26 @@ def register_task_stage_routes(
                     needs_human=request_data.needs_human,
                     by_session_id=None,
                 )
+                event = "stage_changed"
+            elif request_data.action == "move_to":
+                stage_row = manager.move_to_stage(
+                    task.id,
+                    stage_name,
+                    by_session_id=request_session_id if request_data.force else None,
+                    notes=request_data.notes,
+                    force=request_data.force,
+                )
+                if request_data.force:
+                    log_extra: dict[str, Any] = {
+                        "event": "task_stage_forced_move_to",
+                        "task_id": task.id,
+                        "stage_name": stage_name,
+                        "notes_present": bool(request_data.notes),
+                        "force": request_data.force,
+                    }
+                    if request_session_id:
+                        log_extra["request_session_id"] = request_session_id
+                    logger.info("Forced task stage move", extra=log_extra)
                 event = "stage_changed"
             elif request_data.action == "add":
                 if request_data.position is None:

@@ -1181,7 +1181,7 @@ CREATE TABLE agent_commands (
 
 | Tool | Description |
 |------|-------------|
-| `send_message(to_session, content, priority, metadata)` | P2P message to any session in same project. Auto-writes to `agent_runs.result` when recipient is sender's parent (preserves `get_agent_result` bridge). |
+| `send_message(from_session, to_session, content, *, priority, metadata)` | P2P message to any session in same project. Auto-writes to `agent_runs.result` when recipient is sender's parent (preserves `get_agent_result` bridge). |
 | `send_command(to_session, command_text, allowed_tools, allowed_mcp_tools, exit_condition)` | Directed execution (ancestor-only). Creates pending command. |
 | `complete_command(result)` | Signal command completion, remove temporary rules, send result back to sender. |
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button } from './ui/Button'
+import { Button } from '../shared/Button'
 
 interface PlanApprovalBarProps {
   onApprove: () => void

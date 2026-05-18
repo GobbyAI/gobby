@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.dispatch_tick import (
@@ -46,6 +47,7 @@ from gobby.storage.tasks import (
     StageManifestSpec,
     Task,
 )
+from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
 _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_work_attempts": "max_work_attempts = ?",
@@ -538,9 +540,29 @@ def _record_build_event(
         task_id,
         from_state=None,
         to_state=to_state,
-        reason="gobby build",
+        reason=BUILD_EVENT_REASON,
         by_actor="build",
     )
+
+
+BuildState = Literal["never_started", "running", "paused"]
+
+
+def derive_build_state(*, allow_automation: bool, has_build_event: bool) -> BuildState:
+    """Resolve a task's definitive build state for the web payload.
+
+    - ``running``: automation is currently enabled (``allow_automation``).
+    - ``paused``: automation is off but a build was started at some point
+      (``build_stop_target`` clears ``allow_automation`` without recording a
+      new lifecycle event or bumping ``dispatch_failure_count``, so the durable
+      ``gobby build`` event is the only honest signal here).
+    - ``never_started``: automation is off and no build was ever started.
+    """
+    if allow_automation:
+        return "running"
+    if has_build_event:
+        return "paused"
+    return "never_started"
 
 
 def _initialize_stage_manifest(
@@ -567,5 +589,7 @@ def _looks_like_task_ref(input_ref: str) -> bool:
 
 
 __all__ = [
+    "BuildState",
     "build",
+    "derive_build_state",
 ]

@@ -11,14 +11,12 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
-import { PriorityBadge, StatusDot, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
-  getTaskStateSummary,
 } from "../../lib/taskState";
+import { useTaskInlineEdit } from "./useTaskInlineEdit";
 import {
-  normalizeTaskPayload,
   normalizeTaskPayloads,
   type RawTaskPayload,
 } from "../../lib/taskNormalization";
@@ -29,127 +27,66 @@ import {
   compareTasksForDisplay,
   DEFAULT_FILTERS,
   filterTreeBySearch,
-  getStageStateColor,
   matchesTaskFilter,
-  PRIORITY_TEXT_COLORS,
-  PRIORITY_TEXT_WEIGHTS,
   RECENT_CLOSED_TASK_LIMIT,
   type TaskFilterKey,
-  type VisibleTaskRow,
 } from "./TasksTabModel";
-import { TasksTabFilters } from "./TasksTabFilters";
 import {
   TasksTabDetailPanel,
   type GobbyTaskDetail,
   type ParentTaskRef,
 } from "./TasksTabDetailPanel";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
-import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
+import { TaskCloseDialog } from "./TaskCloseDialog";
+import {
+  type ActiveTaskAction,
+  TaskQuickMenu,
+  type TaskContextMenu,
+  type TaskMenuAction,
+} from "./TaskQuickMenu";
+import { TasksTabToolbar } from "./TasksTabToolbar";
+import { TasksTabList } from "./TasksTabList";
+import {
+  claimTaskForSession,
+  patchTaskFields,
+  type PatchTaskFields,
+  postBuildControl,
+  postTaskLifecycleAction,
+  startBuild,
+  startQuickBuild,
+} from "./TasksTabActions";
+import {
+  areSetsEqual,
+  extractTaskPayload,
+  fetchMissingTaskAncestors,
+  getBaseUrl,
+  getCurrentStageName,
+  mergeTasksById,
+  normalizeActivityTask,
+} from "./TasksTabData";
 
 interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
 }
 
-interface TaskContextMenu {
-  x: number;
-  y: number;
-  task: GobbyTask;
+function isGobbyTaskDetailSnapshot(task: GobbyTask): task is GobbyTaskDetail {
+  return "description" in task && "validation_status" in task;
 }
 
-function getBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || "";
-}
-
-function extractTaskPayload(data: unknown): RawTaskPayload | null {
-  if (!data || typeof data !== "object") return null;
-  const record = data as { id?: unknown; task?: unknown };
-  if (typeof record.id === "string") return record as RawTaskPayload;
-  if (record.task && typeof record.task === "object") {
-    return record.task as RawTaskPayload;
-  }
-  return null;
-}
-
-function normalizeActivityTask(raw: RawTaskPayload, fallback?: GobbyTask | null): GobbyTask {
-  return normalizeTaskPayload({
-    ...fallback,
-    ...raw,
-    stages: raw.stages ?? fallback?.stages ?? [],
-    current_stage:
-      raw.current_stage ??
-      raw.state?.current_stage ??
-      fallback?.current_stage ??
-      fallback?.state?.current_stage ??
-      null,
-  }) as GobbyTask;
-}
-
-function areSetsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
-  if (left.size !== right.size) return false;
-  for (const value of left) {
-    if (!right.has(value)) return false;
-  }
-  return true;
-}
-
-function getCurrentStageName(task: GobbyTask): string | null {
-  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null;
-}
-
-function mergeTasksById(...taskGroups: GobbyTask[][]): GobbyTask[] {
-  const taskMap = new Map<string, GobbyTask>();
-  for (const group of taskGroups) {
-    for (const task of group) {
-      taskMap.set(task.id, task);
-    }
-  }
-  return [...taskMap.values()];
-}
-
-async function fetchMissingTaskAncestors(
-  baseUrl: string,
-  seedTasks: GobbyTask[],
-  signal: AbortSignal,
-): Promise<GobbyTask[]> {
-  const taskMap = new Map(seedTasks.map((task) => [task.id, task]));
-  const queuedParentIds = new Set<string>();
-  const parentQueue: string[] = [];
-
-  const enqueueParent = (task: GobbyTask) => {
-    const parentId = task.parent_task_id;
-    if (!parentId || taskMap.has(parentId) || queuedParentIds.has(parentId)) {
-      return;
-    }
-    queuedParentIds.add(parentId);
-    parentQueue.push(parentId);
+function mergeTaskSnapshotIntoDetail(
+  detail: GobbyTaskDetail,
+  snapshot: GobbyTask,
+): GobbyTaskDetail {
+  return {
+    ...detail,
+    ...snapshot,
+    validation_fail_count:
+      typeof snapshot.validation_fail_count === "number"
+        ? snapshot.validation_fail_count
+        : detail.validation_fail_count,
   };
-
-  seedTasks.forEach(enqueueParent);
-
-  while (parentQueue.length > 0) {
-    const parentId = parentQueue.shift();
-    if (!parentId || signal.aborted) break;
-    queuedParentIds.delete(parentId);
-
-    try {
-      const response = await fetch(
-        `${baseUrl}/api/tasks/${encodeURIComponent(parentId)}`,
-        { signal },
-      );
-      if (!response.ok) continue;
-      const raw = extractTaskPayload(await response.json());
-      if (!raw) continue;
-      const parentTask = normalizeActivityTask(raw, taskMap.get(parentId) ?? null);
-      taskMap.set(parentTask.id, parentTask);
-      enqueueParent(parentTask);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") throw err;
-    }
-  }
-
-  return [...taskMap.values()];
 }
 
 export const TasksTab = memo(function TasksTab({
@@ -239,9 +176,10 @@ export const TasksTab = memo(function TasksTab({
   const [detailLoading, setDetailLoading] = useState(false);
   const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
   const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
-  const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
-  const [claimError, setClaimError] = useState<string | null>(null);
+  const [activeTaskAction, setActiveTaskAction] = useState<ActiveTaskAction | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
+  const [closeDialogTask, setCloseDialogTask] = useState<GobbyTask | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -254,6 +192,10 @@ export const TasksTab = memo(function TasksTab({
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
+  // WS task_event truth supersedes any in-flight optimistic inline edit. The
+  // ref breaks the declaration-order cycle (handleTaskEvent is defined before
+  // the inline-edit hook, which itself depends on applyRawTaskUpdate).
+  const reconcileInlineEditRef = useRef<(taskId: string) => void>(() => {});
 
   const fetchTasks = useCallback(() => {
     abortRef.current?.abort();
@@ -330,21 +272,25 @@ export const TasksTab = memo(function TasksTab({
 
       if (event === "task_deleted") {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
-        if (taskId === selectedTaskId) {
+        if (taskId === selectedTaskIdRef.current) {
           userSelectedRef.current = false;
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
-        const newTask = normalizeActivityTask(taskData as RawTaskPayload);
+        const rawTask = extractTaskPayload(taskData);
+        if (!rawTask) return;
+        const newTask = normalizeActivityTask(rawTask);
         setTasks((prev) => {
           if (prev.some((t) => t.id === taskId)) return prev;
           return [...prev, newTask];
         });
       } else {
         // task_updated, task_closed, task_reopened, task_de_escalated
+        const rawTask = extractTaskPayload(taskData);
+        if (!rawTask) return;
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === taskId ? normalizeActivityTask(taskData as RawTaskPayload, t) : t,
+            t.id === taskId ? normalizeActivityTask(rawTask, t) : t,
           ),
         );
       }
@@ -352,7 +298,10 @@ export const TasksTab = memo(function TasksTab({
       // Re-fetch detail if the affected task is currently selected.
       // Abort any previous in-flight detail fetch so a stale response can't
       // overwrite a newer one (or land after the component unmounts).
-      if (taskId === selectedTaskId && event !== "task_deleted") {
+      if (taskId === selectedTaskIdRef.current && event !== "task_deleted") {
+        // Server truth landed: drop in-flight optimistic-edit bookkeeping so a
+        // slow PATCH resolve/reject can't stomp this update.
+        reconcileInlineEditRef.current(taskId);
         detailFetchControllerRef.current?.abort();
         const controller = new AbortController();
         detailFetchControllerRef.current = controller;
@@ -362,6 +311,7 @@ export const TasksTab = memo(function TasksTab({
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (controller.signal.aborted) return;
+            if (selectedTaskIdRef.current !== taskId) return;
             const raw = extractTaskPayload(data);
             const cached = tasks.find((task) => task.id === taskId) ?? null;
             setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
@@ -382,7 +332,7 @@ export const TasksTab = memo(function TasksTab({
         window.clearTimeout(debouncedRefetchRef.current);
       debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500);
     },
-    [fetchTasks, projectId, selectedTaskId, tasks],
+    [fetchTasks, projectId, tasks],
   );
 
   useEffect(() => {
@@ -415,6 +365,7 @@ export const TasksTab = memo(function TasksTab({
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        if (selectedTaskIdRef.current !== selectedTaskId) return;
         const raw = extractTaskPayload(data);
         const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
         setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
@@ -574,7 +525,6 @@ export const TasksTab = memo(function TasksTab({
     [selectedTaskId, tasks],
   );
   const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
-  const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
   let parentTask: ParentTaskRef | null = null;
   if (taskDetail?.parent_task_id) {
     const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);
@@ -611,6 +561,93 @@ export const TasksTab = memo(function TasksTab({
 
   const closeTaskMenu = useCallback(() => setTaskMenu(null), []);
 
+  const applyRawTaskUpdate = useCallback(
+    (taskId: string, rawTask: RawTaskPayload | null) => {
+      if (!rawTask) {
+        if (selectedTaskIdRef.current === taskId) {
+          setTaskDetail(null);
+        }
+        return;
+      }
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId ? normalizeActivityTask(rawTask, task) : task,
+        ),
+      );
+      if (selectedTaskIdRef.current === taskId) {
+        setTaskDetail((prev) =>
+          normalizeActivityTask(rawTask, prev ?? undefined) as GobbyTaskDetail,
+        );
+      }
+    },
+    [],
+  );
+
+  // Restore the pre-edit snapshot when an optimistic inline edit fails.
+  const rollbackTask = useCallback(
+    (taskId: string, snapshot: GobbyTask) => {
+      setTasks((prev) =>
+        prev.map((task) => (task.id === taskId ? snapshot : task)),
+      );
+      setTaskDetail((prev) =>
+        prev && prev.id === taskId
+          ? (
+              isGobbyTaskDetailSnapshot(snapshot)
+                ? snapshot
+                : mergeTaskSnapshotIntoDetail(prev, snapshot)
+            )
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const patchTask = useCallback(
+    (taskId: string, fields: PatchTaskFields) =>
+      patchTaskFields(getBaseUrl(), taskId, fields),
+    [],
+  );
+
+  // D4 store-agnostic inline editor, wired to this tab's own optimistic
+  // store (no second store, no extra fetch).
+  const inlineEdit = useTaskInlineEdit({
+    patchTask,
+    applyRawTaskUpdate,
+    rollback: rollbackTask,
+  });
+
+  useEffect(() => {
+    reconcileInlineEditRef.current = inlineEdit.reconcile;
+  }, [inlineEdit.reconcile]);
+
+  const runMenuAction = useCallback(
+    async (
+      task: GobbyTask,
+      action: TaskMenuAction,
+      operation: () => Promise<RawTaskPayload | null>,
+      errorPrefix: string,
+      refetchAfter = false,
+    ) => {
+      closeTaskMenu();
+      setActiveTaskAction({ taskId: task.id, action });
+      setActionError(null);
+      try {
+        const rawTask = await operation();
+        applyRawTaskUpdate(task.id, rawTask);
+        if (refetchAfter) fetchTasks();
+      } catch (error) {
+        setActionError(
+          error instanceof Error
+            ? `${errorPrefix}: ${error.message}`
+            : `${errorPrefix}.`,
+        );
+      } finally {
+        setActiveTaskAction(null);
+      }
+    },
+    [applyRawTaskUpdate, closeTaskMenu, fetchTasks],
+  );
+
   useEffect(() => {
     if (!taskMenu) return;
     const handleWindowClick = () => setTaskMenu(null);
@@ -634,50 +671,143 @@ export const TasksTab = memo(function TasksTab({
     [],
   );
 
-  const handleAssignToMainChat = useCallback(async () => {
+  const handleAssignToMainChat = useCallback(() => {
     if (!taskMenu?.task.id || !chatSessionId) {
       return;
     }
-    const taskId = taskMenu.task.id;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "assign",
+      () => claimTaskForSession(getBaseUrl(), task.id, chatSessionId),
+      "Failed to assign task to main chat",
+    );
+  }, [chatSessionId, runMenuAction, taskMenu]);
+
+  const handleBuild = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "build",
+      async () => {
+        await startBuild(getBaseUrl(), task);
+        return null;
+      },
+      "Failed to start build",
+      true,
+    );
+  }, [runMenuAction, taskMenu]);
+
+  const handleBuildQuick = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "buildQuick",
+      async () => {
+        await startQuickBuild(getBaseUrl(), task);
+        return null;
+      },
+      "Failed to start quick build",
+      true,
+    );
+  }, [runMenuAction, taskMenu]);
+
+  const handleStopBuild = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "stopBuild",
+      async () => {
+        await postBuildControl(getBaseUrl(), "stop", task);
+        return null;
+      },
+      "Failed to stop build",
+      true,
+    );
+  }, [runMenuAction, taskMenu]);
+
+  const handleResumeBuild = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "resumeBuild",
+      async () => {
+        await postBuildControl(getBaseUrl(), "resume", task);
+        return null;
+      },
+      "Failed to resume build",
+      true,
+    );
+  }, [runMenuAction, taskMenu]);
+
+  const handleReleaseClaim = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "releaseClaim",
+      () => postTaskLifecycleAction(getBaseUrl(), task.id, "release-claim"),
+      "Failed to release task claim",
+    );
+  }, [runMenuAction, taskMenu]);
+
+  const handleDetailClaim = useCallback(() => {
+    if (!taskDetail || !chatSessionId) return;
+    const detail = taskDetail;
+    void runMenuAction(
+      detail,
+      "assign",
+      () => claimTaskForSession(getBaseUrl(), detail.id, chatSessionId),
+      "Failed to claim task",
+    );
+  }, [chatSessionId, runMenuAction, taskDetail]);
+
+  const handleDetailRelease = useCallback(() => {
+    if (!taskDetail) return;
+    const detail = taskDetail;
+    void runMenuAction(
+      detail,
+      "releaseClaim",
+      () => postTaskLifecycleAction(getBaseUrl(), detail.id, "release-claim"),
+      "Failed to release task claim",
+    );
+  }, [runMenuAction, taskDetail]);
+
+  const handleOpenCloseTaskDialog = useCallback(() => {
+    if (!taskMenu?.task) return;
+    setCloseDialogTask(taskMenu.task);
     closeTaskMenu();
-    setAssigningTaskId(taskId);
-    setClaimError(null);
-    try {
-      const response = await fetch(
-        `${getBaseUrl()}/api/tasks/${encodeURIComponent(taskId)}/claim`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: chatSessionId, force: true }),
-        },
+  }, [closeTaskMenu, taskMenu]);
+
+  const handleCloseTask = useCallback(
+    (reason: string) => {
+      if (!closeDialogTask) return;
+      const task = closeDialogTask;
+      void runMenuAction(
+        task,
+        "close",
+        () => postTaskLifecycleAction(getBaseUrl(), task.id, "close", { reason }),
+        "Failed to close task",
       );
-      if (!response.ok) {
-        throw new Error(`Failed to claim task (${response.status})`);
-      }
-      const claimedTask = await response.json();
-      const rawClaimedTask = extractTaskPayload(claimedTask);
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === taskId && rawClaimedTask
-            ? normalizeActivityTask(rawClaimedTask, task)
-            : task,
-        ),
-      );
-      if (selectedTaskId === taskId && rawClaimedTask) {
-        setTaskDetail((prev) =>
-          normalizeActivityTask(rawClaimedTask, prev ?? undefined) as GobbyTaskDetail,
-        );
-      }
-    } catch (error) {
-      setClaimError(
-        error instanceof Error
-          ? `Failed to assign task to main chat: ${error.message}`
-          : "Failed to assign task to main chat.",
-      );
-    } finally {
-      setAssigningTaskId(null);
-    }
-  }, [chatSessionId, closeTaskMenu, selectedTaskId, taskMenu]);
+      setCloseDialogTask(null);
+    },
+    [closeDialogTask, runMenuAction],
+  );
+
+  const handleReopenTask = useCallback(() => {
+    if (!taskMenu?.task) return;
+    const task = taskMenu.task;
+    void runMenuAction(
+      task,
+      "reopen",
+      () => postTaskLifecycleAction(getBaseUrl(), task.id, "reopen"),
+      "Failed to reopen task",
+    );
+  }, [runMenuAction, taskMenu]);
 
   const toggleTaskOpen = useCallback((taskId: string) => {
     setCollapsedTaskIds((prev) => {
@@ -691,136 +821,13 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
-  const renderTaskRow = useCallback(
-    (row: VisibleTaskRow) => {
-      const task = row.node.task;
-      const taskState = getCanonicalTaskState(task);
-      const currentStage = taskState.current_stage;
-      const stateSummary = getTaskStateSummary(task);
-      const textColor =
-        PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
-      const textWeight =
-        PRIORITY_TEXT_WEIGHTS[task.priority ?? 3] ?? "var(--font-weight-normal)";
-      const ref = task.seq_num != null ? `#${task.seq_num}` : null;
-      const isAssigning = assigningTaskId === task.id;
-      const isSelected = selectedTaskId === task.id;
+  const handleSelectTask = useCallback((taskId: string) => {
+    userSelectedRef.current = true;
+    setActionError(null);
+    setSelectedTaskId(taskId);
+  }, []);
 
-      const taskRowClass = [
-        "activity-task-row",
-        isSelected && "activity-task-row--selected",
-        getTaskDisplayState(task) === "closed" && "activity-task-row--closed",
-      ]
-        .filter(Boolean)
-        .join(" ");
-
-      return (
-        <div
-          key={task.id}
-          style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
-          className={taskRowClass}
-          role="treeitem"
-          tabIndex={0}
-          aria-level={row.depth + 1}
-          aria-expanded={row.isInternal ? row.isOpen : undefined}
-          aria-label={`${ref ?? task.ref} ${task.title}: ${stateSummary}`}
-          title={stateSummary}
-          onClick={() => {
-            userSelectedRef.current = true;
-            setClaimError(null);
-            setSelectedTaskId(task.id);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              userSelectedRef.current = true;
-              setClaimError(null);
-              setSelectedTaskId(task.id);
-            }
-          }}
-        >
-          {row.isInternal ? (
-            <button
-              className="activity-task-row-toggle"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleTaskOpen(task.id);
-              }}
-              aria-label={`${
-                row.isOpen ? "Collapse" : "Expand"
-              } subtasks for ${task.title}`}
-              title={row.isOpen ? "Collapse subtasks" : "Expand subtasks"}
-            >
-              <span
-                className={`activity-task-row-toggle-icon${
-                  row.isOpen ? " activity-task-row-toggle-icon--open" : ""
-                }`}
-                aria-hidden="true"
-              >
-                <svg viewBox="0 0 12 12" fill="none">
-                  <path
-                    d="M4 2.5L8 6L4 9.5"
-                    stroke="currentColor"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </span>
-            </button>
-          ) : (
-            <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
-          )}
-          <StatusDot task={task} />
-          {ref && (
-            <span className="activity-task-row-ref">{ref}</span>
-          )}
-          <span
-            className="activity-task-row-title"
-            style={{ color: textColor, fontWeight: textWeight }}
-          >
-            {task.title}
-          </span>
-          {currentStage && (
-            <span className="activity-task-row-stage" title={stateSummary}>
-              <span
-                className="activity-task-row-stage-pip"
-                style={{ backgroundColor: getStageStateColor(currentStage.state) }}
-                aria-hidden="true"
-              />
-              <span className="activity-task-row-stage-label">
-                {currentStage.display_name}
-              </span>
-            </span>
-          )}
-          <button
-            type="button"
-            className="session-more-btn"
-            onClick={(event) => handleMenuButtonClick(event, task)}
-            title="Task actions"
-            aria-label="Task actions"
-            disabled={isAssigning}
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-            >
-              <circle cx="12" cy="5" r="2" />
-              <circle cx="12" cy="12" r="2" />
-              <circle cx="12" cy="19" r="2" />
-            </svg>
-          </button>
-        </div>
-      );
-    },
-    [
-      assigningTaskId,
-      handleMenuButtonClick,
-      selectedTaskId,
-      toggleTaskOpen,
-    ],
-  );
+  const showDetail = selectedTaskId !== null;
 
   if (loading) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
@@ -828,86 +835,47 @@ export const TasksTab = memo(function TasksTab({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Toolbar */}
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
-          value={search}
-          onChange={setSearch}
-          placeholder="Search"
-        />
-        <button
-          type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
-          onClick={() => setShowFilterDropdown((v) => !v)}
-          title="Filter by task state"
-          aria-label="Filter tasks"
-          aria-expanded={showFilterDropdown}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {activeFilterCount > 0 && (
-            <span className="activity-filter-badge">{activeFilterCount}</span>
-          )}
-        </button>
-        {showFilterDropdown && (
-          <TasksTabFilters
-            filters={statusFilters}
-            stages={stagesRegistry}
-            selectedStages={selectedStageFilters}
-            onApply={handleFiltersApply}
-            onClose={() => setShowFilterDropdown(false)}
-          />
-        )}
-      </div>
-      {claimError && (
+      <TasksTabToolbar
+        search={search}
+        onSearchChange={setSearch}
+        showFilterDropdown={showFilterDropdown}
+        onToggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
+        activeFilterCount={activeFilterCount}
+        statusFilters={statusFilters}
+        stagesRegistry={stagesRegistry}
+        selectedStageFilters={selectedStageFilters}
+        onFiltersApply={handleFiltersApply}
+        onCloseFilterDropdown={() => setShowFilterDropdown(false)}
+      />
+      {actionError && (
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"
           role="alert"
           style={{ color: "var(--color-error)" }}
         >
-          {claimError}
+          {actionError}
         </div>
       )}
 
-      {/* Tree pane */}
       <div
-        className={`activity-tasks-pane min-h-0 overflow-y-auto ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
-        style={selectedTaskId ? { height: `${topHeight}%` } : undefined}
-        role={filtered.length > 0 ? "tree" : undefined}
-        aria-label={filtered.length > 0 ? "Tasks" : undefined}
-        data-testid={filtered.length > 0 ? "task-tree" : undefined}
+        className={`min-h-0 flex flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
+        style={showDetail ? { height: `${topHeight}%` } : undefined}
       >
-        {filtered.length === 0 ? (
-          <ActivityPanelEmpty
-            icon={<TasksEmptyIcon />}
-            heading="Tasks"
-            body={
-              tasks.length > 0
-                ? "Tasks exist, but none match the current filters"
-                : "Tasks appear here as they are created"
-            }
-          />
-        ) : (
-          <>
-            {visibleRows.map((row) => renderTaskRow(row))}
-          </>
-        )}
+        <TasksTabList
+          visibleRows={visibleRows}
+          isEmpty={filtered.length === 0}
+          isLoading={loading}
+          hasAnyTasks={tasks.length > 0}
+          selectedTaskId={selectedTaskId}
+          activeTaskActionId={activeTaskAction?.taskId ?? null}
+          onSelect={handleSelectTask}
+          onToggleOpen={toggleTaskOpen}
+          onMenuButtonClick={handleMenuButtonClick}
+        />
       </div>
 
       {/* Resize handle */}
-      {selectedTaskId && (
+      {showDetail && (
         <ResizeHandle
           direction="vertical"
           onResize={setTopHeight}
@@ -917,21 +885,12 @@ export const TasksTab = memo(function TasksTab({
         />
       )}
 
-      {/* Detail pane */}
-      {selectedTaskId && (
+      {showDetail && (
         <div className="activity-task-detail-shell">
           <div className="activity-task-pane-bar activity-task-pane-bar--detail">
             <span className="activity-task-pane-bar__title">
               Task {headerRef ?? "—"}
-              {headerTitle ? <> – {headerTitle}</> : null}
             </span>
-            {taskDetail && (
-              <div className="activity-task-pane-bar__chips">
-                <TaskStateBadges task={taskDetail} />
-                <PriorityBadge priority={taskDetail.priority ?? 4} />
-                <TypeBadge type={taskDetail.task_type} />
-              </div>
-            )}
           </div>
           {detailLoading ? (
             <p className="activity-task-detail-loading">
@@ -944,6 +903,10 @@ export const TasksTab = memo(function TasksTab({
               onSelectTask={setSelectedTaskId}
               dependencies={taskDependencies}
               subtasks={taskSubtasks}
+              edit={inlineEdit}
+              onClaim={chatSessionId ? handleDetailClaim : undefined}
+              onRelease={handleDetailRelease}
+              claimBusy={activeTaskAction?.taskId === taskDetail.id}
             />
           ) : (
             <p className="activity-task-detail-empty">
@@ -954,24 +917,28 @@ export const TasksTab = memo(function TasksTab({
       )}
 
       {taskMenu && (
-        <>
-          <div className="session-ctx-backdrop" onClick={closeTaskMenu} />
-          <div
-            className="session-ctx-menu"
-            style={{ position: "fixed", left: taskMenu.x, top: taskMenu.y }}
-          >
-            <button
-              className="session-ctx-item"
-              onClick={() => {
-                void handleAssignToMainChat();
-              }}
-              disabled={!chatSessionId || assigningTaskId === taskMenu.task.id}
-            >
-              Assign to Main Chat
-            </button>
-          </div>
-        </>
+        <TaskQuickMenu
+          menu={taskMenu}
+          chatSessionId={chatSessionId}
+          activeAction={activeTaskAction}
+          onClose={closeTaskMenu}
+          onAssignToMainChat={handleAssignToMainChat}
+          onBuild={handleBuild}
+          onBuildQuick={handleBuildQuick}
+          onStopBuild={handleStopBuild}
+          onResumeBuild={handleResumeBuild}
+          onReleaseClaim={handleReleaseClaim}
+          onCloseTask={handleOpenCloseTaskDialog}
+          onReopenTask={handleReopenTask}
+        />
       )}
+      <TaskCloseDialog
+        key={closeDialogTask?.id ?? "none"}
+        task={closeDialogTask}
+        isSubmitting={activeTaskAction?.action === "close"}
+        onCancel={() => setCloseDialogTask(null)}
+        onConfirm={handleCloseTask}
+      />
     </div>
   );
 });

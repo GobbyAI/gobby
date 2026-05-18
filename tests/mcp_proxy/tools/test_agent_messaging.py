@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -97,6 +98,15 @@ class MockCommand:
             "allowed_mcp_tools": self.allowed_mcp_tools,
             "exit_condition": self.exit_condition,
         }
+
+
+class FakeWakeDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(session_id)
+        return {"session_id": session_id, "delivered": True, "method": "fake"}
 
 
 @pytest.fixture
@@ -194,6 +204,179 @@ class TestSendMessage:
 
         assert result["success"] is True
         mock_message_manager.create_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_message_accepts_to_session_and_metadata(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Public send_message accepts to_session and forwards metadata."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-to": MockSession(id="s-to", project_id="proj-1"),
+        }.get(sid)
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "to_session": "s-to",
+                "content": "assignment",
+                "priority": "high",
+                "message_type": "task_assignment",
+                "metadata": {"task_id": "#14760"},
+            },
+        )
+
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-to"]
+        call_kwargs = mock_message_manager.create_message.call_args.kwargs
+        assert call_kwargs["priority"] == "high"
+        assert call_kwargs["message_type"] == "task_assignment"
+        assert '"task_id": "#14760"' in call_kwargs["metadata_json"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_direct_function_accepts_keyword_priority(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Direct send_message function accepts optional fields only by keyword."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-to": MockSession(id="s-to", project_id="proj-1"),
+        }.get(sid)
+        send_message = messaging_registry.get_tool("send_message")
+        assert send_message is not None
+
+        result = await send_message("s-from", "s-to", "current", priority="high")
+
+        assert result["success"] is True
+        call_kwargs = mock_message_manager.create_message.call_args.kwargs
+        assert call_kwargs["to_session"] == "s-to"
+        assert call_kwargs["content"] == "current"
+        assert call_kwargs["priority"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_send_message_rejects_positional_priority(
+        self, messaging_registry, mock_session_manager
+    ) -> None:
+        """Direct send_message no longer accepts legacy positional priority."""
+        send_message = messaging_registry.get_tool("send_message")
+        assert send_message is not None
+
+        with pytest.raises(TypeError, match="positional"):
+            await send_message("s-from", "s-to", "legacy", "high")
+
+        mock_session_manager.resolve_session_reference.assert_not_called()
+
+    def test_send_message_schema_documents_broadcast_parameters(self, messaging_registry) -> None:
+        """Tool description names broadcast args and keyword-only optional fields."""
+        schema = messaging_registry.get_schema("send_message")
+
+        assert schema is not None
+        description = schema["description"]
+        assert "keyword-only" in description
+        assert "send_to_all=true" in description
+        assert "send_to_all" in schema["inputSchema"]["properties"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_rejects_target_with_broadcast(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Reject explicit target when broadcasting."""
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "to_session": "s-to",
+                "send_to_all": True,
+                "content": "hi",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "to_session cannot be combined with send_to_all=true."
+        mock_session_manager.resolve_session_reference.assert_not_called()
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_requires_target_unless_broadcast(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Reject direct sends without exactly one target identifier."""
+        result = await messaging_registry.call(
+            "send_message",
+            {"from_session": "s-from", "content": "hi"},
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "Pass to_session unless send_to_all is true."
+        mock_session_manager.resolve_session_reference.assert_not_called()
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_send_to_all_fans_out_and_wakes(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_command_manager,
+        mock_session_var_manager,
+        mock_db,
+    ) -> None:
+        """send_to_all delegates broadcast fanout and optional wake to MailboxService."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        wake_dispatcher = FakeWakeDispatcher()
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            command_manager=mock_command_manager,
+            session_var_manager=mock_session_var_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-child": MockSession(id="s-child", project_id="proj-1"),
+        }.get(sid)
+        mock_db.fetchall.return_value = [
+            {
+                "child_session_id": "s-child",
+                "child_status": "active",
+                "parent_session_id": "s-from",
+                "parent_status": "active",
+            }
+        ]
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id="msg-broadcast",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "send_to_all": True,
+                "include_wakeup": True,
+                "content": "hello agents",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-child"]
+        assert result["broadcast_id"]
+        assert wake_dispatcher.calls == ["s-child"]
+        assert result["wake_results"] == [
+            {"session_id": "s-child", "delivered": True, "method": "fake"}
+        ]
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_rejected(

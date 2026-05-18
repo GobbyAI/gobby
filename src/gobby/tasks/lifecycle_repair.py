@@ -255,18 +255,7 @@ def _has_expansion_provenance(task: Task) -> bool:
 
 
 def _has_build_event(task_manager: LocalTaskManager, task_id: str) -> bool:
-    return bool(
-        task_manager.db.fetchone(
-            """
-            SELECT 1
-              FROM task_lifecycle_events
-             WHERE task_id = ?
-               AND reason = 'gobby build'
-             LIMIT 1
-            """,
-            (task_id,),
-        )
-    )
+    return task_manager.lifecycle_events.has_build_event(task_id)
 
 
 def _has_non_manifest_lifecycle_event(task_manager: LocalTaskManager, task_id: str) -> bool:

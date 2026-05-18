@@ -21,7 +21,11 @@ export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
   const displayState = getTaskDisplayState(task)
   const stateLabel = getTaskStateLabel(task)
   const isActive = !state.is_closed && (state.is_claimed || displayState === 'in_progress')
-  const ownerLabel = task.agent_name || (state.owner_session_id ? `#${state.owner_session_id.slice(0, 6)}` : null)
+  // Friendly owner ref (#<seq_num> or UUID prefix fallback).
+  const ownerLabel =
+    task.agent_name ||
+    state.owner_session_ref?.ref ||
+    (state.owner_session_id ? `#${state.owner_session_id.slice(0, 8)}` : null)
 
   // Live-updating relative timestamp
   const [timeLabel, setTimeLabel] = useState(() => relativeTime(task.updated_at))

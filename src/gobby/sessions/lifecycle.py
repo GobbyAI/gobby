@@ -7,14 +7,16 @@ Handles background jobs for:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
 import tempfile
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
@@ -37,6 +39,8 @@ from gobby.storage.token_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 def _session_int(value: Any) -> int:
@@ -78,6 +82,21 @@ class SessionLifecycleManager:
         self._expire_task: asyncio.Task[None] | None = None
         self._process_task: asyncio.Task[None] | None = None
         self._kg_queue_task: asyncio.Task[None] | None = None
+
+    async def _run_memory_db(
+        self,
+        func: Callable[..., T],
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
+        """Run memory DB work on the memory manager's bounded executor when available."""
+        run_db = getattr(self.memory_manager, "run_db", None)
+        if callable(run_db):
+            result = run_db(func, *args, **kwargs)
+            if inspect.isawaitable(result):
+                return await cast(Awaitable[T], result)
+            return cast(T, result)
+        return await asyncio.to_thread(func, *args, **kwargs)
 
     async def start(self) -> None:
         """Start background jobs."""
@@ -201,8 +220,9 @@ class SessionLifecycleManager:
         if not kg_service:
             return 0
 
-        pending = await asyncio.to_thread(
-            self.memory_manager.get_pending_graph_memories, limit=batch_size
+        pending = await self._run_memory_db(
+            self.memory_manager.get_pending_graph_memories,
+            limit=batch_size,
         )
         if not pending:
             return 0
@@ -216,7 +236,7 @@ class SessionLifecycleManager:
                     project_id=memory.project_id,
                 )
                 if result.status in ("success", "noop_no_entities"):
-                    await asyncio.to_thread(self.memory_manager.mark_graph_processed, memory.id)
+                    await self._run_memory_db(self.memory_manager.mark_graph_processed, memory.id)
                     processed += 1
             except Exception as e:
                 logger.warning(f"KG processing failed for memory {memory.id}: {e}")

@@ -25,6 +25,12 @@ type Phase6TasksApi = ReturnType<typeof useTasks> & {
   ) => Promise<unknown>
   failStage: (taskId: string, stageName: string, reason: string) => Promise<unknown>
   startStage: (taskId: string, stageName: string) => Promise<unknown>
+  moveTaskToStage: (taskId: string, targetStageName: string) => Promise<unknown>
+}
+
+const STAGE_TEST_METADATA: Record<string, { displayName: string; category: string }> = {
+  build: { displayName: 'Build', category: 'delivery' },
+  deploy: { displayName: 'Deploy', category: 'release' },
 }
 
 function installFetchSpy(
@@ -55,13 +61,21 @@ function createDeferred<T>() {
 
 function stageState(
   state: 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done' = 'ready',
+  name = 'build',
+  position = 0,
+  reviewPolicy: 'required' | 'none' | 'optional' = 'required',
 ) {
-  return {
-    name: 'build',
-    display_name: 'Build',
+  const metadata = STAGE_TEST_METADATA[name] ?? {
+    displayName: name.charAt(0).toUpperCase() + name.slice(1),
     category: 'delivery',
+  }
+  return {
+    name,
+    display_name: metadata.displayName,
+    category: metadata.category,
     state,
-    review_policy: 'required',
+    review_policy: reviewPolicy,
+    position,
     updated_at: '2026-05-02T00:00:00Z',
   }
 }
@@ -768,6 +782,95 @@ describe('useTasks', () => {
     expect(JSON.parse(String(stageRequest?.init?.body))).toEqual({ action: 'start' })
   })
 
+  it('test_move_task_to_stage_optimistic_success', async () => {
+    const build = stageState('ready', 'build', 0)
+    const deploy = stageState('ready', 'deploy', 1, 'optional')
+    const stagedTask = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready', { current_stage: build }),
+      current_stage: build,
+      stages: [build, deploy],
+    }
+    const movedStages = [
+      { ...build, state: 'done' },
+      deploy,
+    ]
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) {
+        return jsonResponse({ ...TASK_LIST_RESPONSE, tasks: [stagedTask], total: 1 })
+      }
+      if (url.includes('/api/tasks/task-1/stages/deploy')) {
+        stageRequests.push({ url, init })
+        return jsonResponse({ task_id: 'task-1', stages: movedStages })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).moveTaskToStage('task-1', 'deploy')
+    })
+
+    expect(stageRequests[0]?.url).toContain('/api/tasks/task-1/stages/deploy')
+    expect(stageRequests[0]?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(stageRequests[0]?.init?.body))).toEqual({ action: 'move_to' })
+    expect(result.current.tasks[0]?.current_stage?.name).toBe('deploy')
+    expect(result.current.tasks[0]?.stages.map(stage => [stage.name, stage.state])).toEqual([
+      ['build', 'done'],
+      ['deploy', 'ready'],
+    ])
+  })
+
+  it('test_move_task_to_stage_failure_restores_previous_task_without_refetch', async () => {
+    const build = stageState('ready', 'build', 0)
+    const deploy = stageState('ready', 'deploy', 1, 'optional')
+    const stagedTask = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready', { current_stage: build }),
+      current_stage: build,
+      stages: [build, deploy],
+    }
+    const payload = { error: 'illegal_stage_transition', reason: 'target stage is unavailable' }
+    const fetchSpy = installFetchSpy(async (input) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) {
+        return jsonResponse({ ...TASK_LIST_RESPONSE, tasks: [stagedTask], total: 1 })
+      }
+      if (url.includes('/api/tasks/task-1/stages/deploy')) {
+        return new Response(JSON.stringify(payload), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    fetchSpy.mockClear()
+
+    let thrown: unknown
+    await act(async () => {
+      try {
+        await (result.current as Phase6TasksApi).moveTaskToStage('task-1', 'deploy')
+      } catch (error) {
+        thrown = error
+      }
+    })
+    expect(thrown).toMatchObject(payload)
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('target stage is unavailable')
+      expect(result.current.tasks[0]?.current_stage?.name).toBe('build')
+    })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain('/api/tasks/task-1/stages/deploy')
+  })
+
   it('test_ws_stage_changed_refetches', async () => {
     const { result } = renderHook(() => useTasks())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
@@ -788,5 +891,78 @@ describe('useTasks', () => {
     })
 
     await waitFor(() => expect(mockFetch.fn).toHaveBeenCalledTimes(1))
+  })
+
+  it('warns before ignoring invalid task_created payloads', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const taskEventHandler = mockUseWebSocketEvent.mock.calls.find(
+      ([eventType]) => eventType === 'task_event',
+    )?.[1]
+
+    act(() => {
+      taskEventHandler?.({
+        event: 'task_created',
+        task_id: 'task-invalid',
+        task: {
+          id: 123,
+          title: 'Sensitive title should not be logged',
+          project_id: 'proj-1',
+        },
+      })
+    })
+
+    expect(result.current.allTasks.map(task => task.title)).not.toContain(
+      'Sensitive title should not be logged',
+    )
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Ignoring invalid task event payload',
+      expect.objectContaining({
+        event: 'task_created',
+        taskId: 123,
+        taskData: {
+          id: 123,
+          project_id: 'proj-1',
+        },
+      }),
+    )
+  })
+
+  it('warns before ignoring invalid task update payloads', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const taskEventHandler = mockUseWebSocketEvent.mock.calls.find(
+      ([eventType]) => eventType === 'task_event',
+    )?.[1]
+
+    act(() => {
+      taskEventHandler?.({
+        event: 'task_updated',
+        task_id: 'task-1',
+        task: {
+          id: 'task-1',
+          assignee: 123,
+          title: 'Sensitive title should not be logged',
+          project_id: 'proj-1',
+        },
+      })
+    })
+
+    expect(result.current.allTasks.find(task => task.id === 'task-1')?.title).toBe('Fix bug')
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Ignoring invalid task event payload',
+      expect.objectContaining({
+        event: 'task_updated',
+        taskId: 'task-1',
+        taskData: {
+          id: 'task-1',
+          project_id: 'proj-1',
+        },
+      }),
+    )
   })
 })

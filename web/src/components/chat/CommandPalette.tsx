@@ -62,7 +62,7 @@ export function CommandPalette({
       : sessions.filter((s) => {
           if (!searchTerm) return true
           const title = (s.title || '').toLowerCase()
-          const ref = s.ref.toLowerCase()
+          const ref = (s.ref ?? '').toLowerCase()
           const seq = s.seq_num != null ? `#${s.seq_num}` : ''
           return title.includes(searchTerm) || ref.includes(searchTerm) || seq.includes(searchTerm)
         })
@@ -131,7 +131,7 @@ export function CommandPalette({
       } else if (e.key === 'Backspace' && query === '' && allItems[selectedIndex]?.type === 'session') {
         // Delete session with backspace when query is empty
         const session = allItems[selectedIndex].session
-        if (onDeleteSession) {
+        if (onDeleteSession && session.session_type === 'web_chat') {
           e.preventDefault()
           onDeleteSession(session)
         }

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 from tests.storage.tasks._stage_test_helpers import (
@@ -61,6 +62,136 @@ def test_patch_start_stage(
 
     assert response.status_code == 200
     assert response.json()["stage"]["state"] == "in_progress"
+
+
+def test_patch_move_to_stage_resets_manifest_to_target(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "in_progress")
+
+    response = stage_client.patch(f"/api/tasks/{task.id}/stages/pr", json={"action": "move_to"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"]["stage_name"] == "pr"
+    assert payload["stage"]["state"] == "ready"
+    assert [(row["stage_name"], row["state"]) for row in payload["stages"]] == [
+        ("development", "done"),
+        ("pr", "ready"),
+        ("merge", "ready"),
+    ]
+
+
+def test_patch_move_to_unknown_stage_returns_400(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/merge",
+        json={"action": "move_to"},
+    )
+
+    assert response.status_code == 400
+    assert "Stage 'merge' is not in task manifest" in response.json()["detail"]
+
+
+def test_patch_move_to_stage_rejects_claimed_task_without_force(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    response = stage_client.patch(f"/api/tasks/{task.id}/stages/pr", json={"action": "move_to"})
+
+    assert response.status_code == 400
+    assert "claimed by another session" in response.json()["detail"]
+
+
+def test_patch_move_to_stage_force_overrides_claim(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="gobby.servers.routes.tasks_stage_routes")
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/pr",
+        json={"action": "move_to", "force": True, "notes": "operator secret"},
+        headers={"X-Gobby-Session-Id": "session-header-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stage"]["stage_name"] == "pr"
+    forced_log = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "task_stage_forced_move_to"
+    )
+    assert forced_log.task_id == task.id
+    assert forced_log.stage_name == "pr"
+    assert forced_log.force is True
+    assert forced_log.notes_present is True
+    assert not hasattr(forced_log, "notes")
+    assert forced_log.request_session_id == "session-header-1"
+
+
+def test_patch_force_is_only_accepted_for_move_to(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/development",
+        json={"action": "start", "force": True},
+    )
+
+    assert response.status_code == 422
+    assert "force is only supported" in response.text
 
 
 def test_list_filter_by_stage_state(
@@ -424,3 +555,43 @@ def test_stage_transition_broadcasts(
     assert websocket_server.broadcast_task_event.await_args.kwargs["task"]["state"] == (
         "in_progress"
     )
+    assert (
+        websocket_server.broadcast_task_event.await_args.kwargs["task"]["stages"][0]["stage_name"]
+        == "development"
+    )
+
+
+def test_move_to_stage_broadcasts_full_stage_payload(
+    temp_db,
+    sample_project,
+    task_manager: LocalTaskManager,
+) -> None:
+    websocket_server = MagicMock()
+    websocket_server.broadcast_task_event = AsyncMock()
+    server = create_http_server(task_manager=task_manager, websocket_server=websocket_server)
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "in_progress")
+    with patch("gobby.servers.app_factory.HookManager") as hook_manager:
+        hook_manager.return_value._stop_registry = MagicMock()
+        hook_manager.return_value.shutdown = MagicMock()
+        with TestClient(server.app) as client:
+            response = client.patch(
+                f"/api/tasks/{task.id}/stages/development",
+                json={"action": "move_to"},
+            )
+
+    assert response.status_code == 200
+    websocket_server.broadcast_task_event.assert_awaited_once()
+    assert websocket_server.broadcast_task_event.await_args.args[:2] == ("stage_changed",)
+    task_payload = websocket_server.broadcast_task_event.await_args.kwargs["task"]
+    assert task_payload["stage_name"] == "development"
+    assert task_payload["state"] == "ready"
+    assert [(row["stage_name"], row["state"]) for row in task_payload["stages"]] == [
+        ("development", "ready"),
+        ("pr", "ready"),
+    ]

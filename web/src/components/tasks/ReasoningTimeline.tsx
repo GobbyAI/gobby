@@ -43,6 +43,8 @@ const BTN_PRIMARY_CLS =
   'border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] text-[var(--color-info)] hover:bg-[color-mix(in_srgb,var(--color-info)_22%,transparent)]'
 const BTN_DANGER_CLS =
   'border-[color-mix(in_srgb,var(--color-error)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)]'
+const VALIDATION_PASSED_STATUSES = ['passed', 'valid'] as const
+const VALIDATION_FAILED_STATUSES = ['failed'] as const
 const BTN_ICON_CLS = 'text-[length:var(--text-sm)]'
 
 const TIMELINE_STATE_ORDER: TaskDisplayState[] = [
@@ -122,9 +124,9 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   let verifySummary: string | null = null
   if (isFailed) {
     verifySummary = `Escalated: ${task.escalation_reason || 'needs attention'}`
-  } else if (task.validation_status === 'passed' || task.validation_status === 'valid') {
+  } else if (VALIDATION_PASSED_STATUSES.some(status => status === task.validation_status)) {
     verifySummary = 'Validation passed'
-  } else if (task.validation_status === 'failed') {
+  } else if (VALIDATION_FAILED_STATUSES.some(status => status === task.validation_status)) {
     verifySummary = `Validation failed: ${task.validation_feedback || 'see feedback'}`
   } else if (task.closed_at) {
     verifySummary = `Closed: ${task.closed_reason || 'completed'}`
@@ -136,7 +138,9 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
     label: 'Verify',
     status: verifyReached
       ? (
-          state.is_closed || state.is_merge_ready || task.validation_status === 'passed' || task.validation_status === 'valid'
+          state.is_closed ||
+            state.is_merge_ready ||
+            VALIDATION_PASSED_STATUSES.some(status => status === task.validation_status)
             ? 'complete'
             : 'active'
         )

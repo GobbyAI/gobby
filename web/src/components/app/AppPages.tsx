@@ -11,11 +11,6 @@ export const ProjectsPage = lazy(() =>
     default: m.ProjectsPage,
   })),
 );
-export const TasksPage = lazy(() =>
-  import("../tasks/TasksPage").then((m) => ({
-    default: m.TasksPage,
-  })),
-);
 export const SkillsPage = lazy(() =>
   import("../skills/SkillsPage").then((m) => ({
     default: m.SkillsPage,

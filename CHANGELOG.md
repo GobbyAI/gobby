@@ -8,6 +8,83 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6]
+
+A patch release focused on a tri-state activity-panel layout, a redesigned
+task detail-pane, store-agnostic inline task editing, task quick-menu
+mailbox delivery, `send_message` alias removal, SQLite migration baseline
+flattening, a websocket-voice package split, and broad CodeRabbit/review
+hardening since `0.4.5`.
+
+The abandoned Tasks List/Board (Jira-style) / kanban experiment was built
+and fully reverted within this window and is intentionally omitted — it
+nets to no user-facing change.
+
+### Added
+
+- Add a tri-state activity-panel layout keystone (chat / split / panel)
+  (#14768).
+- Redesign the task detail-pane information architecture and fix the
+  owner-label bug (#14772).
+- Add store-agnostic inline task field editing (#14771).
+- Add task quick-menu mailbox delivery (#14760).
+- Make discovery agents persona-capable (#14757).
+- Improve attached-mode proxy UX (#14327).
+- Scope chat attachment storage by project (#14779).
+- Add an active session status glyph (#14812).
+- Add a `gcode` skill definition and plugin configuration for AST-aware
+  code navigation.
+
+### Changed
+
+- Remove the `send_message` target alias and legacy positional priority,
+  updating all priority references (#14763, #14796, #14798).
+- Split `useChat` state wiring and the websocket voice module into
+  packages (#14753, #14809).
+- Flatten the SQLite storage migrations to a single baseline at 260
+  (#14070, #14790).
+- Restrict preview-iframe sandbox permissions and clean up MessageItem
+  indentation.
+- Shell-quote `agent_name` via `shlex.quote` when sending tmux commands.
+
+### Fixed
+
+- Clean up workflow agent child sessions (#14754).
+- Let native Skill calls pass through (#14755).
+- Verify bundled content in packaged installs (#14759).
+- Handle web restart timeouts (#14761).
+- Reject ambiguous `send_message` target aliases (#14762).
+- Harden task payload logging and validate optional task payload fields
+  (#14766, #14781).
+- Complete the queued attachment send path and harden chat attachment
+  handling (#14777, #14780).
+- Show honest task-state icons in the list viewer (#14769).
+- Clean up SQLite worker connections (#14778).
+- Derive a definitive build_state for Resume Build (#14770).
+- Clean up activity task refs (#14784).
+- Resolve mypy Any-return errors (#14793).
+- Align web session dropdown behavior (#14795).
+- Address review-finding regressions (#14794).
+- Match Claim/Release button styling to sibling actions (#14797).
+- Apply the sandbox attribute to the PDF iframe in MessageItem.
+- Avoid legacy lifecycle stage audit matches (#14807).
+- Satisfy React hook lint in the activity UI (#14810).
+- Surface Chatterbox runtime import failures (#14811).
+- Handle missing hook-server state (#14813).
+- Apply CodeRabbit/review cleanup across batches (#14764, #14765, #14782,
+  #14788, #14789, #14791, #14799, #14800, #14802, #14803, #14804, #14815).
+
+### Docs
+
+- Correct the bundled-sync invariant (#14758).
+- Add the one-surface UI migration plan draft (#14814).
+
+### Release
+
+- Open the 0.4.6 development line and bump the package version to 0.4.6
+  (#14751).
+- Add a CODEOWNERS file with @joshwilhelmi as the global owner (#14752).
+
 ## [0.4.5]
 
 A patch release focused on MCP discovery timeout hardening, memory-digest
@@ -31,6 +108,8 @@ service-installer module split, and review/test hardening since `0.4.4`.
 
 ### Fixed
 
+- Address review cleanup findings across task lifecycle routing, attachment
+  handling, frontend task/chat polish, and focused regression tests (#14799).
 - Time out MCP discovery calls and add a discovery time-budget check so
   discovery cannot exceed its timeout limits (#14735).
 - Persist memory-digest state atomically and retry invalid memory turn

@@ -48,6 +48,67 @@ vi.mock("../../chat/artifacts/ResizeHandle", () => ({
 
 let mockFetch: MockFetchInstance;
 
+function taskRow(title: string): HTMLElement {
+  const row = screen
+    .getAllByText(title)[0]
+    .closest('[role="treeitem"]');
+  expect(row).toBeTruthy();
+  return row as HTMLElement;
+}
+
+async function openTaskMenu(title: string): Promise<void> {
+  const row = taskRow(title);
+  fireEvent.click(
+    within(row).getByRole("button", {
+      name: "Task actions",
+    }),
+  );
+  await screen.findByRole("menuitem", { name: "Assign to Main Chat" });
+}
+
+async function openReviewTaskMenu(): Promise<void> {
+  await openTaskMenu("Review approved task");
+}
+
+function findPostCall(path: string) {
+  return mockFetch.fn.mock.calls.find(
+    ([url, init]) =>
+      String(url).includes(path) &&
+      (init as RequestInit | undefined)?.method === "POST",
+  );
+}
+
+function setupTaskRoutes(tasks: Array<Record<string, unknown>>): void {
+  mockFetch.resetRoutes();
+  mockFetch.mockJsonResponse("/api/stages/registry", {
+    stages: [
+      {
+        name: "development",
+        display_label: "Development",
+        category: "implementation",
+        review_policy: "required",
+        position_hint: 10,
+      },
+      {
+        name: "operator_review",
+        display_label: "Operator Review",
+        category: "verification",
+        review_policy: "required",
+        position_hint: 20,
+      },
+    ],
+  });
+  mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks });
+  mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+    task: {
+      ...tasks[0],
+      description: "Task detail",
+      category: null,
+      validation_criteria: null,
+    },
+  });
+}
+
 describe("TasksTab — events and row actions", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
@@ -118,6 +179,30 @@ describe("TasksTab — events and row actions", () => {
     });
   });
 
+  it("merges partial task update WebSocket payloads into existing rows", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Open task 1")).toBeTruthy();
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_updated",
+        task_id: "task-1",
+        task: {
+          id: "task-1",
+          title: "Updated by WS",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Updated by WS")).toBeTruthy();
+    });
+  });
+
   it("ignores WebSocket events for other projects", async () => {
     render(<TasksTab projectId="proj-1" />);
 
@@ -151,6 +236,29 @@ describe("TasksTab — events and row actions", () => {
     expect(screen.queryByText("Other project task")).toBeNull();
   });
 
+  it("ignores task events with invalid task payloads", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Open task 1")).toBeTruthy();
+    });
+
+    act(() => {
+      wsHandler?.({
+        type: "task_event",
+        event: "task_created",
+        task_id: "task-invalid",
+        task: {
+          id: 123,
+          title: "Invalid task payload",
+          project_id: "proj-1",
+        },
+      });
+    });
+
+    expect(screen.queryByText("Invalid task payload")).toBeNull();
+  });
+
   it("assigns a task to the active main chat from the row actions menu", async () => {
     mockFetch.mockJsonResponse("/api/tasks/task-review/claim", {
       task: {
@@ -174,16 +282,9 @@ describe("TasksTab — events and row actions", () => {
       isListFetch(url),
     ).length;
 
-    const reviewTaskRow = screen
-      .getAllByText("Review approved task")[0]
-      .closest('[role="treeitem"]');
-    fireEvent.click(
-      within(reviewTaskRow as HTMLElement).getByRole("button", {
-        name: "Task actions",
-      }),
-    );
+    await openReviewTaskMenu();
 
-    const assignButton = await screen.findByRole("button", {
+    const assignButton = await screen.findByRole("menuitem", {
       name: "Assign to Main Chat",
     });
     fireEvent.click(assignButton);
@@ -198,7 +299,7 @@ describe("TasksTab — events and row actions", () => {
       expect(claimCall).toBeTruthy();
       expect(claimCall?.[1]).toMatchObject({
         method: "POST",
-        body: JSON.stringify({ session_id: "main-chat-1", force: true }),
+        body: JSON.stringify({ session_id: "main-chat-1", force: false }),
       });
     });
 
@@ -217,21 +318,280 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
-    const reviewTaskRow = screen
-      .getAllByText("Review approved task")[0]
-      .closest('[role="treeitem"]');
+    await openReviewTaskMenu();
     fireEvent.click(
-      within(reviewTaskRow as HTMLElement).getByRole("button", {
-        name: "Task actions",
-      }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Assign to Main Chat" }),
+      await screen.findByRole("menuitem", { name: "Assign to Main Chat" }),
     );
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
-      "Failed to assign task to main chat: Failed to claim task (500)",
+      "Failed to assign task to main chat: Server Error",
     );
+  });
+
+  it("shows resume build for paused task evidence and disables assign without chat", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+    await openReviewTaskMenu();
+
+    expect(screen.getByRole("menuitem", { name: "Assign to Main Chat" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Close..." })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Release Claim" })).toBeNull();
+  });
+
+  it("sends build payloads from the quick menu when no build evidence exists", async () => {
+    const startableTask = {
+      ...taskList[1],
+      id: "task-build",
+      ref: "#501",
+      title: "Startable build task",
+      state: { current_stage: null },
+      current_stage: null,
+      stages: [],
+      seq_num: 501,
+      path_cache: "501",
+    };
+    setupTaskRoutes([startableTask]);
+    mockFetch.mockJsonResponse("/api/build/stop", { success: true });
+    mockFetch.mockJsonResponse("/api/build", { success: true });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Startable build task")).toBeTruthy();
+    });
+
+    await openTaskMenu("Startable build task");
+    expect(screen.getByRole("menuitem", { name: "Build" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Build Quick" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Build" }));
+    await waitFor(() => {
+      expect(findPostCall("/api/build")).toBeTruthy();
+    });
+    expect(findPostCall("/api/build")?.[1]).toMatchObject({
+      body: JSON.stringify({ input_ref: "#501" }),
+    });
+
+    await openTaskMenu("Startable build task");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Build Quick" }));
+    await waitFor(() => {
+      const buildCalls = mockFetch.fn.mock.calls.filter(
+        ([url, init]) =>
+          String(url).includes("/api/build") &&
+          !String(url).includes("/api/build/") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(buildCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    const buildCalls = mockFetch.fn.mock.calls.filter(
+      ([url, init]) =>
+        String(url).includes("/api/build") &&
+        !String(url).includes("/api/build/") &&
+        (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(buildCalls[buildCalls.length - 1]?.[1]).toMatchObject({
+      body: JSON.stringify({
+        input_ref: "#501",
+        quick: true,
+        stage: [],
+      }),
+    });
+    expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
+      body: JSON.stringify({ input_ref: "#501" }),
+    });
+  });
+
+  it("resumes paused task-scoped build automation from the quick menu", async () => {
+    mockFetch.mockJsonResponse("/api/build/resume", { success: true });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+    await openReviewTaskMenu();
+    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Resume Build" }));
+
+    await waitFor(() => {
+      expect(findPostCall("/api/build/resume")).toBeTruthy();
+    });
+    expect(findPostCall("/api/build/resume")?.[1]).toMatchObject({
+      body: JSON.stringify({ input_ref: "#401" }),
+    });
+  });
+
+  it("stops task-scoped build automation from the quick menu", async () => {
+    const activeBuildTask = {
+      ...taskList[0],
+      allow_automation: true,
+      // Automation on -> backend derives a running build_state.
+      build_state: "running",
+    };
+    setupTaskRoutes([activeBuildTask]);
+    mockFetch.mockJsonResponse("/api/build/stop", { success: true });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+    await openReviewTaskMenu();
+    expect(screen.getByRole("menuitem", { name: "Stop Build" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop Build" }));
+
+    await waitFor(() => {
+      expect(findPostCall("/api/build/stop")).toBeTruthy();
+    });
+    expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
+      body: JSON.stringify({ input_ref: "#401" }),
+    });
+  });
+
+  it("releases a claimed task from the quick menu", async () => {
+    const claimedTask = {
+      ...taskList[0],
+      claimed_by_session_id: "main-chat-1",
+      assignee: "main-chat-1",
+      state: taskStatePayload("review_approved", {
+        is_claimed: true,
+        owner_session_id: "main-chat-1",
+      }),
+    };
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: [claimedTask] });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        ...claimedTask,
+        description: "Review approved task detail",
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
+    mockFetch.mockJsonResponse("/api/tasks/task-review/release-claim", {
+      task: {
+        ...claimedTask,
+        claimed_by_session_id: null,
+        assignee: null,
+        state: taskStatePayload("review_approved", { is_claimed: false }),
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+    await openReviewTaskMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Release Claim" }));
+
+    await waitFor(() => {
+      expect(findPostCall("/api/tasks/task-review/release-claim")).toBeTruthy();
+    });
+    expect(findPostCall("/api/tasks/task-review/release-claim")?.[1]).toMatchObject({
+      body: JSON.stringify({}),
+    });
+  });
+
+  it("requires a close reason before posting the close action", async () => {
+    mockFetch.mockJsonResponse("/api/tasks/task-review/close", {
+      task: {
+        ...taskList[0],
+        closed_at: "2026-04-14T00:00:00Z",
+        state: taskStatePayload("done", {
+          is_closed: true,
+          closed_at: "2026-04-14T00:00:00Z",
+        }),
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+    await openReviewTaskMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close..." }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Close task" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Reason is required.",
+    );
+    expect(findPostCall("/api/tasks/task-review/close")).toBeUndefined();
+
+    fireEvent.change(within(dialog).getByLabelText("Reason"), {
+      target: { value: "Finished implementation" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(findPostCall("/api/tasks/task-review/close")).toBeTruthy();
+    });
+    expect(findPostCall("/api/tasks/task-review/close")?.[1]).toMatchObject({
+      body: JSON.stringify({ reason: "Finished implementation" }),
+    });
+  });
+
+  it("reopens a closed task from the quick menu", async () => {
+    mockFetch.mockJsonResponse("/api/tasks/task-closed/reopen", {
+      task: {
+        ...taskList.find((task) => task.id === "task-closed"),
+        closed_at: null,
+        state: taskStatePayload("ready", { is_closed: false }),
+        current_stage: stagePayload("ready"),
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Filter tasks" }));
+    const filterDialog = await screen.findByRole("dialog", { name: "Task filters" });
+    fireEvent.click(within(filterDialog).getByLabelText("Closed"));
+    fireEvent.click(within(filterDialog).getByRole("button", { name: "Apply" }));
+
+    const closedRow = await screen.findByText("Closed task");
+    fireEvent.click(
+      within(closedRow.closest('[role="treeitem"]') as HTMLElement).getByRole("button", {
+        name: "Task actions",
+      }),
+    );
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reopen" }));
+
+    await waitFor(() => {
+      expect(findPostCall("/api/tasks/task-closed/reopen")).toBeTruthy();
+    });
+    expect(findPostCall("/api/tasks/task-closed/reopen")?.[1]).toMatchObject({
+      body: JSON.stringify({}),
+    });
   });
 });

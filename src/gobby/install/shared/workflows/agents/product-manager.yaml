@@ -1,3 +1,4 @@
+tags: [gobby]
 name: product-manager
 description: |
   Discovery-stage product manager for lifecycle build PRD. Consolidates
@@ -6,7 +7,7 @@ description: |
 version: "1.0"
 enabled: true
 priority: 20
-surfaces: [spawn]
+surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.5
 reasoning_effort: high

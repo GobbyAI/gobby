@@ -1,6 +1,7 @@
 import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
-import type { CanonicalTaskState, TaskCompatProjection } from './taskState'
+import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from './taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
+import { DEFAULT_TASK_PRIORITY } from './taskOptions'
 
 const STAGE_STATES: readonly StageState5[] = [
   'ready',
@@ -13,6 +14,7 @@ const STAGE_STATES: readonly StageState5[] = [
 const REVIEW_POLICIES: readonly ReviewPolicy[] = ['none', 'required', 'optional']
 
 const RETIRED_STAGE_NAMES = new Set(['test_arch'])
+const MAX_TASK_PAYLOAD_EXTRACT_DEPTH = 5
 
 export function isRetiredStageName(name: string | null | undefined): boolean {
   return typeof name === 'string' && RETIRED_STAGE_NAMES.has(name)
@@ -116,10 +118,20 @@ export type RawTaskPayload = {
   escalated_at?: string | null
   pre_escalation_status?: string | null
   category?: string | null
+  description?: string | null
+  labels?: string[] | null
+  validation_criteria?: string | null
+  owner_session_ref?: OwnerSessionRef | null
   current_stage?: RawStagePayload | null
   stages?: RawStagePayload[] | null
   state?: Partial<CanonicalTaskState> | null
   compat?: TaskCompatProjection | null
+  allow_automation?: boolean | null
+  yolo?: boolean | null
+  isolation?: string | null
+  dispatch_failure_count?: number | null
+  additional_skills?: string[] | null
+  assigned_agent?: string | null
 }
 
 export type NormalizedTaskPayload = Omit<RawTaskPayload, 'current_stage' | 'stages' | 'state'> & {
@@ -142,6 +154,120 @@ export type NormalizedTaskPayload = Omit<RawTaskPayload, 'current_stage' | 'stag
   current_stage: StageStateView | null
   stages: StageStateView[]
   state: CanonicalTaskState
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string'
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'number'
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'boolean'
+}
+
+function isOptionalRecord(value: unknown): boolean {
+  return value === undefined || value === null || isRecord(value)
+}
+
+function isStringArrayOrNull(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && value.every(item => typeof item === 'string'))
+  )
+}
+
+function isOptionalOwnerSessionRef(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (!isRecord(value)) return false
+  return (
+    typeof value.session_id === 'string' &&
+    value.session_id.trim().length > 0 &&
+    typeof value.ref === 'string' &&
+    value.ref.trim().length > 0 &&
+    (value.source === undefined || value.source === null || typeof value.source === 'string')
+  )
+}
+
+type OptionalTaskFieldValidator = (value: unknown) => boolean
+
+const OPTIONAL_TASK_FIELD_VALIDATORS = {
+  ref: isOptionalString,
+  title: isOptionalString,
+  status: isOptionalString,
+  task_type: isOptionalString,
+  type: isOptionalString,
+  parent_task_id: isOptionalString,
+  created_at: isOptionalString,
+  updated_at: isOptionalString,
+  path_cache: isOptionalString,
+  assignee: isOptionalString,
+  agent_name: isOptionalString,
+  start_date: isOptionalString,
+  due_date: isOptionalString,
+  project_id: isOptionalString,
+  closed_at: isOptionalString,
+  closed_in_session_id: isOptionalString,
+  escalated_at: isOptionalString,
+  pre_escalation_status: isOptionalString,
+  category: isOptionalString,
+  description: isOptionalString,
+  validation_criteria: isOptionalString,
+  isolation: isOptionalString,
+  assigned_agent: isOptionalString,
+  priority: isOptionalNumber,
+  seq_num: isOptionalNumber,
+  sequence_order: isOptionalNumber,
+  dispatch_failure_count: isOptionalNumber,
+  allow_automation: isOptionalBoolean,
+  yolo: isOptionalBoolean,
+  current_stage: isOptionalRecord,
+  state: isOptionalRecord,
+  compat: isOptionalRecord,
+  owner_session_ref: isOptionalOwnerSessionRef,
+  labels: isStringArrayOrNull,
+  additional_skills: isStringArrayOrNull,
+} satisfies Partial<Record<keyof RawTaskPayload, OptionalTaskFieldValidator>>
+
+function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
+  return (
+    Object.entries(OPTIONAL_TASK_FIELD_VALIDATORS).every(([field, validate]) =>
+      validate(record[field]),
+    ) &&
+    (record.stages === undefined ||
+      record.stages === null ||
+      (Array.isArray(record.stages) && record.stages.every(isRecord)))
+  )
+}
+
+export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
+  return isRecord(value) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    hasValidOptionalTaskFields(value)
+}
+
+export function extractTaskPayload(
+  data: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): RawTaskPayload | null {
+  if (depth >= MAX_TASK_PAYLOAD_EXTRACT_DEPTH) return null
+  if (isRawTaskPayload(data)) return data
+  if (isRecord(data)) {
+    if (seen.has(data)) return null
+    seen.add(data)
+    if (isRawTaskPayload(data.task)) return data.task
+    if (isRecord(data.data)) return extractTaskPayload(data.data, depth + 1, seen)
+  }
+  return null
 }
 
 function isStageState(value: unknown): value is StageState5 {
@@ -282,7 +408,7 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
     ...task,
     ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
     title: task.title ?? '',
-    priority: task.priority ?? 2,
+    priority: task.priority ?? DEFAULT_TASK_PRIORITY,
     task_type: task.task_type ?? task.type ?? 'task',
     parent_task_id: task.parent_task_id ?? null,
     created_at: task.created_at ?? '',

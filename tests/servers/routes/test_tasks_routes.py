@@ -6,12 +6,15 @@ create_http_server() with a real LocalTaskManager backed by temp_db.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.routes.tasks_assignment import MailboxService
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
@@ -19,6 +22,20 @@ from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+class FakeWakeDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(session_id)
+        return {"session_id": session_id, "delivered": True, "method": "fake"}
+
+
+class FailingWebsocketServer:
+    def __init__(self) -> None:
+        self.broadcast_task_event = AsyncMock(side_effect=RuntimeError("ws down"))
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +597,86 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] == session_id
         assert data["state"]["owner_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
+
+    def test_claim_task_creates_assignment_mailbox_message_and_wake(
+        self,
+        client: TestClient,
+        server,
+        temp_db,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        wake_dispatcher = FakeWakeDispatcher()
+        server.services.wake_dispatcher = wake_dispatcher
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        messages = temp_db.fetchall(
+            """
+            SELECT *
+              FROM inter_session_messages
+             WHERE to_session = ?
+               AND message_type = 'task_assignment'
+            """,
+            (session_id,),
+        )
+        assert len(messages) == 1
+        message = messages[0]
+        assert message["priority"] == "high"
+        assert f"{sample_task['ref']} assigned: Sample task" in message["content"]
+        metadata = json.loads(message["metadata_json"])
+        assert metadata["task_id"] == sample_task["id"]
+        assert metadata["task_ref"] == sample_task["ref"]
+        assert metadata["task_title"] == "Sample task"
+        assert metadata["assigned_session_id"] == session_id
+        assert metadata["task_status"] in {"open", "ready"}
+        assert wake_dispatcher.calls == [session_id]
+
+    def test_claim_task_returns_success_when_assignment_notification_fails(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        async def fail_send(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("mailbox down")
+
+        monkeypatch.setattr(MailboxService, "send", fail_send)
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert data["state"]["is_claimed"] is True
+        assert data["warnings"] == [{"source": "assignment_notification", "error": "mailbox down"}]
+
+    def test_claim_task_returns_success_when_broadcast_fails(
+        self,
+        client: TestClient,
+        server,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        server.services.websocket_server = FailingWebsocketServer()
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert {"source": "broadcast", "error": "ws down"} in data["warnings"]
 
     def test_release_task_claim(
         self,

@@ -1,5 +1,5 @@
 // Shared badge components for the task system.
-// Reusable across TasksPage, TaskDetail, Kanban cards, etc.
+// Reusable across the task tree, board cards, and the detail panel.
 
 import './task-execution.css'
 
@@ -9,13 +9,20 @@ import {
   getTaskStateSummary,
   getTaskStateTokens,
   TASK_STATE_COLORS,
+  TASK_STATE_GLYPH,
   TASK_STATE_KIND,
   TASK_STATE_LABELS,
   TASK_STATE_ORDER,
   type TaskDisplayState,
 } from '../../lib/taskState'
 import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
+import { taskPriorityLabel } from '../../lib/taskOptions'
 import { cn } from '../../lib/utils'
+import {
+  PRIORITY_GLYPH_PATHS,
+  normalizePriorityGlyphLevel,
+  type PriorityGlyphLevel,
+} from './priorityGlyphPaths'
 
 // =============================================================================
 // Color maps
@@ -31,14 +38,14 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const PRIORITY_STYLES: Record<
-  number,
-  { bg: string; color: string; label: string }
+  PriorityGlyphLevel,
+  { bg: string; color: string }
 > = {
-  0: { bg: "var(--color-error-soft)", color: "var(--color-error)", label: "Critical" },
-  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)", label: "High" },
-  2: { bg: "var(--color-info-soft)", color: "var(--color-info)", label: "Medium" },
-  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)", label: "Low" },
-  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)", label: "Backlog" },
+  0: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
+  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)" },
+  2: { bg: "var(--color-info-soft)", color: "var(--color-info)" },
+  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)" },
+  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
 };
 
 const TASK_BADGE_CLS =
@@ -83,6 +90,7 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
   return (
     <ActivityRowStatusDot
       kind={TASK_STATE_KIND[displayState]}
+      glyph={TASK_STATE_GLYPH[displayState]}
       label={`Status: ${label}`}
       title={label}
     />
@@ -115,11 +123,42 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 // =============================================================================
 
 export function PriorityBadge({ priority }: { priority: number }) {
-  const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
-  const style = PRIORITY_STYLES[normalizedPriority];
+  const normalizedPriority = normalizePriorityGlyphLevel(priority);
+  const label = taskPriorityLabel(normalizedPriority) ?? "Medium";
   return (
     <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
-      {style.label}
+      {label}
+    </span>
+  );
+}
+
+// =============================================================================
+// PriorityGlyph — compact, deutan-safe priority symbol for dense rows
+// =============================================================================
+
+export function PriorityGlyph({ priority }: { priority: number }) {
+  const p = normalizePriorityGlyphLevel(priority);
+  const style = PRIORITY_STYLES[p];
+  const label = taskPriorityLabel(p) ?? "Medium";
+  const filled = p <= 1;
+  return (
+    <span
+      className="priority-glyph"
+      style={{ color: style.color }}
+      title={`${label} priority`}
+      aria-label={`${label} priority`}
+      role="img"
+    >
+      <svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true">
+        <path
+          d={PRIORITY_GLYPH_PATHS[p]}
+          fill={filled ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth={filled ? 0 : 1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     </span>
   );
 }

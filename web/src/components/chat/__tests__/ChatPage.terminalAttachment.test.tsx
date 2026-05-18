@@ -14,7 +14,7 @@ import {
   createVoice,
   setupChatPageEnvironment,
   teardownChatPageEnvironment,
-  togglePanelSpy,
+  toggleFromChatSpy,
 } from "./chatPageTestSetup";
 
 vi.mock("../MessageList", async () =>
@@ -141,13 +141,13 @@ describe("ChatPage – terminal attachment", () => {
       "false",
     );
     expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent(
-      "true",
+      "false",
     );
     expect(
       screen.getByTestId("chat-input-attachments-disabled"),
     ).toHaveTextContent("true");
     expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent(
-      "true",
+      "false",
     );
     expect(
       screen.getByTestId("chat-input-worktree-disabled"),
@@ -310,7 +310,7 @@ describe("ChatPage – terminal attachment", () => {
     expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
-    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+    expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
   });
 
   it("keeps Attach available for live handoff tmux sessions across providers", async () => {

@@ -1,1 +1,2 @@
 include build_backend/__init__.py
+include src/gobby/install/bundled_content_manifest.json

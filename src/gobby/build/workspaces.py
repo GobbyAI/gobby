@@ -348,7 +348,12 @@ def _project_repo_path(db: DatabaseProtocol, project_id: str) -> Path:
 def _service_git_manager(services: object | None, project_id: str) -> WorktreeGitManager | None:
     getter = getattr(services, "get_git_manager", None)
     if callable(getter):
-        manager = getter(project_id)
+        try:
+            manager = getter(project_id)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to resolve build workspace git manager for project {project_id}"
+            ) from exc
         if manager is not None:
             return cast(WorktreeGitManager, manager)
     manager = getattr(services, "git_manager", None)

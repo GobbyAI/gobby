@@ -11,7 +11,7 @@ Contains MCP proxy and tool feature Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
 
@@ -273,6 +273,36 @@ class ChatConfig(FeatureDefaultConfig):
         default="plan",
         description="Default chat mode for new sessions. One of: normal, accept_edits, bypass, plan.",
     )
+    attachment_max_file_bytes: int = Field(
+        default=100_000_000,
+        ge=1,
+        le=500_000_000,
+        description="Maximum size for one uploaded chat attachment in bytes.",
+    )
+    attachment_max_total_bytes_per_message: int = Field(
+        default=2_000_000_000,
+        ge=1,
+        le=2_147_483_648,
+        description="Maximum total size for chat attachments on one message in bytes.",
+    )
+    attachment_max_files_per_message: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of chat attachments accepted on one message.",
+    )
+    attachment_unbound_retention_hours: int = Field(
+        default=24,
+        ge=1,
+        le=24 * 30,
+        description="How long unbound uploaded chat attachments are retained before cleanup.",
+    )
+    attachment_gc_interval_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=24 * 60,
+        description="How often to remove stale unbound uploaded chat attachments.",
+    )
 
     @field_validator("default_mode")
     @classmethod
@@ -282,6 +312,17 @@ class ChatConfig(FeatureDefaultConfig):
         if v not in valid:
             raise ValueError(f"default_mode must be one of {valid}, got '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def cap_attachment_total_by_file_product(self) -> "ChatConfig":
+        """Reject totals above the configured per-file and file-count product."""
+        product_cap = self.attachment_max_file_bytes * self.attachment_max_files_per_message
+        if self.attachment_max_total_bytes_per_message > product_cap:
+            raise ValueError(
+                "attachment_max_total_bytes_per_message cannot exceed "
+                "attachment_max_file_bytes * attachment_max_files_per_message"
+            )
+        return self
 
 
 class HookStageConfig(BaseModel):

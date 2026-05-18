@@ -6,18 +6,22 @@ import type {
   ConversationState,
   VoiceProps,
 } from "../../../types/chat";
+import type { GobbySession } from "../../../types/sessions";
+import type { LayoutMode } from "../../activity/useActivityPanel";
 
 export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
 
 export const isMobileState = { value: false };
-export const isPinnedState = { value: false };
+export const effectiveModeState: { value: LayoutMode } = { value: "split" };
 
 export const clearArtifactsSpy = vi.fn();
 export const createArtifactSpy = vi.fn();
 export const scrollToBottomSpy = vi.fn();
-export const setIsPinnedSpy = vi.fn();
 export const showTabSpy = vi.fn();
-export const togglePanelSpy = vi.fn();
+export const toggleFromChatSpy = vi.fn();
+export const toggleFromPanelSpy = vi.fn();
+export const dismissOnMobileSpy = vi.fn();
+export const commandPalettePropsSpy = vi.fn();
 
 export const messageListMockFactory = () => ({
   MessageList: React.forwardRef((_props: unknown, ref) => {
@@ -101,8 +105,23 @@ export const chatInputMockFactory = () => ({
 });
 
 export const commandBarMockFactory = () => ({
-  CommandBar: ({ onTogglePanel }: { onTogglePanel?: () => void }) => (
+  CommandBar: ({
+    onOpenPalette,
+    onTogglePanel,
+  }: {
+    onOpenPalette?: () => void;
+    onTogglePanel?: () => void;
+  }) => (
     <div data-testid="command-bar">
+      {onOpenPalette && (
+        <button
+          type="button"
+          data-testid="command-bar-open-palette"
+          onClick={onOpenPalette}
+        >
+          Open Palette
+        </button>
+      )}
       {onTogglePanel && (
         <button
           type="button"
@@ -117,7 +136,49 @@ export const commandBarMockFactory = () => ({
 });
 
 export const commandPaletteMockFactory = () => ({
-  CommandPalette: () => null,
+  CommandPalette: ({
+    isOpen,
+    sessions,
+    activeSessionId,
+    onSelectSession,
+    onDeleteSession,
+  }: {
+    isOpen: boolean;
+    sessions: GobbySession[];
+    activeSessionId: string | null;
+    onSelectSession: (session: GobbySession) => void;
+    onDeleteSession?: (session: GobbySession) => void;
+  }) => {
+    commandPalettePropsSpy({ sessions, activeSessionId });
+    if (!isOpen) return null;
+    return (
+      <div data-testid="command-palette">
+        <span data-testid="command-palette-session-ids">
+          {sessions.map((session) => session.id).join(",")}
+        </span>
+        {sessions.map((session) => (
+          <button
+            key={`select-${session.id}`}
+            type="button"
+            data-testid={`command-palette-select-${session.id}`}
+            onClick={() => onSelectSession(session)}
+          >
+            Select {session.id}
+          </button>
+        ))}
+        {sessions.map((session) => (
+          <button
+            key={`delete-${session.id}`}
+            type="button"
+            data-testid={`command-palette-delete-${session.id}`}
+            onClick={() => onDeleteSession?.(session)}
+          >
+            Delete {session.id}
+          </button>
+        ))}
+      </div>
+    );
+  },
 });
 
 export const activityPanelMockFactory = () => ({
@@ -338,16 +399,18 @@ export const useArtifactsMockFactory = () => ({
 });
 
 export const useActivityPanelMockFactory = () => ({
-  useActivityPanel: () => ({
+  useActivityPanel: (_isMobile: boolean) => ({
     activeTab: "artifacts",
     closeIfAutoOpened: vi.fn(),
-    isPinned: isPinnedState.value,
+    dismissOnMobile: dismissOnMobileSpy,
+    effectiveMode: effectiveModeState.value,
+    mode: effectiveModeState.value,
     panelWidth: 320,
     setActiveTab: vi.fn(),
-    setIsPinned: setIsPinnedSpy,
     setPanelWidth: vi.fn(),
     showTab: showTabSpy,
-    togglePanel: togglePanelSpy,
+    toggleFromChat: toggleFromChatSpy,
+    toggleFromPanel: toggleFromPanelSpy,
   }),
 });
 
@@ -445,7 +508,7 @@ export function createVoice(overrides: Partial<VoiceProps> = {}): VoiceProps {
 export function setupChatPageEnvironment(): void {
   vi.clearAllMocks();
   isMobileState.value = false;
-  isPinnedState.value = false;
+  effectiveModeState.value = "split";
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {

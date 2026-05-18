@@ -4,6 +4,11 @@ import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { inputFocusCls } from '../shared/focusStyles'
 import {
+  DEFAULT_TASK_PRIORITY,
+  TASK_CATEGORY_OPTIONS,
+  TASK_PRIORITY_OPTIONS,
+} from '../../lib/taskOptions'
+import {
   TASK_MODAL_BACKDROP_BASE_CLS,
   TASK_MODAL_CLOSE_BTN_CLS,
   TASK_MODAL_HEADER_CLS,
@@ -18,6 +23,7 @@ export interface TaskCreateDefaults {
   description?: string
   validationCriteria?: string
   labels?: string[]
+  category?: string
 }
 
 interface TaskCreateFormProps {
@@ -35,18 +41,11 @@ interface CreateTaskParams {
   task_type?: string
   parent_task_id?: string
   labels?: string[]
+  category?: string
   validation_criteria?: string
 }
 
 const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
-
-const PRIORITY_OPTIONS = [
-  { value: 0, label: 'Critical' },
-  { value: 1, label: 'High' },
-  { value: 2, label: 'Medium' },
-  { value: 3, label: 'Low' },
-  { value: 4, label: 'Backlog' },
-]
 
 const BACKDROP_CLS = cn(TASK_MODAL_BACKDROP_BASE_CLS, 'z-[200]')
 const MODAL_CLS =
@@ -74,7 +73,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState('task')
-  const [priority, setPriority] = useState(2)
+  const [priority, setPriority] = useState(DEFAULT_TASK_PRIORITY)
+  const [category, setCategory] = useState('')
   const [parentTaskId, setParentTaskId] = useState('')
   const [labelsInput, setLabelsInput] = useState('')
   const [validationCriteria, setValidationCriteria] = useState('')
@@ -84,7 +84,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     setTitle('')
     setDescription('')
     setTaskType('task')
-    setPriority(2)
+    setPriority(DEFAULT_TASK_PRIORITY)
+    setCategory('')
     setParentTaskId('')
     setLabelsInput('')
     setValidationCriteria('')
@@ -98,7 +99,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       setTitle(defaults?.title || '')
       setDescription(defaults?.description || '')
       setTaskType(defaults?.taskType || 'task')
-      setPriority(defaults?.priority ?? 2)
+      setPriority(defaults?.priority ?? DEFAULT_TASK_PRIORITY)
+      setCategory(defaults?.category || '')
       setParentTaskId(defaults?.parentTaskId || '')
       setLabelsInput(defaults?.labels?.join(', ') || '')
       setValidationCriteria(defaults?.validationCriteria || '')
@@ -116,6 +118,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       priority,
     }
     if (description.trim()) params.description = description.trim()
+    const trimmedCategory = category.trim()
+    if (trimmedCategory) params.category = trimmedCategory
     if (parentTaskId) params.parent_task_id = parentTaskId
     if (labelsInput.trim()) {
       params.labels = labelsInput.split(',').map(l => l.trim()).filter(Boolean)
@@ -130,7 +134,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     } finally {
       setSubmitting(false)
     }
-  }, [title, description, taskType, priority, parentTaskId, labelsInput, validationCriteria, onSubmit, handleClose])
+  }, [title, description, taskType, priority, category, parentTaskId, labelsInput, validationCriteria, onSubmit, handleClose])
 
   if (!isOpen) return null
 
@@ -196,12 +200,25 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
                 value={priority}
                 onChange={e => setPriority(Number(e.target.value))}
               >
-                {PRIORITY_OPTIONS.map(p => (
+                {TASK_PRIORITY_OPTIONS.map(p => (
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
             </label>
           </div>
+
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Category</span>
+            <select
+              className={INPUT_CLS}
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+            >
+              {TASK_CATEGORY_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
 
           <label className={FIELD_CLS}>
             <span className={LABEL_CLS}>Parent Task</span>

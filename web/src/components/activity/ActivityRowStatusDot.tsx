@@ -1,6 +1,7 @@
 import { memo, type ReactNode, type SVGProps } from "react";
 
 export type StatusKind =
+  | "active"
   | "success"
   | "info"
   | "warning"
@@ -14,13 +15,21 @@ interface ActivityRowStatusDotProps {
   pulse?: boolean;
   label?: string;
   title?: string;
+  /**
+   * Override the kind-derived glyph with an honest, domain-specific shape.
+   * Color and OKLCH lightness band still come from `kind`, so grayscale
+   * ranking is preserved; only the rendered shape changes.
+   */
+  glyph?: StatusGlyph;
 }
 
 // Each kind anchors to a distinct OKLCH lightness band so grayscale viewers
 // can rank states by L alone:
-//   warning (L≈78) > success (L≈72) > info (L≈70) > paused (L≈68)
-//   > error (L≈65) > disabled (L≈62) > inactive/stopped (L≈60)
+//   active (L≈82) > warning (L≈78) > success (L≈72) > info (L≈70)
+//   > paused (L≈68) > error (L≈65) > disabled (L≈62)
+//   > inactive/stopped (L≈60)
 const KIND_TOKEN: Record<StatusKind, string> = {
+  active: "var(--accent)",
   success: "var(--color-success-foreground)",
   info: "var(--color-info)",
   warning: "var(--color-warning-foreground)",
@@ -32,6 +41,7 @@ const KIND_TOKEN: Record<StatusKind, string> = {
 
 type LocalGlyphProps = SVGProps<SVGSVGElement> & {
   children: ReactNode;
+  "data-glyph"?: string;
 };
 
 function LocalGlyph({ children, className, ...props }: LocalGlyphProps) {
@@ -55,9 +65,14 @@ function LocalGlyph({ children, className, ...props }: LocalGlyphProps) {
   );
 }
 
-type StatusGlyph = (props: SVGProps<SVGSVGElement>) => ReactNode;
+export type StatusGlyph = (props: SVGProps<SVGSVGElement>) => ReactNode;
 
 const KIND_ICON: Record<StatusKind, StatusGlyph> = {
+  active: (props) => (
+    <LocalGlyph {...props}>
+      <polygon points="6 3 20 12 6 21 6 3" />
+    </LocalGlyph>
+  ),
   success: (props) => (
     <LocalGlyph {...props}>
       <path d="M21.801 10A10 10 0 1 1 17 3.335" />
@@ -102,13 +117,56 @@ const KIND_ICON: Record<StatusKind, StatusGlyph> = {
   ),
 };
 
+// Honest task-state glyphs. These deliberately avoid the alarm triangle and
+// failure X so a being-worked task does not read as a warning and a
+// dependency-blocked task does not read as a failure. The `kind` token still
+// supplies color/lightness, so grayscale ranking by L is preserved.
+export const ActivityGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="activity" {...props}>
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  </LocalGlyph>
+);
+
+export const LockGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="lock" {...props}>
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </LocalGlyph>
+);
+
+export const CircleGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="circle" {...props}>
+    <circle cx="12" cy="12" r="9" />
+  </LocalGlyph>
+);
+
+export const EyeGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="eye" {...props}>
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </LocalGlyph>
+);
+
+export const CheckGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="check" {...props}>
+    <path d="M20 6 9 17l-5-5" />
+  </LocalGlyph>
+);
+
+export const DashGlyph: StatusGlyph = (props) => (
+  <LocalGlyph data-glyph="dash" {...props}>
+    <path d="M5 12h14" />
+  </LocalGlyph>
+);
+
 function ActivityRowStatusDotImpl({
   kind,
   pulse,
   label,
   title,
+  glyph,
 }: ActivityRowStatusDotProps) {
-  const Icon = KIND_ICON[kind];
+  const Icon = glyph ?? KIND_ICON[kind];
   return (
     <span
       className={

@@ -1183,6 +1183,37 @@ class TestLocalTaskManager:
         assert closed.closed_in_session_id == session.id
         assert closed.closed_commit_sha == "abc123def"
 
+    def test_close_task_with_commit_links_and_closes_atomically(
+        self, task_manager, project_id
+    ) -> None:
+        """The public close-with-commit helper records both changes together."""
+        task = task_manager.create_task(project_id, "Task")
+
+        with patch("gobby.utils.git.normalize_commit_sha", return_value="abc123"):
+            closed = task_manager.close_task_with_commit(task.id, "abc123")
+
+        assert is_task_closed(closed)
+        assert closed.closed_commit_sha == "abc123"
+        assert closed.commits == ["abc123"]
+
+    def test_close_task_with_commit_rolls_back_link_when_close_fails(
+        self, task_manager, project_id
+    ) -> None:
+        """A failed close must not leave an orphan commit link."""
+        parent = task_manager.create_task(project_id, "Parent")
+        task_manager.create_task(project_id, "Child", parent_task_id=parent.id)
+
+        with (
+            patch("gobby.utils.git.normalize_commit_sha", return_value="abc123"),
+            pytest.raises(ValueError, match="open child task"),
+        ):
+            task_manager.close_task_with_commit(parent.id, "abc123")
+
+        refreshed = task_manager.get_task(parent.id)
+        assert not is_task_closed(refreshed)
+        assert refreshed.closed_commit_sha is None
+        assert refreshed.commits in (None, [])
+
     def test_close_task_with_validation_override(self, task_manager, project_id) -> None:
         """Test closing task with validation override reason."""
         task = task_manager.create_task(project_id, "Task")

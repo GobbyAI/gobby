@@ -24,7 +24,7 @@ vi.mock('../ActiveAgentIndicator', () => ({
     <div data-testid="agent-indicator" data-disabled={String(Boolean(disabled))} />
   ),
 }))
-vi.mock('./ui/Button', () => ({
+vi.mock('../shared/Button', () => ({
   Button: ({ children, onClick, disabled, ...props }: any) => (
     <button onClick={onClick} disabled={disabled} {...props}>
       {children}
@@ -709,6 +709,39 @@ describe('ChatInput', () => {
       ttsEnabled: false,
     })
     expect(onPaletteSelect).not.toHaveBeenCalled()
+  })
+
+  it('handles restart slash commands locally in proxy mode', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        proxySlashMode={true}
+        paletteItems={[
+          {
+            kind: 'command' as const,
+            name: 'restart',
+            description: 'Restart the Gobby daemon',
+            action: 'restart_daemon',
+          },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/restart')
+    await userEvent.keyboard('{Enter}')
+
+    expect(onPaletteSelect).toHaveBeenCalledWith({
+      kind: 'command',
+      name: 'restart',
+      description: 'Restart the Gobby daemon',
+      action: 'restart_daemon',
+    })
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('renders the observe overlay and calls attach', async () => {

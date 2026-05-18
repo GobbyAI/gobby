@@ -1,13 +1,26 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '../../lib/utils'
 import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 
-export interface SegmentedControlOption<T extends string> {
+interface BaseSegmentedControlOption<T extends string> {
   value: T
-  label: string
   title?: string
   onClick?: () => void
 }
+
+type TextSegmentedControlOption<T extends string> = BaseSegmentedControlOption<T> & {
+  label: string
+  ariaLabel?: string
+}
+
+type NonTextSegmentedControlOption<T extends string> = BaseSegmentedControlOption<T> & {
+  label: Exclude<ReactNode, string>
+  ariaLabel: string
+}
+
+export type SegmentedControlOption<T extends string> =
+  | TextSegmentedControlOption<T>
+  | NonTextSegmentedControlOption<T>
 
 interface SegmentedControlProps<T extends string> {
   value: T
@@ -82,6 +95,8 @@ export function SegmentedControl<T extends string>({
     >
       {options.map((option, index) => {
         const isActive = option.value === value
+        const optionAriaLabel =
+          option.ariaLabel ?? (typeof option.label === 'string' ? option.label : undefined)
         return (
           <button
             key={option.value}
@@ -93,6 +108,7 @@ export function SegmentedControl<T extends string>({
             aria-checked={isActive}
             tabIndex={isActive ? 0 : -1}
             disabled={disabled}
+            aria-label={optionAriaLabel}
             title={option.title}
             onClick={() => {
               if (disabled) return

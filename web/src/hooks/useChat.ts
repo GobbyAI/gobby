@@ -1,56 +1,35 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type {
-  ChatMessage,
-  ChatMode,
-  QueuedFile,
-  SessionInteractionMode,
-  SessionObservationMeta,
-} from "../types/chat";
-import { normalizeChatMode } from "../types/chat";
+import type { ChatMessage, QueuedFile } from "../types/chat";
 import type { A2UISurfaceState } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
 import {
   clearPendingProxyMessages,
-  computeContextUsageFromSessionData,
-  createWebChatSession,
-  hasSessionUsage,
-  isChatProvider,
-  loadConversationId,
-  loadDbSessionId,
-  loadViewingSessionId,
-  loadViewingSessionMode,
-  saveConversationId,
   saveDbSessionId,
   saveViewingSessionId,
   saveViewingSessionMode,
-  toSessionObservationMeta,
   uuid,
   type ChatError,
   type ChatStreamChunk,
   type ChatThinkingMessage,
-  type ContinuationRollbackSnapshot,
   type ModelSwitchedMessage,
-  type PendingProxyMessage,
   type ToolStatusMessage,
 } from "./useChat/core";
 import { useChatActions } from "./useChat/actions";
+import { usePlanArtifactCallbacks } from "./useChat/callbacksState";
+import {
+  createEmptyContextUsage,
+  useContextUsageState,
+} from "./useChat/contextUsageState";
 import { useChatLifecycle } from "./useChat/lifecycle";
 import { useChatMessageHandlers } from "./useChat/handlers";
+import { useProviderAgentState } from "./useChat/providerAgentState";
+import { useSessionAttachmentState } from "./useChat/sessionAttachmentState";
+import { useSessionIdentityState } from "./useChat/sessionIdentityState";
 import { useChatSessionViewing } from "./useChat/sessionViewing";
 import { useChatTransport } from "./useChat/transport";
-import { clearFreshChatDraft } from "../lib/sessionPersistence";
+import { useContinuationRestore } from "./useChat/useContinuationRestore";
 
 export function useChat() {
-  const [conversationId, setConversationId] = useState<string>(() =>
-    loadConversationId(),
-  );
-  const conversationIdRef = useRef<string>(conversationId);
-
-  // Counter that increments only on intentional conversation switches (not SDK
-  // session ID adoption).  Used by the mode-restore effect in App.tsx so that
-  // adopting the SDK session ID doesn't reset the user's mode to the default.
-  const [conversationSwitchKey, setConversationSwitchKey] = useState(0);
-
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
   const [isConnected, setIsConnected] = useState(false);
@@ -65,226 +44,126 @@ export function useChat() {
   >(new Map());
   const [canvasPanel, setCanvasPanel] = useState<CanvasPanelState | null>(null);
 
-  // Session ref tracking (e.g. "#158")
-  const [sessionRef, setSessionRef] = useState<string | null>(null);
-
-  // DB session ID — used by title synthesis to call session APIs directly
-  // without waiting for sessions list polling
-  const [dbSessionId, setDbSessionId] = useState<string | null>(() =>
-    loadDbSessionId(),
-  );
-  const dbSessionIdRef = useRef<string | null>(dbSessionId);
-  const creatingSessionIdRef = useRef<Promise<string | null> | null>(null);
-  const lastSeqRef = useRef<number>(0);
-
-  // Branch/worktree tracking
-  const [currentBranch, setCurrentBranch] = useState<string | null>(null);
-  const [worktreePath, setWorktreePath] = useState<string | null>(null);
-
-  // Active agent tracking — persisted to survive page reloads
-  const ACTIVE_AGENT_KEY = "gobby-active-agent";
-  const [activeAgent, setActiveAgent] = useState<string>(
-    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default",
-  );
-
-  // Session title — stored from switchConversation to survive filtered list race
-  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
-  const [mainSessionMeta, setMainSessionMeta] =
-    useState<SessionObservationMeta | null>(null);
-  const sessionRefRef = useRef<string | null>(sessionRef);
-  useEffect(() => {
-    sessionRefRef.current = sessionRef;
-  }, [sessionRef]);
-
-  // LLM provider selection (null = server default), persisted to localStorage
-  const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
-    () => {
-      try {
-        return localStorage.getItem("gobby-selected-provider") || null;
-      } catch {
-        return null;
-      }
-    },
-  );
-  const setSelectedProvider = useCallback((provider: string | null) => {
-    setSelectedProviderRaw(provider);
-    try {
-      if (provider) {
-        localStorage.setItem("gobby-selected-provider", provider);
-      } else {
-        localStorage.removeItem("gobby-selected-provider");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-  const selectedProviderRef = useRef<string | null>(selectedProvider);
-  useEffect(() => {
-    selectedProviderRef.current = selectedProvider;
-  }, [selectedProvider]);
-
-  // Session viewing tracking (read-only observation of CLI sessions via REST)
-  const [viewingSessionId, setViewingSessionId] = useState<string | null>(() =>
-    loadViewingSessionId(),
-  );
-  const viewingSessionIdRef = useRef<string | null>(null);
-  const [viewingSessionMeta, setViewingSessionMeta] =
-    useState<SessionObservationMeta | null>(null);
-  const viewingSessionMetaRef = useRef<SessionObservationMeta | null>(null);
-  const initialViewingSessionIdRef = useRef<string | null>(
-    loadViewingSessionId(),
-  );
-  // Widened to the full SessionInteractionMode (incl. "proxy") on purpose:
-  // a persisted proxy-attached terminal session must restore its proxy
-  // attach on reload, not collapse to read-only. New-Chat-refresh
-  // suppression is handled separately by the fresh-chat-draft flag and the
-  // viewingSessionId->null localStorage clear, not by narrowing this type.
-  // A CodeRabbit cleanup (#14719) re-narrowed this and regressed #14713;
-  // do not narrow it again.
-  const initialViewingModeRef = useRef<SessionInteractionMode>(
-    loadViewingSessionMode(),
-  );
-  const initialViewingRestoreRef = useRef(false);
-  const initialViewingReconnectRetryRef = useRef(false);
-
-  // Live terminal observation is distinct from interactive proxy mode.
-  const [observedSessionId, setObservedSessionId] = useState<string | null>(
-    null,
-  );
-  const observedSessionIdRef = useRef<string | null>(null);
-  const observedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
-  const [sessionInteractionMode, setSessionInteractionMode] =
-    useState<SessionInteractionMode>("none");
-  const sessionInteractionModeRef = useRef<SessionInteractionMode>("none");
-  const pendingSessionInteractionModeRef = useRef<"observe" | "proxy">("proxy");
-  const [proxyDeliveryNotice, setProxyDeliveryNotice] = useState<string | null>(
-    null,
-  );
-  const agentNameCacheRef = useRef<Map<string, string | null>>(new Map());
-
-  // Session attachment tracking (interactive proxy mode only)
-  const [attachedSessionId, setAttachedSessionId] = useState<string | null>(
-    null,
-  );
-  const attachedSessionIdRef = useRef<string | null>(null);
-  const [attachedSessionMeta, setAttachedSessionMeta] =
-    useState<SessionObservationMeta | null>(null);
-  const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
-  const pendingProxyMessagesRef = useRef<Map<string, PendingProxyMessage>>(
-    new Map(),
-  );
-  const pendingProxySessionQueuesRef = useRef<Map<string, string[]>>(new Map());
-  const [isContinuingSession, setIsContinuingSession] = useState(false);
-  const continuingSessionIdRef = useRef<string | null>(null);
-  const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
-    null,
-  );
-
-  // Keep a ref so onopen/reconnect can read the current agent
-  const activeAgentRef = useRef(activeAgent);
-  useEffect(() => {
-    activeAgentRef.current = activeAgent;
-    localStorage.setItem(ACTIVE_AGENT_KEY, activeAgent);
-  }, [activeAgent]);
-
   // Keep a ref so onopen/reconnect can read the current project
   const projectIdRef = useRef<string | null>(null);
   const setProjectIdRef = useCallback((id: string | null) => {
     projectIdRef.current = id;
   }, []);
-  const clearContinuingSession = useCallback(() => {
-    continuingSessionIdRef.current = null;
-    setIsContinuingSession(false);
-  }, []);
 
-  const resolveAgentName = useCallback(async (agentRunId: string) => {
-    const cached = agentNameCacheRef.current.get(agentRunId);
-    if (cached !== undefined) {
-      return cached;
-    }
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastServerModeTimestampRef = useRef<number>(0);
 
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    try {
-      const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`);
-      if (!res.ok) {
-        agentNameCacheRef.current.set(agentRunId, null);
-        return null;
-      }
-      const data = await res.json();
-      const resolved =
-        data?.run?.agent_name || data?.run?.workflow_name || null;
-      agentNameCacheRef.current.set(agentRunId, resolved);
-      return resolved;
-    } catch {
-      agentNameCacheRef.current.set(agentRunId, null);
-      return null;
-    }
-  }, []);
+  const {
+    activeAgent,
+    activeAgentRef,
+    selectedProvider,
+    selectedProviderRef,
+    setActiveAgent,
+    setSelectedProvider,
+  } = useProviderAgentState();
 
-  // Plan mode approval tracking
-  const [planPendingApproval, setPlanPendingApproval] = useState(false);
-  const planContentRef = useRef<string | null>(null);
-  const currentModeRef = useRef<ChatMode>("plan");
+  const {
+    currentModeRef,
+    onArtifactEventRef,
+    onChatClearedRef,
+    onChatDeletedRef,
+    onModeChangedRef,
+    onPlanReadyRef,
+    pendingPlanFeedbackRef,
+    planContentRef,
+    planPendingApproval,
+    setOnArtifactEvent,
+    setOnChatCleared,
+    setOnChatDeleted,
+    setCurrentMode,
+    setOnModeChanged,
+    setOnPlanReady,
+    setPlanPendingApproval,
+  } = usePlanArtifactCallbacks();
 
-  // Callback for backend-initiated mode changes (e.g. agent EnterPlanMode)
-  const onModeChangedRef = useRef<((mode: ChatMode) => void) | null>(null);
-  const setOnModeChanged = useCallback((fn: (mode: ChatMode) => void) => {
-    onModeChangedRef.current = fn;
-  }, []);
+  const {
+    clearPreAttachContextUsage,
+    contextUsage,
+    contextUsageUpdatedAt,
+    markSessionUsageFresh,
+    preAttachContextUsageRef,
+    setContextUsage,
+    shouldApplyHydratedUsage,
+  } = useContextUsageState();
 
-  // Callback when plan content is ready (for artifact creation)
-  const onPlanReadyRef = useRef<((content: string | null) => void) | null>(
-    null,
-  );
-  const setOnPlanReady = useCallback((fn: (content: string | null) => void) => {
-    onPlanReadyRef.current = fn;
-  }, []);
+  const {
+    applyMainSessionMeta,
+    bindActiveSession,
+    conversationId,
+    conversationIdRef,
+    conversationSwitchKey,
+    currentBranch,
+    dbSessionId,
+    dbSessionIdRef,
+    ensureMainSession,
+    lastSeqRef,
+    mainSessionMeta,
+    sessionRef,
+    sessionRefRef,
+    sessionTitle,
+    setConversationId,
+    setConversationSwitchKey,
+    setCurrentBranch,
+    setDbSessionId,
+    setMainSessionMeta,
+    setSessionRef,
+    setSessionTitle,
+    setWorktreePath,
+    worktreePath,
+  } = useSessionIdentityState({
+    activeAgentRef,
+    currentModeRef,
+    onModeChangedRef,
+    projectIdRef,
+    selectedProviderRef,
+    setContextUsage,
+    setSelectedProvider,
+    wsRef,
+  });
 
-  // Callback when artifact event arrives from backend (show_file)
-  const onArtifactEventRef = useRef<
-    | ((
-        type: string,
-        content: string,
-        language?: string,
-        title?: string,
-      ) => void)
-    | null
-  >(null);
-  const setOnArtifactEvent = useCallback(
-    (
-      fn: (
-        type: string,
-        content: string,
-        language?: string,
-        title?: string,
-      ) => void,
-    ) => {
-      onArtifactEventRef.current = fn;
-    },
-    [],
-  );
-
-  // Callback when backend confirms a chat deletion
-  const onChatDeletedRef = useRef<((conversationId: string) => void) | null>(
-    null,
-  );
-  const setOnChatDeleted = useCallback(
-    (fn: (conversationId: string) => void) => {
-      onChatDeletedRef.current = fn;
-    },
-    [],
-  );
-
-  // Callback when backend confirms a chat clear
-  const onChatClearedRef = useRef<((conversationId: string) => void) | null>(
-    null,
-  );
-  const setOnChatCleared = useCallback(
-    (fn: (conversationId: string) => void) => {
-      onChatClearedRef.current = fn;
-    },
-    [],
-  );
+  const {
+    attachedSessionId,
+    attachedSessionIdRef,
+    attachedSessionMeta,
+    attachedSessionMetaRef,
+    clearContinuationRollback,
+    clearContinuingSession,
+    continuingSessionIdRef,
+    continuationRollbackRef,
+    initialViewingModeRef,
+    initialViewingReconnectRetryRef,
+    initialViewingRestoreRef,
+    initialViewingSessionIdRef,
+    isContinuingSession,
+    observedSessionId,
+    observedSessionIdRef,
+    observedSessionMetaRef,
+    pendingProxyMessagesRef,
+    pendingProxySessionQueuesRef,
+    pendingSessionInteractionModeRef,
+    proxyDeliveryNotice,
+    resolveAgentName,
+    sessionInteractionMode,
+    sessionInteractionModeRef,
+    setAttachedSessionId,
+    setAttachedSessionMeta,
+    setIsContinuingSession,
+    setObservedSessionId,
+    setProxyDeliveryNotice,
+    setSessionInteractionMode,
+    setViewingSessionId,
+    setViewingSessionMeta,
+    viewingSessionId,
+    viewingSessionIdRef,
+    viewingSessionMeta,
+    viewingSessionMetaRef,
+  } = useSessionAttachmentState();
 
   // Stable ref to sendMessage for use inside WS handlers / callbacks
   // defined before sendMessage itself. Updated after sendMessage is created.
@@ -300,61 +179,6 @@ export function useChat() {
       ) => boolean)
     | null
   >(null);
-
-  const bindActiveSession = useCallback((sessionId: string | null) => {
-    const nextId = sessionId ?? "";
-    lastSeqRef.current = 0;
-    conversationIdRef.current = nextId;
-    setConversationId(nextId);
-    setDbSessionId(sessionId);
-    dbSessionIdRef.current = sessionId;
-    saveDbSessionId(sessionId);
-    saveConversationId(nextId);
-    if (sessionId) {
-      clearFreshChatDraft();
-    }
-  }, []);
-
-  const markSessionUsageFresh = useCallback((sessionId: string, rawTimestamp?: string) => {
-    const parsed = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
-    lastLiveUsageBySessionRef.current.set(
-      sessionId,
-      Number.isFinite(parsed) ? parsed : Date.now(),
-    );
-  }, []);
-
-  const shouldApplyHydratedUsage = useCallback((sessionId: string, fetchStartedAt: number) => {
-    const lastLive = lastLiveUsageBySessionRef.current.get(sessionId);
-    return lastLive == null || lastLive <= fetchStartedAt;
-  }, []);
-
-  const applyMainSessionMeta = useCallback(
-    (session: Record<string, unknown> | null) => {
-      const nextMeta = toSessionObservationMeta(session, {
-        sessionType: "web_chat",
-      });
-      setMainSessionMeta(nextMeta);
-      setSessionTitle(nextMeta?.title ?? null);
-      if (nextMeta?.ref) {
-        setSessionRef(nextMeta.ref);
-      }
-      setCurrentBranch(nextMeta?.gitBranch ?? null);
-      if (nextMeta && isChatProvider(nextMeta.source)) {
-        setSelectedProvider(nextMeta.source);
-      }
-      if (nextMeta?.chatMode) {
-        const restored = normalizeChatMode(nextMeta.chatMode);
-        if (restored !== currentModeRef.current) {
-          currentModeRef.current = restored;
-          onModeChangedRef.current?.(restored);
-        }
-      }
-      if (hasSessionUsage(session)) {
-        setContextUsage(computeContextUsageFromSessionData(session));
-      }
-    },
-    [setSelectedProvider],
-  );
 
   const clearSessionObservationState = useCallback(
     ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
@@ -388,7 +212,24 @@ export function useChat() {
       setSessionInteractionMode("none");
       setProxyDeliveryNotice(null);
     },
-    [],
+    [
+      attachedSessionIdRef,
+      attachedSessionMetaRef,
+      observedSessionIdRef,
+      observedSessionMetaRef,
+      pendingProxyMessagesRef,
+      pendingProxySessionQueuesRef,
+      sessionInteractionModeRef,
+      setAttachedSessionId,
+      setAttachedSessionMeta,
+      setObservedSessionId,
+      setProxyDeliveryNotice,
+      setSessionInteractionMode,
+      setViewingSessionId,
+      setViewingSessionMeta,
+      viewingSessionIdRef,
+      viewingSessionMetaRef,
+    ],
   );
 
   const resetMainChatState = useCallback(() => {
@@ -405,128 +246,24 @@ export function useChat() {
     setCanvasPanel(null);
     setPlanPendingApproval(false);
     planContentRef.current = null;
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
+    setContextUsage(createEmptyContextUsage());
     setMessages([]);
     setIsLoadingMessages(false);
-  }, []);
-
-  const ensureMainSession = useCallback(
-    async (options?: {
-      projectId?: string | null;
-      provider?: string | null;
-      model?: string | null;
-      reasoningEffort?: string | null;
-      chatMode?: ChatMode | null;
-      title?: string | null;
-      forceNew?: boolean;
-    }): Promise<string | null> => {
-      if (!options?.forceNew && dbSessionIdRef.current) {
-        return dbSessionIdRef.current;
-      }
-      if (!options?.forceNew && creatingSessionIdRef.current) {
-        return await creatingSessionIdRef.current;
-      }
-
-      const pending = createWebChatSession({
-        projectId: options?.projectId ?? projectIdRef.current,
-        provider: options?.provider ?? selectedProviderRef.current,
-        model: options?.model ?? null,
-        reasoningEffort: options?.reasoningEffort ?? null,
-        chatMode: options?.chatMode ?? currentModeRef.current,
-        title: options?.title ?? null,
-      })
-        .then((session) => {
-          bindActiveSession(session.id);
-          applyMainSessionMeta(session as Record<string, unknown>);
-          if (
-            wsRef.current?.readyState === WebSocket.OPEN &&
-            activeAgentRef.current
-          ) {
-            wsRef.current.send(
-              JSON.stringify({
-                type: "set_agent",
-                conversation_id: session.id,
-                agent_name: activeAgentRef.current,
-              }),
-            );
-          }
-          return session.id;
-        })
-        .catch((error) => {
-          console.error("Failed to create web chat session:", error);
-          return null;
-        })
-        .finally(() => {
-          creatingSessionIdRef.current = null;
-        });
-
-      creatingSessionIdRef.current = pending;
-      return await pending;
-    },
-    [applyMainSessionMeta, bindActiveSession],
-  );
-
-  useEffect(() => {
-    conversationIdRef.current = conversationId;
-  }, [conversationId]);
+  }, [
+    lastSeqRef,
+    planContentRef,
+    setContextUsage,
+    setCurrentBranch,
+    setMainSessionMeta,
+    setPlanPendingApproval,
+    setSessionRef,
+    setSessionTitle,
+    setWorktreePath,
+  ]);
 
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
-
-  useEffect(() => {
-    dbSessionIdRef.current = dbSessionId;
-  }, [dbSessionId]);
-
-  // Context usage tracking — accumulated across turns.
-  // totalInputTokens = uncached + cacheRead + cacheCreation (the real context size).
-  const [contextUsage, setContextUsage] = useState<{
-    totalInputTokens: number;
-    outputTokens: number;
-    contextWindow: number | null;
-    // Per-category breakdown for tooltip
-    uncachedInputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-  }>({
-    totalInputTokens: 0,
-    outputTokens: 0,
-    contextWindow: null,
-    uncachedInputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-  });
-  const [contextUsageUpdatedAt, setContextUsageUpdatedAt] = useState<number | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  // Timestamp of last server-authoritative mode_changed — used to suppress
-  // redundant set_mode emissions on WS reconnect and session restore
-  const lastServerModeTimestampRef = useRef<number>(0);
-
-  // Main-chat contextUsage captured before attaching to an observed session,
-  // so detach can restore it. Null when no attach is active. Only set on the
-  // first attach in a sequence so chained attaches don't overwrite the
-  // original main-chat snapshot.
-  const preAttachContextUsageRef = useRef<{
-    totalInputTokens: number;
-    outputTokens: number;
-    contextWindow: number | null;
-    uncachedInputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-  } | null>(null);
-  const didTrackContextUsageRef = useRef(false);
-  const lastLiveUsageBySessionRef = useRef<Map<string, number>>(new Map());
-  const clearPreAttachContextUsage = useCallback(() => {
-    preAttachContextUsageRef.current = null;
-  }, []);
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
@@ -536,79 +273,55 @@ export function useChat() {
     {
       content: string;
       model?: string | null;
+      files?: QueuedFile[];
       projectId?: string | null;
       reasoningEffort?: string | null;
       ttsEnabled?: boolean;
     }[]
   >([]);
 
-  const clearContinuationRollback = useCallback(() => {
-    continuationRollbackRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    if (!didTrackContextUsageRef.current) {
-      didTrackContextUsageRef.current = true;
-      return;
-    }
-    setContextUsageUpdatedAt(Date.now());
-  }, [contextUsage]);
-
-  const restoreContinuationState = useCallback(
-    (snapshot: ContinuationRollbackSnapshot) => {
-      conversationIdRef.current = snapshot.conversationId;
-      setConversationId(snapshot.conversationId);
-      saveConversationId(snapshot.conversationId);
-      dbSessionIdRef.current = snapshot.dbSessionId;
-      setDbSessionId(snapshot.dbSessionId);
-      saveDbSessionId(snapshot.dbSessionId);
-      setMessages(snapshot.messages);
-      setMainSessionMeta(snapshot.mainSessionMeta);
-      setSessionTitle(snapshot.sessionTitle);
-      setSessionRef(snapshot.sessionRef);
-      setSelectedProvider(snapshot.selectedProvider);
-      setContextUsage(snapshot.contextUsage);
-      setCurrentBranch(snapshot.currentBranch);
-      setWorktreePath(snapshot.worktreePath);
-      setViewingSessionId(snapshot.viewingSessionId);
-      viewingSessionIdRef.current = snapshot.viewingSessionId;
-      saveViewingSessionId(snapshot.viewingSessionId);
-      setViewingSessionMeta(snapshot.viewingSessionMeta);
-      viewingSessionMetaRef.current = snapshot.viewingSessionMeta;
-      observedSessionIdRef.current = snapshot.observedSessionId;
-      observedSessionMetaRef.current = snapshot.observedSessionMeta;
-      setObservedSessionId(snapshot.observedSessionId);
-      attachedSessionIdRef.current = snapshot.attachedSessionId;
-      setAttachedSessionId(snapshot.attachedSessionId);
-      attachedSessionMetaRef.current = snapshot.attachedSessionMeta;
-      setAttachedSessionMeta(snapshot.attachedSessionMeta);
-      sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
-      setSessionInteractionMode(snapshot.sessionInteractionMode);
-      saveViewingSessionMode(
-        snapshot.viewingSessionId ? snapshot.sessionInteractionMode : "none",
-      );
-      setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
-      setIsLoadingMessages(false);
-      currentModeRef.current = normalizeChatMode(snapshot.currentMode);
-      onModeChangedRef.current?.(normalizeChatMode(snapshot.currentMode));
-
-      if (
-        snapshot.observedSessionId &&
-        snapshot.sessionInteractionMode !== "none" &&
-        wsRef.current?.readyState === WebSocket.OPEN
-      ) {
-        pendingSessionInteractionModeRef.current =
-          snapshot.sessionInteractionMode === "proxy" ? "proxy" : "observe";
-        wsRef.current.send(
-          JSON.stringify({
-            type: "attach_to_session",
-            session_id: snapshot.observedSessionId,
-          }),
-        );
-      }
+  const restoreContinuationState = useContinuationRestore({
+    sessionRefs: {
+      attachedSessionIdRef,
+      conversationIdRef,
+      dbSessionIdRef,
+      observedSessionIdRef,
+      viewingSessionIdRef,
     },
-    [setContextUsage, setSelectedProvider],
-  );
+    sessionSetters: {
+      setAttachedSessionId,
+      setConversationId,
+      setDbSessionId,
+      setObservedSessionId,
+      setSelectedProvider,
+      setSessionRef,
+      setSessionTitle,
+      setViewingSessionId,
+    },
+    conversationRefs: {
+      attachedSessionMetaRef,
+      observedSessionMetaRef,
+      viewingSessionMetaRef,
+      wsRef,
+    },
+    conversationSetters: {
+      setAttachedSessionMeta,
+      setContextUsage,
+      setCurrentBranch,
+      setCurrentMode,
+      setIsLoadingMessages,
+      setMainSessionMeta,
+      setMessages,
+      setProxyDeliveryNotice,
+      setViewingSessionMeta,
+      setWorktreePath,
+    },
+    interactionMode: {
+      pendingSessionInteractionModeRef,
+      sessionInteractionModeRef,
+      setSessionInteractionMode,
+    },
+  });
 
   /** Returns true if the chunk belongs to the currently active request. */
   function isActiveRequest(requestId?: string): boolean {
@@ -633,8 +346,6 @@ export function useChat() {
     () => {},
   );
   const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(() => {});
-
-  const pendingPlanFeedbackRef = useRef<string | null>(null);
 
   const connect = useChatTransport({
     activeRequestIdRef,
@@ -812,6 +523,7 @@ export function useChat() {
     setContextUsage,
     setConversationId,
     setConversationSwitchKey,
+    setCurrentMode,
     setIsContinuingSession,
     setIsLoadingMessages,
     setIsStreaming,

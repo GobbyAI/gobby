@@ -177,6 +177,36 @@ class AgentLifecycleMonitor:
             run_id, terminal_reason=terminal_reason
         )
 
+    async def terminalize_successful_run(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        completion_result: str | None = None,
+    ) -> bool:
+        """Terminalize a successful active run.
+
+        Args:
+            run_id: Agent run id to complete.
+            notify_result: Payload sent to completion subscribers.
+            message: Human-readable completion notification.
+            completion_result: Optional persisted result override.
+
+        Returns:
+            True when the run was completed by this call; False for an already
+            terminal or missing run.
+
+        Delegates persistence, subscriber notification, and child-session cleanup
+        to AgentCleanupHandler.
+        """
+        return await self._cleanup_handler.terminalize_successful_run(
+            run_id,
+            notify_result=notify_result,
+            message=message,
+            completion_result=completion_result,
+        )
+
     async def start(self) -> None:
         """Start the monitoring loop."""
         if self._running:

@@ -206,6 +206,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_bin_freshness_task",
         "_zombie_messages_task",
         "_comms_messages_task",
+        "_chat_attachments_cleanup_task",
         "_expired_isolation_task",
         "_vector_rebuild_task",
         "_memory_reconcile_task",

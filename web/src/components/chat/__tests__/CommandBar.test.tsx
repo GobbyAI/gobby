@@ -49,7 +49,7 @@ describe("CommandBar", () => {
         title="Session"
         onOpenPalette={vi.fn()}
         onTogglePanel={onTogglePanel}
-        isPanelPinned={true}
+        panelVisible={true}
       />,
     );
 

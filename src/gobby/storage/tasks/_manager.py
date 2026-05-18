@@ -38,6 +38,7 @@ from gobby.storage.tasks._crud import (
 from gobby.storage.tasks._crud import (
     update_task_metadata as _update_task_metadata,
 )
+from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
     add_label as _add_label,
@@ -140,7 +141,7 @@ __all__ = [
 ]
 
 
-class LocalTaskManager:
+class LocalTaskManager(TaskDecompositionMixin):
     def __init__(self, db: DatabaseProtocol):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
@@ -503,19 +504,7 @@ class LocalTaskManager:
         closed_commit_sha: str | None = None,
         validation_override_reason: str | None = None,
     ) -> Task:
-        """Close a task.
-
-        Args:
-            task_id: The task ID to close
-            reason: Optional reason for closing
-            force: If True, close even if there are open children (default: False)
-            closed_in_session_id: Session ID where task was closed
-            closed_commit_sha: Git commit SHA at time of closing
-            validation_override_reason: Why agent bypassed validation (if applicable)
-
-        Raises:
-            ValueError: If task not found or has open children (and force=False)
-        """
+        """Close a task."""
         _close_task(
             self.db,
             task_id=task_id,
@@ -525,6 +514,32 @@ class LocalTaskManager:
             closed_commit_sha=closed_commit_sha,
             validation_override_reason=validation_override_reason,
         )
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def close_task_with_commit(
+        self,
+        task_id: str,
+        commit_sha: str,
+        *,
+        reason: str | None = None,
+        force: bool = False,
+        closed_in_session_id: str | None = None,
+        validation_override_reason: str | None = None,
+        cwd: str | Path | None = None,
+    ) -> Task:
+        """Link a commit and close the task in one transaction."""
+        with self.db.transaction_immediate():
+            _link_commit(self.db, task_id, commit_sha, cwd)
+            _close_task(
+                self.db,
+                task_id=task_id,
+                reason=reason,
+                force=force,
+                closed_in_session_id=closed_in_session_id,
+                closed_commit_sha=commit_sha,
+                validation_override_reason=validation_override_reason,
+            )
         self._notify_listeners()
         return self.get_task(task_id)
 
@@ -853,58 +868,6 @@ class LocalTaskManager:
     def count_closed_since(self, hours: int = 24, project_id: str | None = None) -> int:
         """Count tasks closed within the last N hours."""
         return _count_closed_since(self.db, hours=hours, project_id=project_id)
-
-    def create_task_with_decomposition(
-        self,
-        project_id: str,
-        title: str,
-        description: str | None = None,
-        parent_task_id: str | None = None,
-        created_in_session_id: str | None = None,
-        priority: int = 2,
-        task_type: str = "task",
-        assignee: str | None = None,
-        labels: list[str] | None = None,
-        category: str | None = None,
-        validation_criteria: str | None = None,
-        assigned_agent: str | None = None,
-        additional_skills: list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Create a task and return result dict."""
-        task = self.create_task(
-            project_id=project_id,
-            title=title,
-            description=description,
-            parent_task_id=parent_task_id,
-            created_in_session_id=created_in_session_id,
-            priority=priority,
-            task_type=task_type,
-            assignee=assignee,
-            labels=labels,
-            category=category,
-            validation_criteria=validation_criteria,
-            assigned_agent=assigned_agent,
-            additional_skills=additional_skills,
-        )
-        return {"task": task.to_dict()}
-
-    def update_task_with_result(
-        self,
-        task_id: str,
-        description: str | None = None,
-    ) -> dict[str, Any]:
-        """Update a task's description and return result dict.
-
-        Args:
-            task_id: Task ID
-            description: New description
-
-        Returns:
-            Dict with task details.
-        """
-        updated = self.update_task(task_id, description=description)
-        return {"task": updated.to_dict()}
 
     # --- Search Methods ---
 

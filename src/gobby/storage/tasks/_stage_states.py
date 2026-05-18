@@ -216,6 +216,24 @@ class StageStatesManager:
             cited_subtasks=cited_subtasks,
         )
 
+    def move_to_stage(
+        self,
+        task_id: str,
+        target_stage_name: str,
+        *,
+        by_session_id: str | None,
+        notes: str | None = None,
+        force: bool = False,
+    ) -> StageState:
+        """Move a task to the target stage, resetting stage rows as needed."""
+        return self._transitions.move_task_to_stage(
+            task_id,
+            target_stage_name,
+            by_session_id=by_session_id,
+            notes=notes,
+            force=force,
+        )
+
     def escalate_stage_failure(self, task_id: str, reason: str) -> None:
         self._transitions.escalate_stage_failure(task_id, reason)
 

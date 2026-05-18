@@ -4,6 +4,7 @@ Handles tool allow/block lists at the agent and step workflow levels,
 MCP tool matching, and step workflow transition processing.
 """
 
+import inspect
 import json
 import logging
 from datetime import UTC, datetime
@@ -616,7 +617,7 @@ class EnforcementMixin:
             workflow_name,
             type(run_storage).__name__ if run_storage is not None else None,
         )
-        db_agent = None
+        db_agent: Any | None = None
         get_by_session = getattr(run_storage, "get_by_session", None)
         logger.debug(
             "_complete_agent_workflow_run session=%s workflow=%s has_get_by_session=%s",
@@ -632,7 +633,7 @@ class EnforcementMixin:
                 workflow_name,
                 getattr(db_agent, "id", None),
             )
-        fallback_run_id = None
+        fallback_run_id: str | None = None
         if db_agent is None:
             fallback_run_id = self._runner.get_run_id_by_session(session_id)
             logger.debug(
@@ -650,22 +651,56 @@ class EnforcementMixin:
             )
             return
 
+        notify_result: dict[str, Any] = {
+            "status": "success",
+            "run_id": run_id,
+            "via": "workflow_terminate",
+            "workflow": workflow_name,
+        }
+        message = f"Agent {run_id} completed via workflow terminate"
+
+        lifecycle_monitor = getattr(self._runner, "agent_lifecycle_monitor", None)
+        terminalize_successful_run: Any = getattr(
+            lifecycle_monitor,
+            "terminalize_successful_run",
+            None,
+        )
+        cleanup_session_id: str | None = (
+            getattr(db_agent, "child_session_id", None) if db_agent else None
+        )
+        if not isinstance(cleanup_session_id, str) or not cleanup_session_id:
+            cleanup_session_id = session_id
+        # Lifecycle monitor terminalizers are async by contract. A sync callable
+        # is treated as unavailable so workflow completion uses the runner path.
+        if inspect.iscoroutinefunction(terminalize_successful_run):
+            await terminalize_successful_run(
+                run_id,
+                notify_result=notify_result,
+                message=message,
+            )
+            cleanup_agent_runtime_state(
+                self.db,
+                run_id=run_id,
+                child_session_id=cleanup_session_id,
+            )
+            return
+        if callable(terminalize_successful_run):
+            logger.warning(
+                "Ignoring synchronous terminalize_successful_run hook for run %s",
+                run_id,
+            )
+
         await complete_and_notify_agent_run(
             self._runner,
             run_id,
             completion_registry=self._completion_registry,
-            notify_result={
-                "status": "success",
-                "run_id": run_id,
-                "via": "workflow_terminate",
-                "workflow": workflow_name,
-            },
-            message=f"Agent {run_id} completed via workflow terminate",
+            notify_result=notify_result,
+            message=message,
         )
         cleanup_agent_runtime_state(
             self.db,
             run_id=run_id,
-            child_session_id=session_id,
+            child_session_id=cleanup_session_id,
         )
 
     async def _process_step_after_tool(

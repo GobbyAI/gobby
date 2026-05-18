@@ -25,6 +25,7 @@ from gobby.config.extensions import (
     WebSocketBroadcastConfig,
 )
 from gobby.config.features import (
+    ChatConfig,
     ImportMCPServerConfig,
     MetricsConfig,
     RecommendToolsConfig,
@@ -1290,6 +1291,25 @@ class TestDaemonConfigComposition:
         assert loaded.daemon_port == 9000
         assert loaded.telemetry.log_level == "debug"
         assert loaded.memory.crossref_threshold == 0.8
+
+
+class TestChatConfig:
+    def test_attachment_total_default_matches_product_cap(self) -> None:
+        """Default total attachment cap matches file cap times file count."""
+        config = ChatConfig()
+
+        assert config.attachment_max_total_bytes_per_message == (
+            config.attachment_max_file_bytes * config.attachment_max_files_per_message
+        )
+
+    def test_attachment_total_rejects_values_above_product_cap(self) -> None:
+        """Configured total attachment cap cannot exceed the product cap."""
+        with pytest.raises(ValidationError, match="attachment_max_total_bytes_per_message"):
+            ChatConfig(
+                attachment_max_file_bytes=10,
+                attachment_max_files_per_message=2,
+                attachment_max_total_bytes_per_message=21,
+            )
 
 
 class TestAllConfigClassesInstantiate:

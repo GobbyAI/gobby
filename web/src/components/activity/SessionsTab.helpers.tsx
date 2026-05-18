@@ -147,7 +147,7 @@ export function matchesSearch(session: GobbySession, search: string): boolean {
   return (
     (session.title && session.title.toLowerCase().includes(query)) ||
     session.ref.toLowerCase().includes(query) ||
-    session.external_id.toLowerCase().includes(query)
+    (session.external_id?.toLowerCase().includes(query) ?? false)
   );
 }
 

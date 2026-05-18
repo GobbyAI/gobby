@@ -89,6 +89,7 @@ class SaveUISettingsRequest(BaseModel):
     defaultChatMode: str | None = None
     postPlanChatMode: str | None = None
     selectedProjectId: str | None = None
+    selectedProvider: str | None = None
 
 
 class SaveApprovalRulesRequest(BaseModel):
@@ -766,6 +767,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
         "defaultChatMode",
         "postPlanChatMode",
         "selectedProjectId",
+        "selectedProvider",
     )
 
     @router.get("/ui-settings")

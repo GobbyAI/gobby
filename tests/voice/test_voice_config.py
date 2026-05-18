@@ -17,6 +17,7 @@ class TestVoiceConfig:
         assert config.tts_clause_max_chars == 180
         assert config.tts_reference_text is None
         assert config.stt_enabled is True
+        assert config.transcription_timeout_seconds == 120.0
         assert config.whisper_model_size == "base"
         assert config.whisper_device == "auto"
         assert config.whisper_compute_type == "int8"
@@ -77,3 +78,8 @@ class TestVoiceConfig:
     def test_clause_max_chars_bounds_validation(self, value: int):
         with pytest.raises(ValidationError):
             VoiceConfig(tts_clause_max_chars=value)
+
+    @pytest.mark.parametrize("value", [0.0, -1.0])
+    def test_transcription_timeout_bounds_validation(self, value: float):
+        with pytest.raises(ValidationError):
+            VoiceConfig(transcription_timeout_seconds=value)

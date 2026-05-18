@@ -138,6 +138,19 @@ def _default_db_path() -> Path:
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+class _ThreadConnectionLease:
+    """Weakref-able owner for a thread-local SQLite connection.
+
+    ``threading.local`` cannot notify us when a worker thread exits, so each
+    per-thread connection gets a tiny lease object stored in that thread-local
+    state. ``LocalDatabase`` registers a weakref finalizer against the lease;
+    when the thread-local state is collected, the finalizer closes and untracks
+    the SQLite connection even if the owning thread has already disappeared.
+    """
+
+    __slots__ = ("__weakref__",)
+
+
 class LocalDatabase:
     """
     SQLite database manager with connection pooling.
@@ -217,14 +230,22 @@ class LocalDatabase:
                     conn.execute("PRAGMA query_only = ON")
             # Use default DELETE journal mode (more reliable than WAL for dual-write)
             self._local.connection = conn
+            lease = _ThreadConnectionLease()
+            self._local.connection_lease = lease
+            weakref.finalize(
+                lease,
+                self._close_connection,
+                self._all_connections,
+                self._connections_lock,
+                conn,
+            )
             # Track for cleanup in close()
             with self._connections_lock:
                 self._all_connections.add(conn)
                 connection_count = len(self._all_connections)
-                if (
-                    connection_count > _DB_CONNECTION_WARNING_THRESHOLD
-                    and connection_count > self._last_connection_warning_count
-                ):
+                if connection_count <= _DB_CONNECTION_WARNING_THRESHOLD:
+                    self._last_connection_warning_count = 0
+                elif connection_count > self._last_connection_warning_count:
                     self._last_connection_warning_count = connection_count
                     logger.warning(
                         "LocalDatabase has %d open SQLite connection(s) for %s",
@@ -486,6 +507,21 @@ class LocalDatabase:
             callback()
 
     @staticmethod
+    def _close_connection(
+        connections: set[sqlite3.Connection],
+        connections_lock: threading.Lock,
+        conn: sqlite3.Connection,
+    ) -> None:
+        """Close one tracked connection without retaining the LocalDatabase instance."""
+        with connections_lock:
+            connections.discard(conn)
+
+        try:
+            conn.close()
+        except Exception as e:
+            logger.debug("Connection close failed: %s", e)
+
+    @staticmethod
     def _close_tracked_connections(
         connections: set[sqlite3.Connection],
         connections_lock: threading.Lock,
@@ -493,15 +529,19 @@ class LocalDatabase:
     ) -> None:
         """Close tracked connections without retaining the LocalDatabase instance."""
         with connections_lock:
-            for conn in list(connections):
-                try:
-                    conn.close()
-                except Exception as e:
-                    logger.debug(f"Connection close failed: {e}")
+            tracked_connections = list(connections)
             connections.clear()
+
+        for conn in tracked_connections:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.debug("Connection close failed: %s", e)
 
         if hasattr(local_state, "connection"):
             local_state.connection = None
+        if hasattr(local_state, "connection_lease"):
+            local_state.connection_lease = None
 
     def close(self) -> None:
         """Close all database connections and reject future use.

@@ -8,17 +8,18 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPage } from "../ChatPage";
+import type { GobbySession } from "../../../types/sessions";
 import {
+  commandPalettePropsSpy,
   createChat,
   createConversations,
   createVoice,
+  dismissOnMobileSpy,
   isMobileState,
-  isPinnedState,
-  setIsPinnedSpy,
   showTabSpy,
   setupChatPageEnvironment,
   teardownChatPageEnvironment,
-  togglePanelSpy,
+  toggleFromChatSpy,
 } from "./chatPageTestSetup";
 
 vi.mock("../MessageList", async () =>
@@ -61,11 +62,47 @@ vi.mock("../../../hooks/useConfirmDialog", async () =>
   (await import("./chatPageTestSetup")).useConfirmDialogMockFactory(),
 );
 
-describe("ChatPage – activity panel", () => {
+function makeSession(overrides: Partial<GobbySession>): GobbySession {
+  return {
+    id: "session-1",
+    ref: "#1",
+    external_id: "external-1",
+    source: "codex",
+    project_id: "proj-1",
+    title: "Session",
+    status: "active",
+    model: "gpt-5.4",
+    message_count: 1,
+    created_at: "2026-05-04T12:00:00Z",
+    updated_at: "2026-05-04T12:01:00Z",
+    seq_num: 1,
+    summary_markdown: null,
+    digest_markdown: null,
+    git_branch: "main",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    had_edits: false,
+    agent_depth: 0,
+    chat_mode: "plan",
+    agent_run_id: null,
+    parent_session_id: null,
+    session_type: "web_chat",
+    terminal_context: null,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
+    ...overrides,
+  };
+}
+
+// The tri-state crossing logic (desktop<->mobile derivation, never both
+// collapsed, localStorage migration) lives in `useActivityPanel` and is
+// covered directly by useActivityPanel.test.tsx. These tests only assert
+// ChatPage's wiring to the hook's command surface.
+describe("ChatPage – activity panel wiring", () => {
   beforeEach(setupChatPageEnvironment);
   afterEach(teardownChatPageEnvironment);
 
-  it("renders the activity-panel toggle in the status bar when the chat input is visible", async () => {
+  it("wires the command-bar panel toggle to toggleFromChat", async () => {
     render(
       <ChatPage
         chat={createChat()}
@@ -81,17 +118,16 @@ describe("ChatPage – activity panel", () => {
     });
 
     fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
-    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+    expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does not flicker or disappear after repeated mobile user toggles", async () => {
+  it("keeps invoking toggleFromChat on repeated toggles without unmounting the panel", async () => {
     isMobileState.value = true;
-    isPinnedState.value = false;
     const chat = createChat();
     const conversations = createConversations();
     const voice = createVoice();
 
-    const { rerender } = render(
+    render(
       <ChatPage chat={chat} conversations={conversations} voice={voice} />,
     );
 
@@ -101,70 +137,19 @@ describe("ChatPage – activity panel", () => {
       ).toBeInTheDocument();
     });
 
-    setIsPinnedSpy.mockClear();
     fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
-    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
-
-    isPinnedState.value = true;
-    await act(async () => {
-      rerender(
-        <ChatPage chat={chat} conversations={conversations} voice={voice} />,
-      );
-    });
-    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
-
     fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
-    expect(togglePanelSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
-    isPinnedState.value = true;
-    await act(async () => {
-      rerender(
-        <ChatPage chat={chat} conversations={conversations} voice={voice} />,
-      );
-    });
+    expect(toggleFromChatSpy).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
-
-    expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
   });
 
-  it("auto-closes the activity panel when a pinned desktop layout becomes mobile", async () => {
-    isPinnedState.value = true;
-    const chat = createChat();
-    const conversations = createConversations();
-    const voice = createVoice();
-
-    const { rerender } = render(
-      <ChatPage chat={chat} conversations={conversations} voice={voice} />,
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("command-bar-panel-toggle"),
-      ).toBeInTheDocument();
-    });
-    expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
-
-    isMobileState.value = true;
-    await act(async () => {
-      rerender(
-        <ChatPage chat={chat} conversations={conversations} voice={voice} />,
-      );
-    });
-
-    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
-  });
-
-  it("keeps the activity panel open after plan approval on desktop", async () => {
+  it("calls onApprovePlan then dismissOnMobile after plan approval", async () => {
     const onApprovePlan = vi.fn();
 
     render(
       <ChatPage
-        chat={createChat({
-          planPendingApproval: true,
-          onApprovePlan,
-        })}
+        chat={createChat({ planPendingApproval: true, onApprovePlan })}
         conversations={createConversations()}
         voice={createVoice()}
       />,
@@ -175,41 +160,30 @@ describe("ChatPage – activity panel", () => {
     });
 
     expect(onApprovePlan).toHaveBeenCalledTimes(1);
-    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+    expect(dismissOnMobileSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("still closes the activity panel after plan approval on mobile when pinned", async () => {
-    isMobileState.value = true;
-    isPinnedState.value = true;
-    const onApprovePlan = vi.fn();
+  it("calls onRequestPlanChanges then dismissOnMobile after requesting changes", async () => {
+    const onRequestPlanChanges = vi.fn();
 
     render(
       <ChatPage
-        chat={createChat({
-          planPendingApproval: true,
-          onApprovePlan,
-        })}
+        chat={createChat({ planPendingApproval: true, onRequestPlanChanges })}
         conversations={createConversations()}
         voice={createVoice()}
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId("approve-plan")).toBeInTheDocument();
-    });
-    setIsPinnedSpy.mockClear();
-
     await act(async () => {
-      fireEvent.click(screen.getByTestId("approve-plan"));
+      fireEvent.click(screen.getByTestId("request-plan-changes"));
     });
 
-    expect(onApprovePlan).toHaveBeenCalledTimes(1);
-    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
+    expect(onRequestPlanChanges).toHaveBeenCalledWith("Needs changes");
+    expect(dismissOnMobileSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the mobile attach-file callback routed while the panel is pinned", async () => {
+  it("routes the attach-file callback without dismissing the panel", async () => {
     isMobileState.value = true;
-    isPinnedState.value = true;
     const onSend = vi.fn();
 
     render(
@@ -223,7 +197,6 @@ describe("ChatPage – activity panel", () => {
     await waitFor(() => {
       expect(screen.getByTestId("attach-file-to-chat")).toBeInTheDocument();
     });
-    setIsPinnedSpy.mockClear();
 
     fireEvent.click(screen.getByTestId("attach-file-to-chat"));
 
@@ -231,49 +204,99 @@ describe("ChatPage – activity panel", () => {
       "Read and reference this file: /tmp/context.md",
     );
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
-    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+    expect(dismissOnMobileSpy).not.toHaveBeenCalled();
   });
 
-  it("does not unpin on mobile when the activity panel is already unpinned", async () => {
-    isMobileState.value = true;
+  it("feeds the command palette active and paused activity sessions", async () => {
+    const activitySessions = [
+      makeSession({ id: "db-session-1", ref: "#10", seq_num: 10 }),
+      makeSession({
+        id: "terminal-live",
+        ref: "#14",
+        seq_num: 14,
+        session_type: "terminal",
+      }),
+      makeSession({
+        id: "web-paused",
+        ref: "#12",
+        seq_num: 12,
+        status: "paused",
+      }),
+      makeSession({
+        id: "expired-session",
+        ref: "#11",
+        seq_num: 11,
+        status: "expired",
+      }),
+      makeSession({
+        id: "hidden-cron",
+        ref: "#13",
+        seq_num: 13,
+        source: "cron",
+      }),
+    ];
 
     render(
       <ChatPage
-        chat={createChat()}
+        chat={createChat({ dbSessionId: "db-session-1" })}
         conversations={createConversations()}
         voice={createVoice()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
-    });
-
-    expect(setIsPinnedSpy).not.toHaveBeenCalled();
-  });
-
-  it("closes the activity panel after plan changes are requested on mobile when pinned", async () => {
-    isMobileState.value = true;
-    isPinnedState.value = true;
-    const onRequestPlanChanges = vi.fn();
-
-    render(
-      <ChatPage
-        chat={createChat({
-          planPendingApproval: true,
-          onRequestPlanChanges,
-        })}
-        conversations={createConversations()}
-        voice={createVoice()}
+        activitySessions={activitySessions}
       />,
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId("request-plan-changes"));
+      fireEvent.click(screen.getByTestId("command-bar-open-palette"));
     });
 
-    expect(onRequestPlanChanges).toHaveBeenCalledWith("Needs changes");
-    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId("command-palette-session-ids")).toHaveTextContent(
+      "terminal-live,web-paused",
+    );
+    expect(commandPalettePropsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ activeSessionId: "db-session-1" }),
+    );
+  });
+
+  it("routes command-palette non-web session selection through swap viewing", async () => {
+    const viewSession = vi.fn();
+    const observeSession = vi.fn();
+    const onSelectSession = vi.fn();
+    const terminalSession = makeSession({
+      id: "terminal-live",
+      ref: "#14",
+      seq_num: 14,
+      session_type: "terminal",
+    });
+
+    render(
+      <ChatPage
+        chat={createChat({
+          dbSessionId: "db-session-1",
+          viewSession,
+          observeSession,
+        })}
+        conversations={{
+          ...createConversations(),
+          onSelectSession,
+        }}
+        voice={createVoice()}
+        activitySessions={[terminalSession]}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("command-bar-open-palette"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("command-palette-select-terminal-live"));
+    });
+
+    expect(showTabSpy).toHaveBeenCalledWith("sessions");
+    expect(viewSession).toHaveBeenCalledWith("terminal-live", {
+      forceRefresh: true,
+    });
+    expect(observeSession).toHaveBeenCalledWith("terminal-live", "observe");
+    expect(onSelectSession).not.toHaveBeenCalled();
   });
 
   it("hides the swapped terminal while keeping the parked web chat focused", async () => {

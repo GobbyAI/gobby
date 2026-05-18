@@ -9,11 +9,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 from uuid import uuid4
 
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
+from gobby.servers.websocket.attachments import append_attachment_paths, store_proxy_attachments
+from gobby.servers.websocket.chat_attachments import (
+    append_prepared_attachment_context,
+    partition_attachment_items,
+    prepare_message_attachments,
+)
 from gobby.servers.websocket.db import run_db
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
@@ -50,6 +57,63 @@ def _as_int(value: Any, default: int | None = None) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
+def _mode_from_level(value: Any) -> str | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return {0: "plan", 1: "normal", 2: "bypass"}.get(value)
+    return None
+
+
+def _variable_value[T](
+    variables: dict[str, Any],
+    predicate: Callable[[Any], TypeGuard[T]],
+    *names: str,
+) -> T | None:
+    for name in names:
+        value = variables.get(name)
+        if predicate(value):
+            return value
+    return None
+
+
+def _is_nonempty_str(value: Any) -> TypeGuard[str]:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_nonbool_int(value: Any) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _variable_str(variables: dict[str, Any], *names: str) -> str | None:
+    return _variable_value(variables, _is_nonempty_str, *names)
+
+
+def _variable_int(variables: dict[str, Any], *names: str) -> int | None:
+    return _variable_value(variables, _is_nonbool_int, *names)
+
+
+def _read_session_variables(db: Any, session_id: str) -> dict[str, Any]:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(db).get_variables(session_id)
+    return variables if isinstance(variables, dict) else {}
+
+
+async def _load_live_session_variables(
+    mixin: SessionControlMixin,
+    session_manager: Any,
+    session_id: str,
+) -> dict[str, Any]:
+    db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
+    if db is None:
+        return {}
+    try:
+        variables = await run_db(mixin, _read_session_variables, db, session_id)
+        return variables if isinstance(variables, dict) else {}
+    except Exception as exc:
+        logger.debug("Failed to read live session variables for %s: %s", session_id, exc)
+        return {}
+
+
 def _has_terminal_liveness(terminal_context: Any) -> bool:
     """Return True when terminal metadata indicates a live tmux-backed session."""
     if not isinstance(terminal_context, dict):
@@ -84,6 +148,65 @@ def _can_proxy_attach_session(session: Any) -> bool:
         return True
 
     return _has_terminal_liveness(getattr(session, "terminal_context", None))
+
+
+def _session_meta_payload(
+    session: Any,
+    *,
+    variables: dict[str, Any],
+    agent_name: str | None,
+    workflow_name: str | None,
+    agent_run_id: str | None,
+) -> dict[str, Any]:
+    seq_num = _as_int(getattr(session, "seq_num", None))
+    live_chat_mode = (
+        _variable_str(variables, "chat_mode")
+        or _mode_from_level(variables.get("mode_level"))
+        or _as_str(getattr(session, "chat_mode", None))
+    )
+    live_reasoning_effort = _variable_str(
+        variables,
+        "reasoning_effort",
+        "_effective_reasoning_effort",
+        "_requested_reasoning_effort",
+    ) or _as_str(getattr(session, "reasoning_effort", None))
+    live_model = _variable_str(
+        variables,
+        "model",
+        "model_id",
+        "modelId",
+    ) or _as_str(getattr(session, "model", None))
+    live_context_window = _variable_int(
+        variables,
+        "context_window",
+        "model_context_window",
+        "modelContextWindow",
+    ) or _as_int(getattr(session, "context_window", None))
+
+    return {
+        "external_id": _as_str(getattr(session, "external_id", None)),
+        "source": _as_str(getattr(session, "source", None)) or "unknown",
+        "title": _as_str(getattr(session, "title", None)),
+        "status": _as_str(getattr(session, "status", None)) or "unknown",
+        "model": live_model,
+        "reasoning_effort": live_reasoning_effort,
+        "ref": f"#{seq_num}" if seq_num is not None else None,
+        "chat_mode": live_chat_mode,
+        "git_branch": _as_str(getattr(session, "git_branch", None)),
+        "context_window": live_context_window,
+        "session_type": _as_str(getattr(session, "session_type", None)),
+        "can_proxy_attach": _can_proxy_attach_session(session),
+        "workflow_name": workflow_name,
+        "agent_run_id": agent_run_id,
+        "agent_name": agent_name,
+        "usage_input_tokens": _as_int(getattr(session, "usage_input_tokens", 0), 0),
+        "usage_output_tokens": _as_int(getattr(session, "usage_output_tokens", 0), 0),
+        "usage_cache_read_tokens": _as_int(getattr(session, "usage_cache_read_tokens", 0), 0),
+        "usage_cache_creation_tokens": _as_int(
+            getattr(session, "usage_cache_creation_tokens", 0),
+            0,
+        ),
+    }
 
 
 async def _release_source_session(
@@ -566,6 +689,7 @@ async def handle_attach_to_session(
         workflow_name,
         agent_run_id,
     )
+    live_variables = await _load_live_session_variables(mixin, session_manager, session_id)
 
     # Message loading via message_manager removed (session_messages table dropped)
     messages: list[dict[str, Any]] = []
@@ -583,44 +707,28 @@ async def handle_attach_to_session(
         metadata["attached_session_id"] = session_id
 
     # Send response with initial messages and session metadata
-    seq_num = _as_int(getattr(session, "seq_num", None))
-    ref = f"#{seq_num}" if seq_num is not None else None
+    session_meta = _session_meta_payload(
+        session,
+        variables=live_variables,
+        agent_name=agent_name,
+        workflow_name=workflow_name,
+        agent_run_id=agent_run_id,
+    )
     await websocket.send(
         json.dumps(
             {
                 "type": "attach_to_session_result",
                 "session_id": session_id,
-                "external_id": _as_str(getattr(session, "external_id", None)),
-                "source": _as_str(getattr(session, "source", None)) or "unknown",
-                "title": _as_str(getattr(session, "title", None)),
-                "status": _as_str(getattr(session, "status", None)) or "unknown",
-                "model": _as_str(getattr(session, "model", None)),
-                "reasoning_effort": _as_str(getattr(session, "reasoning_effort", None)),
-                "ref": ref,
-                "chat_mode": _as_str(getattr(session, "chat_mode", None)),
-                "git_branch": _as_str(getattr(session, "git_branch", None)),
-                "context_window": _as_int(getattr(session, "context_window", None)),
-                "session_type": _as_str(getattr(session, "session_type", None)),
-                "can_proxy_attach": _can_proxy_attach_session(session),
-                "workflow_name": workflow_name,
-                "agent_run_id": agent_run_id,
-                "agent_name": agent_name,
-                "usage_input_tokens": _as_int(getattr(session, "usage_input_tokens", 0), 0),
-                "usage_output_tokens": _as_int(getattr(session, "usage_output_tokens", 0), 0),
-                "usage_cache_read_tokens": _as_int(
-                    getattr(session, "usage_cache_read_tokens", 0),
-                    0,
-                ),
-                "usage_cache_creation_tokens": _as_int(
-                    getattr(session, "usage_cache_creation_tokens", 0),
-                    0,
-                ),
+                **session_meta,
                 "messages": messages,
                 "total_count": total_count,
             }
         )
     )
-    logger.info(f"Client attached to session {session_id} ({ref}): {total_count} messages loaded")
+    logger.info(
+        f"Client attached to session {session_id} ({session_meta['ref']}): "
+        f"{total_count} messages loaded"
+    )
 
 
 async def handle_send_to_cli_session(
@@ -636,14 +744,25 @@ async def handle_send_to_cli_session(
     {
         "type": "send_to_cli_session",
         "session_id": "db-uuid-of-target-session",
-        "content": "message text"
+        "content": "message text",
+        "attachments": [{"id": "stored-attachment-id"}],
+        "client_message_id": "optional-client-id"
     }
     """
-    session_id = data.get("session_id")
-    content = data.get("content", "").strip()
+    session_id = _as_str(data.get("session_id"))
+    content_value = data.get("content")
+    if content_value is not None and not isinstance(content_value, str):
+        await mixin._send_error(websocket, "send_to_cli_session content must be a string")
+        return
+    content = (content_value or "").strip()
+    attachments = data.get("attachments")
+    attachment_items = attachments if isinstance(attachments, list) else []
     client_message_id = _as_str(data.get("client_message_id"))
-    if not session_id or not content:
-        await mixin._send_error(websocket, "send_to_cli_session requires session_id and content")
+    if not session_id or (not content and not attachment_items):
+        await mixin._send_error(
+            websocket,
+            "send_to_cli_session requires session_id and content or attachments",
+        )
         return
 
     session_manager = getattr(mixin, "session_manager", None)
@@ -668,6 +787,36 @@ async def handle_send_to_cli_session(
             code="UNSUPPORTED_SESSION_TYPE",
         )
         return
+
+    if attachment_items:
+        try:
+            attachment_partitions = partition_attachment_items(attachment_items)
+            prepared = await prepare_message_attachments(
+                mixin,
+                attachment_partitions,
+                target_session_id=session_id,
+            )
+            content = append_prepared_attachment_context(content, prepared)
+            stored_paths = await store_proxy_attachments(
+                session_id,
+                attachment_partitions.legacy_items,
+            )
+            content = append_attachment_paths(content, stored_paths)
+        except ValueError as exc:
+            await mixin._send_error(websocket, str(exc), code="INVALID_ATTACHMENT")
+            return
+        except Exception:
+            logger.warning(
+                "Failed to process attachments for CLI session %s",
+                session_id,
+                exc_info=True,
+            )
+            await mixin._send_error(
+                websocket,
+                "Failed to process attachments",
+                code="ATTACHMENT_ERROR",
+            )
+            return
 
     # Persist the message via InterSessionMessageManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager

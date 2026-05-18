@@ -1,11 +1,8 @@
-import json
 import sqlite3
 from unittest.mock import patch
 
 import pytest
 
-from gobby.config.app import load_config
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import (
     BASELINE_VERSION,
@@ -35,59 +32,32 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
     return {row["name"] for row in db.fetchall(f"PRAGMA index_list({table})")}
 
 
+def _trigger_names(db: LocalDatabase, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in db.fetchall(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+            (table,),
+        )
+    }
+
+
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
-    """Fresh databases apply the flattened baseline plus pending migrations."""
+    """Fresh databases apply the current flattened baseline directly."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    assert BASELINE_VERSION == 239
-    assert latest_known_version() == 256
-    assert [version for version, _description, _action in MIGRATIONS] == [
-        240,
-        241,
-        242,
-        243,
-        244,
-        245,
-        246,
-        247,
-        248,
-        249,
-        250,
-        251,
-        252,
-        253,
-        254,
-        255,
-        256,
-    ]
+    assert BASELINE_VERSION == 260
+    assert latest_known_version() == 260
+    assert MIGRATIONS == []
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 18
-    assert get_current_version(db) == 256
+    assert applied == 1
+    assert get_current_version(db) == 260
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [
-        239,
-        240,
-        241,
-        242,
-        243,
-        244,
-        245,
-        246,
-        247,
-        248,
-        249,
-        250,
-        251,
-        252,
-        253,
-        254,
-        255,
-        256,
-    ]
+    assert versions == [260]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
@@ -97,6 +67,13 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     assert "workspace_role" in _column_names(db, "worktrees")
     assert "integration_branch" in _column_names(db, "task_artifacts")
     assert _table_exists(db, "integration_workspace_mutex")
+    assert "project_id" in _column_names(db, "chat_attachments")
+    assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
+    assert {
+        "trg_chat_attachments_bound_at_write_once",
+        "trg_chat_attachments_updated_at_touch",
+    }.issubset(_trigger_names(db, "chat_attachments"))
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -107,28 +84,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 256
+    assert get_current_version(db) == 260
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [
-        239,
-        240,
-        241,
-        242,
-        243,
-        244,
-        245,
-        246,
-        247,
-        248,
-        249,
-        250,
-        251,
-        252,
-        253,
-        254,
-        255,
-        256,
-    ]
+    assert versions == [260]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -161,182 +119,6 @@ def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
     assert db.fetchall("SELECT version FROM schema_version") == []
 
 
-def test_delivery_migration_drops_legacy_artifact_columns(tmp_path) -> None:
-    db_path = tmp_path / "delivery_migration.db"
-    db = LocalDatabase(db_path)
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute(
-        """
-        CREATE TABLE task_artifacts (
-            task_id TEXT PRIMARY KEY,
-            plan_file_path TEXT,
-            pr_url TEXT,
-            merge_commit_sha TEXT,
-            pr_review_report TEXT,
-            structured_pr_verdict TEXT,
-            merge_campaign_report TEXT
-        )
-        """
-    )
-
-    delivery_migrations = [migration for migration in MIGRATIONS if migration[0] == 240]
-    _run_migration_list(db, current_version=239, migrations=delivery_migrations)
-
-    assert _table_exists(db, "task_delivery_campaigns")
-    assert _table_exists(db, "task_delivery_units")
-    assert {
-        "pr_url",
-        "merge_commit_sha",
-        "pr_review_report",
-        "structured_pr_verdict",
-        "merge_campaign_report",
-    }.isdisjoint(_column_names(db, "task_artifacts"))
-
-
-def test_review_anchor_migration_adds_default_planning_stage(tmp_path) -> None:
-    db_path = tmp_path / "review_anchor_migration.db"
-    db = LocalDatabase(db_path)
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute("CREATE TABLE task_stages_registry (name TEXT PRIMARY KEY)")
-    db.execute(
-        """
-        CREATE TABLE task_type_default_stages (
-            task_type TEXT NOT NULL,
-            stage_name TEXT NOT NULL REFERENCES task_stages_registry(name) ON DELETE CASCADE,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (task_type, stage_name)
-        )
-        """
-    )
-    db.execute("INSERT INTO task_stages_registry (name) VALUES ('planning')")
-
-    review_anchor_migration = [migration for migration in MIGRATIONS if migration[0] == 242]
-    _run_migration_list(db, current_version=241, migrations=review_anchor_migration)
-
-    row = db.fetchone(
-        """
-        SELECT stage_name, position
-          FROM task_type_default_stages
-         WHERE task_type = 'review_anchor'
-        """
-    )
-    assert dict(row) == {"stage_name": "planning", "position": 0}
-
-
-def test_config_store_cleanup_migrates_logging_and_removes_stale_keys(tmp_path) -> None:
-    db_path = tmp_path / "config_store_cleanup.db"
-    db = LocalDatabase(db_path)
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute("INSERT INTO schema_version (version) VALUES (242)")
-    db.execute(
-        """
-        CREATE TABLE config_store (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            source TEXT NOT NULL DEFAULT 'user',
-            is_secret INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-
-    store = ConfigStore(db)
-    active_direct_keys = {
-        "rules.enforcement_enabled": False,
-        "ui_settings.fontSize": 15,
-        "ui_settings.model": "opus",
-        "ui_settings.theme": "dark",
-        "ui_settings.defaultChatMode": "agent",
-        "ui_settings.postPlanChatMode": "ask",
-        "ui_settings.selectedProjectId": "project-123",
-    }
-    legacy_logging_keys = {
-        "logging.level": "debug",
-        "logging.format": "json",
-        "logging.client": "/tmp/legacy-client.log",
-        "logging.client_error": "/tmp/legacy-error.log",
-        "logging.hook_manager": "/tmp/legacy-hook.log",
-        "logging.mcp_server": "/tmp/legacy-mcp-server.log",
-        "logging.mcp_client": "/tmp/legacy-mcp-client.log",
-        "logging.max_size_mb": 42,
-        "logging.backup_count": 8,
-    }
-    stale_exact_keys = {
-        "_meta.yaml_imported": True,
-        "agent_auth.forward_claude_oauth_env": True,
-        "conductor.daily_budget_usd": 1,
-        "conductor.throttle_threshold": 0.8,
-        "conductor.tracking_window_days": 7,
-        "conductor.warning_threshold": 0.5,
-        "embeddings.provider": "openai",
-        "gobby_tasks.expansion.max_subtasks": 12,
-        "gobby_tasks.validation.external_validator_mode": "required",
-        "gobby_tasks.validation.use_external_validator": True,
-        "llm_providers.api_keys.openai_api_key": "sk-raw-test-key",
-        "logging.watchdog": True,
-        "memory.mem0_url": "http://localhost:8000",
-        "ui_settings.defaultchatmode": "legacy",
-        "ui_settings.fontsize": 99,
-        "ui_settings.selectedprojectid": "legacy-project",
-        "workflow.protected_tools": ["Edit"],
-        "workflow.require_task_before_edit": True,
-    }
-    stale_prefix_keys = {
-        "gobby_tasks.enrichment.enabled": False,
-        "review.provider": "claude",
-        "task_description.enabled": True,
-        "title_synthesis.model": "haiku",
-        "hook_extensions.plugins.old.enabled": True,
-        "llm_providers.litellm.api_base": "http://localhost:4000",
-        "memory_extraction.provider": "legacy",
-        "watchdog.enabled": True,
-    }
-    store.set_many(active_direct_keys)
-    store.set_many(legacy_logging_keys)
-    store.set_many(stale_exact_keys)
-    store.set_many(stale_prefix_keys)
-    store.set("telemetry.log_level", "warning")
-
-    cleanup_migration = [migration for migration in MIGRATIONS if migration[0] == 243]
-    applied = _run_migration_list(db, current_version=242, migrations=cleanup_migration)
-
-    assert applied == 1
-    assert get_current_version(db) == 243
-
-    keys = set(store.list_keys())
-    for key, value in active_direct_keys.items():
-        assert store.get(key) == value
-        assert key in keys
-    for key in legacy_logging_keys | stale_exact_keys | stale_prefix_keys:
-        assert key not in keys
-    for prefix in (
-        "gobby_tasks.enrichment.",
-        "review.",
-        "task_description.",
-        "title_synthesis.",
-        "hook_extensions.plugins.",
-        "llm_providers.litellm.",
-        "memory_extraction.",
-        "watchdog.",
-    ):
-        assert not any(key.startswith(prefix) for key in keys)
-
-    assert store.get("telemetry.log_level") == "warning"
-    assert store.get("telemetry.log_format") == "json"
-    assert store.get("telemetry.log_file") == "/tmp/legacy-client.log"
-    assert store.get("telemetry.log_file_error") == "/tmp/legacy-error.log"
-    assert store.get("telemetry.log_file_hook_manager") == "/tmp/legacy-hook.log"
-    assert store.get("telemetry.log_file_mcp_server") == "/tmp/legacy-mcp-server.log"
-    assert store.get("telemetry.log_file_mcp_client") == "/tmp/legacy-mcp-client.log"
-    assert store.get("telemetry.max_size_mb") == 42
-    assert store.get("telemetry.backup_count") == 8
-
-    config = load_config(config_file=str(tmp_path / "bootstrap.yaml"), config_store=store)
-    assert config.telemetry.log_level == "warning"
-    assert config.telemetry.log_format == "json"
-    assert config.telemetry.max_size_mb == 42
-
-
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     """Existing baseline databases self-heal the bootstrapped system session on startup."""
     db_path = tmp_path / "system_session_repair.db"
@@ -359,9 +141,9 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     assert repaired["title"] == "_system"
 
 
-@pytest.mark.parametrize("legacy_version", [1, 218, 219, 238])
+@pytest.mark.parametrize("legacy_version", [1, 218, 219, 238, 239, 257, 258, 259])
 def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) -> None:
-    """Historical SQLite upgrades below the v239 baseline are unsupported."""
+    """Historical SQLite upgrades below the v260 baseline are unsupported."""
     db_path = tmp_path / f"legacy_{legacy_version}.db"
     db = LocalDatabase(db_path)
     db.execute(
@@ -379,7 +161,7 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
 
     message = str(exc_info.value)
     assert f"Database version {legacy_version}" in message
-    assert "current SQLite baseline 239" in message
+    assert "current SQLite baseline 260" in message
     assert "reset" in message
     assert "manually recover" in message
     assert "~/.gobby/gobby-hub.db" in message
@@ -406,7 +188,7 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
 
 
 def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
-    """The v239 baseline includes representative storage domains."""
+    """The v260 baseline includes representative storage domains."""
     db_path = tmp_path / "baseline_tables.db"
     db = LocalDatabase(db_path)
 
@@ -440,6 +222,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
         "code_content_chunks",
         "checkpoints",
         "chat_messages",
+        "chat_attachments",
         "comms_messages",
         "bin_update_state",
     }
@@ -448,7 +231,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
 
 
 def test_flattened_baseline_launch_columns(tmp_path) -> None:
-    """The v239 baseline exposes the canonical post-flattening columns."""
+    """The v260 baseline exposes the canonical post-flattening columns."""
     db_path = tmp_path / "baseline_columns.db"
     db = LocalDatabase(db_path)
 
@@ -486,6 +269,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
         _column_names(db, "token_events")
     )
     assert "content_blocks_json" in _column_names(db, "chat_messages")
+    assert "project_id" in _column_names(db, "chat_attachments")
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")
@@ -514,7 +298,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
 
 
 def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
-    """The v239 baseline includes indexes and FK semantics formerly added by migrations."""
+    """The v260 baseline includes indexes and FK semantics formerly added by migrations."""
     db_path = tmp_path / "baseline_indexes.db"
     db = LocalDatabase(db_path)
 
@@ -536,6 +320,13 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_token_events_dedup" in _index_names(db, "token_events")
     assert "idx_cc_target" in _index_names(db, "code_calls")
     assert "idx_plans_project_state" in _index_names(db, "plans")
+    assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
+    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
+    assert {
+        "trg_chat_attachments_bound_at_write_once",
+        "trg_chat_attachments_updated_at_touch",
+    }.issubset(_trigger_names(db, "chat_attachments"))
     assert {
         "tool_name",
         "installed_version",
@@ -594,7 +385,7 @@ def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
 
 
 def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
-    """The v239 baseline contains the repaired stage registry and zero-based defaults."""
+    """The v260 baseline contains the repaired stage registry and zero-based defaults."""
     db_path = tmp_path / "baseline_stages.db"
     db = LocalDatabase(db_path)
 
@@ -650,237 +441,6 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_type["review_anchor"] == [("planning", 0)]
     for rows in by_type.values():
         assert [position for _stage_name, position in rows] == list(range(len(rows)))
-
-
-def test_migration_254_adds_reviewer_selector_to_existing_registry(tmp_path) -> None:
-    db = LocalDatabase(tmp_path / "stage-reviewer-selector.db")
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute("INSERT INTO schema_version (version) VALUES (253)")
-    db.execute(
-        """
-        CREATE TABLE task_stages_registry (
-            name TEXT PRIMARY KEY,
-            reviewer_agent TEXT,
-            updated_at TEXT
-        )
-        """
-    )
-    db.execute(
-        """
-        INSERT INTO task_stages_registry (name, reviewer_agent, updated_at)
-        VALUES ('development', 'custom-reviewer', datetime('now'))
-        """
-    )
-    migration_254 = [item for item in MIGRATIONS if item[0] == 254]
-
-    assert _run_migration_list(db, 253, migration_254) == 1
-
-    row = db.fetchone(
-        """
-        SELECT reviewer_agent, reviewer_agent_selector_json
-          FROM task_stages_registry
-         WHERE name = 'development'
-        """
-    )
-    assert row["reviewer_agent"] is None
-    selector = json.loads(row["reviewer_agent_selector_json"])
-    assert selector["default"] == "custom-reviewer"
-    assert selector["rules"] == [{"category": "docs", "reviewer_agent": "doc-reviewer"}]
-    assert get_current_version(db) == 254
-
-
-def test_migration_255_adds_project_lifecycle_events_to_existing_database(tmp_path) -> None:
-    db = LocalDatabase(tmp_path / "project-lifecycle-events.db")
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute("INSERT INTO schema_version (version) VALUES (254)")
-    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
-    db.execute("CREATE TABLE task_stages_registry (name TEXT PRIMARY KEY)")
-    migration_255 = [item for item in MIGRATIONS if item[0] == 255]
-
-    assert _run_migration_list(db, 254, migration_255) == 1
-
-    assert _table_exists(db, "project_lifecycle_events")
-    assert "idx_project_lifecycle_events_project" in _index_names(
-        db,
-        "project_lifecycle_events",
-    )
-    assert _table_exists(db, "build_profiles")
-    assert "deleted_at" in _column_names(db, "task_stages_registry")
-    assert get_current_version(db) == 255
-
-
-def test_migration_256_adds_cross_repo_delivery_columns(tmp_path) -> None:
-    db = LocalDatabase(tmp_path / "cross-repo-delivery.db")
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute("INSERT INTO schema_version (version) VALUES (255)")
-    db.execute(
-        """
-        CREATE TABLE task_delivery_campaigns (
-            task_id TEXT PRIMARY KEY,
-            state TEXT NOT NULL DEFAULT 'pending',
-            merge_strategy TEXT NOT NULL DEFAULT 'squash',
-            structured_pr_verdict TEXT,
-            pr_report_ref TEXT,
-            merge_sha TEXT,
-            merge_report_ref TEXT,
-            last_error TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE build_profiles (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            display_label TEXT NOT NULL,
-            description TEXT NOT NULL,
-            skip_stages_json TEXT NOT NULL DEFAULT '[]',
-            isolation TEXT NOT NULL DEFAULT 'worktree',
-            unattended INTEGER NOT NULL DEFAULT 0,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            source TEXT NOT NULL,
-            project_id TEXT,
-            tags_json TEXT NOT NULL DEFAULT '[]',
-            bundled_hash TEXT,
-            deleted_at TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    migration_256 = [item for item in MIGRATIONS if item[0] == 256]
-
-    assert _run_migration_list(db, 255, migration_256) == 1
-
-    assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
-        _column_names(db, "task_delivery_campaigns")
-    )
-    assert {"delivery_mode", "delivery_target_repo"}.issubset(_column_names(db, "build_profiles"))
-    assert get_current_version(db) == 256
-
-
-def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:
-    db_path = tmp_path / "remove_test_arch.db"
-    db = LocalDatabase(db_path)
-    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    db.execute(
-        """
-        CREATE TABLE task_stage_states (
-            task_id TEXT NOT NULL,
-            stage_name TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (task_id, stage_name)
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE task_type_default_stages (
-            task_type TEXT NOT NULL,
-            stage_name TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (task_type, stage_name)
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE task_stages_registry (
-            name TEXT PRIMARY KEY,
-            position_hint INTEGER
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE task_artifacts (
-            task_id TEXT PRIMARY KEY,
-            test_arch_attempts INTEGER,
-            qa_attempts INTEGER
-        )
-        """
-    )
-    db.executemany(
-        """
-        INSERT INTO task_stage_states (task_id, stage_name, position)
-        VALUES (?, ?, ?)
-        """,
-        [
-            ("task-1", "planning", 4),
-            ("task-1", "test_arch", 5),
-            ("task-1", "expansion", 6),
-            ("task-1", "development", 7),
-            ("task-2", "test_arch", 1),
-            ("task-2", "pr", 3),
-        ],
-    )
-    db.executemany(
-        """
-        INSERT INTO task_type_default_stages (task_type, stage_name, position)
-        VALUES (?, ?, ?)
-        """,
-        [
-            ("epic", "planning", 4),
-            ("epic", "test_arch", 5),
-            ("epic", "expansion", 6),
-            ("epic", "development", 7),
-            ("feature", "planning", 0),
-            ("feature", "test_arch", 1),
-            ("feature", "expansion", 2),
-        ],
-    )
-    db.executemany(
-        "INSERT INTO task_stages_registry (name, position_hint) VALUES (?, ?)",
-        [
-            ("planning", 4),
-            ("test_arch", 5),
-            ("expansion", 6),
-            ("development", 7),
-            ("pr", 8),
-        ],
-    )
-    db.execute(
-        """
-        INSERT INTO task_artifacts (task_id, test_arch_attempts, qa_attempts)
-        VALUES ('task-1', 2, 3)
-        """
-    )
-
-    migration = [item for item in MIGRATIONS if item[0] == 253]
-    applied = _run_migration_list(db, current_version=252, migrations=migration)
-
-    assert applied == 1
-    assert "test_arch_attempts" not in _column_names(db, "task_artifacts")
-    assert db.fetchone("SELECT name FROM task_stages_registry WHERE name = 'test_arch'") is None
-    stage_rows = db.fetchall(
-        """
-        SELECT task_id, stage_name, position
-          FROM task_stage_states
-         ORDER BY task_id, position
-        """
-    )
-    assert [tuple(row) for row in stage_rows] == [
-        ("task-1", "planning", 0),
-        ("task-1", "expansion", 1),
-        ("task-1", "development", 2),
-        ("task-2", "pr", 0),
-    ]
-    default_rows = db.fetchall(
-        """
-        SELECT task_type, stage_name, position
-          FROM task_type_default_stages
-         ORDER BY task_type, position
-        """
-    )
-    assert [tuple(row) for row in default_rows] == [
-        ("epic", "planning", 0),
-        ("epic", "expansion", 1),
-        ("epic", "development", 2),
-        ("feature", "planning", 0),
-        ("feature", "expansion", 1),
-    ]
 
 
 def test_migrations_needed_checks_latest_schema_version(tmp_path) -> None:

@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
+from gobby.install.manifest import (
+    build_bundled_content_manifest,
+    hash_file_bytes,
+    load_bundled_content_manifest,
+    write_bundled_content_manifest,
+)
+from gobby.storage.workflow_definitions import compute_definition_hash
 from gobby.sync.integrity import (
+    BUNDLED_SYNC_CONTENT_TYPES,
     CONTENT_TYPE_DIRS,
     IntegrityResult,
+    _to_shared_relative_path,
     get_dirty_content_types,
     verify_bundled_integrity,
 )
@@ -39,6 +51,73 @@ class TestIntegrityResult:
         assert result.untracked_files == []
         assert result.errors == []
         assert result.git_available is True
+        assert result.checked is False
+        assert result.source == "none"
+
+
+class TestBundledContentManifest:
+    """Tests for deterministic raw-byte manifest generation."""
+
+    def test_manifest_generation_is_deterministic_and_hashes_raw_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "skills" / "z").mkdir(parents=True)
+        (shared / "skills" / "a").mkdir(parents=True)
+        z_file = shared / "skills" / "z" / "SKILL.md"
+        a_file = shared / "skills" / "a" / "SKILL.md"
+        z_file.write_bytes(b"z-content\n")
+        a_file.write_bytes(b"a-content\n")
+        (shared / "skills" / "__pycache__").mkdir()
+        (shared / "skills" / "__pycache__" / "ignored.pyc").write_bytes(b"cache")
+        (shared / "skills" / "ignored.pyo").write_bytes(b"cache")
+
+        manifest = build_bundled_content_manifest(shared)
+
+        assert list(manifest["files"]) == [
+            "skills/a/SKILL.md",
+            "skills/z/SKILL.md",
+        ]
+        assert manifest["files"]["skills/a/SKILL.md"] == hashlib.sha256(b"a-content\n").hexdigest()
+        assert manifest == build_bundled_content_manifest(shared)
+
+    def test_manifest_generation_excludes_symlinks(self, tmp_path: Path) -> None:
+        shared = tmp_path / "shared"
+        skill_dir = shared / "skills" / "demo"
+        skill_dir.mkdir(parents=True)
+        target = skill_dir / "target.md"
+        target.write_text("target", encoding="utf-8")
+        (skill_dir / "linked.md").symlink_to(target)
+
+        manifest = build_bundled_content_manifest(shared)
+
+        assert list(manifest["files"]) == ["skills/demo/target.md"]
+
+    def test_manifest_load_read_error_returns_validation_error(self, tmp_path: Path) -> None:
+        manifest_path = tmp_path / "bundled_content_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+
+        with patch("pathlib.Path.read_text", side_effect=OSError("denied")):
+            files, errors = load_bundled_content_manifest(tmp_path)
+
+        assert files is None
+        assert errors == ["Failed to read bundled content manifest: denied"]
+
+    def test_hash_distinguishes_yaml_reformat_from_normalized_definition_hash(
+        self, tmp_path: Path
+    ) -> None:
+        first = tmp_path / "first.yaml"
+        second = tmp_path / "second.yaml"
+        first.write_text("name: demo\ntype: pipeline\nsteps: []\n", encoding="utf-8")
+        second.write_text("name: demo\n\ntype: pipeline\nsteps: []\n", encoding="utf-8")
+
+        first_definition = json.dumps(yaml.safe_load(first.read_text(encoding="utf-8")))
+        second_definition = json.dumps(yaml.safe_load(second.read_text(encoding="utf-8")))
+
+        assert hash_file_bytes(first) != hash_file_bytes(second)
+        assert compute_definition_hash(first_definition) == compute_definition_hash(
+            second_definition
+        )
 
 
 class TestVerifyBundledIntegrity:
@@ -52,7 +131,7 @@ class TestVerifyBundledIntegrity:
         assert "Shared directory not found" in result.errors[0]
 
     def test_not_a_git_repo(self, tmp_path: Path) -> None:
-        """Returns git_available=False when not in a git repo."""
+        """Returns unchecked when git and manifest are unavailable."""
         shared = tmp_path / "shared"
         shared.mkdir()
 
@@ -60,7 +139,94 @@ class TestVerifyBundledIntegrity:
             result = verify_bundled_integrity(tmp_path)
 
         assert result.git_available is False
+        assert result.checked is False
+        assert result.source == "none"
         assert result.all_clean is True
+        assert "manifest not found" in result.errors[0]
+
+    def test_non_git_clean_manifest_verifies_cleanly(self, tmp_path: Path) -> None:
+        """Non-git installs verify against the packaged manifest."""
+        shared = tmp_path / "shared"
+        (shared / "skills" / "demo").mkdir(parents=True)
+        (shared / "skills" / "demo" / "SKILL.md").write_text("content", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+
+        with patch("gobby.sync.integrity.run_git_command", return_value=None):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.git_available is False
+        assert result.checked is True
+        assert result.source == "manifest"
+        assert result.all_clean is True
+        assert result.clean_files == ["shared/skills/demo/SKILL.md"]
+
+    def test_non_git_tampered_yaml_maps_to_skipped_content_type(self, tmp_path: Path) -> None:
+        """Manifest hash mismatches become dirty files with sync target mapping."""
+        shared = tmp_path / "shared"
+        pipeline = shared / "workflows" / "pipelines" / "demo.yaml"
+        pipeline.parent.mkdir(parents=True)
+        pipeline.write_text("name: demo\n", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+        pipeline.write_text("name: demo\n# tampered\n", encoding="utf-8")
+
+        with patch("gobby.sync.integrity.run_git_command", return_value=None):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.checked is True
+        assert result.source == "manifest"
+        assert result.all_clean is False
+        assert result.dirty_files == ["shared/workflows/pipelines/demo.yaml"]
+        assert get_dirty_content_types(result.dirty_files, tmp_path) == {"pipelines"}
+
+    def test_non_git_unreadable_manifest_file_is_dirty(self, tmp_path: Path) -> None:
+        """Manifest file read failures are dirty, not silently clean."""
+        shared = tmp_path / "shared"
+        skill = shared / "skills" / "demo" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("content", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+
+        with (
+            patch("gobby.sync.integrity.run_git_command", return_value=None),
+            patch("gobby.sync.integrity.hash_file_bytes", side_effect=OSError("denied")),
+        ):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.checked is True
+        assert result.all_clean is False
+        assert result.dirty_files == ["shared/skills/demo/SKILL.md"]
+        assert "Failed to read shared/skills/demo/SKILL.md" in result.errors[0]
+
+    def test_non_git_extra_bundled_yaml_is_untracked(self, tmp_path: Path) -> None:
+        """Extra protected files are treated like untracked git content."""
+        shared = tmp_path / "shared"
+        rule = shared / "rules" / "build" / "known.yaml"
+        rule.parent.mkdir(parents=True)
+        rule.write_text("rules: {}\n", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+        extra = shared / "rules" / "build" / "extra.yaml"
+        extra.write_text("rules: {}\n", encoding="utf-8")
+
+        with patch("gobby.sync.integrity.run_git_command", return_value=None):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.untracked_files == ["shared/rules/build/extra.yaml"]
+        assert get_dirty_content_types(result.untracked_files, tmp_path) == {"rules"}
+
+    def test_unknown_registry_file_is_ignored(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("WARNING", logger="gobby.sync.integrity")
+
+        content_types = get_dirty_content_types(
+            ["shared/registry/experimental.yaml"],
+            tmp_path,
+        )
+
+        assert content_types == set()
+        assert "Unknown bundled registry file is ignored by sync integrity" in caplog.text
 
     def test_clean_repo(self, tmp_path: Path) -> None:
         """All files clean when git reports no changes."""
@@ -83,6 +249,8 @@ class TestVerifyBundledIntegrity:
             result = verify_bundled_integrity(tmp_path)
 
         assert result.git_available is True
+        assert result.checked is True
+        assert result.source == "git"
         assert result.all_clean is True
         assert len(result.dirty_files) == 0
         assert len(result.untracked_files) == 0
@@ -211,17 +379,38 @@ class TestGetDirtyContentTypes:
 
         assert result == set()
 
-    def test_no_git_returns_empty(self, tmp_path: Path) -> None:
-        """Returns empty set when git is not available."""
+    def test_maps_manifest_paths_without_git(self, tmp_path: Path) -> None:
+        """Maps manifest-shaped paths without requiring git."""
         shared = tmp_path / "shared"
         shared.mkdir()
 
         with patch("gobby.sync.integrity.run_git_command", return_value=None):
             result = get_dirty_content_types(["shared/workflows/pipelines/x.yaml"], tmp_path)
 
-        assert result == set()
+        assert result == {"pipelines"}
+
+    def test_unrelated_relative_path_returns_no_shared_path(self, tmp_path: Path) -> None:
+        assert _to_shared_relative_path("README.md", tmp_path) is None
+
+    def test_maps_top_level_workflows_rules_variables_and_build_profiles(
+        self, tmp_path: Path
+    ) -> None:
+        """Covers every DB-synced bundled root."""
+        dirty = [
+            "shared/workflows/dev.yaml",
+            "shared/workflows/rules/tool-hygiene/require-uv.yaml",
+            "shared/rules/build/build-agent-safety.yaml",
+            "shared/workflows/variables/gobby-default-variables.yaml",
+            "shared/registry/build_profiles.yaml",
+        ]
+
+        result = get_dirty_content_types(dirty, tmp_path)
+
+        assert result == {"pipelines", "rules", "variables", "build_profiles"}
 
     def test_content_type_dirs_matches_sync_targets(self) -> None:
-        """CONTENT_TYPE_DIRS covers all DB-synced content types."""
-        expected = {"skills", "prompts", "rules", "agents", "variables", "pipelines"}
-        assert set(CONTENT_TYPE_DIRS.values()) == expected
+        """Directory mappings plus explicit file mappings cover synced types."""
+        expected = BUNDLED_SYNC_CONTENT_TYPES
+        explicit_file_targets = {"build_profiles"}
+        assert set(CONTENT_TYPE_DIRS.values()) | explicit_file_targets == expected
+        assert "build_profiles" not in set(CONTENT_TYPE_DIRS.values())

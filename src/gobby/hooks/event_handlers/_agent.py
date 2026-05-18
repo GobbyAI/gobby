@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Pattern for /gobby or /gobby skillname with optional args
 _GOBBY_CMD_PATTERN = re.compile(r"^/gobby(?::(\S+))?\s*(.*)?$", re.IGNORECASE | re.DOTALL)
+_HELP_SKILL_LIST_LIMIT = 50
 
 
 def _load_agent_prompt(
@@ -61,6 +62,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         """Handle BEFORE_AGENT event (user prompt submit)."""
         input_data = event.data
         prompt = input_data.get("prompt", "")
+        stripped_prompt = prompt.strip()
         session_id = event.metadata.get("_platform_session_id")
 
         context_parts = []
@@ -69,7 +71,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
 
             # Update status to active (unless /clear or /exit)
-            prompt_lower = prompt.strip().lower()
+            prompt_lower = stripped_prompt.lower()
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "active")
@@ -101,18 +103,25 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         self.logger.warning(f"Failed to set handoff_source: {e}")
 
         # Skill interception — runs before lifecycle workflows
-        if self._skill_manager and prompt.strip():
+        if self._skill_manager and stripped_prompt:
+            # ``stripped_prompt`` is truthy here, so split() always has a first token.
+            skill_identifier = stripped_prompt.split(None, 1)[0]
             try:
-                skill_context = self._intercept_skill_command(prompt.strip(), session_id)
+                skill_context = self._intercept_skill_command(stripped_prompt, session_id)
                 if skill_context:
                     context_parts.append(skill_context)
                 else:
                     # Try trigger-based suggestion for non-command prompts
-                    suggestion = self._suggest_skills(prompt.strip())
+                    suggestion = self._suggest_skills(stripped_prompt)
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
-                self.logger.error(f"Failed skill interception: {e}", exc_info=True)
+                self.logger.error(
+                    "Failed skill interception for %s: %s",
+                    skill_identifier,
+                    e,
+                    exc_info=True,
+                )
 
         response = HookResponse(
             decision="allow",
@@ -297,9 +306,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
 
         skill_lines = []
-        for skill in user_skills:
+        for skill in user_skills[:_HELP_SKILL_LIST_LIMIT]:
             desc = skill.description.split(".")[0] if skill.description else ""
             skill_lines.append(f"- `/gobby {skill.name}` — {desc}")
+        hidden_count = len(user_skills) - len(skill_lines)
+        if hidden_count > 0:
+            skill_lines.append(
+                f"- ... {hidden_count} more skills. Use `list_skills()` on `gobby-skills`."
+            )
         skills_list = "\n".join(skill_lines)
 
         fallback = (

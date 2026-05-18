@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.sync import sync
+from gobby.sync.integrity import BUNDLED_SYNC_CONTENT_TYPES, IntegrityResult
 
 pytestmark = pytest.mark.unit
 
@@ -250,27 +251,142 @@ class TestSyncProductionMode:
         mock_verify.return_value = integrity_result
 
         result = runner.invoke(sync, ["--verify-only"], catch_exceptions=False)
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "Blocking tampered content types: skills" in result.output
+
+        fail_result = runner.invoke(
+            sync,
+            ["--verify-only", "--fail-on-verify"],
+            catch_exceptions=False,
+        )
+        assert fail_result.exit_code == 1
 
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=False)
-    def test_prod_no_git(
+    def test_prod_verify_only_missing_manifest_fails_closed(
         self,
         _dev: MagicMock,
         _install: MagicMock,
         mock_verify: MagicMock,
         runner: CliRunner,
     ) -> None:
-        integrity_result = MagicMock()
-        integrity_result.git_available = False
-        integrity_result.all_clean = True
-        mock_verify.return_value = integrity_result
+        mock_verify.return_value = IntegrityResult(
+            git_available=False,
+            checked=False,
+            source="none",
+            errors=[
+                "Bundled content manifest not found: /fake/install/bundled_content_manifest.json"
+            ],
+        )
 
         result = runner.invoke(sync, ["--verify-only", "--verbose"], catch_exceptions=False)
         assert result.exit_code == 0
-        assert "Git not available" in result.output
+        assert "Integrity verification unavailable" in result.output
+
+        fail_result = runner.invoke(
+            sync,
+            ["--verify-only", "--fail-on-verify", "--verbose"],
+            catch_exceptions=False,
+        )
+        assert fail_result.exit_code == 1
+
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_verify_only_manifest_clean(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_verify.return_value = IntegrityResult(
+            git_available=False,
+            checked=True,
+            source="manifest",
+        )
+
+        result = runner.invoke(sync, ["--verify-only", "--verbose"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Git not available; verified packaged manifest" in result.output
+        assert "All bundled content is clean" in result.output
+
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.storage.migrations.run_migrations")
+    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_non_git_tampering_passes_skip_types_to_sync(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        mock_load: MagicMock,
+        mock_db_cls: MagicMock,
+        _mig: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_verify.return_value = IntegrityResult(
+            dirty_files=["shared/workflows/pipelines/demo.yaml"],
+            git_available=False,
+            checked=True,
+            source="manifest",
+        )
+        mock_config = MagicMock()
+        mock_config.database_path = str(tmp_path / "test.db")
+        mock_load.return_value = mock_config
+        (tmp_path / "test.db").write_text("")
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Blocking tampered content types: pipelines" in result.output
+        assert mock_sync.call_args.kwargs["skip_types"] == {"pipelines"}
+
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.storage.migrations.run_migrations")
+    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_missing_manifest_skips_all_bundled_sync_targets(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        mock_load: MagicMock,
+        mock_db_cls: MagicMock,
+        _mig: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_verify.return_value = IntegrityResult(
+            git_available=False,
+            checked=False,
+            source="none",
+            errors=[
+                "Bundled content manifest not found: /fake/install/bundled_content_manifest.json"
+            ],
+        )
+        mock_config = MagicMock()
+        mock_config.database_path = str(tmp_path / "test.db")
+        mock_load.return_value = mock_config
+        (tmp_path / "test.db").write_text("")
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Integrity verification unavailable" in result.output
+        assert mock_sync.call_args.kwargs["skip_types"] == BUNDLED_SYNC_CONTENT_TYPES
 
 
 # ---------------------------------------------------------------------------

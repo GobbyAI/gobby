@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { DEFAULT_TASK_PRIORITY } from '../../lib/taskOptions'
 
 interface QuickCaptureTaskProps {
   isOpen: boolean
@@ -56,7 +57,11 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
       const response = await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), task_type: taskType, priority: 2 }),
+        body: JSON.stringify({
+          title: title.trim(),
+          task_type: taskType,
+          priority: DEFAULT_TASK_PRIORITY,
+        }),
       })
       if (!response.ok) {
         console.error('Failed to create task:', response.status)

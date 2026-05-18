@@ -1,11 +1,12 @@
-"""Git integrity verification for bundled content.
+"""Integrity verification for bundled content.
 
 Detects modifications to bundled YAML/MD files (workflows, skills, prompts,
-rules, agents) by checking git status of the shared content directory.
+rules, agents) by checking git status of the shared content directory or a
+packaged raw-byte manifest when git is unavailable.
 
 In dev mode (``is_dev_mode()``), integrity checks are skipped entirely —
-file edits are expected.  In production mode, any git-tracked modifications
-or untracked files in the shared directory are flagged as tampered.
+file edits are expected. In production mode, any git-tracked modifications,
+manifest hash mismatches, or untracked protected files are flagged as tampered.
 """
 
 from __future__ import annotations
@@ -13,21 +14,49 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
+from gobby.install.manifest import (
+    hash_file_bytes,
+    iter_bundled_manifest_files,
+    load_bundled_content_manifest,
+)
 from gobby.utils.git import run_git_command
 
 logger = logging.getLogger(__name__)
 
-# Maps subdirectory names under install/shared/ to content type names
-# used by sync_bundled_content_to_db's sync_targets.
+IntegritySource = Literal["git", "manifest", "none"]
+
+BUNDLED_SYNC_CONTENT_TYPES: set[str] = {
+    "skills",
+    "prompts",
+    "agents",
+    "pipelines",
+    "rules",
+    "variables",
+    "build_profiles",
+}
+
+# Maps protected paths under install/shared/ to content type names used by the
+# DB sync targets. Keep this in lockstep with BUNDLED_SYNC_CONTENT_TYPES; the
+# integrity tests assert that every synced target has at least one path mapping.
 CONTENT_TYPE_DIRS: dict[str, str] = {
     "skills": "skills",
     "prompts": "prompts",
     "workflows/rules": "rules",
+    "rules": "rules",
     "workflows/agents": "agents",
     "workflows/variables": "variables",
     "workflows/pipelines": "pipelines",
 }
+
+_GIT_PROTECTED_PATHS: tuple[str, ...] = (
+    "skills",
+    "prompts",
+    "workflows",
+    "rules",
+    "registry/build_profiles.yaml",
+)
 
 
 @dataclass
@@ -39,6 +68,8 @@ class IntegrityResult:
     untracked_files: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     git_available: bool = True
+    checked: bool = False
+    source: IntegritySource = "none"
 
     @property
     def all_clean(self) -> bool:
@@ -47,21 +78,24 @@ class IntegrityResult:
 
 
 def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
-    """Verify git integrity of bundled content under *install_dir*/shared/.
+    """Verify integrity of bundled content under *install_dir*/shared/.
 
-    Checks for:
+    Git is preferred when available. Packaged installs without git fall back to
+    the bundled raw-byte manifest.
+
+    Git checks:
     - Modified tracked files (staged and unstaged) via ``git diff``
     - Untracked files via ``git ls-files --others``
 
-    If *install_dir* is not inside a git repository (e.g. installed via
-    package), returns ``git_available=False`` and sync proceeds normally.
+    Manifest checks:
+    - Missing manifest entries and hash mismatches as dirty files
+    - Extra files under protected content roots as untracked files
 
     Args:
         install_dir: The ``src/gobby/install`` directory (parent of ``shared/``).
 
     Returns:
-        An :class:`IntegrityResult` with lists of clean, dirty, and untracked
-        files relative to the repo root.
+        An :class:`IntegrityResult` with lists of clean, dirty, and untracked files.
     """
     result = IntegrityResult()
     shared_dir = install_dir / "shared"
@@ -76,7 +110,7 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
     if repo_root is None:
         # Not a git repo — installed package context
         result.git_available = False
-        return result
+        return _verify_manifest_integrity(install_dir, result)
 
     repo_root_path = Path(repo_root)
 
@@ -86,12 +120,14 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
     except ValueError:
         result.errors.append(f"Shared dir {shared_dir} is not under repo root {repo_root_path}")
         result.git_available = False
-        return result
+        return _verify_manifest_integrity(install_dir, result)
 
     rel_shared_str = str(rel_shared)
 
-    # Only check the content-type subdirs (skills, prompts, rules, agents, workflows)
-    content_dirs = [f"{rel_shared_str}/{d}" for d in CONTENT_TYPE_DIRS]
+    result.checked = True
+    result.source = "git"
+
+    content_dirs = [f"{rel_shared_str}/{path}" for path in _GIT_PROTECTED_PATHS]
 
     # 1. Unstaged modifications
     unstaged = run_git_command(
@@ -134,48 +170,122 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
     return result
 
 
+def _verify_manifest_integrity(install_dir: Path, result: IntegrityResult) -> IntegrityResult:
+    shared_dir = install_dir / "shared"
+    manifest_files, errors = load_bundled_content_manifest(install_dir)
+    if errors:
+        result.errors.extend(errors)
+    if manifest_files is None:
+        result.source = "none"
+        result.checked = False
+        return result
+
+    result.source = "manifest"
+    result.checked = True
+
+    clean: list[str] = []
+    dirty: list[str] = []
+    for relative_path, expected_hash in manifest_files.items():
+        path = shared_dir / relative_path
+        display_path = f"shared/{relative_path}"
+        if not path.is_file():
+            dirty.append(display_path)
+            continue
+        try:
+            actual_hash = hash_file_bytes(path)
+        except OSError as exc:
+            logger.error("Failed to read bundled manifest file %s", path, exc_info=True)
+            result.errors.append(f"Failed to read {display_path}: {exc}")
+            dirty.append(display_path)
+            continue
+        if actual_hash != expected_hash:
+            dirty.append(display_path)
+        else:
+            clean.append(display_path)
+
+    live_files = {
+        path.relative_to(shared_dir).as_posix() for path in iter_bundled_manifest_files(shared_dir)
+    }
+    extra_files = sorted(live_files - set(manifest_files))
+
+    result.clean_files = sorted(clean)
+    result.dirty_files = sorted(dirty)
+    result.untracked_files = [
+        f"shared/{relative_path}"
+        for relative_path in extra_files
+        if _content_type_for_shared_relative_path(relative_path) is not None
+    ]
+    return result
+
+
 def get_dirty_content_types(dirty_files: list[str], install_dir: Path) -> set[str]:
     """Map dirty file paths to content type names.
 
-    Given a list of paths relative to the repo root (as returned by
-    :func:`verify_bundled_integrity`), determine which content types
-    (``"workflows"``, ``"skills"``, etc.) are affected.
+    Accepts git-relative paths such as
+    ``src/gobby/install/shared/workflows/pipelines/foo.yaml`` and manifest
+    paths such as ``shared/workflows/pipelines/foo.yaml``.
 
     Args:
-        dirty_files: File paths relative to repo root.
+        dirty_files: Dirty or untracked file paths.
         install_dir: The ``src/gobby/install`` directory.
 
     Returns:
-        Set of content type names (e.g. ``{"workflows", "skills"}``).
+        Set of sync target names (e.g. ``{"pipelines", "skills"}``).
     """
-    shared_dir = install_dir / "shared"
-    try:
-        repo_root = run_git_command(["git", "rev-parse", "--show-toplevel"], cwd=shared_dir)
-    except Exception:
-        repo_root = None
-
-    if repo_root is None:
-        return set()
-
-    repo_root_path = Path(repo_root)
-    try:
-        rel_shared = str(shared_dir.resolve().relative_to(repo_root_path.resolve()))
-    except ValueError:
-        return set()
-
     affected: set[str] = set()
     for fpath in dirty_files:
-        # fpath is relative to repo root, e.g. "src/gobby/install/shared/workflows/pipelines/foo.yaml"
-        if not fpath.startswith(rel_shared + "/"):
+        relative_path = _to_shared_relative_path(fpath, install_dir)
+        if relative_path is None:
             continue
-        # Strip the shared prefix to get e.g. "workflows/pipelines/foo.yaml"
-        remainder = fpath[len(rel_shared) + 1 :]
-        # Try two-level key first (e.g. "workflows/rules"), then single-level
-        parts = remainder.split("/")
-        key2 = f"{parts[0]}/{parts[1]}" if len(parts) > 1 else None
-        if key2 and key2 in CONTENT_TYPE_DIRS:
-            affected.add(CONTENT_TYPE_DIRS[key2])
-        elif parts[0] in CONTENT_TYPE_DIRS:
-            affected.add(CONTENT_TYPE_DIRS[parts[0]])
+        content_type = _content_type_for_shared_relative_path(relative_path)
+        if content_type is not None:
+            affected.add(content_type)
 
     return affected
+
+
+def _to_shared_relative_path(file_path: str, install_dir: Path) -> str | None:
+    normalized = file_path.replace("\\", "/")
+    if normalized.startswith("shared/"):
+        return normalized[len("shared/") :]
+
+    path = Path(file_path)
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to((install_dir / "shared").resolve()).as_posix()
+        except ValueError:
+            return None
+
+    marker = "/shared/"
+    if marker in normalized:
+        return normalized.split(marker, 1)[1]
+
+    return None
+
+
+def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
+    parts = tuple(part for part in relative_path.split("/") if part)
+    if not parts or any(part in {".", ".."} for part in parts):
+        return None
+
+    if parts[0] in {"skills", "prompts", "rules"}:
+        return CONTENT_TYPE_DIRS[parts[0]]
+
+    if parts[0] == "workflows":
+        if len(parts) == 2 and parts[1].endswith((".yaml", ".yml")):
+            return "pipelines"
+        if len(parts) >= 2:
+            return CONTENT_TYPE_DIRS.get(f"workflows/{parts[1]}")
+        return None
+
+    if parts[0] == "registry" and len(parts) >= 2:
+        # build_profiles is a single protected registry file, not a directory.
+        if parts[1] == "build_profiles.yaml":
+            return "build_profiles"
+        logger.warning(
+            "Unknown bundled registry file is ignored by sync integrity: %s",
+            relative_path,
+        )
+        return None
+
+    return None

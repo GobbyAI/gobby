@@ -91,6 +91,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
     """Main daemon startup, event loop, and shutdown sequence."""
     from gobby.runner_maintenance import (
         bin_freshness_loop,
+        cleanup_chat_attachments_loop,
         cleanup_comms_messages_loop,
         cleanup_expired_isolation_loop,
         cleanup_pid_file,
@@ -156,6 +157,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
             memory_reconcile_loop=memory_reconcile_loop,
             cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
             cleanup_comms_messages_loop=cleanup_comms_messages_loop,
+            cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
             cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
             metric_snapshot_loop=metric_snapshot_loop,
             bin_freshness_loop=bin_freshness_loop,

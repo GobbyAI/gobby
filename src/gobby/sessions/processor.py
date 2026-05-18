@@ -10,6 +10,7 @@ Supports two transcript formats:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
     class WebSocketServer(Protocol):
         async def broadcast(self, message: dict[str, Any]) -> None: ...
 
+        async def feed_attached_session_tts(
+            self,
+            session_id: str,
+            rendered: dict[str, Any],
+            *,
+            complete: bool = False,
+        ) -> None: ...
+
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -32,6 +41,7 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.database import DatabaseProtocol
+from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +91,50 @@ class SessionMessageProcessor:
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    async def _feed_attached_session_tts(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool,
+    ) -> None:
+        """Feed opt-in TTS without suppressing transcript broadcasts."""
+        if self.websocket_server is None:
+            return
+        tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
+        if not callable(tts_feed):
+            return
+        try:
+            result = tts_feed(session_id, rendered, complete=complete)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            inc_counter("tts_feed_failures_total")
+            logger.warning(
+                "Attached-session TTS feed failed for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+    async def _broadcast_rendered_session_message(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool,
+    ) -> None:
+        if self.websocket_server is None:
+            return
+        await self._feed_attached_session_tts(session_id, rendered, complete=complete)
+        await self.websocket_server.broadcast(
+            {
+                "type": "session_message",
+                "session_id": session_id,
+                "message": rendered,
+                "complete": complete,
+            }
+        )
 
     @staticmethod
     def _build_codex_hook_event(
@@ -368,21 +422,17 @@ class SessionMessageProcessor:
 
         if self.websocket_server:
             for rendered_msg in completed:
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered_msg.to_dict(),
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    rendered_msg.to_dict(),
+                    complete=True,
                 )
             # Broadcast in-progress turn for live updates (upsert by ID)
             if render_state.current_message:
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": render_state.current_message.to_dict(),
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    render_state.current_message.to_dict(),
+                    complete=False,
                 )
 
         # Update in-memory state
@@ -467,20 +517,16 @@ class SessionMessageProcessor:
 
         if self.websocket_server:
             for rendered_msg in completed:
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": rendered_msg.to_dict(),
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    rendered_msg.to_dict(),
+                    complete=True,
                 )
             if render_state.current_message:
-                await self.websocket_server.broadcast(
-                    {
-                        "type": "session_message",
-                        "session_id": session_id,
-                        "message": render_state.current_message.to_dict(),
-                    }
+                await self._broadcast_rendered_session_message(
+                    session_id,
+                    render_state.current_message.to_dict(),
+                    complete=False,
                 )
 
         # Update in-memory state

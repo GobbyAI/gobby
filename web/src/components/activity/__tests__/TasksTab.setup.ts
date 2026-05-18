@@ -55,6 +55,9 @@ export const taskList = [
     start_date: null,
     due_date: null,
     project_id: "proj-1",
+    // Build was started then stopped: allow_automation is off but the durable
+    // `gobby build` lifecycle event persists, so the backend reports paused.
+    build_state: "paused",
   },
   ...Array.from({ length: 10 }, (_, index) => ({
     id: `task-${index + 1}`,

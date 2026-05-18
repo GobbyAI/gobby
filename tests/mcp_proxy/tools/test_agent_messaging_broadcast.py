@@ -7,6 +7,7 @@ broadcast agent_message and agent_command events via WebSocket.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
@@ -354,6 +355,86 @@ class TestSendMessageBroadcast:
         assert call_kwargs["event"] == "message_sent"
         assert call_kwargs["from_session"] == "s-from"
         assert call_kwargs["to_session"] == "s-to"
+
+    @pytest.mark.asyncio
+    async def test_send_message_returns_failed_broadcasts_per_recipient(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_command_manager,
+        mock_session_var_manager,
+        mock_db,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Persisted fanout succeeds, but failed WebSocket broadcasts are reported."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        broadcast_fn = AsyncMock(side_effect=[RuntimeError("socket down"), None])
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging with partial broadcast failure",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            command_manager=mock_command_manager,
+            session_var_manager=mock_session_var_manager,
+            db=mock_db,
+            broadcast_fn=broadcast_fn,
+        )
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-child-1": MockSession(id="s-child-1", project_id="proj-1"),
+            "s-child-2": MockSession(id="s-child-2", project_id="proj-1"),
+        }.get(sid)
+        mock_db.fetchall.return_value = [
+            {
+                "child_session_id": "s-child-1",
+                "child_status": "active",
+                "parent_session_id": "s-from",
+                "parent_status": "active",
+            },
+            {
+                "child_session_id": "s-child-2",
+                "child_status": "active",
+                "parent_session_id": "s-from",
+                "parent_status": "active",
+            },
+        ]
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id=f"msg-{kwargs['to_session']}",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+        caplog.set_level(logging.WARNING, logger="gobby.mcp_proxy.tools.agent_messaging")
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "send_to_all": True,
+                "content": "hello agents",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["recipient_session_ids"] == ["s-child-1", "s-child-2"]
+        assert result["failed_broadcasts"] == [
+            {"recipient_session_id": "s-child-1", "error": "socket down"}
+        ]
+        assert broadcast_fn.await_count == 2
+        failure_log = next(
+            record
+            for record in caplog.records
+            if record.message == "Failed to broadcast agent_message"
+        )
+        assert failure_log.to_session == "s-child-1"
+        assert failure_log.exc_info is not None
 
     @pytest.mark.asyncio
     async def test_no_broadcast_on_failure(

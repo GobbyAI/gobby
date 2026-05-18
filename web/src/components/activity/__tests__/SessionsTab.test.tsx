@@ -427,6 +427,55 @@ describe("SessionsTab", () => {
     expect(liveRadio).toHaveClass("bg-accent/15");
   });
 
+  it("renders active sessions with play status and paused sessions with pause status", async () => {
+    render(
+      <SessionsTab
+        sessions={[LIVE_SESSION, PAUSED_SESSION]}
+        focusSessionId="live-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("#201: Live Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#202: Paused Terminal").length).toBeGreaterThan(
+        0,
+      );
+    });
+
+    const statusDotForTitle = (title: string) => {
+      const row = screen
+        .getAllByText(title)
+        .map((node) => node.closest(".session-entry"))
+        .find((candidate): candidate is HTMLElement => candidate != null);
+      if (!row) throw new Error(`No session row found for ${title}`);
+      const dot = row.querySelector("span.activity-row-status-dot");
+      if (!dot) throw new Error(`No status dot found for ${title}`);
+      return dot as HTMLSpanElement;
+    };
+
+    const activeDot = statusDotForTitle("#201: Live Terminal");
+    const activeSvg = activeDot.querySelector("svg");
+    expect(activeDot.getAttribute("data-kind")).toBe("active");
+    expect(activeDot.getAttribute("class")).toContain(
+      "activity-row-status-dot--pulse",
+    );
+    expect(activeSvg?.getAttribute("class")).toContain(
+      "activity-row-status-dot__glyph--active",
+    );
+    expect(activeSvg?.querySelector("polygon")).not.toBeNull();
+
+    const pausedDot = statusDotForTitle("#202: Paused Terminal");
+    const pausedSvg = pausedDot.querySelector("svg");
+    expect(pausedDot.getAttribute("data-kind")).toBe("paused");
+    expect(pausedDot.getAttribute("class")).not.toContain(
+      "activity-row-status-dot--pulse",
+    );
+    expect(pausedSvg?.getAttribute("class")).toContain(
+      "activity-row-status-dot__glyph--paused",
+    );
+    expect(pausedSvg?.querySelectorAll("rect")).toHaveLength(2);
+  });
+
   it("renders digest fallback for a live session with no summary", async () => {
     mockUseSessionDetail.mockReturnValue({
       session: {

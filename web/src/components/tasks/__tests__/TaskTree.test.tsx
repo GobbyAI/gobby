@@ -41,6 +41,7 @@ import { TaskTree } from '../TaskTree'
 const readyState = {
   current_stage: null,
   owner_session_id: null,
+  owner_session_ref: null,
   is_claimed: false,
   is_closed: false,
   is_escalated: false,

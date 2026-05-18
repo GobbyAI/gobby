@@ -8,7 +8,7 @@ import type {
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
-import { Button } from './ui/Button'
+import { Button } from '../shared/Button'
 import { PaperclipIcon, RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
@@ -21,6 +21,11 @@ import {
   AUTO_REASONING_EFFORT,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
+import {
+  deleteChatAttachment,
+  formatAttachmentSize,
+  uploadChatAttachment,
+} from '../../lib/chatAttachments'
 
 interface ChatInputProps {
   onSend: (
@@ -96,10 +101,16 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
-  isAttached?: boolean
 }
 
-const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
+const LOCAL_ONLY_SLASH_COMMANDS = new Set([
+  'gobby',
+  'mcp',
+  'panel',
+  'restart',
+  'settings',
+  'skills',
+])
 
 function shouldHandleSlashCommandLocally(input: string): boolean {
   if (!input.startsWith('/')) return false
@@ -170,7 +181,6 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
-  isAttached = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -186,6 +196,9 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const mountedRef = useRef(true)
+  const deletedUploadedAttachmentIdsRef = useRef<Set<string>>(new Set())
+  const deleteUploadedAttachmentRef = useRef<(attachmentId: string) => void>(() => {})
   const metaRef = useRef<HTMLDivElement>(null)
   // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
   // but compress: model name + branch label truncate, toolbar buttons show
@@ -214,23 +227,50 @@ export function ChatInput({
   useEffect(() => {
     attachmentsDisabledRef.current = attachmentsDisabled
   }, [attachmentsDisabled])
-  const clearQueuedFiles = useCallback(() => {
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  const deleteUploadedAttachment = useCallback((attachmentId: string) => {
+    if (deletedUploadedAttachmentIdsRef.current.has(attachmentId)) return
+    deletedUploadedAttachmentIdsRef.current.add(attachmentId)
+    void deleteChatAttachment(attachmentId).catch((error: unknown) => {
+      console.warn('Failed to delete uploaded chat attachment', { attachmentId, error })
+    })
+  }, [])
+  useEffect(() => {
+    deleteUploadedAttachmentRef.current = deleteUploadedAttachment
+  }, [deleteUploadedAttachment])
+  const clearQueuedFiles = useCallback((deleteUploaded = false) => {
     queuedFilesRef.current.forEach((qf) => {
       if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+      qf.uploadAbort?.()
+      if (deleteUploaded && qf.attachment) deleteUploadedAttachment(qf.attachment.id)
     })
     queuedFilesRef.current = []
     setQueuedFiles([])
-  }, [])
+    deletedUploadedAttachmentIdsRef.current.clear()
+  }, [deleteUploadedAttachment])
   useEffect(() => {
+    const deletedUploadedAttachmentIds = deletedUploadedAttachmentIdsRef.current
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+        qf.uploadAbort?.()
+        if (qf.attachment) deleteUploadedAttachmentRef.current(qf.attachment.id)
       })
+      deletedUploadedAttachmentIds.clear()
     }
   }, [])
   useEffect(() => {
+    if (queuedFiles.length === 0) {
+      deletedUploadedAttachmentIdsRef.current.clear()
+    }
+  }, [queuedFiles.length])
+  useEffect(() => {
     if (attachmentsDisabled) {
-      clearQueuedFiles()
+      clearQueuedFiles(true)
     }
   }, [attachmentsDisabled, clearQueuedFiles])
 
@@ -271,6 +311,8 @@ export function ChatInput({
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim()
     const filesToSend = attachmentsDisabled ? [] : queuedFiles
+    const hasBlockingUpload = filesToSend.some((qf) => qf.status !== 'uploaded')
+    if (hasBlockingUpload) return
     const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
       if (ttsEnabled) {
@@ -314,42 +356,90 @@ export function ChatInput({
     }
   }, [onPaletteSelect, onInputChange])
 
-  const handleFilesSelected = useCallback((files: FileList | null) => {
-    if (!files || attachmentsDisabled) return
-    const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
-    Array.from(files).forEach((file) => {
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        console.warn(`File "${file.name}" exceeds ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB limit, skipping`)
+  const uploadQueuedFile = useCallback(async (id: string, file: File) => {
+    const disabledAtStart = attachmentsDisabledRef.current
+    const upload = uploadChatAttachment(file, {
+      projectId,
+      onProgress: (progress) => {
+        if (!mountedRef.current) return
+        setQueuedFiles((prev) =>
+          prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
+        )
+      },
+    })
+    setQueuedFiles((prev) =>
+      prev.map((qf) => qf.id === id ? { ...qf, uploadAbort: upload.abort } : qf),
+    )
+    try {
+      const attachment = await upload.promise
+      if (!mountedRef.current) {
+        deleteUploadedAttachment(attachment.id)
         return
       }
+      setQueuedFiles((prev) => {
+        const stillQueued = prev.some((qf) => qf.id === id)
+        if (!stillQueued || disabledAtStart || attachmentsDisabledRef.current) {
+          deleteUploadedAttachment(attachment.id)
+          return prev
+        }
+        return prev.map((qf) =>
+          qf.id === id
+            ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null, uploadAbort: null }
+            : qf,
+        )
+      })
+    } catch (error: unknown) {
+      if (!mountedRef.current) return
+      const message = error instanceof Error ? error.message : 'Attachment upload failed'
+      setQueuedFiles((prev) => {
+        const stillQueued = prev.some((qf) => qf.id === id)
+        if (message === 'Attachment upload canceled' && !stillQueued) return prev
+        console.warn('Attachment upload failed', { id, error })
+        return prev.map((qf) =>
+          qf.id === id
+            ? { ...qf, status: 'error', progress: null, attachment: null, error: message, uploadAbort: null }
+            : qf,
+        )
+      })
+    }
+  }, [deleteUploadedAttachment, projectId])
+
+  const handleFilesSelected = useCallback((files: FileList | null) => {
+    if (!files || attachmentsDisabled) return
+    Array.from(files).forEach((file) => {
       const id = crypto.randomUUID()
       const isImage = file.type.startsWith('image/')
       const previewUrl = isImage ? URL.createObjectURL(file) : null
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        const base64 = result.split(',')[1] || null
-        if (attachmentsDisabledRef.current) {
-          if (previewUrl) URL.revokeObjectURL(previewUrl)
-          return
-        }
-        setQueuedFiles((prev) => [...prev, { id, file, previewUrl, base64 }])
-      }
-      reader.onerror = () => {
-        if (previewUrl) URL.revokeObjectURL(previewUrl)
-        console.error(`Failed to read file "${file.name}"`)
-      }
-      reader.readAsDataURL(file)
+      setQueuedFiles((prev) => [
+        ...prev,
+        { id, file, previewUrl, status: 'uploading', progress: null, attachment: null, error: null, uploadAbort: null },
+      ])
+      void uploadQueuedFile(id, file)
     })
-  }, [attachmentsDisabled])
+  }, [attachmentsDisabled, uploadQueuedFile])
 
   const removeFile = useCallback((id: string) => {
     setQueuedFiles((prev) => {
       const removed = prev.find((f) => f.id === id)
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      removed?.uploadAbort?.()
+      if (removed?.attachment) deleteUploadedAttachment(removed.attachment.id)
       return prev.filter((f) => f.id !== id)
     })
-  }, [])
+  }, [deleteUploadedAttachment])
+
+  const retryFile = useCallback((id: string) => {
+    const queued = queuedFilesRef.current.find((qf) => qf.id === id)
+    if (!queued) return
+    setQueuedFiles((prev) =>
+      prev.map((qf) =>
+        qf.id === id
+          ? { ...qf, status: 'uploading', progress: null, attachment: null, error: null, uploadAbort: null }
+          : qf,
+      ),
+    )
+    void uploadQueuedFile(id, queued.file)
+  }, [uploadQueuedFile])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
@@ -388,6 +478,8 @@ export function ChatInput({
     }
   }, [handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
+  const hasPendingUploads = queuedFiles.some((qf) => qf.status === 'uploading')
+  const hasUploadErrors = queuedFiles.some((qf) => qf.status === 'error')
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
   const {
@@ -422,7 +514,7 @@ export function ChatInput({
 
   const resolvePrimaryButtonKind = (): PrimaryButtonKind => {
     if (isStreaming) return 'stop'
-    if (pttEnabled && !hasInput && !isAttached) {
+    if (pttEnabled && !hasInput) {
       return isRecording ? 'mic-recording' : 'mic-idle'
     }
     return 'send'
@@ -554,7 +646,7 @@ export function ChatInput({
 
   const primaryButtonDisabled =
     primaryButtonKind === 'send'
-      ? !isStreaming && (disabled || !hasInput)
+      ? !isStreaming && (disabled || !hasInput || hasPendingUploads || hasUploadErrors)
       : primaryButtonKind === 'stop'
         ? false
         : disabled || !startRecording || !stopRecording || !cancelRecording
@@ -646,7 +738,7 @@ export function ChatInput({
         {queuedFiles.length > 0 && (
           <div className="flex gap-2 mb-2 flex-wrap">
             {queuedFiles.map((qf) => (
-              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
+              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted max-w-[180px]">
                 {qf.previewUrl ? (
                   <img src={qf.previewUrl} alt={qf.file.name} loading="lazy" decoding="async" className="w-16 h-16 object-cover" />
                 ) : (
@@ -655,6 +747,22 @@ export function ChatInput({
                     <span className="max-w-[100px] truncate">{qf.file.name}</span>
                   </div>
                 )}
+                <div className="px-2 pb-1 text-[10px] text-muted-foreground">
+                  <div className="truncate">{formatAttachmentSize(qf.attachment?.size_bytes ?? qf.file.size)}</div>
+                  {qf.status === 'uploading' && (
+                    <div>{qf.progress === null ? 'Uploading' : `${Math.round(qf.progress * 100)}%`}</div>
+                  )}
+                  {qf.status === 'error' && (
+                    <button
+                      type="button"
+                      className="text-destructive underline"
+                      onClick={() => retryFile(qf.id)}
+                      title={qf.error ?? 'Upload failed'}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   aria-label={`Remove ${qf.file.name}`}
@@ -680,7 +788,7 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {!isAttached && onModeChange && (
+              {onModeChange && (
                 <ModeSelector
                   mode={mode}
                   onModeChange={onModeChange}
@@ -689,54 +797,49 @@ export function ChatInput({
                   size={isNarrow ? 'sm' : 'md'}
                 />
               )}
-              {!isAttached && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disabled || attachmentsDisabled}
-                  title={
-                    attachmentsDisabled
-                      ? 'Attached session owns attachments'
-                      : 'Attach file'
-                  }
-                >
-                  <PaperclipIcon />
-                </Button>
-              )}
-              {!isAttached &&
-                onAgentChange &&
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || attachmentsDisabled}
+                title={
+                  attachmentsDisabled
+                    ? 'Attached session owns attachments'
+                    : 'Attach file'
+                }
+              >
+                <PaperclipIcon />
+              </Button>
+              {onAgentChange &&
                 agentName &&
                 agentDefinitions.length > 0 && (
-                <ActiveAgentIndicator
-                  agentName={agentName}
-                  onAgentChange={onAgentChange}
-                  definitions={agentDefinitions}
-                  globalDefs={agentGlobalDefs}
-                  projectDefs={agentProjectDefs}
-                  showScopeToggle={agentShowScopeToggle}
-                  hasGlobal={agentHasGlobal}
-                  hasProject={agentHasProject}
-                  disabled={disabled || agentPickerDisabled}
-                />
+                  <ActiveAgentIndicator
+                    agentName={agentName}
+                    onAgentChange={onAgentChange}
+                    definitions={agentDefinitions}
+                    globalDefs={agentGlobalDefs}
+                    projectDefs={agentProjectDefs}
+                    showScopeToggle={agentShowScopeToggle}
+                    hasGlobal={agentHasGlobal}
+                    hasProject={agentHasProject}
+                    disabled={disabled || agentPickerDisabled}
+                  />
               )}
-              {!isAttached && (
-                <ChatInputVoiceControls
-                  disabled={disabled}
-                  sttEnabled={sttEnabled}
-                  ttsEnabled={ttsEnabled}
-                  voiceInputMode={voiceInputMode}
-                  isRecording={isRecording}
-                  isSpeaking={isSpeaking}
-                  voiceLoading={voiceLoading}
-                  voiceReady={voiceReady}
-                  prepareTTSPlayback={prepareTTSPlayback}
-                  stopTTS={stopTTS}
-                  onSttEnabledChange={onSttEnabledChange}
-                  onTtsEnabledChange={onTtsEnabledChange}
-                  onVoiceInputModeChange={onVoiceInputModeChange}
-                />
-              )}
+              <ChatInputVoiceControls
+                disabled={disabled}
+                sttEnabled={sttEnabled}
+                ttsEnabled={ttsEnabled}
+                voiceInputMode={voiceInputMode}
+                isRecording={isRecording}
+                isSpeaking={isSpeaking}
+                voiceLoading={voiceLoading}
+                voiceReady={voiceReady}
+                prepareTTSPlayback={prepareTTSPlayback}
+                stopTTS={stopTTS}
+                onSttEnabledChange={onSttEnabledChange}
+                onTtsEnabledChange={onTtsEnabledChange}
+                onVoiceInputModeChange={onVoiceInputModeChange}
+              />
             </div>
             {!canSelectModel && onWorktreeChange ? (
               <div className="chat-input-toolbar__right">
@@ -809,7 +912,7 @@ export function ChatInput({
             </div>
           </div>
 
-          {!isAttached && canSelectModel && (
+          {canSelectModel && (
             <ChatInputModelControls
                 compact={isNarrow}
                 currentBranch={currentBranch}

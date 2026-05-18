@@ -160,7 +160,12 @@ async def spawn_agent(
 def _service_git_manager(services: object | None, project_id: str) -> object | None:
     getter = getattr(services, "get_git_manager", None)
     if callable(getter):
-        return cast(object | None, getter(project_id))
+        try:
+            return cast(object | None, getter(project_id))
+        except (LookupError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Failed to resolve dispatch git manager for project {project_id}"
+            ) from exc
     return None
 
 

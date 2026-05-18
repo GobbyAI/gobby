@@ -9,14 +9,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from shlex import quote
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
+from gobby.sessions.tmux_context import get_tmux_manager_for_context
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
+_SAFE_PERSONA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 async def _set_attached_session_mode(
@@ -39,7 +43,7 @@ async def _set_attached_session_mode(
 
     try:
         session = await run_db(mixin, session_manager.get, target_session_id)
-    except Exception as exc:
+    except (LookupError, RuntimeError, ValueError) as exc:
         logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
         await mixin._send_error(
             websocket,
@@ -80,7 +84,7 @@ async def _set_attached_session_mode(
                 target_session_id,
                 {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
             )
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         logger.warning(
             "Failed to sync mode_level for attached session %s: %s",
             target_session_id[:8],
@@ -92,6 +96,140 @@ async def _set_attached_session_mode(
         mode,
         target_session_id[:8],
     )
+
+
+async def _validate_persona_agent(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    session_manager: Any,
+    agent_name: str,
+    existing_row: Any | None,
+) -> bool:
+    if agent_name == "default":
+        return True
+    try:
+        from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+
+        agent_body = await run_db(
+            mixin,
+            resolve_agent,
+            agent_name,
+            session_manager.db,
+            getattr(existing_row, "source", None),
+            getattr(existing_row, "project_id", None),
+        )
+    except (AgentResolutionError, RuntimeError, TypeError, ValueError) as e:
+        logger.warning("Failed to resolve persona candidate '%s': %s", agent_name, e)
+        agent_body = None
+
+    if agent_body is None:
+        await mixin._send_error(websocket, f"Unknown agent definition '{agent_name}'")
+        return False
+    supports_surface = getattr(agent_body, "supports_surface", None)
+    if not callable(supports_surface):
+        await mixin._send_error(
+            websocket,
+            f"Agent definition '{agent_name}' is invalid: missing supports_surface",
+        )
+        return False
+    try:
+        persona_supported = bool(supports_surface("persona"))
+    except (RuntimeError, TypeError, ValueError):
+        logger.warning(
+            "Agent definition '%s' failed persona surface validation",
+            agent_name,
+            exc_info=True,
+        )
+        await mixin._send_error(
+            websocket,
+            f"Agent definition '{agent_name}' failed persona surface validation",
+        )
+        return False
+    if not persona_supported:
+        await mixin._send_error(
+            websocket,
+            f"Agent definition '{agent_name}' is not persona-capable",
+        )
+        return False
+    return True
+
+
+async def _set_attached_session_agent(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    target_session_id: str,
+    agent_name: str,
+) -> None:
+    session_manager = getattr(mixin, "session_manager", None)
+    if session_manager is None:
+        await mixin._send_error(websocket, "Session manager not available")
+        return
+
+    try:
+        session = await run_db(mixin, session_manager.get, target_session_id)
+    except (LookupError, RuntimeError, ValueError) as exc:
+        logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
+        session = None
+    if session is None:
+        await mixin._send_error(
+            websocket,
+            f"Session not found: {target_session_id}",
+            code="NOT_FOUND",
+        )
+        return
+    if getattr(session, "session_type", None) != "terminal":
+        await mixin._send_error(
+            websocket,
+            "set_agent target_session_id only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
+        return
+
+    if not await _validate_persona_agent(mixin, websocket, session_manager, agent_name, session):
+        return
+
+    ctx: dict[str, Any] = {}
+    if isinstance(getattr(session, "terminal_context", None), dict):
+        ctx = session.terminal_context
+    tmux_pane = ctx.get("tmux_pane")
+    if not tmux_pane and isinstance(getattr(session, "metadata", None), dict):
+        tmux_pane = session.metadata.get("terminal_tmux_pane")
+    if not isinstance(tmux_pane, str) or not tmux_pane:
+        await mixin._send_error(
+            websocket,
+            f"Session {target_session_id} has no tmux pane for persona switching",
+            code="NO_TERMINAL_TARGET",
+        )
+        return
+
+    try:
+        # Extra defense: quote the agent_name even though regex should ensure safety
+        ok = await get_tmux_manager_for_context(ctx).send_keys(
+            tmux_pane,
+            f"/gobby persona {quote(agent_name)}\n",
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning(
+            "tmux persona send_keys failed for pane %s: %s",
+            tmux_pane,
+            exc,
+            exc_info=True,
+        )
+        ok = False
+    if not ok:
+        await mixin._send_error(websocket, "Failed to send persona command to attached session")
+        return
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "agent_changed",
+                "target_session_id": target_session_id,
+                "agent_name": agent_name,
+            }
+        )
+    )
+    logger.info("Persona switched for attached session %s: %s", target_session_id[:8], agent_name)
 
 
 async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]) -> None:
@@ -348,46 +486,56 @@ async def handle_set_agent(
         "agent_name": "agent-definition-name"
     }
     """
-    conversation_id = data.get("conversation_id")
-    agent_name = data.get("agent_name")
+    raw_conversation_id = data.get("conversation_id")
+    target_session_id = data.get("target_session_id")
+    raw_agent_name = data.get("agent_name")
 
-    if not conversation_id or not agent_name:
-        await mixin._send_error(websocket, "set_agent requires conversation_id and agent_name")
+    if not isinstance(raw_agent_name, str) or not raw_agent_name:
+        await mixin._send_error(
+            websocket,
+            "set_agent requires conversation_id or target_session_id and agent_name",
+        )
+        return
+    agent_name = raw_agent_name
+    if not _SAFE_PERSONA_NAME_RE.fullmatch(agent_name):
+        await mixin._send_error(
+            websocket,
+            "set_agent agent_name may only contain letters, numbers, '.', '_' and '-'",
+        )
         return
 
+    if target_session_id:
+        await _set_attached_session_agent(mixin, websocket, str(target_session_id), agent_name)
+        return
+
+    if not isinstance(raw_conversation_id, str) or not raw_conversation_id:
+        await mixin._send_error(
+            websocket,
+            "set_agent requires a valid conversation_id and agent_name",
+        )
+        return
+    conversation_id = raw_conversation_id
+
+    session = mixin._chat_sessions.get(conversation_id)
     session_manager = getattr(mixin, "session_manager", None)
     if session_manager and agent_name != "default":
+        db_session_id = getattr(session, "db_session_id", None) if session is not None else None
+        existing_row = None
         try:
-            existing_row = await run_db(mixin, session_manager.get, conversation_id)
-        except Exception:
-            existing_row = None
-        try:
-            from gobby.workflows.agent_resolver import resolve_agent
-
-            agent_body = await run_db(
-                mixin,
-                resolve_agent,
-                agent_name,
-                session_manager.db,
-                getattr(existing_row, "source", None),
-                getattr(existing_row, "project_id", None),
+            if db_session_id:
+                existing_row = await run_db(mixin, session_manager.get, db_session_id)
+        except (LookupError, RuntimeError, ValueError) as exc:
+            logger.debug(
+                "Failed to look up existing session %s for agent validation: %s",
+                db_session_id,
+                exc,
             )
-        except Exception as e:
-            logger.warning("Failed to resolve persona candidate '%s': %s", agent_name, e)
-            agent_body = None
-
-        if agent_body is None:
-            await mixin._send_error(websocket, f"Unknown agent definition '{agent_name}'")
-            return
-        if not agent_body.supports_surface("persona"):
-            await mixin._send_error(
-                websocket,
-                f"Agent definition '{agent_name}' is not persona-capable",
-            )
+        if not await _validate_persona_agent(
+            mixin, websocket, session_manager, agent_name, existing_row
+        ):
             return
 
     # Tear down existing session (same pattern as set_worktree)
-    session = mixin._chat_sessions.get(conversation_id)
     current_agent_name = getattr(session, "_pending_agent_name", None) if session else None
     if session and current_agent_name == agent_name:
         logger.debug("Agent unchanged for conversation %s", conversation_id[:8])

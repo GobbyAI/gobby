@@ -14,12 +14,26 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.websocket.chat._attachment_preparation import (
+    prepare_chat_attachments_or_error,
+)
+from gobby.servers.websocket.chat._message_validation import (
+    as_optional_str,
+    validate_chat_content,
+)
 from gobby.servers.websocket.chat._session import _resolve_git_branch
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import (
     LocalOpenAIModelWarmupError,
 )
+from gobby.servers.websocket.chat_attachments import (
+    AttachmentSessionManager,
+    PreparedMessageAttachments,
+)
 from gobby.servers.websocket.db import run_db
+
+if TYPE_CHECKING:
+    from gobby.servers.websocket.chat_attachments import AttachmentDaemonConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +50,8 @@ class ChatMessagingMixin:
     _pending_projects: dict[str, str]
     _pending_inject_contexts: dict[str, str]
     web_chat_session_registry: Any
+    session_manager: AttachmentSessionManager | None
+    daemon_config: AttachmentDaemonConfig | None
 
     if TYPE_CHECKING:
 
@@ -169,7 +185,6 @@ class ChatMessagingMixin:
 
         Sessions are keyed by conversation_id (stable across reconnections).
         Each session maintains full multi-turn context including tool calls.
-
         Message format:
         {
             "type": "chat_message",
@@ -179,7 +194,6 @@ class ChatMessagingMixin:
             "model": "optional-model-override",
             "request_id": "client-uuid-for-stream-correlation"
         }
-
         Response format (streamed):
         {
             "type": "chat_stream",
@@ -208,11 +222,13 @@ class ChatMessagingMixin:
             websocket: Client WebSocket connection
             data: Parsed chat message
         """
-        content: str | list[dict[str, Any]] = data.get("content", "")
+        content: str | list[dict[str, Any]]
+        raw_content = data.get("content", "")
         content_blocks = data.get("content_blocks")
         conversation_id = data.get("conversation_id") or str(uuid4())
         model = data.get("model")
         request_id = data.get("request_id", "")
+        message_id = as_optional_str(data.get("message_id"))
         project_id = data.get("project_id")
         provider = data.get("provider")
         reasoning_effort = data.get("reasoning_effort")
@@ -222,17 +238,39 @@ class ChatMessagingMixin:
             )
             return
 
-        # Use content_blocks (multimodal) if provided, otherwise plain text
-        if content_blocks and isinstance(content_blocks, list):
-            content = content_blocks
-        elif not content or not isinstance(content, str) or not content.strip():
-            await self._send_error(websocket, "Missing or invalid 'content' field")
-            return
-
         client_info = self.clients.get(websocket)
         if not client_info:
             logger.warning("Chat message from unregistered client")
+            await self._send_error(
+                websocket,
+                "Client is not registered for chat messages",
+                request_id=request_id,
+                code="UNREGISTERED_CLIENT",
+            )
             return
+
+        prepared_attachments = await prepare_chat_attachments_or_error(
+            self,
+            websocket,
+            data.get("attachments"),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            request_id=request_id,
+            send_error=self._send_error,
+        )
+        if prepared_attachments is None:
+            return
+
+        validated_content, content_error = validate_chat_content(
+            raw_content,
+            content_blocks,
+            has_attachments=bool(prepared_attachments.records),
+        )
+        if content_error:
+            await self._send_error(websocket, content_error, request_id=request_id)
+            return
+        assert validated_content is not None
+        content = validated_content
 
         # Track which conversation this client is in (for scoped broadcasts)
         client_info["conversation_id"] = conversation_id
@@ -260,6 +298,8 @@ class ChatMessagingMixin:
             for value in [pending_inject_context, explicit_inject_context]
             if isinstance(value, str) and value.strip()
         ]
+        if prepared_attachments.prompt_context:
+            inject_parts.append(prepared_attachments.prompt_context)
         inject_context = "\n\n".join(inject_parts) if inject_parts else None
 
         # Cancel any active stream for this conversation
@@ -278,6 +318,7 @@ class ChatMessagingMixin:
                 provider=provider,
                 reasoning_effort=reasoning_effort,
                 tts_enabled=tts_enabled if isinstance(tts_enabled, bool) else None,
+                attachments=prepared_attachments,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -307,6 +348,7 @@ class ChatMessagingMixin:
         provider: str | None = None,
         reasoning_effort: str | None = None,
         tts_enabled: bool | None = None,
+        attachments: PreparedMessageAttachments | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -547,7 +589,15 @@ class ChatMessagingMixin:
 
             # Persist user message to database
             user_text = content if isinstance(content, str) else json.dumps(content)
-            await _persist_message(session, "user", user_text)
+            if isinstance(content, list):
+                user_content_blocks = list(content)
+            else:
+                user_content_blocks = (
+                    [{"type": "text", "content": content}] if content.strip() else []
+                )
+            if attachments and attachments.records:
+                user_content_blocks.extend(attachments.content_blocks)
+            await _persist_message(session, "user", user_text, user_content_blocks)
 
             # Mark session as active while streaming
             db_sid = getattr(session, "db_session_id", None)
@@ -633,8 +683,10 @@ class ChatMessagingMixin:
                     if tts_pipeline and content.strip():
                         try:
                             tts_pipeline.feed_text(content)
+                        except (ValueError, RuntimeError):
+                            logger.warning("TTS feed_text failed", exc_info=True)
                         except Exception:
-                            logger.debug("TTS feed_text failed", exc_info=True)
+                            logger.warning("Unexpected TTS feed_text failure", exc_info=True)
 
                 elif isinstance(event, ToolCallEvent):
                     # If there's a pending approval card, transition it so

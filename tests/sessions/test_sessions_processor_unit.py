@@ -424,6 +424,43 @@ class TestWebSocketBroadcast:
         assert call_args["message"]["role"] == "user"
 
     @pytest.mark.asyncio
+    async def test_tts_feed_failure_does_not_block_websocket_broadcast(self, mock_db, tmp_path):
+        """Attached TTS failures should not stop transcript message broadcasts."""
+        mock_ws_server = MagicMock()
+        mock_ws_server.broadcast = AsyncMock()
+        mock_ws_server.feed_attached_session_tts = AsyncMock(side_effect=RuntimeError("tts down"))
+
+        processor = SessionMessageProcessor(mock_db, websocket_server=mock_ws_server)
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            '{"type": "assistant", "message": {"content": "hello"}, "timestamp": "2024-01-01T10:00:00Z"}\n'
+        )
+        processor.register_session("session-1", str(transcript))
+
+        timestamp = datetime(2024, 1, 1, 10, 0, 0)
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="hello",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=timestamp,
+            raw_json={},
+        )
+        mock_parser = MagicMock()
+        mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
+        processor._parsers["session-1"] = mock_parser
+
+        with patch("gobby.sessions.processor.inc_counter") as inc_counter:
+            await processor._process_session("session-1", str(transcript))
+
+        mock_ws_server.feed_attached_session_tts.assert_awaited()
+        mock_ws_server.broadcast.assert_awaited_once()
+        inc_counter.assert_called_once_with("tts_feed_failures_total")
+
+    @pytest.mark.asyncio
     async def test_no_broadcast_without_websocket_server(self, mock_db, tmp_path):
         """Should skip broadcast when no WebSocket server is configured."""
         processor = SessionMessageProcessor(mock_db, websocket_server=None)

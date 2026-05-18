@@ -9,6 +9,7 @@ import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { Settings } from "../../hooks/useSettings";
 import type { CommandPaletteAction } from "../chat/CommandPalette";
 import type { ChatMode, QueuedFile } from "../../types/chat";
+import { requestDaemonRestart } from "../../lib/api";
 import { APP_NAV_PAGES } from "./appNavigation";
 
 type ActiveModal = "skills" | "gobby" | "mcp" | null;
@@ -78,15 +79,23 @@ export function useAppCommandPalette({
   ]);
 
   const restartDaemon = useCallback(
-    (showFailureMessage: boolean) => {
-      addSystemMessage("Restarting daemon...");
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/admin/restart`, { method: "POST" }).catch((err) => {
+    async (showFailureMessage: boolean) => {
+      addSystemMessage("Requesting daemon restart...");
+      try {
+        const response = await requestDaemonRestart();
+        if (!response.ok) {
+          throw new Error(`Restart failed: ${response.status}`);
+        }
+        addSystemMessage("Daemon restart requested; reconnecting...");
+      } catch (err) {
         console.error("Restart request failed:", err);
         if (showFailureMessage) {
-          addSystemMessage("Failed to restart daemon");
+          const message = err instanceof Error && err.message
+            ? err.message
+            : "Failed to restart daemon";
+          addSystemMessage(`Failed to restart daemon: ${message}`);
         }
-      });
+      }
     },
     [addSystemMessage],
   );
@@ -124,7 +133,7 @@ export function useAppCommandPalette({
         return;
       }
       if (item.action === "restart_daemon") {
-        restartDaemon(false);
+        void restartDaemon(false);
         return;
       }
       if (item.action === "exit_plan_mode") {
@@ -199,7 +208,7 @@ export function useAppCommandPalette({
         label: "Restart Daemon",
         icon: "\u21BB",
         category: "action",
-        onSelect: () => restartDaemon(true),
+        onSelect: () => { void restartDaemon(true); },
       },
     ];
     for (const page of APP_NAV_PAGES) {

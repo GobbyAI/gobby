@@ -6,6 +6,7 @@ import inspect
 
 import pytest
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
@@ -16,6 +17,7 @@ from tests.storage.tasks._stage_test_helpers import (
     set_stage_state,
     spec,
     stage_row,
+    stage_rows,
     task_row,
 )
 
@@ -67,6 +69,7 @@ def test_stage_states_manager_exposes_reads_writes_and_models(temp_db) -> None:
         "reject_review",
         "complete_stage",
         "fail_stage",
+        "move_to_stage",
     }:
         assert callable(getattr(manager, method_name))
 
@@ -407,6 +410,254 @@ def test_holistic_failure_rejects_cited_non_descendant(temp_db, sample_project) 
             by_session_id="holistic-reviewer",
             cited_subtasks=[outsider.id],
         )
+
+
+def test_move_to_stage_forward_marks_previous_done_and_target_ready(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "pr", "in_progress", work_attempt_count=1)
+
+    moved = manager.move_to_stage(task.id, "merge", by_session_id="operator")
+
+    assert moved.stage_name == "merge"
+    assert moved.state == "ready"
+    assert [(row["stage_name"], row["state"]) for row in stage_rows(temp_db, task.id)] == [
+        ("development", "done"),
+        ("pr", "done"),
+        ("merge", "ready"),
+    ]
+    assert lifecycle_events(temp_db, task.id)[-2:] == [
+        {
+            "from_state": "development:ready",
+            "to_state": "development:done",
+            "reason": "move_to_stage:merge",
+            "by_actor": "operator",
+        },
+        {
+            "from_state": "pr:in_progress",
+            "to_state": "pr:done",
+            "reason": "move_to_stage:merge",
+            "by_actor": "operator",
+        },
+    ]
+
+
+def test_move_to_stage_backward_resets_target_and_later_rows(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done", work_attempt_count=1)
+    set_stage_state(temp_db, task.id, "pr", "done", work_attempt_count=1)
+    set_stage_state(temp_db, task.id, "merge", "in_progress", work_attempt_count=1)
+
+    manager.move_to_stage(task.id, "pr", by_session_id="operator")
+
+    assert [(row["stage_name"], row["state"]) for row in stage_rows(temp_db, task.id)] == [
+        ("development", "done"),
+        ("pr", "ready"),
+        ("merge", "ready"),
+    ]
+    assert lifecycle_events(temp_db, task.id)[-2:] == [
+        {
+            "from_state": "pr:done",
+            "to_state": "pr:ready",
+            "reason": "move_to_stage:pr",
+            "by_actor": "operator",
+        },
+        {
+            "from_state": "merge:in_progress",
+            "to_state": "merge:ready",
+            "reason": "move_to_stage:pr",
+            "by_actor": "operator",
+        },
+    ]
+
+
+def test_move_to_stage_same_ready_stage_is_state_idempotent(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done", work_attempt_count=1)
+    before_events = lifecycle_events(temp_db, task.id)
+
+    manager.move_to_stage(task.id, "pr", by_session_id="operator")
+
+    assert [(row["stage_name"], row["state"]) for row in stage_rows(temp_db, task.id)] == [
+        ("development", "done"),
+        ("pr", "ready"),
+        ("merge", "ready"),
+    ]
+    assert lifecycle_events(temp_db, task.id) == before_events
+
+
+def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    for stage_name in ("development", "pr", "merge"):
+        set_stage_state(temp_db, task.id, stage_name, "done", work_attempt_count=1)
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+           SET entered_at = '2026-05-01T00:00:00+00:00',
+               entered_by_session_id = 'stale-session',
+               completed_at = '2026-05-02T00:00:00+00:00',
+               completed_by_session_id = 'stale-session',
+               completed_commit_sha = 'abc123',
+               artifact_refs = '{"result":"stale"}',
+               notes = 'stale note'
+         WHERE task_id = ? AND stage_name IN ('pr', 'merge')
+        """,
+        (task.id,),
+    )
+    temp_db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = '2026-05-03T00:00:00+00:00',
+               closed_reason = 'manifest_exhausted',
+               closed_commit_sha = 'abc123',
+               escalated_at = '2026-05-04T00:00:00+00:00',
+               escalation_reason = 'stale escalation',
+               is_escalated = 1,
+               assignee = 'stale-agent',
+               claimed_by_session_id = NULL,
+               validation_fail_count = 4,
+               dispatch_failure_count = 3
+         WHERE id = ?
+        """,
+        (task.id,),
+    )
+
+    manager.move_to_stage(task.id, "pr", by_session_id="operator")
+
+    reopened = task_row(temp_db, task.id)
+    assert reopened["closed_at"] is None
+    assert reopened["closed_reason"] is None
+    assert reopened["closed_commit_sha"] is None
+    assert reopened["escalated_at"] is None
+    assert reopened["escalation_reason"] is None
+    assert reopened["is_escalated"] == 0
+    assert reopened["assignee"] is None
+    assert reopened["validation_fail_count"] == 0
+    assert reopened["dispatch_failure_count"] == 0
+    assert stage_row(temp_db, task.id, "development")["state"] == "done"
+    for stage_name in ("pr", "merge"):
+        row = stage_row(temp_db, task.id, stage_name)
+        assert row["state"] == "ready"
+        assert row["entered_at"] is None
+        assert row["completed_at"] is None
+        assert row["completed_commit_sha"] is None
+        assert row["artifact_refs"] is None
+        assert row["notes"] is None
+
+
+def test_move_to_stage_rejects_unknown_target(temp_db, sample_project) -> None:
+    task, manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+
+    with pytest.raises(ValueError, match="Stage 'merge' is not in task manifest"):
+        manager.move_to_stage(task.id, "merge", by_session_id="operator")
+
+
+def test_move_to_stage_rejects_other_session_claim_without_force(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    with pytest.raises(ValueError, match="claimed by another session"):
+        manager.move_to_stage(task.id, "pr", by_session_id="operator-session")
+
+
+def test_move_to_stage_preserves_same_session_claim(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    moved = manager.move_to_stage(task.id, "pr", by_session_id=owner.id)
+
+    assert moved.stage_name == "pr"
+    assert task_row(temp_db, task.id)["claimed_by_session_id"] == owner.id
+
+
+def test_move_to_stage_force_overrides_other_session_claim(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    moved = manager.move_to_stage(
+        task.id,
+        "pr",
+        by_session_id="operator-session",
+        force=True,
+    )
+
+    assert moved.stage_name == "pr"
+    assert task_row(temp_db, task.id)["claimed_by_session_id"] is None
 
 
 register_contract_tests(

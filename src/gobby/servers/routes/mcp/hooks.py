@@ -209,6 +209,8 @@ async def _maybe_hold_open(
     hook_type: str,
     payload: dict[str, Any],
     source: str,
+    *,
+    server: "HTTPServer | None" = None,
 ) -> dict[str, Any] | None:
     """Hold HTTP response open for web chat sessions needing user approval.
 
@@ -218,23 +220,26 @@ async def _maybe_hold_open(
     """
     from gobby.storage.sessions import SessionManager
 
-    server = request.app.state.server
-    db = server.services.database
+    resolved_server = server or getattr(request.app.state, "server", None)
+    if resolved_server is None:
+        return None
+
+    db = resolved_server.services.database
     if not db:
         return None
     session_store = SessionManager(db)
-    db_session = await server.run_db(session_store.get, session_id)
+    db_session = await resolved_server.run_db(session_store.get, session_id)
     if not db_session:
         try:
-            resolved_session_id = await server.run_db(
+            resolved_session_id = await resolved_server.run_db(
                 session_store.resolve_session_reference, session_id
             )
         except Exception:
             resolved_session_id = None
         if resolved_session_id:
-            db_session = await server.run_db(session_store.get, resolved_session_id)
+            db_session = await resolved_server.run_db(session_store.get, resolved_session_id)
     if not db_session:
-        db_session = await server.run_db(
+        db_session = await resolved_server.run_db(
             session_store.find_active_by_external_id, session_id, source
         )
 
@@ -249,7 +254,9 @@ async def _maybe_hold_open(
         try:
             from gobby.storage.projects import LocalProjectManager
 
-            project = await server.run_db(LocalProjectManager(db).get, db_session.project_id)
+            project = await resolved_server.run_db(
+                LocalProjectManager(db).get, db_session.project_id
+            )
             if project and project.repo_path:
                 project_path = project.repo_path
         except Exception:
@@ -265,10 +272,7 @@ async def _maybe_hold_open(
         tool_name: str,
         arguments: dict[str, Any],
     ) -> None:
-        ws_server = (
-            request.app.state.server.services.websocket_server
-            or request.app.state.server.websocket_server
-        )
+        ws_server = resolved_server.services.websocket_server or resolved_server.websocket_server
         if not ws_server:
             return
 
@@ -338,7 +342,9 @@ async def _maybe_hold_open(
             key = approval_key_for_tool(tool_name, arguments)
             updated_rules = set(session_rules)
             updated_rules.add(key)
-            await server.run_db(session_store.update_approved_tools, db_session.id, updated_rules)
+            await resolved_server.run_db(
+                session_store.update_approved_tools, db_session.id, updated_rules
+            )
             return {"decision": "approve"}
         if decision == "approve":
             return {"decision": "approve"}
@@ -479,7 +485,12 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 normalized_hold_open_type = _normalize_hold_open_hook_type(hook_type)
                 if session_header and normalized_hold_open_type:
                     hold_open_result = await _maybe_hold_open(
-                        request, session_header, normalized_hold_open_type, payload, source
+                        request,
+                        session_header,
+                        normalized_hold_open_type,
+                        payload,
+                        source,
+                        server=server,
                     )
                     if hold_open_result is not None:
                         return hold_open_result

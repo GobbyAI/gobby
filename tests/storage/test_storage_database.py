@@ -241,26 +241,51 @@ class TestLocalDatabase:
 
         assert db_ref() is None
 
+    def test_worker_thread_connections_close_when_threads_exit(self, temp_dir: Path) -> None:
+        """Connections from short-lived workers are removed when worker threads exit."""
+        db = LocalDatabase(temp_dir / "thread_exit_connections.db")
+        db.execute("CREATE TABLE thread_exit_probe (id INTEGER PRIMARY KEY)")
+
+        def query() -> None:
+            db.fetchone("SELECT 1")
+
+        for _ in range(6):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(query).result(timeout=5)
+
+        # CPython keeps thread-local objects alive until the worker thread is fully
+        # joined and a collection pass runs, so force GC after the executors exit.
+        gc.collect()
+
+        assert db.connection_count == 1  # main thread only
+        db.close()
+
     def test_close_closes_worker_thread_connections(self, temp_dir: Path) -> None:
         """close() closes connections opened from multiple worker threads."""
         db = LocalDatabase(temp_dir / "worker_connections.db")
         db.execute("CREATE TABLE worker_probe (id INTEGER PRIMARY KEY)")
-        barrier = threading.Barrier(4)
+        barrier = threading.Barrier(5)
+        release = threading.Event()
 
         def open_connection() -> sqlite3.Connection:
-            barrier.wait(timeout=5)
             conn = db.connection
             conn.execute("SELECT 1")
+            barrier.wait(timeout=5)
+            release.wait(timeout=5)
             return conn
 
         with ThreadPoolExecutor(max_workers=4) as executor:
-            connections = list(executor.map(lambda _: open_connection(), range(4)))
+            futures = [executor.submit(open_connection) for _ in range(4)]
+            barrier.wait(timeout=5)
 
-        assert db.connection_count == 5  # main thread + four worker threads
+            assert db.connection_count == 5  # main thread + four live worker threads
 
-        db.close()
+            db.close()
+            assert db.connection_count == 0
 
-        assert db.connection_count == 0
+            release.set()
+            connections = [future.result(timeout=5) for future in futures]
+
         for conn in connections:
             with pytest.raises(sqlite3.ProgrammingError):
                 conn.execute("SELECT 1")

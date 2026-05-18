@@ -4,7 +4,16 @@ import {
   type StageState5,
   type StageStateView,
 } from './stageActions'
-import type { StatusKind } from '../components/activity/ActivityRowStatusDot'
+import {
+  ActivityGlyph,
+  CheckGlyph,
+  CircleGlyph,
+  DashGlyph,
+  EyeGlyph,
+  LockGlyph,
+  type StatusGlyph,
+  type StatusKind,
+} from '../components/activity/ActivityRowStatusDot'
 
 export type TaskDisplayState =
   | 'ready'
@@ -14,8 +23,20 @@ export type TaskDisplayState =
   | 'review_approved'
   | 'closed'
 
+/**
+ * Friendly, human-readable owner-session identity resolved by the backend
+ * tasks serializer. The web UI renders `ref` (`#<seq_num>` or a short hash)
+ * and `source` — never the raw 36-char `session_id` UUID.
+ */
+export interface OwnerSessionRef {
+  session_id: string
+  ref: string
+  source: string | null
+}
+
 export interface CanonicalTaskState {
   owner_session_id: string | null
+  owner_session_ref: OwnerSessionRef | null
   current_stage: StageStateView | null
   is_claimed: boolean
   is_closed: boolean
@@ -37,6 +58,7 @@ export interface TaskCompatProjection {
 export interface TaskStateLike {
   assignee?: string | null
   claimed_by_session_id?: string | null
+  owner_session_ref?: OwnerSessionRef | null
   closed_at?: string | null
   closed_reason?: string | null
   closed_in_session_id?: string | null
@@ -94,6 +116,22 @@ export const TASK_STATE_KIND: Record<TaskDisplayState, StatusKind> = {
   closed: 'disabled',
 }
 
+// Honest per-state shapes. TASK_STATE_KIND still drives color/lightness (do
+// not remap StatusKind — other surfaces depend on its grayscale ranking);
+// this map only corrects the icon so it stops lying:
+//   in_progress -> activity pulse (being worked, not an alarm)
+//   blocked     -> lock/hold (waiting on a dep, not a failure)
+//   ready / needs_review -> distinct neutral shapes (open dot vs. review eye)
+//   review_approved -> check ; closed -> muted dash
+export const TASK_STATE_GLYPH: Record<TaskDisplayState, StatusGlyph> = {
+  ready: CircleGlyph,
+  in_progress: ActivityGlyph,
+  needs_review: EyeGlyph,
+  blocked: LockGlyph,
+  review_approved: CheckGlyph,
+  closed: DashGlyph,
+}
+
 export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
   ready: 'var(--color-info-soft)',
   in_progress: 'var(--color-warning-soft)',
@@ -125,6 +163,8 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
     task.claimed_by_session_id ??
     compatAssignee ??
     null
+  const ownerSessionRef =
+    task.state?.owner_session_ref ?? task.owner_session_ref ?? null
   const current = deriveCurrentStage(task)
   const currentState = current?.state ?? null
   const isClosed =
@@ -140,6 +180,7 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
 
   return {
     owner_session_id: ownerSessionId,
+    owner_session_ref: ownerSessionRef,
     current_stage: current,
     is_claimed: task.state?.is_claimed ?? (
       Boolean(ownerSessionId)
@@ -168,6 +209,10 @@ export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
   if (state.current_stage?.state === 'in_progress' || state.is_claimed) return 'in_progress'
 
   return 'ready'
+}
+
+export function getCanonicalStageName(task: TaskStateLike): string | null {
+  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null
 }
 
 export function isTaskClosed(task: TaskStateLike): boolean {

@@ -712,6 +712,9 @@ CREATE INDEX idx_inter_session_messages_unread ON inter_session_messages(to_sess
 CREATE INDEX idx_ism_undelivered ON inter_session_messages(to_session, delivered_at)
     WHERE delivered_at IS NULL;
 
+CREATE INDEX idx_ism_completion_lookup ON inter_session_messages(to_session, message_type)
+    WHERE metadata_json IS NOT NULL;
+
 CREATE TABLE agent_commands (
     id TEXT PRIMARY KEY,
     from_session TEXT NOT NULL,
@@ -1484,6 +1487,51 @@ CREATE TABLE chat_messages (
 );
 
 CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
+
+CREATE TABLE chat_attachments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    -- Client/display identifiers intentionally do not reference server tables.
+    draft_id TEXT,
+    conversation_id TEXT,
+    message_id TEXT,
+    target_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+    local_path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    bound_at TEXT -- Set once when an attachment is first bound to a message/session.
+);
+
+CREATE INDEX idx_chat_attachments_project ON chat_attachments(project_id);
+
+CREATE INDEX idx_chat_attachments_draft ON chat_attachments(draft_id);
+
+CREATE INDEX idx_chat_attachments_conversation ON chat_attachments(conversation_id);
+
+CREATE INDEX idx_chat_attachments_message ON chat_attachments(message_id);
+
+CREATE INDEX idx_chat_attachments_target_session ON chat_attachments(target_session_id);
+
+CREATE INDEX idx_chat_attachments_local_path ON chat_attachments(local_path);
+
+CREATE TRIGGER trg_chat_attachments_bound_at_write_once
+BEFORE UPDATE OF bound_at ON chat_attachments
+WHEN OLD.bound_at IS NOT NULL AND NEW.bound_at IS NOT OLD.bound_at
+BEGIN
+    SELECT RAISE(ABORT, 'chat_attachments.bound_at is write-once');
+END;
+
+CREATE TRIGGER trg_chat_attachments_updated_at_touch
+AFTER UPDATE ON chat_attachments
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE chat_attachments
+       SET updated_at = datetime('now')
+     WHERE id = NEW.id;
+END;
 
 CREATE TABLE checkpoints (
     id TEXT PRIMARY KEY,

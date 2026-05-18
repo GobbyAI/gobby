@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.sessions.mailbox import WakeDispatcherProtocol
     from gobby.storage.agent_commands import AgentCommandManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -81,6 +82,7 @@ def add_messaging_tools(
     session_var_manager: SessionVariableManager,
     db: DatabaseProtocol,
     broadcast_fn: BroadcastFn | None = None,
+    wake_dispatcher: WakeDispatcherProtocol | None = None,
 ) -> None:
     """Add inter-agent messaging and command tools to a registry.
 
@@ -103,6 +105,15 @@ def add_messaging_tools(
         project_id = ctx.get("id") if ctx else None
         return session_manager.resolve_session_reference(ref, project_id)
 
+    from gobby.sessions.mailbox import MailboxService
+
+    mailbox = MailboxService(
+        db=db,
+        message_manager=message_manager,
+        session_manager=session_manager,
+        wake_dispatcher=wake_dispatcher,
+    )
+
     # ── send_message ───────────────────────────────────────────────
 
     @registry.tool(
@@ -112,47 +123,59 @@ def add_messaging_tools(
             "are in the same project. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
-            "to agent_runs.result when sending to parent."
+            "to agent_runs.result when sending to parent. Direct message callers "
+            "pass to_session and content. Broadcast callers pass send_to_all=true "
+            "and omit to_session. Optional fields such as priority, message_type, "
+            "metadata, and include_wakeup are keyword-only."
         ),
     )
     async def send_message(
         from_session: str,
-        to_session: str,
-        content: str,
+        to_session: str | None = None,
+        content: str | None = None,
+        *,
         priority: str = "normal",
+        send_to_all: bool = False,
+        include_wakeup: bool = False,
+        message_type: str = "message",
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            from_id = _resolve(from_session)
-            to_id = _resolve(to_session)
-
-            from_sess = session_manager.get(from_id)
-            if not from_sess:
-                return {"success": False, "error": f"Session not found: {from_id}"}
-
-            to_sess = session_manager.get(to_id)
-            if not to_sess:
-                return {"success": False, "error": f"Session not found: {to_id}"}
-
-            # Validate same project
-            if from_sess.project_id != to_sess.project_id:
+            if content is None:
+                return {"success": False, "error": "content is required."}
+            content = content.strip()
+            if not content:
+                return {"success": False, "error": "content is required."}
+            if send_to_all and to_session is not None:
                 return {
                     "success": False,
-                    "error": (
-                        f"Cross-project messaging not allowed. "
-                        f"Sender project: {from_sess.project_id}, "
-                        f"recipient project: {to_sess.project_id}"
-                    ),
+                    "error": "to_session cannot be combined with send_to_all=true.",
                 }
+            if not send_to_all and to_session is None:
+                return {
+                    "success": False,
+                    "error": "Pass to_session unless send_to_all is true.",
+                }
+            from_id = _resolve(from_session)
 
-            msg = message_manager.create_message(
-                from_session=from_id,
-                to_session=to_id,
+            to_id = _resolve(to_session) if to_session is not None else None
+
+            send_result = await mailbox.send(
+                from_session_id=from_id,
+                to_session_id=to_id,
+                send_to_all=send_to_all,
+                include_wakeup=include_wakeup,
                 content=content,
                 priority=priority,
+                message_type=message_type,
+                metadata=metadata,
             )
+            msg = send_result.messages[0] if len(send_result.messages) == 1 else None
+
+            from_sess = session_manager.get(from_id)
 
             # Auto-write to agent_runs.result when sending to parent
-            if from_sess.parent_session_id == to_id:
+            if from_sess and to_id and from_sess.parent_session_id == to_id:
                 try:
                     row = db.fetchone(
                         "SELECT id FROM agent_runs WHERE child_session_id = ? "
@@ -169,18 +192,37 @@ def add_messaging_tools(
                     logger.warning(f"Failed to write to agent_runs.result: {e}")
 
             # Broadcast agent_message event
+            failed_broadcasts: list[dict[str, Any]] = []
             if broadcast_fn:
-                try:
-                    await broadcast_fn(
-                        msg_type="agent_message",
-                        event="message_sent",
-                        from_session=from_id,
-                        to_session=to_id,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to broadcast agent_message: {e}")
+                for recipient_id in send_result.recipient_session_ids:
+                    try:
+                        await broadcast_fn(
+                            msg_type="agent_message",
+                            event="message_sent",
+                            from_session=from_id,
+                            to_session=recipient_id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to broadcast agent_message",
+                            extra={
+                                "from_session": from_id,
+                                "to_session": recipient_id,
+                                "broadcast_id": send_result.broadcast_id,
+                            },
+                            exc_info=True,
+                        )
+                        failed_broadcasts.append(
+                            {
+                                "recipient_session_id": recipient_id,
+                                "error": str(e),
+                            }
+                        )
+            send_result.failed_broadcasts = failed_broadcasts
 
-            return {"success": True, "message": msg.to_dict()}
+            payload = send_result.to_dict()
+            payload["message"] = msg.to_dict() if msg is not None else None
+            return payload
 
         except Exception as e:
             logger.error(f"send_message failed: {e}")

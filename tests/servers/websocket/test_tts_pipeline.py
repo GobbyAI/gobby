@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.servers.websocket.voice import TTSPipeline
+from gobby.servers.websocket.voice_attached import feed_attached_session_tts
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +28,12 @@ class FailingTTS:
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
         raise RuntimeError("reference conditioning invalid")
         yield  # pragma: no cover
+
+
+class HangingTTS:
+    async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
+        await asyncio.Event().wait()
+        yield text.encode("utf-8"), 24000
 
 
 class DummyWebSocket:
@@ -64,6 +71,23 @@ class TestTTSPipeline:
         await pipeline.cancel()
 
     @pytest.mark.asyncio
+    async def test_cancel_stops_worker_before_clearing_buffer_and_queue(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=HangingTTS(),
+            conversation_id="conv-1234",
+            clients={ws: {"conversation_id": "conv-1234"}},
+        )
+
+        pipeline.feed_text("First sentence. Queued sentence.")
+        await asyncio.sleep(0)
+        await pipeline.cancel()
+
+        assert pipeline._worker_task.done()
+        assert pipeline._queue.empty()
+        assert ws.send.await_count == 0
+
+    @pytest.mark.asyncio
     async def test_flush_waits_for_queued_sentence_before_remaining_text(self) -> None:
         ws = DummyWebSocket()
         pipeline = TTSPipeline(
@@ -79,6 +103,93 @@ class TestTTSPipeline:
             call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
         ]
         assert binary_frames == [b"First sentence.", b"Tail fragment"]
+
+        await pipeline.cancel()
+
+
+class DummyAttachedPipeline:
+    def __init__(self, *, fail_feed: bool = False, fail_flush: bool = False) -> None:
+        self.fail_feed = fail_feed
+        self.fail_flush = fail_flush
+        self.fed: list[str] = []
+        self.flush_calls = 0
+
+    def feed_text(self, text: str) -> None:
+        if self.fail_feed:
+            raise RuntimeError("feed failed")
+        self.fed.append(text)
+
+    async def flush(self) -> None:
+        self.flush_calls += 1
+        if self.fail_flush:
+            raise RuntimeError("flush failed")
+
+
+class DummyAttachedServer:
+    def __init__(self, pipeline: DummyAttachedPipeline) -> None:
+        self.pipeline = pipeline
+        self._attached_tts_offsets: dict[str, int] = {}
+        self._active_tts_pipelines: dict[str, DummyAttachedPipeline] = {}
+        self._attached_tts_lock = asyncio.Lock()
+
+    def _is_voice_mode(self, session_id: str) -> bool:
+        return True
+
+    def _create_tts_pipeline(self, session_id: str) -> DummyAttachedPipeline:
+        self._active_tts_pipelines[session_id] = self.pipeline
+        return self.pipeline
+
+
+class TestAttachedSessionTTS:
+    @pytest.mark.asyncio
+    async def test_feed_failure_advances_attached_tts_offset(self) -> None:
+        server = DummyAttachedServer(DummyAttachedPipeline(fail_feed=True))
+
+        await feed_attached_session_tts(
+            server,
+            "session-1",
+            {"id": "msg-1", "role": "assistant", "content": "First sentence."},
+        )
+
+        assert server._attached_tts_offsets["session-1:msg-1"] == len("First sentence.")
+
+    @pytest.mark.asyncio
+    async def test_flush_failure_keeps_attached_pipeline_and_offset(self) -> None:
+        pipeline = DummyAttachedPipeline(fail_flush=True)
+        server = DummyAttachedServer(pipeline)
+
+        await feed_attached_session_tts(
+            server,
+            "session-1",
+            {"id": "msg-1", "role": "assistant", "content": "First sentence."},
+        )
+        await feed_attached_session_tts(
+            server,
+            "session-1",
+            {"id": "msg-1", "role": "assistant", "content": "First sentence."},
+            complete=True,
+        )
+
+        assert pipeline.flush_calls == 1
+        assert server._active_tts_pipelines["session-1"] is pipeline
+        assert server._attached_tts_offsets["session-1:msg-1"] == len("First sentence.")
+
+    @pytest.mark.asyncio
+    async def test_attached_session_clients_receive_tts_audio(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="term-1234",
+            clients={ws: {"conversation_id": "web-chat", "attached_session_id": "term-1234"}},
+        )
+
+        pipeline.feed_text("Attached response.")
+        await pipeline.flush()
+
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+        assert binary_frames == [b"Attached response."]
 
         await pipeline.cancel()
 

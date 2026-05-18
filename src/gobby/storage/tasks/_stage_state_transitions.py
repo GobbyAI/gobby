@@ -272,6 +272,133 @@ class StageStateTransitions:
                 by_actor=holder,
             )
 
+    def move_task_to_stage(
+        self,
+        task_id: str,
+        target_stage_name: str,
+        *,
+        by_session_id: str | None,
+        notes: str | None = None,
+        force: bool = False,
+    ) -> StageState:
+        holder = by_session_id or "system"
+        snapshot = self.rows.current_stage(task_id)
+        with self.mutexes.mutex(
+            task_id,
+            holder,
+            f"{target_stage_name}:move_to_stage",
+            expected_stage=snapshot,
+        ):
+            stages = self.rows.list_for_task(task_id)
+            target = next(
+                (row for row in stages if row.stage_name == target_stage_name),
+                None,
+            )
+            if target is None:
+                raise ValueError(f"Stage '{target_stage_name}' is not in task manifest")
+
+            now = _now()
+            with self.db.transaction() as conn:
+                task_row = conn.execute(
+                    "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
+                    (task_id,),
+                ).fetchone()
+                claimed_by_session_id = task_row["claimed_by_session_id"] if task_row else None
+                if claimed_by_session_id and claimed_by_session_id != by_session_id and not force:
+                    raise ValueError(
+                        "Task is claimed by another session; pass force=True to move stages"
+                    )
+                preserved_claim = (
+                    claimed_by_session_id
+                    if claimed_by_session_id and claimed_by_session_id == by_session_id
+                    else None
+                )
+                conn.execute(
+                    """
+                    UPDATE tasks
+                       SET closed_at = NULL,
+                           closed_reason = NULL,
+                           closed_in_session_id = NULL,
+                           closed_commit_sha = NULL,
+                           escalated_at = NULL,
+                           escalation_reason = NULL,
+                           is_escalated = 0,
+                           assignee = NULL,
+                           claimed_by_session_id = ?,
+                           validation_fail_count = 0,
+                           dispatch_failure_count = 0,
+                           updated_at = ?
+                     WHERE id = ?
+                    """,
+                    (preserved_claim, now, task_id),
+                )
+
+                for row in stages:
+                    to_state: StageState5 = "done" if row.position < target.position else "ready"
+                    if row.position < target.position:
+                        conn.execute(
+                            """
+                            UPDATE task_stage_states
+                               SET state = ?,
+                                   completed_at = CASE
+                                       WHEN state != ? THEN ? ELSE completed_at
+                                   END,
+                                   completed_by_session_id = CASE
+                                       WHEN state != ? THEN ? ELSE completed_by_session_id
+                                   END,
+                                   completed_commit_sha = CASE
+                                       WHEN state != ? THEN NULL ELSE completed_commit_sha
+                                   END,
+                                   updated_at = ?
+                             WHERE task_id = ? AND stage_name = ?
+                            """,
+                            (
+                                to_state,
+                                to_state,
+                                now,
+                                to_state,
+                                holder,
+                                to_state,
+                                now,
+                                task_id,
+                                row.stage_name,
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE task_stage_states
+                               SET state = ?,
+                                   entered_at = NULL,
+                                   entered_by_session_id = NULL,
+                                   completed_at = NULL,
+                                   completed_by_session_id = NULL,
+                                   completed_commit_sha = NULL,
+                                   artifact_refs = NULL,
+                                   notes = CASE
+                                       WHEN stage_name = ? THEN ?
+                                       ELSE NULL
+                                   END,
+                                   updated_at = ?
+                             WHERE task_id = ? AND stage_name = ?
+                            """,
+                            (to_state, target_stage_name, notes, now, task_id, row.stage_name),
+                        )
+                    if row.state == to_state:
+                        continue
+                    self.events.record_lifecycle_event(
+                        task_id,
+                        f"{row.stage_name}:{row.state}",
+                        f"{row.stage_name}:{to_state}",
+                        f"move_to_stage:{target_stage_name}",
+                        by_actor=holder,
+                    )
+
+            updated = self.rows.get(task_id, target_stage_name)
+            if updated is None:
+                raise RuntimeError(f"Stage '{target_stage_name}' disappeared after move_to_stage")
+            return updated
+
     def transition_target(
         self,
         row: StageState,

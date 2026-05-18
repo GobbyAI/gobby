@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MessageItem } from '../MessageItem'
 import type { ChatMessage } from '../../../types/chat'
 
@@ -165,6 +165,141 @@ describe('MessageItem', () => {
     const img = screen.getByAltText('Image content')
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toBe('https://example.test/generated.png')
+  })
+
+  it('renders stored image attachments inline', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-img',
+                project_id: 'proj-1',
+                filename: 'screen.png',
+                mime_type: 'image/png',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-img/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    const img = screen.getByAltText('screen.png')
+    expect(img.getAttribute('src')).toBe('/api/chat/attachments/att-img/content')
+  })
+
+  it('renders a filename-aware fallback when a stored image attachment fails to load', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-img',
+                project_id: 'proj-1',
+                filename: 'screen.png',
+                mime_type: 'image/png',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-img/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    fireEvent.error(screen.getByAltText('screen.png'))
+
+    expect(screen.getByText('screen.png')).toBeTruthy()
+    expect(screen.getByText('Image preview unavailable')).toBeTruthy()
+    expect(screen.getByText('Download')).toBeTruthy()
+  })
+
+  it('renders stored PDF attachments in an embedded viewer', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-pdf',
+                project_id: 'proj-1',
+                filename: 'plan.pdf',
+                mime_type: 'application/pdf',
+                size_bytes: 2048,
+                content_url: '/api/chat/attachments/att-pdf/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    const iframe = screen.getByTitle('plan.pdf')
+    expect(iframe).toHaveAttribute('sandbox', '')
+    expect(screen.getByText('Open')).toHaveAttribute('rel', 'noreferrer noopener')
+  })
+
+  it('renders an unavailable card for unsafe attachment links', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-bad',
+                project_id: 'proj-1',
+                filename: 'bad.txt',
+                mime_type: 'text/plain',
+                size_bytes: 12,
+                content_url: 'javascript:alert(1)',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('bad.txt')).toBeTruthy()
+    expect(screen.getByText('Attachment link unavailable')).toBeTruthy()
+    expect(screen.queryByText('Download')).toBeNull()
+  })
+
+  it('renders stored document attachments as file cards', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'attachment',
+              attachment: {
+                id: 'att-doc',
+                project_id: 'proj-1',
+                filename: 'notes.txt',
+                mime_type: 'text/plain',
+                size_bytes: 12,
+                content_url: '/api/chat/attachments/att-doc/content',
+              },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(screen.getByText('Download')).toBeTruthy()
   })
 
   it('shows streaming cursor when isStreaming', () => {

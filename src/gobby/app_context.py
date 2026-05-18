@@ -26,6 +26,7 @@ from gobby.sync.memories import MemorySyncManager
 from gobby.sync.tasks import TaskSyncManager
 
 if TYPE_CHECKING:
+    from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
 
 
@@ -72,6 +73,7 @@ class ServiceContainer:
 
     # Completion Events
     completion_registry: Any | None = None  # CompletionEventRegistry
+    wake_dispatcher: WakeDispatcher | None = None
 
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor

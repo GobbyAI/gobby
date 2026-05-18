@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type {
   ChatMessage,
   ChatMode,
+  ContentBlock,
   FallbackContextMode,
   QueuedFile,
 } from "../../types/chat";
@@ -36,6 +37,29 @@ interface UseChatActionsParams extends Record<string, any> {
   setMessages: Setter<ChatMessage[]>;
 }
 
+function hasUploadedAttachment(
+  file: QueuedFile,
+): file is QueuedFile & { attachment: NonNullable<QueuedFile["attachment"]> } {
+  return file.attachment !== null;
+}
+
+function attachmentPayload(files?: QueuedFile[]): Array<{ id: string }> {
+  return (files ?? [])
+    .filter(hasUploadedAttachment)
+    .map((qf) => ({ id: qf.attachment.id }));
+}
+
+function userContentBlocks(content: string, files?: QueuedFile[]): ContentBlock[] | undefined {
+  const blocks: ContentBlock[] = [];
+  if (content.trim()) blocks.push({ type: "text", content });
+  for (const qf of files ?? []) {
+    if (qf.attachment) {
+      blocks.push({ type: "attachment", attachment: qf.attachment });
+    }
+  }
+  return blocks.length > 0 ? blocks : undefined;
+}
+
 export function useChatActions(params: UseChatActionsParams) {
   const {
     activeRequestIdRef,
@@ -65,7 +89,6 @@ export function useChatActions(params: UseChatActionsParams) {
     messagesRef,
     observedSessionId,
     observedSessionMetaRef,
-    onModeChangedRef,
     pendingMessagesRef,
     pendingPlanFeedbackRef,
     pendingProxyMessagesRef,
@@ -85,6 +108,7 @@ export function useChatActions(params: UseChatActionsParams) {
     setContextUsage,
     setConversationId,
     setConversationSwitchKey,
+    setCurrentMode,
     setIsContinuingSession,
     setIsLoadingMessages,
     setIsStreaming,
@@ -159,8 +183,9 @@ const switchConversation = useCallback(
         applyMainSessionMeta(s);
         if (s.chat_mode) {
           const restored = normalizeChatMode(s.chat_mode);
+          const previousMode = currentModeRef.current;
           if (
-            restored !== currentModeRef.current &&
+            restored !== previousMode &&
             wsRef.current?.readyState === WebSocket.OPEN &&
             Date.now() - lastServerModeTimestampRef.current > 2000
           ) {
@@ -172,7 +197,9 @@ const switchConversation = useCallback(
               }),
             );
           }
-          currentModeRef.current = restored;
+          if (restored !== previousMode) {
+            setCurrentMode(restored);
+          }
         }
       })
       .catch(() => {});
@@ -183,6 +210,7 @@ const switchConversation = useCallback(
     clearPreAttachContextUsage,
     clearSessionObservationState,
     resetMainChatState,
+    setCurrentMode,
   ],
 );
 
@@ -209,10 +237,12 @@ const startNewChat = useCallback(
 // Switch provider. Existing conversations fork to a new server-owned session;
 // a blank draft stays local until the first user send.
 const switchProvider = useCallback(
-  (
+  async (
     newProvider: string,
     options?: { model?: string | null; reasoningEffort?: string | null },
   ) => {
+    const hadServerBackedChat =
+      Boolean(dbSessionIdRef.current) || messagesRef.current.length > 0;
     if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
@@ -225,22 +255,26 @@ const switchProvider = useCallback(
     clearSessionObservationState();
     resetMainChatState();
     bindActiveSession(null);
+    setSelectedProvider(newProvider);
     setConversationSwitchKey((k) => k + 1);
 
     // Keep fresh-chat provider changes local until the first user send
     // actually creates the backing web chat session.
-    if (!dbSessionIdRef.current && messagesRef.current.length === 0) {
-      setSelectedProvider(newProvider);
+    if (!hadServerBackedChat) {
       return;
     }
 
-    void ensureMainSession({
-      projectId: projectIdRef.current,
-      provider: newProvider,
-      model: options?.model ?? null,
-      reasoningEffort: options?.reasoningEffort ?? null,
-      forceNew: true,
-    });
+    try {
+      await ensureMainSession({
+        projectId: projectIdRef.current,
+        provider: newProvider,
+        model: options?.model ?? null,
+        reasoningEffort: options?.reasoningEffort ?? null,
+        forceNew: true,
+      });
+    } catch (error) {
+      console.error("Failed to create chat session for provider change:", error);
+    }
   },
   [
     bindActiveSession,
@@ -371,8 +405,7 @@ const continueSessionInChat = useCallback(
       setSelectedProvider(continuationProvider);
     }
     if (sourceChatMode) {
-      currentModeRef.current = sourceChatMode;
-      onModeChangedRef.current?.(sourceChatMode);
+      setCurrentMode(sourceChatMode);
     }
 
     // Fetch source session's messages for display
@@ -437,6 +470,7 @@ const continueSessionInChat = useCallback(
     resetMainChatState,
     selectedProvider,
     setContextUsage,
+    setCurrentMode,
     setSelectedProvider,
     sessionInteractionMode,
     sessionRef,
@@ -508,7 +542,7 @@ const stopStreaming = useCallback(() => {
 const sendMode = useCallback((mode: ChatMode) => {
   const normalizedMode = normalizeChatMode(mode);
   if (currentModeRef.current === normalizedMode) return;
-  currentModeRef.current = normalizedMode;
+  setCurrentMode(normalizedMode);
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   if (!conversationIdRef.current) return;
   setPlanPendingApproval(false);
@@ -557,8 +591,23 @@ const sendProjectChange = useCallback((projectId: string) => {
 // so the next chat_message recreates it with the new agent context.
 const sendAgentChange = useCallback((agentName: string) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-  if (!conversationIdRef.current) return;
+  const proxySessionId = attachedSessionIdRef.current;
+  const isProxyTerminal =
+    proxySessionId &&
+    sessionInteractionModeRef.current === "proxy" &&
+    attachedSessionMetaRef.current?.sessionType === "terminal";
   setActiveAgent(agentName);
+  if (isProxyTerminal) {
+    wsRef.current.send(
+      JSON.stringify({
+        type: "set_agent",
+        agent_name: agentName,
+        target_session_id: proxySessionId,
+      }),
+    );
+    return;
+  }
+  if (!conversationIdRef.current) return;
   wsRef.current.send(
     JSON.stringify({
       type: "set_agent",
@@ -635,6 +684,17 @@ const sendMessage = useCallback(
           normalizedReasoningEffort,
           ttsEnabled,
         );
+      }).catch((error) => {
+        console.error("Failed to create chat session before send:", error);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `system-session-create-${uuid()}`,
+            role: "system" as const,
+            content: "Failed to create chat session",
+            timestamp: new Date(),
+          },
+        ]);
       });
       return true;
     }
@@ -645,6 +705,7 @@ const sendMessage = useCallback(
       pendingMessagesRef.current.push({
         content,
         model,
+        files,
         projectId,
         reasoningEffort: normalizedReasoningEffort,
         ttsEnabled,
@@ -658,6 +719,7 @@ const sendMessage = useCallback(
           role: "user" as const,
           content,
           toolCalls: [],
+          contentBlocks: userContentBlocks(content, files),
           timestamp: new Date(),
         },
       ]);
@@ -688,16 +750,19 @@ const sendMessage = useCallback(
           id: messageId,
           role: "user",
           content,
+          contentBlocks: userContentBlocks(content, files),
           timestamp: new Date(),
         },
       ]);
       setProxyDeliveryNotice(null);
+      const attachments = attachmentPayload(files);
       wsRef.current.send(
         JSON.stringify({
           type: "send_to_cli_session",
           session_id: proxySessionId,
           content,
           client_message_id: clientMessageId,
+          attachments,
         }),
       );
       return true;
@@ -713,6 +778,7 @@ const sendMessage = useCallback(
         id: messageId,
         role: "user",
         content,
+        contentBlocks: userContentBlocks(content, files),
         timestamp: new Date(),
       },
     ]);
@@ -751,29 +817,9 @@ const sendMessage = useCallback(
       payload.provider = selectedProviderRef.current;
     }
 
-    if (files && files.length > 0) {
-      const contentBlocks: Array<Record<string, unknown>> = [];
-      for (const qf of files) {
-        if (qf.file.type.startsWith("image/") && qf.base64) {
-          contentBlocks.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: qf.file.type,
-              data: qf.base64,
-            },
-          });
-        } else if (qf.base64) {
-          contentBlocks.push({
-            type: "text",
-            text: `[File: ${qf.file.name}]\n${atob(qf.base64)}`,
-          });
-        }
-      }
-      if (content) {
-        contentBlocks.push({ type: "text", text: content });
-      }
-      payload.content_blocks = contentBlocks;
+    const attachments = attachmentPayload(files);
+    if (attachments.length > 0) {
+      payload.attachments = attachments;
     }
 
     console.log("Sending WebSocket message:", payload);

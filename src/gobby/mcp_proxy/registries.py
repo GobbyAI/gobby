@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.events.wake import WakeDispatcher
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -65,6 +66,7 @@ def setup_internal_registries(
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_sync_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
+    wake_dispatcher: WakeDispatcher | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
     mcp_manager: Any | None = None,
@@ -102,6 +104,7 @@ def setup_internal_registries(
         pipeline_execution_manager: Pipeline execution manager for tracking executions
         hook_manager_resolver: Lazy callable returning HookManager (or None).
             Solves timing: registries init before HookManager is created in HTTP lifespan.
+        wake_dispatcher: Dispatcher used to wake live sessions after mailbox messages.
         run_db: Optional bounded executor bridge for SQLite storage calls.
 
     Returns:
@@ -282,6 +285,7 @@ def setup_internal_registries(
                 command_manager=AgentCommandManager(db),
                 session_var_manager=SessionVariableManager(db),
                 db=db,
+                wake_dispatcher=wake_dispatcher,
             )
             logger.debug("Agent messaging tools added to agents registry")
 

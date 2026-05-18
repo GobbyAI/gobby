@@ -101,4 +101,23 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute('tabindex', '-1')
     expect(screen.getByRole('radio', { name: 'C' })).toHaveAttribute('tabindex', '-1')
   })
+
+  it('uses ariaLabel for non-text labels', () => {
+    render(
+      <SegmentedControl<'grid'>
+        value="grid"
+        onChange={vi.fn()}
+        options={[
+          {
+            value: 'grid',
+            label: <span aria-hidden="true">#</span>,
+            ariaLabel: 'Grid view',
+          },
+        ]}
+        ariaLabel="View mode"
+      />,
+    )
+
+    expect(screen.getByRole('radio', { name: 'Grid view' })).toBeInTheDocument()
+  })
 })

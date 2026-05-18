@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 class AgentCleanupHandler:
@@ -68,7 +69,7 @@ class AgentCleanupHandler:
         self,
         run_id: str,
         *,
-        result: dict[str, str],
+        result: dict[str, Any],
         message: str,
     ) -> None:
         """Notify waiters about a terminal run transition."""
@@ -79,11 +80,21 @@ class AgentCleanupHandler:
         except Exception as e:
             logger.warning(f"Failed to notify completion for {run_id}: {e}")
 
-    async def post_terminal_cleanup(self, run: AgentRun) -> None:
+    async def post_terminal_cleanup(
+        self,
+        run: AgentRun,
+        *,
+        cleanup_session_id: str | None = None,
+        allow_parent_session_fallback: bool = True,
+    ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
-        session_id = run.child_session_id or run.parent_session_id
+        session_id = cleanup_session_id
+        if session_id is None:
+            session_id = run.child_session_id
+        if session_id is None and allow_parent_session_fallback:
+            session_id = run.parent_session_id
         session_manager = self._get_session_manager()
         session_coordinator = self._get_session_coordinator()
 
@@ -131,6 +142,103 @@ class AgentCleanupHandler:
                 cleanup.dispatch_mutex_rows,
                 cleanup.workflow_instance_rows,
             )
+
+    async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
+        tool_calls_count = run.tool_calls_count or 0
+        turns_used = run.turns_used or 0
+        if not run.child_session_id or (tool_calls_count and turns_used):
+            return tool_calls_count, turns_used
+
+        session_manager = self._get_session_manager()
+        if session_manager is None:
+            return tool_calls_count, turns_used
+
+        try:
+            session = await asyncio.wait_for(
+                self._run_sqlite(session_manager.get, run.child_session_id),
+                timeout=SESSION_STATS_LOOKUP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.debug("Timed out reading session stats for agent %s", run.id)
+            return tool_calls_count, turns_used
+        except Exception:
+            logger.debug("Failed to read session stats for agent %s", run.id, exc_info=True)
+            return tool_calls_count, turns_used
+        if session is None:
+            return tool_calls_count, turns_used
+
+        session_tool_calls = getattr(session, "tool_call_count", None)
+        session_turns = getattr(session, "turn_count", None)
+        if (
+            isinstance(session_tool_calls, int)
+            and not isinstance(session_tool_calls, bool)
+            and tool_calls_count == 0
+        ):
+            tool_calls_count = session_tool_calls
+        if (
+            isinstance(session_turns, int)
+            and not isinstance(session_turns, bool)
+            and turns_used == 0
+        ):
+            turns_used = session_turns
+        return tool_calls_count, turns_used
+
+    async def terminalize_successful_run(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        completion_result: str | None = None,
+    ) -> bool:
+        """Complete an active run, notify subscribers, and clean child-owned state.
+
+        Args:
+            run_id: Agent run id to mark complete.
+            notify_result: Payload delivered to completion subscribers.
+            message: Completion message delivered alongside the payload.
+            completion_result: Optional final result to persist instead of the
+                run's current result.
+
+        Returns:
+            True when the run transitioned to complete; False when the run was
+            already terminal or missing after cleanup reconciliation.
+        """
+        current = await self._run_sqlite(self._agent_run_manager.get, run_id)
+        if current is None:
+            logger.debug("Successful terminalization no-op for missing run %s", run_id)
+            return False
+
+        tool_calls_count, turns_used = await self._completion_stats_for_run(current)
+        db_run = await self._run_sqlite(
+            self._agent_run_manager.complete,
+            run_id,
+            result=completion_result,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
+        )
+        if db_run is None:
+            latest = await self._run_sqlite(self._agent_run_manager.get, run_id)
+            logger.debug(
+                "Successful terminalization no-op for run %s; current status=%s",
+                run_id,
+                latest.status if latest else "missing",
+            )
+            if latest is not None:
+                await self.post_terminal_cleanup(
+                    latest,
+                    cleanup_session_id=latest.child_session_id,
+                    allow_parent_session_fallback=False,
+                )
+            return False
+
+        await self.notify_terminal_completion(db_run.id, result=notify_result, message=message)
+        await self.post_terminal_cleanup(
+            db_run,
+            cleanup_session_id=db_run.child_session_id,
+            allow_parent_session_fallback=False,
+        )
+        return True
 
     async def terminalize_cancelled_run(
         self,

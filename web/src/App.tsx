@@ -37,7 +37,7 @@ import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
-import { Button } from "./components/chat/ui/Button";
+import { Button } from "./components/shared/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {
@@ -51,7 +51,6 @@ import {
   ProjectsPage,
   ReportsPage,
   SkillsPage,
-  TasksPage,
   TracesPage,
   WorkflowsPage,
 } from "./components/app/AppPages";
@@ -149,9 +148,13 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const voiceConversationId =
+    attachedSessionId && sessionInteractionMode === "proxy"
+      ? attachedSessionId
+      : conversationId;
   const voice = useVoice(
     wsRef,
-    conversationId,
+    voiceConversationId,
     conversationSwitchKey,
     projectIdRef,
     {
@@ -317,6 +320,7 @@ export default function App() {
       .then((data) => {
         if (cancelled) return;
         if (data?.selectedProjectId) setSelectedProjectId(data.selectedProjectId);
+        if (data?.selectedProvider) setSelectedProvider(data.selectedProvider);
         setUiSettingsLoaded(true);
       })
       .catch(() => {
@@ -325,7 +329,25 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setSelectedProvider]);
+
+  // Persist selected provider to API after the initial UI settings hydrate.
+  const isFirstProviderRender = useRef(true);
+  useEffect(() => {
+    if (!uiSettingsLoaded) return;
+    if (isFirstProviderRender.current) {
+      isFirstProviderRender.current = false;
+      return;
+    }
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    fetch(`${baseUrl}/api/config/ui-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedProvider }),
+    }).catch((error) => {
+      console.warn("Failed to persist selected provider", error);
+    });
+  }, [selectedProvider, uiSettingsLoaded]);
 
   // Persist project selection to API (only after initial resolution)
   const isFirstProjectRender = useRef(true);
@@ -769,7 +791,10 @@ export default function App() {
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
                   onAttachedModeChange: attachedSessionId
-                    ? (mode) => sendAttachedSessionMode(attachedSessionId, mode)
+                    ? (mode) => {
+                        updateChatMode(mode);
+                        sendAttachedSessionMode(attachedSessionId, mode);
+                      }
                     : undefined,
                   activeAgent,
                   onAgentChange: sendAgentChange,
@@ -834,8 +859,6 @@ export default function App() {
               />
             ) : activeTab === "projects" ? (
               <ProjectsPage projectId={effectiveProjectId} />
-            ) : activeTab === "tasks" ? (
-              <TasksPage projectFilter={effectiveProjectId} />
             ) : activeTab === "memory" ? (
               <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "cron" ? (

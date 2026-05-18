@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gobby.build.lifecycle import derive_build_state
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
+from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
@@ -102,53 +104,6 @@ class TaskUpdateRequest(BaseModel):
         return validate_task_type(value) if value is not None else None
 
 
-class TaskClaimRequest(BaseModel):
-    """Request body for claiming a task."""
-
-    session_id: str = Field(..., description="Owning session reference or UUID")
-    force: bool = Field(default=False, description="Override an existing claim")
-
-
-class TaskReleaseClaimRequest(BaseModel):
-    """Request body for releasing task ownership."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    pass
-
-
-class TaskEscalateRequest(BaseModel):
-    """Request body for escalation."""
-
-    reason: str = Field(..., description="Why this task needs escalation")
-
-
-class TaskCloseRequest(BaseModel):
-    """Request body for closing a task."""
-
-    reason: str | None = Field(default=None, description="Reason for closing")
-    commit_sha: str | None = Field(default=None, description="Git commit SHA to link")
-    session_id: str | None = Field(
-        default=None,
-        description="Session reference or UUID that closed the task",
-    )
-
-
-class TaskReopenRequest(BaseModel):
-    """Request body for reopening a task."""
-
-    reason: str | None = Field(default=None, description="Reason for reopening")
-
-
-class TaskDeEscalateRequest(BaseModel):
-    """Request body for de-escalating a task."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    decision_context: str = Field(..., description="User's decision or instructions for the agent")
-    reset_validation: bool = Field(default=False, description="Also reset validation fail count")
-
-
 # =============================================================================
 # Router
 # =============================================================================
@@ -177,18 +132,21 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             raise TaskNotFoundError(task_id)
         return cast("Task", task)
 
-    async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
+    async def _broadcast_task_or_raise(event: str, task_dict: dict[str, Any]) -> None:
         """Broadcast a task event via WebSocket if available."""
         ws = server.services.websocket_server
         if ws:
-            try:
-                await ws.broadcast_task_event(
-                    event, task_id=task_dict.get("id", ""), task=task_dict
-                )
-            except Exception as e:
-                logger.debug(f"Failed to broadcast task event {event}: {e}")
+            _apply_owner_ref([task_dict])
+            await ws.broadcast_task_event(event, task_id=task_dict.get("id", ""), task=task_dict)
 
-    def _resolve_session_ref(session_ref: str, *, project_id: str | None) -> str:
+    async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
+        """Best-effort task broadcast for routes where HTTP already reports success."""
+        try:
+            await _broadcast_task_or_raise(event, task_dict)
+        except Exception as e:
+            logger.debug(f"Failed to broadcast task event {event}: {e}")
+
+    def _resolve_session_ref(session_ref: str, project_id: str | None) -> str:
         """Resolve session references to canonical UUIDs before storage writes."""
         if server.session_manager is None:
             return session_ref
@@ -216,6 +174,71 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
         return grouped
 
+    def _apply_build_state(task_dicts: list[dict[str, Any]]) -> None:
+        """Attach a definitive build_state to each serialized task.
+
+        Derived from allow_automation + the durable ``gobby build`` lifecycle
+        event — never from planning scaffolding (stages/agent/isolation) or
+        dispatch_failure_count, which misclassify a cleanly stopped build.
+        """
+        if not task_dicts:
+            return
+        ids = [item["id"] for item in task_dicts]
+        built = server.task_manager.lifecycle_events.tasks_with_build_event(ids)
+        for item in task_dicts:
+            item["build_state"] = derive_build_state(
+                allow_automation=bool(item.get("allow_automation")),
+                has_build_event=item["id"] in built,
+            )
+
+    def _owner_session_ref(owner_id: str | None) -> dict[str, Any] | None:
+        """Resolve an owner session UUID to a friendly, human-readable ref.
+
+        The web detail pane must never render a raw 36-char session UUID. We
+        resolve the owning session to ``#<seq_num>`` plus its source (the CLI
+        that drives it). When the session cannot be resolved we still degrade
+        to a short ``id[:8]`` hash — the same convention task refs use — never
+        the full UUID.
+        """
+        if not owner_id:
+            return None
+        session = None
+        if server.session_manager is not None:
+            try:
+                session = server.session_manager.get(owner_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"Failed to resolve owner session {owner_id}: {exc}")
+                session = None
+        if session is not None and session.seq_num:
+            ref = f"#{session.seq_num}"
+        else:
+            ref = owner_id[:8]
+        return {
+            "session_id": owner_id,
+            "ref": ref,
+            "source": session.source if session is not None else None,
+        }
+
+    def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
+        """Attach a friendly ``owner_session_ref`` to each serialized task.
+
+        ``state.owner_session_id`` is authoritative because it mirrors the
+        canonical task state. Older serialized rows may only expose the legacy
+        top-level ``claimed_by_session_id``, which is used as a fallback. The
+        winning UUID is converted through ``_owner_session_ref``; unowned tasks
+        or non-string owner values receive ``None``.
+        """
+        for item in task_dicts:
+            raw_state = item.get("state")
+            owner_id: Any = None
+            if isinstance(raw_state, dict):
+                owner_id = raw_state.get("owner_session_id")
+            if not owner_id:
+                owner_id = item.get("claimed_by_session_id")
+            item["owner_session_ref"] = _owner_session_ref(
+                owner_id if isinstance(owner_id, str) else None
+            )
+
     def _normalize_stage_filters(values: list[str] | None) -> list[str]:
         if not values:
             return []
@@ -236,6 +259,14 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         resolve_task=_resolve_task,
         broadcast_task=_broadcast_task,
         stage_view=_stage_view,
+    )
+    register_task_lifecycle_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        resolve_session_ref=_resolve_session_ref,
+        broadcast_task=_broadcast_task,
+        broadcast_claim_task=_broadcast_task_or_raise,
     )
 
     # -----------------------------------------------------------------
@@ -321,6 +352,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
+            _apply_build_state(task_dicts)
+            _apply_owner_ref(task_dicts)
 
             state_counts = server.task_manager.count_by_state(project_id=resolved_project)
             return {
@@ -368,7 +401,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Get a task by ID, seq_num (#N), or path (1.2.3)."""
         try:
             task = _resolve_task(task_id)
-            return task.to_dict()
+            data = task.to_dict()
+            data["build_state"] = derive_build_state(
+                allow_automation=bool(task.allow_automation),
+                has_build_event=server.task_manager.lifecycle_events.has_build_event(task.id),
+            )
+            _apply_owner_ref([data])
+            return data
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -428,7 +467,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             if not kwargs:
-                return task.to_dict()
+                unchanged = task.to_dict()
+                _apply_owner_ref([unchanged])
+                return unchanged
 
             updated = server.task_manager.update_task(resolved_id, **kwargs)
             result = updated.to_dict()
@@ -464,130 +505,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Failed to delete task {task_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # -----------------------------------------------------------------
-    # Stage and ownership transitions
-    # -----------------------------------------------------------------
-
-    @router.post("/{task_id}/claim")
-    async def claim_task(task_id: str, request_data: TaskClaimRequest) -> Any:
-        """Claim a task for a session."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            resolved_session_id = _resolve_session_ref(
-                request_data.session_id,
-                project_id=task.project_id,
-            )
-            claimed_task = server.task_manager.claim_task(
-                resolved_id,
-                session_id=resolved_session_id,
-                force=request_data.force,
-            )
-            result = claimed_task.to_dict()
-            await _broadcast_task("task_claimed", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/release-claim")
-    async def release_task_claim(
-        task_id: str, request_data: TaskReleaseClaimRequest | None = None
-    ) -> Any:
-        """Release canonical task ownership without using generic PATCH."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            released = server.task_manager.release_task_claim(resolved_id)
-            result = released.to_dict()
-            await _broadcast_task("task_claim_released", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/escalate")
-    async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
-        """Escalate a task without using generic mutation."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            updated = server.task_manager.escalate_task(resolved_id, reason=request_data.reason)
-            result = updated.to_dict()
-            await _broadcast_task("task_escalated", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/close")
-    async def close_task(task_id: str, request_data: TaskCloseRequest | None = None) -> Any:
-        """Close a task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskCloseRequest()
-            resolved_session_id = (
-                _resolve_session_ref(body.session_id, project_id=task.project_id)
-                if body.session_id is not None
-                else None
-            )
-
-            if body.commit_sha:
-                server.task_manager.link_commit(resolved_id, body.commit_sha)
-
-            closed = server.task_manager.close_task(
-                resolved_id,
-                reason=body.reason,
-                closed_in_session_id=resolved_session_id,
-                closed_commit_sha=body.commit_sha,
-            )
-            result = closed.to_dict()
-            await _broadcast_task("task_closed", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/reopen")
-    async def reopen_task(task_id: str, request_data: TaskReopenRequest | None = None) -> Any:
-        """Reopen a closed task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReopenRequest()
-            reopened = server.task_manager.reopen_task(resolved_id, reason=body.reason)
-            result = reopened.to_dict()
-            await _broadcast_task("task_reopened", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/de-escalate")
-    async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task with user decision context."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            updated = server.task_manager.de_escalate_task(
-                resolved_id,
-                reason=request_data.decision_context,
-                reset_validation=request_data.reset_validation,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_de_escalated", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
 
     register_task_comment_routes(
         router,
