@@ -202,9 +202,10 @@ async def _set_attached_session_agent(
         return
 
     try:
+        # Extra defense: quote the agent_name even though regex should ensure safety
         ok = await get_tmux_manager_for_context(ctx).send_keys(
             tmux_pane,
-            f"/gobby persona {agent_name}\n",
+            f"/gobby persona {quote(agent_name)}\n",
         )
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
