@@ -1,0 +1,120 @@
+"""Health monitoring helpers for MCP client manager."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from gobby.mcp_proxy.models import HealthState
+
+
+async def health_check_all(manager: Any) -> dict[str, Any]:
+    """Perform an immediate health check on all connected transports."""
+    tasks: list[Awaitable[Any]] = []
+    server_names: list[str] = []
+
+    for name, connection in manager._connections.items():
+        if connection.is_connected:
+            tasks.append(connection.health_check(timeout=5.0))
+            server_names.append(name)
+
+    if not tasks:
+        return {}
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    health_status: dict[str, bool] = {}
+    for name, result in zip(server_names, results, strict=False):
+        if isinstance(result, Exception) or result is False:
+            manager.health[name].record_failure("Health check failed")
+            health_status[name] = False
+        else:
+            manager.health[name].record_success()
+            health_status[name] = True
+
+    return health_status
+
+
+async def monitor_health(
+    manager: Any,
+    logger: logging.Logger,
+    sleep: Callable[[float], Awaitable[Any]],
+) -> None:
+    """Run the background connection health monitor loop."""
+    while manager._running:
+        try:
+            await sleep(manager._health_check_interval)
+
+            tasks: list[Awaitable[Any]] = []
+            server_names: list[str] = []
+
+            for name, connection in manager._connections.items():
+                if connection.is_connected:
+                    tasks.append(connection.health_check(timeout=5.0))
+                    server_names.append(name)
+
+            if not tasks:
+                continue
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for name, result in zip(server_names, results, strict=False):
+                if isinstance(result, Exception) or result is False:
+                    previous_health = manager.health[name].health
+                    manager.health[name].record_failure("Health check failed")
+                    failure_context = {
+                        "server_name": name,
+                        "previous_health": previous_health.value,
+                        "current_health": manager.health[name].health.value,
+                        "consecutive_failures": manager.health[name].consecutive_failures,
+                        "last_error": manager.health[name].last_error,
+                    }
+                    if manager.health[name].health == HealthState.UNHEALTHY:
+                        if previous_health != HealthState.UNHEALTHY:
+                            logger.warning(
+                                "Health check failed for %s; server is unhealthy",
+                                name,
+                                extra=failure_context,
+                            )
+                        else:
+                            logger.debug(
+                                "Health check failed for %s",
+                                name,
+                                extra=failure_context,
+                            )
+                    else:
+                        logger.debug(
+                            "Health check failed for %s",
+                            name,
+                            extra=failure_context,
+                        )
+
+                    if manager.health[name].health == HealthState.UNHEALTHY:
+                        logger.info("Attempting reconnection for unhealthy server: %s", name)
+                        task = asyncio.create_task(manager._reconnect(name))
+                        manager._reconnect_tasks.add(task)
+                        task.add_done_callback(manager._reconnect_tasks.discard)
+                else:
+                    manager.health[name].record_success()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Error in health monitor: %s", exc)
+
+
+def get_server_health(manager: Any) -> dict[str, dict[str, Any]]:
+    """Format health status for all known servers."""
+    return {
+        name: {
+            "state": status.state.value,
+            "health": status.health.value,
+            "last_check": (
+                status.last_health_check.isoformat() if status.last_health_check else None
+            ),
+            "failures": status.consecutive_failures,
+            "response_time_ms": status.response_time_ms,
+        }
+        for name, status in manager.health.items()
+    }

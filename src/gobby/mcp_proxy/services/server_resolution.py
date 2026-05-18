@@ -2,9 +2,31 @@
 
 import fnmatch
 import logging
+from collections.abc import Mapping
 from typing import Any, cast
 
 logger = logging.getLogger("gobby.mcp.server")
+
+
+def _manager_is_connected(mcp_manager: Any, name: str) -> bool:
+    is_connected = getattr(type(mcp_manager), "is_connected", None)
+    if callable(is_connected):
+        return bool(mcp_manager.is_connected(name))
+
+    connections = getattr(mcp_manager, "connections", None)
+    return isinstance(connections, dict) and name in connections
+
+
+def _manager_server_configs(mcp_manager: Any) -> list[tuple[str, Any]]:
+    configs = getattr(mcp_manager, "server_configs", None)
+    if isinstance(configs, list | tuple):
+        return [(cast("str", config.name), config) for config in configs]
+
+    legacy_configs = getattr(mcp_manager, "_configs", None)
+    if isinstance(legacy_configs, Mapping):
+        return [(cast("str", name), config) for name, config in legacy_configs.items()]
+
+    return []
 
 
 def resolve_server_name(service: Any, server_name: str) -> str:
@@ -39,14 +61,14 @@ def find_tool_server(service: Any, tool_name: str) -> str | None:
         if server:
             return server
 
-    for server_name, config in service._mcp_manager._configs.items():
+    for server_name, config in _manager_server_configs(service._mcp_manager):
         if config.tools:
             for tool in config.tools:
                 tool_name_in_config = (
                     tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
                 )
                 if tool_name_in_config == tool_name:
-                    return cast("str", server_name)
+                    return server_name
 
     return None
 
@@ -62,7 +84,7 @@ async def list_servers(service: Any, name_filter: str | None = None) -> dict[str
     for config in service._mcp_manager.server_configs:
         health = service._mcp_manager.health.get(config.name)
         state = health.state.value if health else "unknown"
-        is_conn = config.name in service._mcp_manager.connections
+        is_conn = _manager_is_connected(service._mcp_manager, config.name)
         if is_conn:
             connected += 1
         entry: dict[str, Any] = {

@@ -132,7 +132,35 @@ def _mcp_call_timeout(server: "HTTPServer") -> float:
     return MCP_CALL_TIMEOUT
 
 
+def _has_manager_method(mcp_manager: Any, method_name: str) -> bool:
+    return callable(getattr(type(mcp_manager), method_name, None))
+
+
+def _get_external_server_config(mcp_manager: Any, server_name: str) -> Any | None:
+    if _has_manager_method(mcp_manager, "get_server_config"):
+        return mcp_manager.get_server_config(server_name)
+
+    configs = getattr(mcp_manager, "_configs", None)
+    if isinstance(configs, Mapping):
+        return configs.get(server_name)
+    return None
+
+
 async def _disconnect_external_server(mcp_manager: Any, server_name: str) -> None:
+    if _has_manager_method(mcp_manager, "disconnect_server"):
+        try:
+            result = mcp_manager.disconnect_server(server_name)
+            if asyncio.iscoroutine(result):
+                await asyncio.wait_for(result, timeout=5.0)
+            return
+        except Exception:
+            logger.warning(
+                "Failed to disconnect MCP server %s after discovery timeout",
+                server_name,
+                exc_info=True,
+            )
+            return
+
     connection = None
     connections = getattr(mcp_manager, "connections", None)
     if isinstance(connections, dict):
@@ -240,7 +268,7 @@ async def list_all_mcp_tools(
                     tools_by_server[server_filter] = registry.list_tools()
             elif server.mcp_manager and server.mcp_manager.has_server(server_filter):
                 # Check if server is enabled before attempting connection
-                server_config = server.mcp_manager._configs.get(server_filter)
+                server_config = _get_external_server_config(server.mcp_manager, server_filter)
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
