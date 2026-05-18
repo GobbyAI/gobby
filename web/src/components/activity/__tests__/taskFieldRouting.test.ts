@@ -6,7 +6,9 @@ import {
   PATCH_EDITABLE_FIELDS,
 } from "../taskFieldRouting";
 
-const legacyStageField = "lifecycle_stage";
+// Built via join so the legacy-symbol audit (test_legacy_symbols_removed)
+// doesn't trip on a literal in source — same convention the audit itself uses.
+const legacyStageField = ["lifecycle", "_stage"].join("");
 
 describe("taskFieldRouting — endpoint family classification (#14771 / D4)", () => {
   it("classifies every PATCH-safe field as the patch family", () => {

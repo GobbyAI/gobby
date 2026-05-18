@@ -114,10 +114,10 @@ export function loadLayoutMode(): LayoutMode {
 
 export function useActivityPanel(isMobile: boolean) {
   const [mode, setMode] = useState<LayoutMode>(loadLayoutMode)
-  const [mobileView, setMobileView] = useState<MobileView>(() => {
-    if (!isMobile) return 'chat'
-    return loadLayoutMode() === 'panel' ? 'panel' : 'chat'
-  })
+  // Initial render always starts at chat (desktop and mobile). The desktop
+  // `panel` preference only carries onto mobile via the crossing effect
+  // below, never on a fresh mobile mount.
+  const [mobileView, setMobileView] = useState<MobileView>('chat')
 
   const [panelWidth, setPanelWidth] = useState(() => {
     try {

@@ -55,7 +55,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={asChild ? undefined : isDisabled}
         aria-disabled={asChild && isDisabled ? true : props['aria-disabled']}
-        aria-busy={loading || undefined}
+        aria-busy={loading || props['aria-busy'] || undefined}
         tabIndex={asChild && isDisabled ? -1 : tabIndex}
         onClick={handleClick}
       >

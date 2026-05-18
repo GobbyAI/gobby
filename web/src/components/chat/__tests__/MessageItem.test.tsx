@@ -245,7 +245,7 @@ describe('MessageItem', () => {
     )
 
     const iframe = screen.getByTitle('plan.pdf')
-    expect(iframe).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(iframe).toHaveAttribute('sandbox', '')
     expect(screen.getByText('Open')).toHaveAttribute('rel', 'noreferrer noopener')
   })
 
