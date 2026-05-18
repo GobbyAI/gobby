@@ -20,6 +20,7 @@ from gobby.servers.websocket.chat.local_openai_warmup import (
     LocalOpenAIModelWarmupError,
 )
 from gobby.servers.websocket.chat_attachments import (
+    AttachmentSessionManager,
     PreparedMessageAttachments,
     prepare_message_attachments,
 )
@@ -40,6 +41,8 @@ class ChatMessagingMixin:
     _pending_projects: dict[str, str]
     _pending_inject_contexts: dict[str, str]
     web_chat_session_registry: Any
+    session_manager: AttachmentSessionManager | None
+    daemon_config: Any | None
 
     if TYPE_CHECKING:
 

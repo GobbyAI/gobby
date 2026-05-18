@@ -18,6 +18,9 @@ from gobby.servers.websocket.handlers import session_config as _config
 from gobby.servers.websocket.handlers import session_lifecycle as _lifecycle
 from gobby.servers.websocket.handlers import session_observe as _observe
 
+if TYPE_CHECKING:
+    from gobby.servers.websocket.chat_attachments import AttachmentSessionManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +46,8 @@ class SessionControlMixin:
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
     _pending_inject_contexts: dict[str, str]
+    session_manager: AttachmentSessionManager | None
+    daemon_config: Any | None
 
     # Provided by ChatMixin / HandlerMixin – declared for type checking only.
     if TYPE_CHECKING:

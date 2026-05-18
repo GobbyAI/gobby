@@ -48,11 +48,13 @@ class SkillMetadataMixin:
 
     def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
         with self.db.transaction() as conn:
-            return conn.execute(query, params).fetchone()
+            row = conn.execute(query, params).fetchone()
+            return cast(sqlite3.Row | None, row)
 
     def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         with self.db.transaction() as conn:
-            return conn.execute(query, params).fetchall()
+            rows = conn.execute(query, params).fetchall()
+            return cast(list[sqlite3.Row], rows)
 
     def create_skill(
         self,

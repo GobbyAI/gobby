@@ -14,7 +14,8 @@ from gobby.storage.database import DatabaseProtocol
 
 
 class AttachmentSessionManager(Protocol):
-    db: DatabaseProtocol | None
+    @property
+    def db(self) -> DatabaseProtocol | None: ...
 
 
 class AttachmentOwner(Protocol):
@@ -85,10 +86,10 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    session_manager = getattr(owner, "session_manager", None)
+    session_manager = owner.session_manager
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
-    db = getattr(session_manager, "db", None)
+    db = session_manager.db
     if db is None:
         raise ValueError("Attachment storage requires session_manager.db")
     return db

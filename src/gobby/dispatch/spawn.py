@@ -161,7 +161,7 @@ def _service_git_manager(services: object | None, project_id: str) -> object | N
     getter = getattr(services, "get_git_manager", None)
     if callable(getter):
         try:
-            return getter(project_id)
+            return cast(object | None, getter(project_id))
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to resolve dispatch git manager for project {project_id}"

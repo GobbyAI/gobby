@@ -355,7 +355,7 @@ def _service_git_manager(services: object | None, project_id: str) -> WorktreeGi
                 f"Failed to resolve build workspace git manager for project {project_id}"
             ) from exc
         if manager is not None:
-            return manager
+            return cast(WorktreeGitManager, manager)
     manager = getattr(services, "git_manager", None)
     return cast(WorktreeGitManager | None, manager)
 
