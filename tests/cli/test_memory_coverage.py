@@ -32,6 +32,28 @@ def mock_manager() -> Generator[MagicMock]:
         yield mgr
 
 
+def test_memory_package_exports_compatibility_symbols() -> None:
+    from gobby.cli.memory import (
+        LocalDatabase,
+        MemoryManager,
+        _get_daemon_client,
+        get_memory_manager,
+        memory,
+        resolve_memory_id,
+        resolve_project_ref,
+        time,
+    )
+
+    assert memory.name == "memory"
+    assert callable(get_memory_manager)
+    assert callable(_get_daemon_client)
+    assert callable(resolve_memory_id)
+    assert callable(resolve_project_ref)
+    assert LocalDatabase is not None
+    assert MemoryManager is not None
+    assert callable(time.time)
+
+
 # =============================================================================
 # get_memory_manager
 # =============================================================================
