@@ -110,6 +110,20 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
     assert row["conversation_id"] is None
 
 
+@pytest.mark.asyncio
+async def test_prepare_message_attachments_requires_session_manager() -> None:
+    with pytest.raises(ValueError, match="requires session_manager"):
+        await prepare_message_attachments(SimpleNamespace(), [{"id": "att-1"}])
+
+
+@pytest.mark.asyncio
+async def test_prepare_message_attachments_requires_session_manager_db() -> None:
+    owner = SimpleNamespace(session_manager=SimpleNamespace(db=None), daemon_config=DaemonConfig())
+
+    with pytest.raises(ValueError, match="requires session_manager.db"):
+        await prepare_message_attachments(owner, [{"id": "att-1"}])
+
+
 def test_legacy_attachment_items_filters_id_references() -> None:
     assert legacy_attachment_items(
         [

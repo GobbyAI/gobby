@@ -453,10 +453,12 @@ class TestWebSocketBroadcast:
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 
-        await processor._process_session("session-1", str(transcript))
+        with patch("gobby.sessions.processor.inc_counter") as inc_counter:
+            await processor._process_session("session-1", str(transcript))
 
         mock_ws_server.feed_attached_session_tts.assert_awaited()
         mock_ws_server.broadcast.assert_awaited_once()
+        inc_counter.assert_called_once_with("tts_feed_failures_total")
 
     @pytest.mark.asyncio
     async def test_no_broadcast_without_websocket_server(self, mock_db, tmp_path):

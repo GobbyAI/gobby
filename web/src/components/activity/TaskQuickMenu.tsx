@@ -1,4 +1,5 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import type { BuildState, GobbyTask } from "../../hooks/useTasks";
 import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
 
@@ -53,6 +54,7 @@ export function TaskQuickMenu({
   onReopenTask,
 }: TaskQuickMenuProps) {
   const task = menu.task;
+  const menuRef = useRef<HTMLDivElement>(null);
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
@@ -66,15 +68,61 @@ export function TaskQuickMenu({
     left: menu.x,
     top: menu.y,
   };
+  const enabledMenuItems = () =>
+    Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+  const focusMenuItem = (index: number) => {
+    const items = enabledMenuItems();
+    if (!items.length) return;
+    const nextIndex = (index + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
+
+  useEffect(() => {
+    focusMenuItem(0);
+  }, [menu.task.id]);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = enabledMenuItems();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (!items.length) return;
+    const currentIndex = Math.max(
+      0,
+      items.indexOf(document.activeElement as HTMLButtonElement),
+    );
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusMenuItem(currentIndex + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusMenuItem(currentIndex - 1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusMenuItem(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusMenuItem(items.length - 1);
+    }
+  };
 
   return (
     <>
       <div className="session-ctx-backdrop" onClick={onClose} />
       <div
+        ref={menuRef}
         className="session-ctx-menu"
         style={menuStyle}
         role="menu"
         aria-label="Task actions"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
       >
         <button
           className="session-ctx-item"

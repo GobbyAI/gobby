@@ -5,7 +5,7 @@ const SELECTED_PROVIDER_KEY = "gobby-selected-provider";
 
 function storageGet(key: string): string | null {
   try {
-    if (typeof globalThis.localStorage === "undefined") return null;
+    if (!globalThis.localStorage) return null;
     return globalThis.localStorage.getItem(key);
   } catch {
     return null;
@@ -14,7 +14,7 @@ function storageGet(key: string): string | null {
 
 function storageSet(key: string, value: string): "stored" | "unavailable" | "failed" {
   try {
-    if (typeof globalThis.localStorage === "undefined") return "unavailable";
+    if (!globalThis.localStorage) return "unavailable";
     globalThis.localStorage.setItem(key, value);
     return "stored";
   } catch {
@@ -24,7 +24,7 @@ function storageSet(key: string, value: string): "stored" | "unavailable" | "fai
 
 function storageRemove(key: string): "removed" | "unavailable" | "failed" {
   try {
-    if (typeof globalThis.localStorage === "undefined") return "unavailable";
+    if (!globalThis.localStorage) return "unavailable";
     globalThis.localStorage.removeItem(key);
     return "removed";
   } catch {

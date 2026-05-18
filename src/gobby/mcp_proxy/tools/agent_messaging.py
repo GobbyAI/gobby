@@ -119,6 +119,7 @@ def add_messaging_tools(
     )
     async def send_message(
         from_session: str,
+        *,
         content: str,
         to_session: str | None = None,
         send_to_all: bool = False,

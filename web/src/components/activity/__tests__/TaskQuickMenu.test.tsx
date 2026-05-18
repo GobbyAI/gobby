@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 
 import { TaskQuickMenu, type TaskContextMenu } from "../TaskQuickMenu";
 import type { BuildState, GobbyTask } from "../../../hooks/useTasks";
@@ -35,7 +36,10 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
   } as GobbyTask;
 }
 
-function renderMenu(task: GobbyTask) {
+function renderMenu(
+  task: GobbyTask,
+  overrides: Partial<ComponentProps<typeof TaskQuickMenu>> = {},
+) {
   const menu: TaskContextMenu = { x: 0, y: 0, task };
   const noop = () => {};
   return render(
@@ -52,6 +56,7 @@ function renderMenu(task: GobbyTask) {
       onReleaseClaim={noop}
       onCloseTask={noop}
       onReopenTask={noop}
+      {...overrides}
     />,
   );
 }
@@ -127,5 +132,24 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
       }),
     );
     expect(visibleBuildButtons()).toEqual([]);
+  });
+
+  it("supports keyboard navigation across enabled menu items", () => {
+    const onClose = vi.fn();
+    renderMenu(makeTask({ build_state: "never_started" }), { onClose });
+    const menu = screen.getByRole("menu", { name: "Task actions" });
+    const assign = screen.getByRole("menuitem", { name: "Assign to Main Chat" });
+    const build = screen.getByRole("menuitem", { name: "Build" });
+    const close = screen.getByRole("menuitem", { name: "Close..." });
+
+    expect(document.activeElement).toBe(assign);
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(build);
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(document.activeElement).toBe(assign);
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

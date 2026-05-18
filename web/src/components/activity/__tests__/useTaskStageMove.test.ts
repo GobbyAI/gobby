@@ -167,10 +167,11 @@ describe("useTaskStageMove — optimistic + rollback (#14773 / D6)", () => {
 
     await act(async () => {
       gate.reject(new Error("stale"));
-      await expect(move).rejects.toThrow("stale");
+      await expect(move).resolves.toBeUndefined();
     });
 
     expect(rollback).not.toHaveBeenCalled();
     expect(result.current.errorFor("task-1")).toBeNull();
+    expect(result.current.isMovePending("task-1")).toBe(false);
   });
 });

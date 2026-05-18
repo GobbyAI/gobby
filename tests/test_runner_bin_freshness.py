@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any, TypeVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +12,8 @@ from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_maintenance import bin_freshness_loop
 
 pytestmark = pytest.mark.unit
+
+T = TypeVar("T")
 
 
 @pytest.mark.asyncio
@@ -61,7 +65,7 @@ async def test_bin_freshness_loop_routes_updates_through_run_db() -> None:
         assert config.enabled is True
         return [db]
 
-    async def run_db(func, *args, **kwargs):
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         run_db_calls.append(func)
         return func(*args, **kwargs)
 

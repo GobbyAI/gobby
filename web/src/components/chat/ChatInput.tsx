@@ -239,14 +239,21 @@ export function ChatInput({
     })
     queuedFilesRef.current = []
     setQueuedFiles([])
+    deletedUploadedAttachmentIdsRef.current.clear()
   }, [deleteUploadedAttachment])
   useEffect(() => {
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
       })
+      deletedUploadedAttachmentIdsRef.current.clear()
     }
   }, [])
+  useEffect(() => {
+    if (queuedFiles.length === 0) {
+      deletedUploadedAttachmentIdsRef.current.clear()
+    }
+  }, [queuedFiles.length])
   useEffect(() => {
     if (attachmentsDisabled) {
       clearQueuedFiles(true)

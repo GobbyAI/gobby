@@ -31,7 +31,7 @@ export function TaskCloseDialog({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isSubmitting, onCancel, task]);
+  }, [isSubmitting, onCancel, task?.id]);
 
   if (!task) return null;
 
@@ -83,7 +83,12 @@ export function TaskCloseDialog({
           </div>
         )}
         <div className="activity-task-close-actions">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onCancel}
+            disabled={isSubmitting}
+          >
             Cancel
           </button>
           <button

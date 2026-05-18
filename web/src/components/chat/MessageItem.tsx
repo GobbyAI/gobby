@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { ChatAttachment, ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
@@ -51,10 +51,18 @@ function AttachmentUnavailableCard({ attachment }: { attachment: ChatAttachment 
 function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
   const resolved = normalizeAttachmentUrl(attachment)
   const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
+  const mountedRef = useRef(true)
   const isImage = resolved.mime_type.startsWith('image/')
   const isPdf = resolved.mime_type === 'application/pdf'
   const imageFailed = failedImageUrl === resolved.content_url
   const safeHref = safeAttachmentHref(resolved.content_url)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   if (!safeHref) {
     return <AttachmentUnavailableCard attachment={resolved} />
@@ -73,7 +81,16 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
 
     return (
       <div className="my-2">
-        <img src={safeHref} alt={resolved.filename} loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" onError={() => setFailedImageUrl(resolved.content_url)} />
+        <img
+          src={safeHref}
+          alt={resolved.filename}
+          loading="lazy"
+          decoding="async"
+          className="max-w-full rounded-lg border border-border"
+          onError={() => {
+            if (mountedRef.current) setFailedImageUrl(resolved.content_url)
+          }}
+        />
       </div>
     )
   }

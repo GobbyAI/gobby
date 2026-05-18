@@ -63,7 +63,7 @@ async function openTaskMenu(title: string): Promise<void> {
       name: "Task actions",
     }),
   );
-  await screen.findByRole("button", { name: "Assign to Main Chat" });
+  await screen.findByRole("menuitem", { name: "Assign to Main Chat" });
 }
 
 async function openReviewTaskMenu(): Promise<void> {
@@ -260,7 +260,7 @@ describe("TasksTab — events and row actions", () => {
 
     await openReviewTaskMenu();
 
-    const assignButton = await screen.findByRole("button", {
+    const assignButton = await screen.findByRole("menuitem", {
       name: "Assign to Main Chat",
     });
     fireEvent.click(assignButton);
@@ -296,7 +296,7 @@ describe("TasksTab — events and row actions", () => {
 
     await openReviewTaskMenu();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Assign to Main Chat" }),
+      await screen.findByRole("menuitem", { name: "Assign to Main Chat" }),
     );
 
     const alert = await screen.findByRole("alert");
@@ -313,13 +313,13 @@ describe("TasksTab — events and row actions", () => {
     });
     await openReviewTaskMenu();
 
-    expect(screen.getByRole("button", { name: "Assign to Main Chat" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Resume Build" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Close..." })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Release Claim" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Assign to Main Chat" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Close..." })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Release Claim" })).toBeNull();
   });
 
   it("sends build payloads from the quick menu when no build evidence exists", async () => {
@@ -345,12 +345,12 @@ describe("TasksTab — events and row actions", () => {
     });
 
     await openTaskMenu("Startable build task");
-    expect(screen.getByRole("button", { name: "Build" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Build Quick" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Build" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Build Quick" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Build" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Build" }));
     await waitFor(() => {
       expect(findPostCall("/api/build")).toBeTruthy();
     });
@@ -359,7 +359,7 @@ describe("TasksTab — events and row actions", () => {
     });
 
     await openTaskMenu("Startable build task");
-    fireEvent.click(screen.getByRole("button", { name: "Build Quick" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Build Quick" }));
     await waitFor(() => {
       const buildCalls = mockFetch.fn.mock.calls.filter(
         ([url, init]) =>
@@ -396,8 +396,8 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
     await openReviewTaskMenu();
-    expect(screen.getByRole("button", { name: "Resume Build" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Resume Build" }));
+    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Resume Build" }));
 
     await waitFor(() => {
       expect(findPostCall("/api/build/resume")).toBeTruthy();
@@ -423,11 +423,11 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
     await openReviewTaskMenu();
-    expect(screen.getByRole("button", { name: "Stop Build" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Stop Build" }));
+    expect(screen.getByRole("menuitem", { name: "Stop Build" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop Build" }));
 
     await waitFor(() => {
       expect(findPostCall("/api/build/stop")).toBeTruthy();
@@ -484,7 +484,7 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
     await openReviewTaskMenu();
-    fireEvent.click(screen.getByRole("button", { name: "Release Claim" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Release Claim" }));
 
     await waitFor(() => {
       expect(findPostCall("/api/tasks/task-review/release-claim")).toBeTruthy();
@@ -512,7 +512,7 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
     await openReviewTaskMenu();
-    fireEvent.click(screen.getByRole("button", { name: "Close..." }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close..." }));
 
     const dialog = await screen.findByRole("dialog", { name: "Close task" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
@@ -557,11 +557,11 @@ describe("TasksTab — events and row actions", () => {
         name: "Task actions",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Build" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Build Quick" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Stop Build" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Resume Build" })).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reopen" }));
 
     await waitFor(() => {
       expect(findPostCall("/api/tasks/task-closed/reopen")).toBeTruthy();

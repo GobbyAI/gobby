@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 from tests.storage.tasks._stage_test_helpers import (
@@ -104,6 +105,63 @@ def test_patch_move_to_unknown_stage_returns_400(
 
     assert response.status_code == 400
     assert "Stage 'merge' is not in task manifest" in response.json()["detail"]
+
+
+def test_patch_move_to_stage_rejects_claimed_task_without_force(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    response = stage_client.patch(f"/api/tasks/{task.id}/stages/pr", json={"action": "move_to"})
+
+    assert response.status_code == 400
+    assert "claimed by another session" in response.json()["detail"]
+
+
+def test_patch_move_to_stage_force_overrides_claim(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/pr",
+        json={"action": "move_to", "force": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stage"]["stage_name"] == "pr"
 
 
 def test_list_filter_by_stage_state(
@@ -467,9 +525,10 @@ def test_stage_transition_broadcasts(
     assert websocket_server.broadcast_task_event.await_args.kwargs["task"]["state"] == (
         "in_progress"
     )
-    assert websocket_server.broadcast_task_event.await_args.kwargs["task"]["stages"][0][
-        "stage_name"
-    ] == "development"
+    assert (
+        websocket_server.broadcast_task_event.await_args.kwargs["task"]["stages"][0]["stage_name"]
+        == "development"
+    )
 
 
 def test_move_to_stage_broadcasts_full_stage_payload(

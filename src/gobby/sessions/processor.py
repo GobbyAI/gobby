@@ -27,7 +27,7 @@ if TYPE_CHECKING:
         async def feed_attached_session_tts(
             self,
             session_id: str,
-            message: dict[str, Any],
+            rendered: dict[str, Any],
             *,
             complete: bool = False,
         ) -> None: ...
@@ -40,6 +40,7 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.database import DatabaseProtocol
+from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ class SessionMessageProcessor:
         *,
         complete: bool,
     ) -> None:
+        """Feed opt-in TTS without suppressing transcript broadcasts."""
         if self.websocket_server is None:
             return
         tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
@@ -105,6 +107,7 @@ class SessionMessageProcessor:
         try:
             await tts_feed(session_id, rendered, complete=complete)
         except Exception:
+            inc_counter("tts_feed_failures_total")
             logger.warning(
                 "Attached-session TTS feed failed for session %s",
                 session_id,

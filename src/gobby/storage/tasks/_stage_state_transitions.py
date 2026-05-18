@@ -279,6 +279,7 @@ class StageStateTransitions:
         *,
         by_session_id: str | None,
         notes: str | None = None,
+        force: bool = False,
     ) -> StageState:
         holder = by_session_id or "system"
         snapshot = self.rows.current_stage(task_id)
@@ -298,6 +299,15 @@ class StageStateTransitions:
 
             now = _now()
             with self.db.transaction() as conn:
+                task_row = conn.execute(
+                    "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
+                    (task_id,),
+                ).fetchone()
+                claimed_by_session_id = task_row["claimed_by_session_id"] if task_row else None
+                if claimed_by_session_id and claimed_by_session_id != by_session_id and not force:
+                    raise ValueError(
+                        "Task is claimed by another session; pass force=True to move stages"
+                    )
                 conn.execute(
                     """
                     UPDATE tasks
@@ -351,7 +361,7 @@ class StageStateTransitions:
                                    completed_commit_sha = NULL,
                                    artifact_refs = NULL,
                                    notes = CASE
-                                       WHEN stage_name = ? THEN COALESCE(?, notes)
+                                       WHEN stage_name = ? THEN ?
                                        ELSE NULL
                                    END,
                                    updated_at = ?

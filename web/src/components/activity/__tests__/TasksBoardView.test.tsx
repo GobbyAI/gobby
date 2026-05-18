@@ -32,7 +32,6 @@ function registryEntry(
 ): StageRegistryEntry {
   return {
     ...stage(name, position, "ready"),
-    display_name: getDisplayName(name),
     sequence_order: position,
   } as StageRegistryEntry;
 }

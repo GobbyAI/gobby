@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import logging
 import re
 import shutil
 import time
@@ -15,12 +16,14 @@ from uuid import uuid4
 
 from gobby.paths import get_gobby_home
 
+logger = logging.getLogger(__name__)
+
 MAX_PROXY_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_PROXY_ATTACHMENT_COUNT = 10
 MAX_PROXY_TOTAL_ATTACHMENT_BYTES = MAX_PROXY_ATTACHMENT_BYTES
 PROXY_ATTACHMENT_RETENTION_DAYS = 7
 PROXY_ATTACHMENT_RETENTION_SECONDS = PROXY_ATTACHMENT_RETENTION_DAYS * 24 * 60 * 60
-_SAFE_PATH_PART_PATTERN = re.compile(r"[^A-Za-z0-9_-]+")
+_SAFE_PATH_PART_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _SAFE_PATH_PART_MAX_LENGTH = 120
 
 
@@ -34,6 +37,7 @@ def _safe_path_part(value: str, fallback: str) -> str:
     normalized = unicodedata.normalize("NFC", value.replace("\x00", ""))
     cleaned = _SAFE_PATH_PART_PATTERN.sub("_", normalized)
     cleaned = re.sub(r"_+", "_", cleaned).strip("_-")
+    cleaned = cleaned.lstrip(".").strip("_-")
     cleaned = cleaned[:_SAFE_PATH_PART_MAX_LENGTH].strip("_-")
     return cleaned or fallback
 
@@ -171,8 +175,22 @@ async def cleanup_expired_proxy_attachments(
         for session_dir in root.iterdir():
             if not session_dir.is_dir() or session_dir.stat().st_mtime > cutoff:
                 continue
-            removed += sum(1 for path in session_dir.rglob("*") if path.is_file())
-            shutil.rmtree(session_dir)
+            file_count = sum(1 for path in session_dir.rglob("*") if path.is_file())
+            try:
+                shutil.rmtree(session_dir)
+            except Exception:
+                logger.warning(
+                    "Failed to remove expired proxy attachment directory %s",
+                    session_dir,
+                    exc_info=True,
+                )
+                continue
+            removed += file_count
+            logger.info(
+                "Removed %s expired proxy attachment file(s) from %s",
+                file_count,
+                session_dir,
+            )
         return removed
 
     return await asyncio.to_thread(remove_expired)

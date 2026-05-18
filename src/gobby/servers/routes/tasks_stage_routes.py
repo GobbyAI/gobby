@@ -43,6 +43,7 @@ class StagePatchRequest(BaseModel):
     artifact_updates: dict[str, str] | None = None
     validation_override_reason: str | None = None
     position: int | None = None
+    force: bool = False
 
 
 class StageStateView(BaseModel):
@@ -193,6 +194,7 @@ def register_task_stage_routes(
                     stage_name,
                     by_session_id=None,
                     notes=request_data.notes,
+                    force=request_data.force,
                 )
                 event = "stage_changed"
             elif request_data.action == "add":

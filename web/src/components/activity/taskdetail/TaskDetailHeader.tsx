@@ -7,6 +7,11 @@ import {
 import { TaskTextField } from "../TaskFieldEditors";
 import type { TaskInlineEditApi } from "./taskDetailFormat";
 
+export interface TaskDetailHeaderProps {
+  task: GobbyTaskDetail;
+  edit?: TaskInlineEditApi;
+}
+
 /**
  * D5 §1 — the single source of state truth: ref · editable title ·
  * state/priority/type chips. Lifecycle state appears here and nowhere else
@@ -15,10 +20,7 @@ import type { TaskInlineEditApi } from "./taskDetailFormat";
 export function TaskDetailHeader({
   task,
   edit,
-}: {
-  task: GobbyTaskDetail;
-  edit?: TaskInlineEditApi;
-}) {
+}: TaskDetailHeaderProps) {
   const titlePending = edit?.isFieldPending(task.id, "title") ?? false;
 
   return (

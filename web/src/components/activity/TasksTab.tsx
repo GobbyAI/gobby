@@ -622,6 +622,7 @@ export const TasksTab = memo(function TasksTab({
     ),
     getTask: useCallback(
       (taskId: string) =>
+        // Keep the DnD move callback stable while reading the freshest task list.
         tasksRef.current.find((task) => task.id === taskId) ?? null,
       [],
     ),

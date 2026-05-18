@@ -219,7 +219,7 @@
 .task-inline-edit--textarea:disabled,
 .task-inline-edit--select:disabled {
   opacity: 0.6;
-  cursor: progress;
+  cursor: not-allowed;
 }
 
 .task-inline-edit--tags {
@@ -290,7 +290,6 @@
 .activity-task-detail-deplist__item .activity-task-detail-parent-title {
   white-space: normal;
   overflow: visible;
-  text-overflow: clip;
 }
 
 /* ===== §5 Trace (collapsed by default) ===== */

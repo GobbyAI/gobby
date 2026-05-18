@@ -238,3 +238,27 @@ def test_delete_only_removes_unbound_uploads(
     bound_delete = client.delete(f"/api/chat/attachments/{second['id']}")
 
     assert bound_delete.status_code == 409
+
+
+def test_delete_reports_file_removal_failure_after_metadata_delete(
+    client: TestClient,
+    temp_db: LocalDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploaded = client.post(
+        "/api/chat/attachments",
+        files={"file": ("queued.txt", b"queued", "text/plain")},
+    ).json()
+
+    def fail_unlink(self: Path) -> None:
+        raise PermissionError(str(self))
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    response = client.delete(f"/api/chat/attachments/{uploaded['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": False}
+    assert (
+        temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (uploaded["id"],)) is None
+    )

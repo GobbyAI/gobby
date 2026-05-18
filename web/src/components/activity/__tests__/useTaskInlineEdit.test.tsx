@@ -187,5 +187,6 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     // The slow rejection must not stomp WS truth.
     expect(rollback).not.toHaveBeenCalled();
     expect(result.current.errorFor("task-1")).toBeNull();
+    expect(result.current.isFieldPending("task-1", "title")).toBe(false);
   });
 });

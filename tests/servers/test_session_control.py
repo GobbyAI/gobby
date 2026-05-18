@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -1420,7 +1421,7 @@ class TestContinueInChatTerminalKill:
     async def test_send_to_cli_session_stores_attachments_and_appends_paths(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Attached proxy uploads should be persisted and relayed as local paths."""
         from gobby.servers.websocket.session_control import SessionControlMixin

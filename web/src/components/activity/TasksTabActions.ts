@@ -1,6 +1,7 @@
 import type { GobbyTask } from "../../hooks/useTasks";
 import {
   extractTaskPayload,
+  type RawStagePayload,
   type RawTaskPayload,
 } from "../../lib/taskNormalization";
 import { getCanonicalTaskState } from "../../lib/taskState";
@@ -51,7 +52,7 @@ export async function moveTaskStage(
   baseUrl: string,
   taskId: string,
   targetStageName: string,
-): Promise<{ stages?: unknown }> {
+): Promise<{ stages?: RawStagePayload[] | null }> {
   const response = await fetch(
     `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(targetStageName)}`,
     {
@@ -75,7 +76,7 @@ export async function moveTaskStage(
     }
     throw new Error(detail);
   }
-  return (await response.json()) as { stages?: unknown };
+  return (await response.json()) as { stages?: RawStagePayload[] | null };
 }
 
 export function taskActionRef(task: GobbyTask): string {
@@ -139,7 +140,8 @@ export async function startQuickBuild(baseUrl: string, task: GobbyTask): Promise
     quick: true,
     stage: stageName ? [stageName] : [],
   });
-  await postBuildControl(baseUrl, "stop", task);
+  // Quick build intentionally seeds automation, then pauses it so the user can inspect.
+  await stopQuickBuildWithRetry(baseUrl, task);
 }
 
 export async function postBuildControl(
@@ -169,4 +171,22 @@ async function postBuildRequest(
   if (!response.ok) {
     throw new Error(`Build failed (${response.status})`);
   }
+}
+
+async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promise<void> {
+  const delays = [150, 400, 900];
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      await postBuildControl(baseUrl, "stop", task);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === delays.length) break;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+  const ref = taskActionRef(task);
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Quick build started for ${ref}, but stop failed after retries: ${detail}`);
 }

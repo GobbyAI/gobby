@@ -6,6 +6,7 @@ import inspect
 
 import pytest
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
@@ -576,6 +577,61 @@ def test_move_to_stage_rejects_unknown_target(temp_db, sample_project) -> None:
 
     with pytest.raises(ValueError, match="Stage 'merge' is not in task manifest"):
         manager.move_to_stage(task.id, "merge", by_session_id="operator")
+
+
+def test_move_to_stage_rejects_other_session_claim_without_force(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    with pytest.raises(ValueError, match="claimed by another session"):
+        manager.move_to_stage(task.id, "pr", by_session_id="operator-session")
+
+
+def test_move_to_stage_force_overrides_other_session_claim(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1)],
+    )
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        (owner.id, task.id),
+    )
+
+    moved = manager.move_to_stage(
+        task.id,
+        "pr",
+        by_session_id="operator-session",
+        force=True,
+    )
+
+    assert moved.stage_name == "pr"
+    assert task_row(temp_db, task.id)["claimed_by_session_id"] is None
 
 
 register_contract_tests(

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "../../../lib/utils";
 
 /**
  * D5 — shared key/value primitives for the detail pane. Tight horizontal
@@ -10,6 +11,8 @@ export interface ParentTaskRef {
   ref: string;
   title: string;
 }
+
+export type ValidationStatus = "ok" | "fail" | "neutral";
 
 export function MetaKVRow({
   label,
@@ -26,9 +29,11 @@ export function MetaKVRow({
   href?: string;
   title?: string;
 }) {
-  let valueCls = "activity-task-detail-kv-row__value";
-  if (mono) valueCls += " activity-task-detail-kv-row__value--mono";
-  if (link && href) valueCls += " activity-task-detail-kv-row__value--link";
+  const valueCls = cn(
+    "activity-task-detail-kv-row__value",
+    mono && "activity-task-detail-kv-row__value--mono",
+    link && href && "activity-task-detail-kv-row__value--link",
+  );
 
   return (
     <div className="activity-task-detail-kv-row" title={title}>
@@ -57,7 +62,7 @@ export function ValidationRow({
   failCount: number;
 }) {
   const normalized = status.toLowerCase();
-  const variant =
+  const variant: ValidationStatus =
     normalized === "passed" || normalized === "approved"
       ? "ok"
       : normalized === "failed" || normalized === "rejected"
@@ -72,9 +77,7 @@ export function ValidationRow({
         Validation
       </span>
       <span className="activity-task-detail-validation-row__value">
-        <span
-          className={`activity-task-detail-pill activity-task-detail-pill--${variant}`}
-        >
+        <span className={cn("activity-task-detail-pill", `activity-task-detail-pill--${variant}`)}>
           {status}
         </span>
         {failCount > 0 && (

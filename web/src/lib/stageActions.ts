@@ -45,6 +45,7 @@ export interface LifecycleTask {
     is_closed?: boolean
     is_escalated?: boolean
     is_blocked?: boolean
+    blocked_reason?: string | null
     closed_at?: string | null
     closed_reason?: string | null
     closed_in_session_id?: string | null
@@ -125,7 +126,11 @@ export function canonicalBoardStage(task: LifecycleTask): StageStateView | null 
 
 type OptimisticTaskState<T extends LifecycleTask> =
   | T['state']
-  | (NonNullable<T['state']> & { escalation_reason: null })
+  | (NonNullable<T['state']> & {
+    blocked_reason: null
+    escalation_reason: null
+    is_blocked: false
+  })
 
 export type OptimisticMoveResult<T extends LifecycleTask> =
   | T
@@ -156,7 +161,9 @@ export type OptimisticMoveResult<T extends LifecycleTask> =
     dispatch_failure_count: 0
     escalated_at: null
     escalation_reason: null
+    is_blocked: false
     is_escalated: false
+    blocked_reason: null
     stages: StageStateView[]
     state: OptimisticTaskState<T>
     validation_fail_count: 0
@@ -203,7 +210,9 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
         owner_session_ref: null,
         is_claimed: false,
         is_closed: false,
+        is_blocked: false,
         is_escalated: false,
+        blocked_reason: null,
         closed_at: null,
         closed_reason: null,
         closed_in_session_id: null,
@@ -220,6 +229,8 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
     closed_commit_sha: null,
     escalated_at: null,
     escalation_reason: null,
+    is_blocked: false,
+    blocked_reason: null,
     is_escalated: false,
     validation_fail_count: 0,
     dispatch_failure_count: 0,

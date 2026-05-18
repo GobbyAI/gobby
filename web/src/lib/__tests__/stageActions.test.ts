@@ -184,6 +184,8 @@ describe('stageActions shared helper contract', () => {
         closed_commit_sha: 'abc123',
         escalated_at: '2026-05-01T00:00:00Z',
         escalation_reason: 'blocked',
+        is_blocked: true,
+        blocked_reason: 'blocked',
         is_escalated: true,
         validation_fail_count: 3,
         dispatch_failure_count: 2,
@@ -199,6 +201,8 @@ describe('stageActions shared helper contract', () => {
           closed_commit_sha: 'abc123',
           escalated_at: '2026-05-01T00:00:00Z',
           escalation_reason: 'blocked',
+          is_blocked: true,
+          blocked_reason: 'blocked',
         },
         stages: [
           {
@@ -225,6 +229,8 @@ describe('stageActions shared helper contract', () => {
       closed_commit_sha: null,
       escalated_at: null,
       escalation_reason: null,
+      is_blocked: false,
+      blocked_reason: null,
       is_escalated: false,
       validation_fail_count: 0,
       dispatch_failure_count: 0,
@@ -240,6 +246,8 @@ describe('stageActions shared helper contract', () => {
         closed_commit_sha: null,
         escalated_at: null,
         escalation_reason: null,
+        is_blocked: false,
+        blocked_reason: null,
       },
     })
   })

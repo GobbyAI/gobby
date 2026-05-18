@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import re
 from pathlib import Path
@@ -22,6 +23,8 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+logger = logging.getLogger(__name__)
 
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
 _GENERIC_BINARY_MIME_TYPES = {"application/octet-stream", "binary/octet-stream"}
@@ -99,7 +102,9 @@ def _mime_matches_declared(declared: str, sniffed: str | None) -> bool:
         return True
     if declared == sniffed:
         return True
-    if sniffed == "text/plain" and (declared.startswith("text/") or declared in _TEXT_COMPATIBLE_MIME_TYPES):
+    if sniffed == "text/plain" and (
+        declared.startswith("text/") or declared in _TEXT_COMPATIBLE_MIME_TYPES
+    ):
         return True
     if sniffed == "application/zip" and declared in _ZIP_CONTAINER_MIME_TYPES:
         return True
@@ -120,11 +125,15 @@ async def _validate_declared_mime(path: Path, declared: str) -> None:
     )
 
 
-async def _remove_path(path: Path) -> None:
+async def _remove_path(path: Path) -> bool:
     try:
         await asyncio.to_thread(path.unlink)
+        return True
     except FileNotFoundError:
-        pass
+        return True
+    except Exception:
+        logger.warning("Failed to remove chat attachment path %s", path, exc_info=True)
+        return False
 
 
 def _get_config_store(server: HTTPServer) -> ConfigStore:
@@ -258,7 +267,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         if record is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
 
-        await _remove_path(Path(record.local_path))
-        return {"ok": True}
+        removed = await _remove_path(Path(record.local_path))
+        return {"ok": removed}
 
     return router

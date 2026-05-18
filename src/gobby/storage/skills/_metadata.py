@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -44,6 +45,14 @@ class SkillMetadataMixin:
 
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
+
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+        with self.db.transaction() as conn:
+            return conn.execute(query, params).fetchone()
+
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        with self.db.transaction() as conn:
+            return conn.execute(query, params).fetchall()
 
     def create_skill(
         self,
@@ -173,9 +182,9 @@ class SkillMetadataMixin:
             ValueError: If skill not found
         """
         if include_deleted:
-            row = self.db.fetchone("SELECT * FROM skills WHERE id = ?", (skill_id,))
+            row = self._fetchone("SELECT * FROM skills WHERE id = ?", (skill_id,))
         else:
-            row = self.db.fetchone(
+            row = self._fetchone(
                 "SELECT * FROM skills WHERE id = ? AND deleted_at IS NULL",
                 (skill_id,),
             )
@@ -195,7 +204,7 @@ class SkillMetadataMixin:
         if not skill_ids:
             return []
         placeholders = ",".join("?" * len(skill_ids))
-        rows = self.db.fetchall(
+        rows = self._fetchall(
             f"SELECT * FROM skills WHERE id IN ({placeholders}) AND deleted_at IS NULL",
             tuple(skill_ids),
         )
@@ -240,18 +249,18 @@ class SkillMetadataMixin:
 
         if project_id:
             # First try project-scoped skill
-            row = self.db.fetchone(
+            row = self._fetchone(
                 f"SELECT * FROM skills WHERE {where} AND project_id = ?",  # nosec B608
                 (*params, project_id),
             )
             # If not found and include_global, try global
             if row is None and include_global:
-                row = self.db.fetchone(
+                row = self._fetchone(
                     f"SELECT * FROM skills WHERE {where} AND project_id IS NULL",  # nosec B608
                     tuple(params),
                 )
         else:
-            row = self.db.fetchone(
+            row = self._fetchone(
                 f"SELECT * FROM skills WHERE {where} AND project_id IS NULL",  # nosec B608
                 tuple(params),
             )
@@ -564,7 +573,7 @@ class SkillMetadataMixin:
         query += " ORDER BY name ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
-        rows = self.db.fetchall(query, tuple(params))
+        rows = self._fetchall(query, tuple(params))
         skills = [Skill.from_row(row) for row in rows]
 
         # Deduplicate when include_global is True: a skill may exist both
@@ -618,7 +627,7 @@ class SkillMetadataMixin:
         sql += " ORDER BY name ASC LIMIT ?"
         params.append(limit)
 
-        rows = self.db.fetchall(sql, tuple(params))
+        rows = self._fetchall(sql, tuple(params))
         return [Skill.from_row(row) for row in rows]
 
     def list_core_skills(self, project_id: str | None = None) -> list[Skill]:
@@ -643,7 +652,7 @@ class SkillMetadataMixin:
 
         query += " ORDER BY name ASC"
 
-        rows = self.db.fetchall(query, tuple(params))
+        rows = self._fetchall(query, tuple(params))
         return [Skill.from_row(row) for row in rows]
 
     def skill_exists(self, skill_id: str, include_deleted: bool = False) -> bool:
@@ -657,9 +666,9 @@ class SkillMetadataMixin:
             True if exists, False otherwise
         """
         if include_deleted:
-            row = self.db.fetchone("SELECT 1 FROM skills WHERE id = ?", (skill_id,))
+            row = self._fetchone("SELECT 1 FROM skills WHERE id = ?", (skill_id,))
         else:
-            row = self.db.fetchone(
+            row = self._fetchone(
                 "SELECT 1 FROM skills WHERE id = ? AND deleted_at IS NULL", (skill_id,)
             )
         return row is not None
@@ -707,5 +716,5 @@ class SkillMetadataMixin:
             query += " AND enabled = ?"
             params.append(enabled)
 
-        row = self.db.fetchone(query, tuple(params))
+        row = self._fetchone(query, tuple(params))
         return row["count"] if row else 0

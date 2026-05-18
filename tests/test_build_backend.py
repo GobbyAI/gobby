@@ -388,7 +388,10 @@ def test_stage_bundled_content_manifest_writes_manifest(tmp_path: Path) -> None:
     assert list(manifest["files"]) == ["skills/demo/SKILL.md"]
 
 
-def test_stage_bundled_content_manifest_rejects_invalid_helper(tmp_path: Path) -> None:
+def test_stage_bundled_content_manifest_rejects_invalid_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Build backend should fail clearly when the manifest helper shape is invalid."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
@@ -397,18 +400,14 @@ def test_stage_bundled_content_manifest_rejects_invalid_helper(tmp_path: Path) -
 
     backend = _load_backend(repo_root)
     backend._MANIFEST_MODULE.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch = pytest.MonkeyPatch()
-    try:
-        monkeypatch.setattr(
-            backend,
-            "_load_manifest_module",
-            lambda: SimpleNamespace(write_bundled_content_manifest="not-callable"),
-        )
+    monkeypatch.setattr(
+        backend,
+        "_load_manifest_module",
+        lambda: SimpleNamespace(write_bundled_content_manifest="not-callable"),
+    )
 
-        with pytest.raises(RuntimeError) as exc_info:
-            backend._stage_bundled_content_manifest()
-    finally:
-        monkeypatch.undo()
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_bundled_content_manifest()
 
     message = str(exc_info.value)
     assert "write_bundled_content_manifest" in message

@@ -20,6 +20,7 @@ from gobby.sync.integrity import (
     BUNDLED_SYNC_CONTENT_TYPES,
     CONTENT_TYPE_DIRS,
     IntegrityResult,
+    _to_shared_relative_path,
     get_dirty_content_types,
     verify_bundled_integrity,
 )
@@ -153,6 +154,25 @@ class TestVerifyBundledIntegrity:
         assert result.all_clean is False
         assert result.dirty_files == ["shared/workflows/pipelines/demo.yaml"]
         assert get_dirty_content_types(result.dirty_files, tmp_path) == {"pipelines"}
+
+    def test_non_git_unreadable_manifest_file_is_dirty(self, tmp_path: Path) -> None:
+        """Manifest file read failures are dirty, not silently clean."""
+        shared = tmp_path / "shared"
+        skill = shared / "skills" / "demo" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("content", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+
+        with (
+            patch("gobby.sync.integrity.run_git_command", return_value=None),
+            patch("gobby.sync.integrity.hash_file_bytes", side_effect=OSError("denied")),
+        ):
+            result = verify_bundled_integrity(tmp_path)
+
+        assert result.checked is True
+        assert result.all_clean is False
+        assert result.dirty_files == ["shared/skills/demo/SKILL.md"]
+        assert "Failed to read shared/skills/demo/SKILL.md" in result.errors[0]
 
     def test_non_git_extra_bundled_yaml_is_untracked(self, tmp_path: Path) -> None:
         """Extra protected files are treated like untracked git content."""
@@ -330,6 +350,9 @@ class TestGetDirtyContentTypes:
             result = get_dirty_content_types(["shared/workflows/pipelines/x.yaml"], tmp_path)
 
         assert result == {"pipelines"}
+
+    def test_unrelated_relative_path_returns_no_shared_path(self, tmp_path: Path) -> None:
+        assert _to_shared_relative_path("README.md", tmp_path) is None
 
     def test_maps_top_level_workflows_rules_variables_and_build_profiles(
         self, tmp_path: Path

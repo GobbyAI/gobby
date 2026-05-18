@@ -23,6 +23,6 @@ export const TASK_PRIORITY_OPTIONS = [
   { value: 4, label: 'Backlog' },
 ] as const satisfies readonly TaskOption<number>[]
 
-export function taskPriorityLabel(priority: number): string {
-  return TASK_PRIORITY_OPTIONS.find(option => option.value === priority)?.label ?? 'Medium'
+export function taskPriorityLabel(priority: number): string | null {
+  return TASK_PRIORITY_OPTIONS.find(option => option.value === priority)?.label ?? null
 }

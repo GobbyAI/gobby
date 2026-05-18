@@ -554,13 +554,14 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const moveTaskToStage = useCallback(
     async (taskId: string, targetStageName: string): Promise<void> => {
       setError(null)
-      const previousTask = allTasksRef.current.find(task => task.id === taskId) ?? null
+      const fallbackSnapshot = allTasksRef.current.find(task => task.id === taskId) ?? null
+      const rollbackSnapshotRef = { current: null as GobbyTask | null }
       setAllTasks(prev =>
-        prev.map(task =>
-          task.id === taskId
-            ? normalizeTask(optimisticMoveTaskToStage(task, targetStageName))
-            : task
-        )
+        prev.map(task => {
+          if (task.id !== taskId) return task
+          rollbackSnapshotRef.current = task
+          return normalizeTask(optimisticMoveTaskToStage(task, targetStageName))
+        })
       )
 
       try {
@@ -591,9 +592,10 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           )
         }
       } catch (errorPayload) {
-        if (previousTask) {
+        const snapshot = rollbackSnapshotRef.current ?? fallbackSnapshot
+        if (snapshot) {
           setAllTasks(prev =>
-            prev.map(task => task.id === taskId ? previousTask : task)
+            prev.map(task => task.id === taskId ? snapshot : task)
           )
         } else {
           console.warn('Could not rollback task move; previous task snapshot missing', {

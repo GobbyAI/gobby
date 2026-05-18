@@ -168,13 +168,18 @@ class TaskLifecycleEventManager:
         if not ids:
             return set()
         placeholders = ", ".join("?" for _ in ids)
-        rows = self.db.fetchall(
-            f"""
+        query = (
+            """
             SELECT DISTINCT task_id
               FROM task_lifecycle_events
              WHERE reason = ?
-               AND task_id IN ({placeholders})
-            """,  # nosec B608 # placeholders generated from ids length only.
+               AND task_id IN (
+            """
+            + placeholders
+            + ")"
+        )
+        rows = self.db.fetchall(
+            query,
             (BUILD_EVENT_REASON, *ids),
         )
         return {row["task_id"] for row in rows}

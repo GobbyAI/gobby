@@ -89,6 +89,14 @@ export function useTaskInlineEdit({
     });
   }, []);
 
+  const clearPendingForTask = useCallback((taskId: string) => {
+    const prefix = `${taskId}:`;
+    setPending((prev) => {
+      const next = new Set([...prev].filter((key) => !key.startsWith(prefix)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, []);
+
   const clearError = useCallback((taskId: string) => {
     setErrors((prev) =>
       prev[taskId] == null ? prev : { ...prev, [taskId]: null },
@@ -105,8 +113,9 @@ export function useTaskInlineEdit({
     (taskId: string) => {
       bumpGeneration(taskId);
       clearError(taskId);
+      clearPendingForTask(taskId);
     },
-    [bumpGeneration, clearError],
+    [bumpGeneration, clearError, clearPendingForTask],
   );
 
   const commitField = useCallback(
@@ -144,7 +153,9 @@ export function useTaskInlineEdit({
               : `Couldn't save ${field}.`,
         }));
       } finally {
-        setPendingKey(pendingKey, false);
+        if (generationRef.current.get(taskId) === generation) {
+          setPendingKey(pendingKey, false);
+        }
       }
     },
     [

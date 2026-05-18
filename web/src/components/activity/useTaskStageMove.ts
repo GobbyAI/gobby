@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import type { GobbyTask } from "../../hooks/useTasks";
-import type { RawTaskPayload } from "../../lib/taskNormalization";
+import type { RawStagePayload, RawTaskPayload } from "../../lib/taskNormalization";
 import { optimisticMoveTaskToStage } from "../../lib/stageActions";
 
 /**
@@ -17,7 +17,7 @@ import { optimisticMoveTaskToStage } from "../../lib/stageActions";
 
 export interface StageMovePayload {
   /** Server truth: the full stage manifest after the move. */
-  stages?: unknown;
+  stages?: RawStagePayload[] | null;
 }
 
 export interface UseTaskStageMoveOptions {
@@ -80,8 +80,9 @@ export function useTaskStageMove({
     (taskId: string) => {
       bumpGeneration(taskId);
       clearError(taskId);
+      setPendingKey(taskId, false);
     },
-    [bumpGeneration, clearError],
+    [bumpGeneration, clearError, setPendingKey],
   );
 
   const moveTaskToStage = useCallback(
@@ -97,23 +98,25 @@ export function useTaskStageMove({
       setPendingKey(taskId, true);
 
       const optimistic = optimisticMoveTaskToStage(task, targetStageName);
-      applyRawTaskUpdate(taskId, {
+      const optimisticPayload: RawTaskPayload = {
         id: taskId,
         stages: optimistic.stages,
         current_stage: optimistic.current_stage,
-      } as RawTaskPayload);
+      };
+      applyRawTaskUpdate(taskId, optimisticPayload);
 
       try {
         const payload = await patchMove(taskId, targetStageName);
         if (generationRef.current.get(taskId) !== generation) return;
         if (Array.isArray(payload?.stages)) {
-          applyRawTaskUpdate(taskId, {
+          const serverPayload: RawTaskPayload = {
             id: taskId,
             stages: payload.stages,
-          } as RawTaskPayload);
+          };
+          applyRawTaskUpdate(taskId, serverPayload);
         }
       } catch (error) {
-        if (generationRef.current.get(taskId) !== generation) throw error;
+        if (generationRef.current.get(taskId) !== generation) return;
         rollback(taskId, snapshot);
         setErrors((prev) => ({
           ...prev,
@@ -125,7 +128,9 @@ export function useTaskStageMove({
         // Re-throw so the board / card surfaces the transition reason.
         throw error;
       } finally {
-        setPendingKey(taskId, false);
+        if (generationRef.current.get(taskId) === generation) {
+          setPendingKey(taskId, false);
+        }
       }
     },
     [

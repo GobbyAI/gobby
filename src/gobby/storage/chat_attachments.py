@@ -201,23 +201,33 @@ def bind_attachments(
         return []
 
     unique_ids = list(dict.fromkeys(attachment_ids))
-    records = get_attachments_by_ids(db, unique_ids)
-    found_ids = {record.id for record in records}
-    missing_ids = [attachment_id for attachment_id in unique_ids if attachment_id not in found_ids]
-    if missing_ids:
-        raise ValueError(f"Unknown attachment id: {missing_ids[0]}")
-
-    for record in records:
-        same_conversation = record.conversation_id in (None, conversation_id)
-        same_message = record.message_id in (None, message_id)
-        same_target = record.target_session_id in (None, target_session_id)
-        if not (same_conversation and same_message and same_target):
-            raise ValueError(f"Attachment {record.id} is already bound")
-
     now = datetime.now(UTC).isoformat()
-    with db.transaction():
+    with db.transaction_immediate() as conn:
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
+                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+              FROM chat_attachments
+             WHERE id IN ({placeholders})
+            """,  # nosec B608 # placeholders are generated from the validated ID count only.
+            tuple(unique_ids),
+        ).fetchall()
+        records = [_row_to_record(row) for row in rows]
+        by_id = {record.id: record for record in records}
+        missing_ids = [attachment_id for attachment_id in unique_ids if attachment_id not in by_id]
+        if missing_ids:
+            raise ValueError(f"Unknown attachment id: {missing_ids[0]}")
+
+        for record in records:
+            same_conversation = record.conversation_id in (None, conversation_id)
+            same_message = record.message_id in (None, message_id)
+            same_target = record.target_session_id in (None, target_session_id)
+            if not (same_conversation and same_message and same_target):
+                raise ValueError(f"Attachment {record.id} is already bound")
+
         for attachment_id in unique_ids:
-            db.execute(
+            conn.execute(
                 """
                 UPDATE chat_attachments
                    SET conversation_id = COALESCE(?, conversation_id),
@@ -229,7 +239,18 @@ def bind_attachments(
                 """,
                 (conversation_id, message_id, target_session_id, now, now, attachment_id),
             )
-    return get_attachments_by_ids(db, unique_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
+                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+              FROM chat_attachments
+             WHERE id IN ({placeholders})
+            """,  # nosec B608 # placeholders are generated from the validated ID count only.
+            tuple(unique_ids),
+        ).fetchall()
+    updated_records = [_row_to_record(row) for row in rows]
+    updated_by_id = {record.id: record for record in updated_records}
+    return [updated_by_id[attachment_id] for attachment_id in unique_ids]
 
 
 def delete_unbound_attachment(

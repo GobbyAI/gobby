@@ -21,7 +21,7 @@ export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
   const displayState = getTaskDisplayState(task)
   const stateLabel = getTaskStateLabel(task)
   const isActive = !state.is_closed && (state.is_claimed || displayState === 'in_progress')
-  // Friendly owner ref (#<seq_num> or short hash) — never the raw UUID.
+  // Friendly owner ref (#<seq_num> or UUID prefix fallback).
   const ownerLabel =
     task.agent_name ||
     state.owner_session_ref?.ref ||

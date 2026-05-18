@@ -191,7 +191,14 @@ def _verify_manifest_integrity(install_dir: Path, result: IntegrityResult) -> In
         if not path.is_file():
             dirty.append(display_path)
             continue
-        if hash_file_bytes(path) != expected_hash:
+        try:
+            actual_hash = hash_file_bytes(path)
+        except OSError as exc:
+            logger.error("Failed to read bundled manifest file %s", path, exc_info=True)
+            result.errors.append(f"Failed to read {display_path}: {exc}")
+            dirty.append(display_path)
+            continue
+        if actual_hash != expected_hash:
             dirty.append(display_path)
         else:
             clean.append(display_path)
@@ -253,7 +260,7 @@ def _to_shared_relative_path(file_path: str, install_dir: Path) -> str | None:
     if marker in normalized:
         return normalized.split(marker, 1)[1]
 
-    return normalized
+    return None
 
 
 def _content_type_for_shared_relative_path(relative_path: str) -> str | None:

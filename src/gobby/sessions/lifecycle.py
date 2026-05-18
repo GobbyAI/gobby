@@ -13,9 +13,10 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
@@ -38,6 +39,8 @@ from gobby.storage.token_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 def _session_int(value: Any) -> int:
@@ -80,11 +83,19 @@ class SessionLifecycleManager:
         self._process_task: asyncio.Task[None] | None = None
         self._kg_queue_task: asyncio.Task[None] | None = None
 
-    async def _run_memory_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+    async def _run_memory_db(
+        self,
+        func: Callable[..., T],
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
         """Run memory DB work on the memory manager's bounded executor when available."""
         run_db = getattr(self.memory_manager, "run_db", None)
-        if inspect.iscoroutinefunction(run_db):
-            return await run_db(func, *args, **kwargs)
+        if callable(run_db):
+            result = run_db(func, *args, **kwargs)
+            if inspect.isawaitable(result):
+                return await cast(Awaitable[T], result)
+            return cast(T, result)
         return await asyncio.to_thread(func, *args, **kwargs)
 
     async def start(self) -> None:

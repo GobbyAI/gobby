@@ -19,6 +19,7 @@ class ChatAttachmentLimits:
 
 
 def _positive_int(value: Any, fallback: int) -> int:
+    # bool is an int subclass; config booleans must not become 1/0 byte limits.
     if isinstance(value, bool):
         return fallback
     if isinstance(value, int) and value > 0:

@@ -665,11 +665,19 @@ class EnforcementMixin:
             "terminalize_successful_run",
             None,
         )
+        cleanup_session_id = getattr(db_agent, "child_session_id", None) if db_agent else None
+        if not isinstance(cleanup_session_id, str) or not cleanup_session_id:
+            cleanup_session_id = session_id
         if inspect.iscoroutinefunction(terminalize_successful_run):
             await terminalize_successful_run(
                 run_id,
                 notify_result=notify_result,
                 message=message,
+            )
+            cleanup_agent_runtime_state(
+                self.db,
+                run_id=run_id,
+                child_session_id=cleanup_session_id,
             )
             return
 
@@ -680,9 +688,6 @@ class EnforcementMixin:
             notify_result=notify_result,
             message=message,
         )
-        cleanup_session_id = getattr(db_agent, "child_session_id", None) if db_agent else None
-        if not isinstance(cleanup_session_id, str) or not cleanup_session_id:
-            cleanup_session_id = session_id
         cleanup_agent_runtime_state(
             self.db,
             run_id=run_id,

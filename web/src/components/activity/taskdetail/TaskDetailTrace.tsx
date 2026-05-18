@@ -59,7 +59,7 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
           <MetaKVRow label="Labels">
             <div className="activity-task-detail-pillrow">
               {labels.map((l, i) => (
-                <span key={`${l}-${i}`} className="activity-task-detail-label">
+                <span key={l || `label-${i}`} className="activity-task-detail-label">
                   {l}
                 </span>
               ))}

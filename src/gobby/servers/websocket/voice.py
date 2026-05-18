@@ -696,7 +696,10 @@ class VoiceMixin:
         project_id = data.get("project_id")
         target_session_id = data.get("target_session_id")
         if not isinstance(target_session_id, str) or not target_session_id:
-            client_meta = self.clients.get(websocket) or {}
+            try:
+                client_meta = self.clients.get(websocket) or {}
+            except TypeError:
+                client_meta = {}
             attached = client_meta.get("attached_session_id")
             target_session_id = attached if attached == conversation_id else None
 
@@ -791,6 +794,8 @@ class VoiceMixin:
             if isinstance(project_id, str) and project_id.strip():
                 chat_data["project_id"] = project_id
             if target_session_id:
+                # Attached CLI sessions live under SessionControlMixin and have
+                # no ChatSession, so bypass ChatMixin's web-chat pipeline.
                 from gobby.servers.websocket.handlers.session_observe import (
                     handle_send_to_cli_session,
                 )

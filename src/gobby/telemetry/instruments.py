@@ -73,6 +73,10 @@ class TelemetryMetrics:
             "statusline_usage_gap_warnings_total",
             "Total number of statusline usage gap warnings",
         )
+        self._register_counter(
+            "tts_feed_failures_total",
+            "Total number of attached-session TTS feed failures",
+        )
 
         # Memory operation metrics
         self._register_counter(
