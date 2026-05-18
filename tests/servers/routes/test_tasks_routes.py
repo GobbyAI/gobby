@@ -651,6 +651,7 @@ class TestLifecycleMutations:
         data = response.json()
         assert data["claimed_by_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
+        assert data["warnings"] == [{"source": "assignment_notification", "error": "mailbox down"}]
 
     def test_release_task_claim(
         self,

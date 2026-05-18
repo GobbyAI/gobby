@@ -246,10 +246,12 @@ export function ChatInput({
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+        qf.uploadAbort?.()
+        if (qf.attachment) deleteUploadedAttachment(qf.attachment.id)
       })
       deletedUploadedAttachmentIds.clear()
     }
-  }, [])
+  }, [deleteUploadedAttachment])
   useEffect(() => {
     if (queuedFiles.length === 0) {
       deletedUploadedAttachmentIdsRef.current.clear()

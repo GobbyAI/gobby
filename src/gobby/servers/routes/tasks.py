@@ -13,10 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from gobby.build.lifecycle import derive_build_state
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
+from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
-from gobby.sessions.mailbox import MailboxService
-from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
@@ -106,53 +104,6 @@ class TaskUpdateRequest(BaseModel):
         return validate_task_type(value) if value is not None else None
 
 
-class TaskClaimRequest(BaseModel):
-    """Request body for claiming a task."""
-
-    session_id: str = Field(..., description="Owning session reference or UUID")
-    force: bool = Field(default=False, description="Override an existing claim")
-
-
-class TaskReleaseClaimRequest(BaseModel):
-    """Request body for releasing task ownership."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    pass
-
-
-class TaskEscalateRequest(BaseModel):
-    """Request body for escalation."""
-
-    reason: str = Field(..., description="Why this task needs escalation")
-
-
-class TaskCloseRequest(BaseModel):
-    """Request body for closing a task."""
-
-    reason: str | None = Field(default=None, description="Reason for closing")
-    commit_sha: str | None = Field(default=None, description="Git commit SHA to link")
-    session_id: str | None = Field(
-        default=None,
-        description="Session reference or UUID that closed the task",
-    )
-
-
-class TaskReopenRequest(BaseModel):
-    """Request body for reopening a task."""
-
-    reason: str | None = Field(default=None, description="Reason for reopening")
-
-
-class TaskDeEscalateRequest(BaseModel):
-    """Request body for de-escalating a task."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    decision_context: str = Field(..., description="User's decision or instructions for the agent")
-    reset_validation: bool = Field(default=False, description="Also reset validation fail count")
-
-
 # =============================================================================
 # Router
 # =============================================================================
@@ -181,17 +132,19 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             raise TaskNotFoundError(task_id)
         return cast("Task", task)
 
-    async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
+    async def _broadcast_task_or_raise(event: str, task_dict: dict[str, Any]) -> None:
         """Broadcast a task event via WebSocket if available."""
         ws = server.services.websocket_server
         if ws:
-            try:
-                _apply_owner_ref([task_dict])
-                await ws.broadcast_task_event(
-                    event, task_id=task_dict.get("id", ""), task=task_dict
-                )
-            except Exception as e:
-                logger.debug(f"Failed to broadcast task event {event}: {e}")
+            _apply_owner_ref([task_dict])
+            await ws.broadcast_task_event(event, task_id=task_dict.get("id", ""), task=task_dict)
+
+    async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
+        """Best-effort task broadcast for routes where HTTP already reports success."""
+        try:
+            await _broadcast_task_or_raise(event, task_dict)
+        except Exception as e:
+            logger.debug(f"Failed to broadcast task event {event}: {e}")
 
     def _resolve_session_ref(session_ref: str, *, project_id: str | None) -> str:
         """Resolve session references to canonical UUIDs before storage writes."""
@@ -298,95 +251,20 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 seen.add(stage_name)
         return stage_names
 
-    assignment_message_manager: InterSessionMessageManager | None = None
-    assignment_mailbox: MailboxService | None = None
-
-    def _assignment_mailbox() -> MailboxService:
-        nonlocal assignment_mailbox, assignment_message_manager
-        if server.session_manager is None:
-            raise RuntimeError("Session manager not available")
-        if assignment_message_manager is None:
-            assignment_message_manager = InterSessionMessageManager(server.services.database)
-        if assignment_mailbox is None:
-            assignment_mailbox = MailboxService(
-                db=server.services.database,
-                message_manager=assignment_message_manager,
-                session_manager=server.session_manager,
-                wake_dispatcher=server.services.wake_dispatcher,
-            )
-        return assignment_mailbox
-
-    async def _send_task_assignment_message(
-        *,
-        task_dict: dict[str, Any],
-        to_session_id: str,
-    ) -> None:
-        """Persist and wake a task-assignment mailbox notification."""
-        raw_state = task_dict.get("state")
-        state = cast(dict[str, Any], raw_state) if isinstance(raw_state, dict) else {}
-        current_stage = state.get("current_stage")
-        if state.get("is_closed"):
-            task_status = "closed"
-        elif state.get("is_escalated"):
-            task_status = "escalated"
-        elif isinstance(current_stage, dict) and current_stage.get("state"):
-            task_status = str(current_stage["state"])
-        else:
-            task_status = "open"
-
-        metadata = {
-            "task_id": task_dict["id"],
-            "task_ref": task_dict.get("ref"),
-            "task_title": task_dict.get("title"),
-            "task_status": task_status,
-            "task_stage": current_stage,
-            "assigned_session_id": to_session_id,
-        }
-        content = f"{task_dict.get('ref', task_dict['id'])} assigned: {task_dict.get('title', '')}"
-        mailbox = _assignment_mailbox()
-        log_context = {
-            "task_id": task_dict["id"],
-            "task_ref": task_dict.get("ref"),
-            "to_session_id": to_session_id,
-            "project_id": task_dict.get("project_id"),
-            "message_type": "task_assignment",
-        }
-        logger.info(
-            "Sending task assignment mailbox message",
-            extra=log_context,
-        )
-        try:
-            send_result = await mailbox.send(
-                from_session_id=SYSTEM_SESSION_ID,
-                to_session_id=to_session_id,
-                content=content,
-                priority="high",
-                message_type="task_assignment",
-                metadata=metadata,
-                project_id=cast(str | None, task_dict.get("project_id")),
-                include_wakeup=True,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to send task assignment mailbox message",
-                extra=log_context,
-            )
-            raise
-        logger.info(
-            "Sent task assignment mailbox message",
-            extra={
-                **log_context,
-                "message_ids": send_result.message_ids,
-                "wake_results": send_result.wake_results,
-            },
-        )
-
     register_task_stage_routes(
         router,
         server,
         resolve_task=_resolve_task,
         broadcast_task=_broadcast_task,
         stage_view=_stage_view,
+    )
+    register_task_lifecycle_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        resolve_session_ref=_resolve_session_ref,
+        broadcast_task=_broadcast_task,
+        broadcast_claim_task=_broadcast_task_or_raise,
     )
 
     # -----------------------------------------------------------------
@@ -625,152 +503,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Failed to delete task {task_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # -----------------------------------------------------------------
-    # Stage and ownership transitions
-    # -----------------------------------------------------------------
-
-    @router.post("/{task_id}/claim")
-    async def claim_task(task_id: str, request_data: TaskClaimRequest) -> Any:
-        """Claim a task for a session."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            resolved_session_id = _resolve_session_ref(
-                request_data.session_id,
-                project_id=task.project_id,
-            )
-            claimed_task = server.task_manager.claim_task(
-                resolved_id,
-                session_id=resolved_session_id,
-                force=request_data.force,
-            )
-            result = claimed_task.to_dict()
-            try:
-                await _send_task_assignment_message(
-                    task_dict=result,
-                    to_session_id=resolved_session_id,
-                )
-            except Exception:
-                logger.exception(
-                    "Task claim committed but assignment notification failed",
-                    extra={
-                        "task_id": resolved_id,
-                        "task_ref": result.get("ref"),
-                        "to_session_id": resolved_session_id,
-                    },
-                )
-            try:
-                await _broadcast_task("task_claimed", result)
-            except Exception:
-                logger.exception(
-                    "Task claim committed but broadcast failed",
-                    extra={"task_id": resolved_id, "task_ref": result.get("ref")},
-                )
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    @router.post("/{task_id}/release-claim")
-    async def release_task_claim(
-        task_id: str, request_data: TaskReleaseClaimRequest | None = None
-    ) -> Any:
-        """Release canonical task ownership without using generic PATCH."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            released = server.task_manager.release_task_claim(resolved_id)
-            result = released.to_dict()
-            await _broadcast_task("task_claim_released", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/escalate")
-    async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
-        """Escalate a task without using generic mutation."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            updated = server.task_manager.escalate_task(resolved_id, reason=request_data.reason)
-            result = updated.to_dict()
-            await _broadcast_task("task_escalated", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/close")
-    async def close_task(task_id: str, request_data: TaskCloseRequest | None = None) -> Any:
-        """Close a task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskCloseRequest()
-            resolved_session_id = (
-                _resolve_session_ref(body.session_id, project_id=task.project_id)
-                if body.session_id is not None
-                else None
-            )
-
-            if body.commit_sha:
-                server.task_manager.link_commit(resolved_id, body.commit_sha)
-
-            closed = server.task_manager.close_task(
-                resolved_id,
-                reason=body.reason,
-                closed_in_session_id=resolved_session_id,
-                closed_commit_sha=body.commit_sha,
-            )
-            result = closed.to_dict()
-            await _broadcast_task("task_closed", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/reopen")
-    async def reopen_task(task_id: str, request_data: TaskReopenRequest | None = None) -> Any:
-        """Reopen a closed task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReopenRequest()
-            reopened = server.task_manager.reopen_task(resolved_id, reason=body.reason)
-            result = reopened.to_dict()
-            await _broadcast_task("task_reopened", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/de-escalate")
-    async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task with user decision context."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            updated = server.task_manager.de_escalate_task(
-                resolved_id,
-                reason=request_data.decision_context,
-                reset_validation=request_data.reset_validation,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_de_escalated", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
 
     register_task_comment_routes(
         router,

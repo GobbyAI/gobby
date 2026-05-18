@@ -69,6 +69,14 @@ describe('extractTaskPayload', () => {
       id: 'task-1',
     })
   })
+
+  it('caps nested payload extraction depth', () => {
+    expect(
+      extractTaskPayload({
+        data: { data: { data: { data: { data: { data: { task: { id: 'task-1' } } } } } } },
+      }),
+    ).toBeNull()
+  })
 })
 
 describe('normalizeStageRow display_name fallback', () => {

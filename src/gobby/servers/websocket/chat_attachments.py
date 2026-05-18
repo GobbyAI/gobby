@@ -18,9 +18,19 @@ class AttachmentSessionManager(Protocol):
     def db(self) -> DatabaseProtocol | None: ...
 
 
+class ChatAttachmentConfig(Protocol):
+    attachment_max_file_bytes: int
+    attachment_max_files_per_message: int
+    attachment_max_total_bytes_per_message: int
+
+
+class AttachmentDaemonConfig(Protocol):
+    chat: ChatAttachmentConfig
+
+
 class AttachmentOwner(Protocol):
     session_manager: AttachmentSessionManager | None
-    daemon_config: Any | None
+    daemon_config: AttachmentDaemonConfig | None
 
 
 @dataclass(frozen=True)
@@ -113,12 +123,15 @@ def _bind_attachments_sync(
     attachment_ids: list[str],
     *,
     max_file_bytes: int,
+    max_files_per_message: int,
     max_total_bytes: int,
     conversation_id: str | None,
     message_id: str | None,
     target_session_id: str | None,
 ) -> list[ChatAttachmentRecord]:
     db = _attachment_db(owner)
+    if len(attachment_ids) > max_files_per_message:
+        raise ValueError(f"Too many attachments: maximum is {max_files_per_message}")
     records = chat_attachments.get_attachments_by_ids(db, attachment_ids)
     found_ids = {record.id for record in records}
     for attachment_id in attachment_ids:
@@ -165,6 +178,7 @@ async def prepare_message_attachments(
         owner,
         attachment_ids,
         max_file_bytes=max_file_bytes,
+        max_files_per_message=max_files_per_message,
         max_total_bytes=max_total_bytes,
         conversation_id=conversation_id,
         message_id=message_id,

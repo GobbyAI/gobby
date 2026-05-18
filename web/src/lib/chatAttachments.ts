@@ -65,7 +65,7 @@ export function uploadChatAttachment(
     if (options.draftId) form.append('draft_id', options.draftId)
     if (options.projectId) form.append('project_id', options.projectId)
 
-    xhr.open('POST', `${API_BASE_URL}/api/chat/attachments`)
+    xhr.open('POST', apiUrl('/api/chat/attachments'))
     xhr.withCredentials = true
     xhr.timeout = ATTACHMENT_UPLOAD_TIMEOUT_MS
     xhr.upload.onprogress = (event) => {
@@ -104,15 +104,27 @@ export function uploadChatAttachment(
 }
 
 export async function deleteChatAttachment(attachmentId: string): Promise<Response> {
-  const response = await fetch(apiUrl(`/api/chat/attachments/${encodeURIComponent(attachmentId)}`), {
-    method: 'DELETE',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(body || response.statusText || `Attachment delete failed (${response.status})`)
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), ATTACHMENT_UPLOAD_TIMEOUT_MS)
+  try {
+    const response = await fetch(apiUrl(`/api/chat/attachments/${encodeURIComponent(attachmentId)}`), {
+      method: 'DELETE',
+      credentials: 'include',
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      throw new Error(body || response.statusText || `Attachment delete failed (${response.status})`)
+    }
+    return response
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Attachment delete timed out')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
   }
-  return response
 }
 
 export function formatAttachmentSize(bytes: number): string {

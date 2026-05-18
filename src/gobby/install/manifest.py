@@ -41,6 +41,8 @@ def hash_file_bytes(path: Path) -> str:
 
 def should_include_bundled_file(path: Path, shared_dir: Path) -> bool:
     """Return whether *path* is a real bundled file for manifest purposes."""
+    if path.is_symlink():
+        return False
     if not path.is_file():
         return False
     try:
@@ -100,6 +102,8 @@ def load_bundled_content_manifest(install_dir: Path) -> tuple[dict[str, str] | N
 
     try:
         raw_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return None, [f"Failed to read bundled content manifest: {exc}"]
     except json.JSONDecodeError as exc:
         return None, [f"Invalid bundled content manifest JSON: {exc}"]
 

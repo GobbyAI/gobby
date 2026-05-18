@@ -275,7 +275,7 @@ describe("TasksTab — events and row actions", () => {
       expect(claimCall).toBeTruthy();
       expect(claimCall?.[1]).toMatchObject({
         method: "POST",
-        body: JSON.stringify({ session_id: "main-chat-1", force: true }),
+        body: JSON.stringify({ session_id: "main-chat-1", force: false }),
       });
     });
 

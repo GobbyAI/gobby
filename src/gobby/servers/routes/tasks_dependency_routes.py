@@ -40,6 +40,9 @@ def register_task_dependency_routes(
     async def _enrich_dependency_nodes(
         node: dict[str, Any],
         cache: dict[str, Any | None],
+        *,
+        depth: int,
+        max_depth: int,
     ) -> None:
         """Attach the real task identity (ref/title/type) to each tree node.
 
@@ -61,12 +64,19 @@ def register_task_dependency_routes(
                 node["ref"] = f"#{seq_num}" if seq_num else resolved_id[:8]
                 node["title"] = getattr(resolved, "title", "")
                 node["task_type"] = getattr(resolved, "task_type", "")
+        if depth >= max_depth:
+            return
         for key in ("blockers", "blocking"):
             children = node.get(key)
             if isinstance(children, list):
                 for child in children:
                     if isinstance(child, dict):
-                        await _enrich_dependency_nodes(child, cache)
+                        await _enrich_dependency_nodes(
+                            child,
+                            cache,
+                            depth=depth + 1,
+                            max_depth=max_depth,
+                        )
 
     def _collect_dependency_node_ids(node: dict[str, Any], ids: set[str]) -> None:
         node_id = node.get("id")
@@ -103,11 +113,11 @@ def register_task_dependency_routes(
             )
         return cache
 
-    async def _enrich_dependency_tree(tree: dict[str, Any]) -> None:
+    async def _enrich_dependency_tree(tree: dict[str, Any], *, max_depth: int) -> None:
         ids: set[str] = set()
         _collect_dependency_node_ids(tree, ids)
         raw_cache = await server.run_db(_load_dependency_tasks, sorted(ids))
-        await _enrich_dependency_nodes(tree, raw_cache)
+        await _enrich_dependency_nodes(tree, raw_cache, depth=0, max_depth=max_depth)
 
     @router.get("/{task_id}/dependencies")
     async def get_dependency_tree(
@@ -115,13 +125,18 @@ def register_task_dependency_routes(
         direction: Literal["blockers", "blocking", "both"] = Query(
             "both", description="Tree direction"
         ),
+        max_depth: int = Query(10, ge=1, le=50, description="Maximum tree depth"),
     ) -> Any:
         """Get the dependency tree for a task."""
         try:
             task = resolve_task(task_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
-            tree = dep_manager.get_dependency_tree(task.id, direction=direction)
-            await _enrich_dependency_tree(tree)
+            tree = dep_manager.get_dependency_tree(
+                task.id,
+                direction=direction,
+                max_depth=max_depth,
+            )
+            await _enrich_dependency_tree(tree, max_depth=max_depth)
             return tree
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

@@ -3,18 +3,40 @@
 from __future__ import annotations
 
 import binascii
+import os
 from pathlib import Path
 
 import pytest
 
 from gobby.servers.websocket import attachments as attachment_helpers
 from gobby.servers.websocket.attachments import (
+    _safe_path_part,
     cleanup_expired_proxy_attachments,
     cleanup_proxy_attachments_for_session,
     store_proxy_attachments,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("../note.txt", "_note.txt"),
+        ("...hidden", "hidden"),
+        ("a/b\\c?.txt", "a_b_c_.txt"),
+        ("\x00", "fallback"),
+    ],
+)
+def test_safe_path_part_sanitizes_deterministically(raw: str, expected: str) -> None:
+    assert _safe_path_part(raw, "fallback") == expected
+
+
+def test_safe_path_part_truncates_preserving_extension() -> None:
+    result = _safe_path_part(f"{'a' * 200}.txt", "fallback")
+
+    assert result.endswith(".txt")
+    assert len(result) <= attachment_helpers._SAFE_PATH_PART_MAX_LENGTH
 
 
 @pytest.mark.asyncio
@@ -150,12 +172,35 @@ async def test_cleanup_expired_proxy_attachments_uses_retention_window(
     monkeypatch.setattr(attachment_helpers.time, "time", lambda: 1_000.0)
     old_mtime = 1_000.0 - attachment_helpers.PROXY_ATTACHMENT_RETENTION_SECONDS - 10
     old_dir.touch()
-    import os
 
     os.utime(old_dir, (old_mtime, old_mtime))
+    os.utime(old_paths[0], (old_mtime, old_mtime))
 
     removed = await cleanup_expired_proxy_attachments()
 
     assert removed == 1
     assert not old_dir.exists()
     assert fresh_paths[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_proxy_attachments_keeps_directory_with_fresh_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    paths = await store_proxy_attachments(
+        "mixed-session",
+        [{"name": "fresh.txt", "base64": "bmV3"}],
+    )
+    session_dir = paths[0].parent
+    monkeypatch.setattr(attachment_helpers.time, "time", lambda: 1_000.0)
+    old_mtime = 1_000.0 - attachment_helpers.PROXY_ATTACHMENT_RETENTION_SECONDS - 10
+    fresh_mtime = 1_000.0
+    os.utime(session_dir, (old_mtime, old_mtime))
+    os.utime(paths[0], (fresh_mtime, fresh_mtime))
+
+    removed = await cleanup_expired_proxy_attachments()
+
+    assert removed == 0
+    assert paths[0].exists()

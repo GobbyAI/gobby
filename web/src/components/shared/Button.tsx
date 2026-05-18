@@ -12,8 +12,8 @@ export interface ButtonProps
     VariantProps<typeof buttonVariants> {
   /**
    * Render through Radix Slot so caller-supplied elements receive button
-   * styling and state props. Loading disables the control, sets aria-busy,
-   * and injects a leading spinner before children.
+   * styling and state props. Loading disables the slotted control and sets
+   * aria-busy, but does not inject a spinner because Slot requires one child.
    */
   asChild?: boolean
   loading?: boolean

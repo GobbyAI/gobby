@@ -37,8 +37,9 @@ BUNDLED_SYNC_CONTENT_TYPES: set[str] = {
     "build_profiles",
 }
 
-# Maps protected paths under install/shared/ to content type names used by
-# sync_bundled_content_to_db's sync_targets.
+# Maps protected paths under install/shared/ to content type names used by the
+# DB sync targets. Keep this in lockstep with BUNDLED_SYNC_CONTENT_TYPES; the
+# integrity tests assert that every synced target has at least one path mapping.
 CONTENT_TYPE_DIRS: dict[str, str] = {
     "skills": "skills",
     "prompts": "prompts",

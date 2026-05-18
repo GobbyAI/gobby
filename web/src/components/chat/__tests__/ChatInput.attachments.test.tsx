@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChatInput } from '../ChatInput'
 
 class MockXMLHttpRequest {
@@ -41,6 +41,7 @@ class MockXMLHttpRequest {
 describe('ChatInput attachments', () => {
   const originalXHR = globalThis.XMLHttpRequest
   const originalFileReader = globalThis.FileReader
+  const originalFetch = globalThis.fetch
 
   beforeEach(() => {
     MockXMLHttpRequest.instances = []
@@ -48,12 +49,15 @@ describe('ChatInput attachments', () => {
     vi.spyOn(crypto, 'randomUUID').mockReturnValue(
       '00000000-0000-4000-8000-000000000001',
     )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
   })
 
   afterEach(() => {
+    cleanup()
     vi.restoreAllMocks()
     vi.stubGlobal('XMLHttpRequest', originalXHR)
     vi.stubGlobal('FileReader', originalFileReader)
+    vi.stubGlobal('fetch', originalFetch)
   })
 
   it('uploads selected files with multipart form data without FileReader base64', async () => {

@@ -744,10 +744,12 @@ async def handle_send_to_cli_session(
     {
         "type": "send_to_cli_session",
         "session_id": "db-uuid-of-target-session",
-        "content": "message text"
+        "content": "message text",
+        "attachments": [{"id": "stored-attachment-id"}],
+        "client_message_id": "optional-client-id"
     }
     """
-    session_id = data.get("session_id")
+    session_id = _as_str(data.get("session_id"))
     content = str(data.get("content", "")).strip()
     attachments = data.get("attachments")
     attachment_items = attachments if isinstance(attachments, list) else []
@@ -787,11 +789,11 @@ async def handle_send_to_cli_session(
             prepared = await prepare_message_attachments(
                 mixin,
                 attachment_items,
-                target_session_id=str(session_id),
+                target_session_id=session_id,
             )
             content = append_prepared_attachment_context(content, prepared)
             legacy_items = legacy_attachment_items(attachment_items)
-            stored_paths = await store_proxy_attachments(str(session_id), legacy_items)
+            stored_paths = await store_proxy_attachments(session_id, legacy_items)
             content = append_attachment_paths(content, stored_paths)
         except ValueError as exc:
             await mixin._send_error(websocket, str(exc), code="INVALID_ATTACHMENT")

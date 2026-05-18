@@ -164,7 +164,7 @@ async def _set_attached_session_agent(
 
     try:
         session = await run_db(mixin, session_manager.get, target_session_id)
-    except Exception as exc:
+    except (LookupError, RuntimeError, ValueError) as exc:
         logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
         session = None
     if session is None:
@@ -510,7 +510,12 @@ async def handle_set_agent(
     if session_manager and agent_name != "default":
         try:
             existing_row = await run_db(mixin, session_manager.get, conversation_id)
-        except Exception:
+        except (LookupError, RuntimeError, ValueError) as exc:
+            logger.debug(
+                "Failed to look up existing session %s for agent validation: %s",
+                conversation_id,
+                exc,
+            )
             existing_row = None
         if not await _validate_persona_agent(
             mixin, websocket, session_manager, agent_name, existing_row

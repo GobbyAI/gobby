@@ -37,6 +37,7 @@ export const DEFAULT_FILTERS = new Set<TaskFilterKey>([
   'escalated',
 ])
 export const RECENT_CLOSED_TASK_LIMIT = 20
+const MAX_TASK_TREE_DEPTH = 100
 
 export const PRIORITY_TEXT_COLORS: Record<number, string> = {
   0: 'var(--text-primary)',
@@ -78,7 +79,11 @@ export function buildTree(tasks: GobbyTask[]): TreeNode[] {
 
   for (const task of tasks) {
     const node = nodeMap.get(task.id)!
-    if (task.parent_task_id && nodeMap.has(task.parent_task_id)) {
+    if (
+      task.parent_task_id &&
+      nodeMap.has(task.parent_task_id) &&
+      !parentWouldCreateCycle(task, nodeMap)
+    ) {
       nodeMap.get(task.parent_task_id)!.children.push(node)
     } else {
       roots.push(node)
@@ -91,6 +96,20 @@ export function buildTree(tasks: GobbyTask[]): TreeNode[] {
   roots.sort((left, right) => compareTasksForDisplay(left.task, right.task))
 
   return roots
+}
+
+function parentWouldCreateCycle(
+  task: GobbyTask,
+  nodeMap: Map<string, TreeNode>,
+): boolean {
+  let parentId = task.parent_task_id
+  let depth = 0
+  while (parentId && depth < MAX_TASK_TREE_DEPTH) {
+    if (parentId === task.id) return true
+    parentId = nodeMap.get(parentId)?.task.parent_task_id ?? null
+    depth += 1
+  }
+  return depth >= MAX_TASK_TREE_DEPTH
 }
 
 function taskMatchesSearch(task: GobbyTask, term: string): boolean {
@@ -117,11 +136,13 @@ export function filterTreeBySearch(nodes: TreeNode[], term: string): TreeNode[] 
 export function collectExpandableNodeIds(
   nodes: TreeNode[],
   ids: Set<string> = new Set(),
+  ancestors: Set<string> = new Set(),
 ): Set<string> {
   for (const node of nodes) {
+    if (ancestors.has(node.id)) continue
     if (node.children.length > 0) {
       ids.add(node.id)
-      collectExpandableNodeIds(node.children, ids)
+      collectExpandableNodeIds(node.children, ids, new Set(ancestors).add(node.id))
     }
   }
   return ids
@@ -132,16 +153,26 @@ export function collectVisibleTaskRows(
   collapsedIds: Set<string>,
   depth = 0,
   forceOpen = false,
+  ancestors: Set<string> = new Set(),
 ): VisibleTaskRow[] {
+  if (depth >= MAX_TASK_TREE_DEPTH) return []
   return nodes.flatMap(node => {
+    if (ancestors.has(node.id)) return []
     const isInternal = node.children.length > 0
     const isOpen = forceOpen || !collapsedIds.has(node.id)
     const row: VisibleTaskRow = { node, depth, isInternal, isOpen }
 
+    const nextAncestors = new Set(ancestors).add(node.id)
     if (!isInternal || !isOpen) return [row]
     return [
       row,
-      ...collectVisibleTaskRows(node.children, collapsedIds, depth + 1, forceOpen),
+      ...collectVisibleTaskRows(
+        node.children,
+        collapsedIds,
+        depth + 1,
+        forceOpen,
+        nextAncestors,
+      ),
     ]
   })
 }

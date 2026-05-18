@@ -183,7 +183,23 @@ async def cleanup_expired_proxy_attachments(
             return 0
         removed = 0
         for session_dir in root.iterdir():
-            if not session_dir.is_dir() or session_dir.stat().st_mtime > cutoff:
+            if not session_dir.is_dir():
+                continue
+            try:
+                newest_mtime = max(
+                    [session_dir.stat().st_mtime]
+                    + [path.stat().st_mtime for path in session_dir.rglob("*")]
+                )
+            except FileNotFoundError:
+                continue
+            except Exception:
+                logger.warning(
+                    "Failed to inspect proxy attachment directory %s",
+                    session_dir,
+                    exc_info=True,
+                )
+                continue
+            if newest_mtime > cutoff:
                 continue
             file_count = sum(1 for path in session_dir.rglob("*") if path.is_file())
             try:

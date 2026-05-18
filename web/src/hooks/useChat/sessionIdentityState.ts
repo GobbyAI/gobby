@@ -150,17 +150,15 @@ export function useSessionIdentityState({
           applyMainSessionMeta(session as Record<string, unknown>);
           const ws = wsRef.current;
           const agentName = activeAgentRef.current;
-          if (ws?.readyState === WebSocket.OPEN && agentName) {
+          if (ws?.readyState === WebSocket.OPEN && agentName && agentName !== "default") {
             try {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: "set_agent",
-                    conversation_id: session.id,
-                    agent_name: agentName,
-                  }),
-                );
-              }
+              ws.send(
+                JSON.stringify({
+                  type: "set_agent",
+                  conversation_id: session.id,
+                  agent_name: agentName,
+                }),
+              );
             } catch (error) {
               console.warn("Failed to send set_agent for new chat session", error);
             }

@@ -31,6 +31,8 @@ service-installer module split, and review/test hardening since `0.4.4`.
 
 ### Fixed
 
+- Address review cleanup findings across task lifecycle routing, attachment
+  handling, frontend task/chat polish, and focused regression tests (#14799).
 - Time out MCP discovery calls and add a discovery time-budget check so
   discovery cannot exceed its timeout limits (#14735).
 - Persist memory-digest state atomically and retry invalid memory turn

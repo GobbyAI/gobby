@@ -86,6 +86,7 @@ export function useAppCommandPalette({
         if (!response.ok) {
           throw new Error(`Restart failed: ${response.status}`);
         }
+        addSystemMessage("Daemon restart requested; reconnecting...");
       } catch (err) {
         console.error("Restart request failed:", err);
         if (showFailureMessage) {

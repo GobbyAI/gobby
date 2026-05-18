@@ -14,6 +14,7 @@ const STAGE_STATES: readonly StageState5[] = [
 const REVIEW_POLICIES: readonly ReviewPolicy[] = ['none', 'required', 'optional']
 
 const RETIRED_STAGE_NAMES = new Set(['test_arch'])
+const MAX_TASK_PAYLOAD_EXTRACT_DEPTH = 5
 
 export function isRetiredStageName(name: string | null | undefined): boolean {
   return typeof name === 'string' && RETIRED_STAGE_NAMES.has(name)
@@ -253,11 +254,12 @@ export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
     hasValidOptionalTaskFields(value)
 }
 
-export function extractTaskPayload(data: unknown): RawTaskPayload | null {
+export function extractTaskPayload(data: unknown, depth = 0): RawTaskPayload | null {
+  if (depth > MAX_TASK_PAYLOAD_EXTRACT_DEPTH) return null
   if (isRawTaskPayload(data)) return data
   if (isRecord(data) && isRawTaskPayload(data.task)) return data.task
   if (isRecord(data) && isRecord(data.data)) {
-    return extractTaskPayload(data.data)
+    return extractTaskPayload(data.data, depth + 1)
   }
   return null
 }

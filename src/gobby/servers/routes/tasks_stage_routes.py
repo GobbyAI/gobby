@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.storage.tasks._stage_types import (
@@ -43,7 +43,10 @@ class StagePatchRequest(BaseModel):
     artifact_updates: dict[str, str] | None = None
     validation_override_reason: str | None = None
     position: int | None = None
-    force: bool = False
+    force: bool = Field(
+        default=False,
+        description="Explicitly override stage move guards for operator-driven recovery.",
+    )
 
 
 class StageStateView(BaseModel):

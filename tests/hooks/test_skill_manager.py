@@ -238,14 +238,16 @@ class TestLoadFromDbProjectScoping:
         from gobby.hooks.skill_manager import HookSkillManager
 
         mock_db = MagicMock()
-        mock_db.fetchall.return_value = []
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_db.transaction.return_value.__enter__.return_value = mock_conn
 
         manager = HookSkillManager(db=mock_db, project_id="proj-123")
         skills = manager.discover_core_skills()
 
         assert isinstance(skills, list)
         # Verify list_skills was called with project_id
-        call_args = mock_db.fetchall.call_args
+        call_args = mock_conn.execute.call_args
         query = call_args[0][0]
         params = call_args[0][1]
         assert "project_id" in query
@@ -256,11 +258,13 @@ class TestLoadFromDbProjectScoping:
         from gobby.hooks.skill_manager import HookSkillManager
 
         mock_db = MagicMock()
-        mock_db.fetchall.return_value = []
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_db.transaction.return_value.__enter__.return_value = mock_conn
 
         manager = HookSkillManager(db=mock_db)
         manager.discover_core_skills()
 
-        call_args = mock_db.fetchall.call_args
+        call_args = mock_conn.execute.call_args
         query = call_args[0][0]
         assert "project_id IS NULL" in query

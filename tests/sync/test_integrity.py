@@ -13,6 +13,7 @@ import yaml
 from gobby.install.manifest import (
     build_bundled_content_manifest,
     hash_file_bytes,
+    load_bundled_content_manifest,
     write_bundled_content_manifest,
 )
 from gobby.storage.workflow_definitions import compute_definition_hash
@@ -79,6 +80,28 @@ class TestBundledContentManifest:
         ]
         assert manifest["files"]["skills/a/SKILL.md"] == hashlib.sha256(b"a-content\n").hexdigest()
         assert manifest == build_bundled_content_manifest(shared)
+
+    def test_manifest_generation_excludes_symlinks(self, tmp_path: Path) -> None:
+        shared = tmp_path / "shared"
+        skill_dir = shared / "skills" / "demo"
+        skill_dir.mkdir(parents=True)
+        target = skill_dir / "target.md"
+        target.write_text("target", encoding="utf-8")
+        (skill_dir / "linked.md").symlink_to(target)
+
+        manifest = build_bundled_content_manifest(shared)
+
+        assert list(manifest["files"]) == ["skills/demo/target.md"]
+
+    def test_manifest_load_read_error_returns_validation_error(self, tmp_path: Path) -> None:
+        manifest_path = tmp_path / "bundled_content_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+
+        with patch("pathlib.Path.read_text", side_effect=OSError("denied")):
+            files, errors = load_bundled_content_manifest(tmp_path)
+
+        assert files is None
+        assert errors == ["Failed to read bundled content manifest: denied"]
 
     def test_hash_distinguishes_yaml_reformat_from_normalized_definition_hash(
         self, tmp_path: Path

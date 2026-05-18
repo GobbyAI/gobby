@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,8 @@ _MAX_FILE_KEY = "chat.attachment_max_file_bytes"
 _MAX_TOTAL_KEY = "chat.attachment_max_total_bytes_per_message"
 _MAX_COUNT_KEY = "chat.attachment_max_files_per_message"
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ChatAttachmentLimits:
@@ -22,10 +25,26 @@ class ChatAttachmentLimits:
 
     def __post_init__(self) -> None:
         product_cap = self.max_file_bytes * self.max_files_per_message
+        requested_total = self.max_total_bytes_per_message
+        if requested_total > product_cap:
+            is_builtin_default_cap = (
+                requested_total == DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE
+                and self.max_file_bytes == DEFAULT_ATTACHMENT_MAX_FILE_BYTES
+                and self.max_files_per_message == DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE
+            )
+            if not is_builtin_default_cap:
+                logger.warning(
+                    "Clamping chat attachment total byte limit from %s to %s "
+                    "(max_file_bytes=%s, max_files_per_message=%s)",
+                    requested_total,
+                    product_cap,
+                    self.max_file_bytes,
+                    self.max_files_per_message,
+                )
         object.__setattr__(
             self,
             "max_total_bytes_per_message",
-            min(self.max_total_bytes_per_message, product_cap),
+            min(requested_total, product_cap),
         )
 
 

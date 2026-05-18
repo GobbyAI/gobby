@@ -246,6 +246,7 @@ class VoiceMixin:
         # Active TTS pipelines per conversation (for cancellation)
         self._active_tts_pipelines: dict[str, TTSPipeline] = {}
         self._attached_tts_offsets: dict[str, int] = {}
+        self._attached_tts_lock = asyncio.Lock()
 
         # Background preload state for startup warmup
         self._voice_warmup_task: asyncio.Task[None] | None = None

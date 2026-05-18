@@ -48,6 +48,7 @@ class FakeXMLHttpRequest {
 const originalXMLHttpRequest = globalThis.XMLHttpRequest
 
 afterEach(() => {
+  vi.useRealTimers()
   globalThis.XMLHttpRequest = originalXMLHttpRequest
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -139,7 +140,29 @@ describe('deleteChatAttachment', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/chat/attachments/id%2Fwith%20slash', {
       method: 'DELETE',
       credentials: 'include',
+      signal: expect.any(AbortSignal),
     })
+  })
+
+  it('throws a timeout-specific error when delete aborts', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = expect(deleteChatAttachment('att-1')).rejects.toThrow(
+      'Attachment delete timed out',
+    )
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+    await result
+    vi.useRealTimers()
   })
 })
 

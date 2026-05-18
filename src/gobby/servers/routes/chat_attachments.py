@@ -167,6 +167,15 @@ async def _remove_path(path: Path) -> bool:
         return False
 
 
+async def _remove_empty_directory(path: Path) -> None:
+    try:
+        await asyncio.to_thread(path.rmdir)
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
 def _get_config_store(server: HTTPServer) -> ConfigStore:
     existing = getattr(server.services, "config_store", None)
     if existing is not None:
@@ -233,8 +242,14 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
 
         await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
         try:
+            await asyncio.to_thread(_ensure_disk_space, target_dir, limits.max_file_bytes)
             async with aiofiles.open(temp_path, "wb") as out:
-                while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                while True:
+                    remaining = limits.max_file_bytes - size
+                    read_size = min(_UPLOAD_CHUNK_BYTES, max(remaining + 1, 1))
+                    chunk = await file.read(read_size)
+                    if not chunk:
+                        break
                     size += len(chunk)
                     if size > limits.max_file_bytes:
                         raise HTTPException(
@@ -243,7 +258,6 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                                 f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
                             ),
                         )
-                    await asyncio.to_thread(_ensure_disk_space, target_dir, len(chunk))
                     await out.write(chunk)
 
             await _validate_declared_mime(temp_path, mime_type)
@@ -262,6 +276,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         except Exception:
             await _remove_path(temp_path)
             await _remove_path(target_path)
+            await _remove_empty_directory(target_dir)
             raise
 
         return chat_attachments.to_api_dict(record)

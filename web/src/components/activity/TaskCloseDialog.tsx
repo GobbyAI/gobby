@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
 
 interface TaskCloseDialogProps {
@@ -14,27 +14,63 @@ export function TaskCloseDialog({
   onCancel,
   onConfirm,
 }: TaskCloseDialogProps) {
-  const [reason, setReason] = useState("");
-  const [showReasonError, setShowReasonError] = useState(false);
+  const currentTaskId = task?.id ?? null;
+  const [draft, setDraft] = useState({
+    taskId: null as string | null,
+    reason: "",
+    showReasonError: false,
+  });
+  const reason = draft.taskId === currentTaskId ? draft.reason : "";
+  const showReasonError = draft.taskId === currentTaskId && draft.showReasonError;
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const hasTask = task !== null;
 
   useEffect(() => {
     if (!hasTask) return;
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !isSubmitting) {
+        event.preventDefault();
         onCancel();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute("disabled"));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [hasTask, isSubmitting, onCancel]);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
+        previousFocusRef.current.focus();
+      }
+      previousFocusRef.current = null;
+    };
+  }, [hasTask, isSubmitting, onCancel, task?.id]);
 
   if (!task) return null;
 
   const submit = () => {
     const trimmed = reason.trim();
     if (!trimmed) {
-      setShowReasonError(true);
+      setDraft({ taskId: currentTaskId, reason, showReasonError: true });
       return;
     }
     onConfirm(trimmed);
@@ -49,6 +85,7 @@ export function TaskCloseDialog({
       }}
     >
       <form
+        ref={dialogRef}
         className="activity-task-close-dialog"
         role="dialog"
         aria-modal="true"
@@ -69,8 +106,11 @@ export function TaskCloseDialog({
           className="activity-task-close-reason"
           value={reason}
           onChange={(event) => {
-            setReason(event.currentTarget.value);
-            if (showReasonError) setShowReasonError(false);
+            setDraft({
+              taskId: currentTaskId,
+              reason: event.currentTarget.value,
+              showReasonError: false,
+            });
           }}
           autoFocus
         />

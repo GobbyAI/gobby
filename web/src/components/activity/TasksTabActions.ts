@@ -54,13 +54,14 @@ export async function claimTaskForSession(
   baseUrl: string,
   taskId: string,
   sessionId: string,
+  force = false,
 ): Promise<RawTaskPayload | null> {
   const response = await fetch(
     `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/claim`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, force: true }),
+      body: JSON.stringify({ session_id: sessionId, force }),
     },
   );
   if (!response.ok) {

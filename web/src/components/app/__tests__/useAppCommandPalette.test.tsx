@@ -72,8 +72,9 @@ describe('useAppCommandPalette', () => {
       await Promise.resolve()
     })
 
-    expect(addSystemMessage).toHaveBeenCalledTimes(1)
+    expect(addSystemMessage).toHaveBeenCalledTimes(2)
     expect(addSystemMessage).toHaveBeenCalledWith('Restarting daemon...')
+    expect(addSystemMessage).toHaveBeenCalledWith('Daemon restart requested; reconnecting...')
     expect(addSystemMessage).not.toHaveBeenCalledWith('Failed to restart daemon')
   })
 })
