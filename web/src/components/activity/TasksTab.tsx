@@ -9,7 +9,6 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
-import { useIsMobile } from "../../hooks/useIsMobile";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
 import {
@@ -48,12 +47,8 @@ import {
 } from "./TaskQuickMenu";
 import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
-import { TasksBoardView } from "./TasksBoardView";
-import { useEffectiveTasksViewMode } from "./useEffectiveTasksViewMode";
-import { useTaskStageMove } from "./useTaskStageMove";
 import {
   claimTaskForSession,
-  moveTaskStage,
   patchTaskFields,
   type PatchTaskFields,
   postBuildControl,
@@ -84,9 +79,6 @@ export const TasksTab = memo(function TasksTab({
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const isMobile = useIsMobile();
-  const { viewMode, setViewMode, effectiveViewMode } =
-    useEffectiveTasksViewMode(isMobile);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
     () => new Set(),
@@ -186,11 +178,6 @@ export const TasksTab = memo(function TasksTab({
   // ref breaks the declaration-order cycle (handleTaskEvent is defined before
   // the inline-edit hook, which itself depends on applyRawTaskUpdate).
   const reconcileInlineEditRef = useRef<(taskId: string) => void>(() => {});
-  // Same WS-supersedes-optimistic guarantee for board stage moves.
-  const reconcileStageMoveRef = useRef<(taskId: string) => void>(() => {});
-  // Latest tasks snapshot for stage-move rollback, without rebinding the hook
-  // on every store change.
-  const tasksRef = useRef<GobbyTask[]>([]);
 
   const fetchTasks = useCallback(() => {
     abortRef.current?.abort();
@@ -294,10 +281,9 @@ export const TasksTab = memo(function TasksTab({
       // Abort any previous in-flight detail fetch so a stale response can't
       // overwrite a newer one (or land after the component unmounts).
       if (taskId === selectedTaskId && event !== "task_deleted") {
-        // Server truth landed: drop in-flight optimistic-edit / stage-move
-        // bookkeeping so a slow PATCH resolve/reject can't stomp this update.
+        // Server truth landed: drop in-flight optimistic-edit bookkeeping so a
+        // slow PATCH resolve/reject can't stomp this update.
         reconcileInlineEditRef.current(taskId);
-        reconcileStageMoveRef.current(taskId);
         detailFetchControllerRef.current?.abort();
         const controller = new AbortController();
         detailFetchControllerRef.current = controller;
@@ -532,10 +518,6 @@ export const TasksTab = memo(function TasksTab({
   }, [selectedTaskId]);
 
   useEffect(() => {
-    tasksRef.current = tasks;
-  }, [tasks]);
-
-  useEffect(() => {
     if (visibleRows.length === 0) {
       if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
@@ -611,28 +593,6 @@ export const TasksTab = memo(function TasksTab({
   useEffect(() => {
     reconcileInlineEditRef.current = inlineEdit.reconcile;
   }, [inlineEdit.reconcile]);
-
-  // D6 store-agnostic board stage move, wired to the same optimistic store
-  // (no second store, no extra fetch — mirrors the D4 inline-edit contract).
-  const stageMove = useTaskStageMove({
-    patchMove: useCallback(
-      (taskId: string, targetStageName: string) =>
-        moveTaskStage(getBaseUrl(), taskId, targetStageName),
-      [],
-    ),
-    getTask: useCallback(
-      (taskId: string) =>
-        // Keep the DnD move callback stable while reading the freshest task list.
-        tasksRef.current.find((task) => task.id === taskId) ?? null,
-      [],
-    ),
-    applyRawTaskUpdate,
-    rollback: rollbackTask,
-  });
-
-  useEffect(() => {
-    reconcileStageMoveRef.current = stageMove.reconcile;
-  }, [stageMove.reconcile]);
 
   const runMenuAction = useCallback(
     async (
@@ -835,16 +795,13 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
-  // Shared selection: List and Board both drive the same D5 detail pane.
   const handleSelectTask = useCallback((taskId: string) => {
     userSelectedRef.current = true;
     setActionError(null);
     setSelectedTaskId(taskId);
   }, []);
 
-  // Board (jira) mode is full-height with no detail pane. Selection is
-  // preserved across the switch, so returning to List restores the detail.
-  const showDetail = effectiveViewMode === "list" && selectedTaskId !== null;
+  const showDetail = selectedTaskId !== null;
 
   if (loading) {
     return <ActivityPanelEmpty body="Loading tasks…" />;
@@ -855,9 +812,6 @@ export const TasksTab = memo(function TasksTab({
       <TasksTabToolbar
         search={search}
         onSearchChange={setSearch}
-        isMobile={isMobile}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
         showFilterDropdown={showFilterDropdown}
         onToggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
         activeFilterCount={activeFilterCount}
@@ -877,32 +831,20 @@ export const TasksTab = memo(function TasksTab({
         </div>
       )}
 
-      {/* View pane — List or Board, sharing filter + selection */}
       <div
         className={`min-h-0 flex flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
         style={showDetail ? { height: `${topHeight}%` } : undefined}
       >
-        {effectiveViewMode === "board" ? (
-          <TasksBoardView
-            tasks={filtered}
-            stagesRegistry={stagesRegistry}
-            selectedTaskId={selectedTaskId}
-            onSelectTask={handleSelectTask}
-            onMoveTaskToStage={stageMove.moveTaskToStage}
-            moveErrors={stageMove.errors}
-          />
-        ) : (
-          <TasksTabList
-            visibleRows={visibleRows}
-            isEmpty={filtered.length === 0}
-            hasAnyTasks={tasks.length > 0}
-            selectedTaskId={selectedTaskId}
-            activeTaskActionId={activeTaskAction?.taskId ?? null}
-            onSelect={handleSelectTask}
-            onToggleOpen={toggleTaskOpen}
-            onMenuButtonClick={handleMenuButtonClick}
-          />
-        )}
+        <TasksTabList
+          visibleRows={visibleRows}
+          isEmpty={filtered.length === 0}
+          hasAnyTasks={tasks.length > 0}
+          selectedTaskId={selectedTaskId}
+          activeTaskActionId={activeTaskAction?.taskId ?? null}
+          onSelect={handleSelectTask}
+          onToggleOpen={toggleTaskOpen}
+          onMenuButtonClick={handleMenuButtonClick}
+        />
       </div>
 
       {/* Resize handle */}
@@ -916,7 +858,6 @@ export const TasksTab = memo(function TasksTab({
         />
       )}
 
-      {/* Detail pane — List mode only; Board (jira) mode is full-height */}
       {showDetail && (
         <div className="activity-task-detail-shell">
           <div className="activity-task-pane-bar activity-task-pane-bar--detail">

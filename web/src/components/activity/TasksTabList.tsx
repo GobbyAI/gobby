@@ -21,11 +21,9 @@ interface TasksTabListProps {
 }
 
 /**
- * D6 — the List view: the existing dependency-hierarchy tree, extracted from
- * TasksTab so the tab stays a thin composer. Selection is owned by the host
- * and shared with the Board view, so both feed the same D5 detail pane. Each
- * row keeps its quick-menu affordance (claim/release/stage), which is the
- * tap-reachable action surface on touch.
+ * Dependency-hierarchy tree extracted from TasksTab so the tab stays a thin
+ * composer. Selection is owned by the host and feeds the detail pane. Each row
+ * keeps its quick-menu affordance, which is the tap-reachable action surface on touch.
  */
 export function TasksTabList({
   visibleRows,

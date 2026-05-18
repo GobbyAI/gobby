@@ -16,14 +16,10 @@ export function TaskCloseDialog({
 }: TaskCloseDialogProps) {
   const [reason, setReason] = useState("");
   const [showReasonError, setShowReasonError] = useState(false);
+  const hasTask = task !== null;
 
   useEffect(() => {
-    setReason("");
-    setShowReasonError(false);
-  }, [task?.id]);
-
-  useEffect(() => {
-    if (!task) return;
+    if (!hasTask) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !isSubmitting) {
         onCancel();
@@ -31,7 +27,7 @@ export function TaskCloseDialog({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isSubmitting, onCancel, task?.id]);
+  }, [hasTask, isSubmitting, onCancel]);
 
   if (!task) return null;
 

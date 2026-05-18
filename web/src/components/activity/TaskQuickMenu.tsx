@@ -82,7 +82,9 @@ export function TaskQuickMenu({
   };
 
   useEffect(() => {
-    focusMenuItem(0);
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus();
   }, [menu.task.id]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

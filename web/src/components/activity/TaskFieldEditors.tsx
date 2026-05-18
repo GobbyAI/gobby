@@ -47,7 +47,6 @@ export function TaskTextField({
   if (committed !== value) {
     setCommitted(value);
     setDraft(value);
-    skipNextBlurCommitRef.current = false;
   }
 
   const commit = useCallback(() => {
@@ -122,7 +121,6 @@ export function TaskTextAreaField({
   if (committed !== value) {
     setCommitted(value);
     setDraft(value);
-    skipNextBlurCommitRef.current = false;
   }
 
   useEffect(() => clearTimer, [clearTimer]);
@@ -242,7 +240,6 @@ export function TaskTagsField({
   if (!sameTags(committed, value)) {
     setCommitted(value);
     setTags(value);
-    skipNextBlurCommitRef.current = false;
   }
 
   const commit = useCallback(

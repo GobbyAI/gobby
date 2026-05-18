@@ -71,6 +71,9 @@ describe("TasksTab", () => {
     expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
     expect(tasksPane.firstElementChild).toHaveAttribute("role", "treeitem");
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
+    expect(screen.queryByLabelText("Task view")).toBeNull();
+    expect(screen.queryByLabelText("List view")).toBeNull();
+    expect(screen.queryByLabelText("Board view")).toBeNull();
   });
 
   it("checks all stage filters by default and narrows by deselection", async () => {
