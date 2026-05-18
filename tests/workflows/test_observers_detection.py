@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
@@ -50,11 +51,7 @@ def make_after_tool_event():
             "tool_input": tool_input or {},
             "tool_output": tool_output or {},
         }
-
-        # Simulate adapter normalization for MCP calls
-        if tool_name in ("call_tool", "mcp__gobby__call_tool") and tool_input:
-            data["mcp_server"] = tool_input.get("server_name")
-            data["mcp_tool"] = tool_input.get("tool_name")
+        normalize_tool_fields(data)
 
         return HookEvent(
             event_type=HookEventType.AFTER_TOOL,

@@ -284,8 +284,6 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
                 "tool_name": "get_skill",
                 "arguments": {"name": "code-index"},
             },
-            "mcp_server": "gobby-skills",
-            "mcp_tool": "get_skill",
             "tool_output": {
                 "success": True,
                 "result": {"skill": {"name": "code-index"}},

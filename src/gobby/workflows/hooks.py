@@ -456,6 +456,10 @@ class WorkflowHookHandler:
                     eval_lock_acquired = True
 
                 self._sync_tool_context(event, session_id)
+                if isinstance(event.data, dict):
+                    from gobby.hooks.normalization import normalize_tool_fields
+
+                    normalize_tool_fields(event.data)
 
                 # Load session-scoped variables (canonical store)
                 variables: dict[str, Any] = {}

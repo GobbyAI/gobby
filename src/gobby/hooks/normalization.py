@@ -687,7 +687,10 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
         inner_server = tool_input.get("server_name")
         inner_tool = tool_input.get("tool_name")
         if tool_name.startswith("mcp__"):
-            # Override prefix-parsed values with actual inner target
+            # The gobby call_tool wrapper is not the semantic target. Clear
+            # prefix-parsed wrapper fields, then set the inner target when present.
+            data.pop("mcp_server", None)
+            data.pop("mcp_tool", None)
             if inner_server:
                 data["mcp_server"] = inner_server
             if inner_tool:
