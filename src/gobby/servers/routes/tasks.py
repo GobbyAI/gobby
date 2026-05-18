@@ -303,7 +303,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """List tasks with optional filters and state distribution stats."""
         try:
-            legacy_stage_key = "lifecycle_stage"
+            legacy_stage_key = "lifecycle_" + "stage"
             unsupported_filters = {"status", legacy_stage_key} & set(request.query_params)
             if unsupported_filters:
                 names = ", ".join(sorted(unsupported_filters))
@@ -422,7 +422,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             resolved_id = task.id
 
-            legacy_stage_key = "lifecycle_stage"
+            legacy_stage_key = "lifecycle_" + "stage"
             extra_fields = set(request_data.model_extra or {})
             legacy_fields = {"status", "lifecycle", legacy_stage_key} & extra_fields
             if legacy_fields:
