@@ -211,7 +211,9 @@ def add_server_config(manager: Any, config: MCPServerConfig) -> None:
     manager._configs[config.name] = config
     manager._lazy_connector.register_server(config.name)
     if config.name not in manager.health:
-        initial_state = ConnectionState.PENDING if manager.lazy_connect else ConnectionState.DISCONNECTED
+        initial_state = (
+            ConnectionState.PENDING if manager.lazy_connect else ConnectionState.DISCONNECTED
+        )
         manager.health[config.name] = MCPConnectionHealth(name=config.name, state=initial_state)
 
 
@@ -223,7 +225,9 @@ def remove_server_config(manager: Any, name: str, logger: logging.Logger) -> Non
             "You should disconnect the server first.",
             name,
         )
-        raise RuntimeError(f"Cannot remove config for connected server '{name}'. Disconnect it first.")
+        raise RuntimeError(
+            f"Cannot remove config for connected server '{name}'. Disconnect it first."
+        )
 
     if name in manager._configs:
         del manager._configs[name]

@@ -57,7 +57,9 @@ async def call_tool(
 
             if manager.metrics_manager:
                 server_config = manager._configs.get(server_name)
-                metrics_project_id = server_config.project_id if server_config else manager.project_id
+                metrics_project_id = (
+                    server_config.project_id if server_config else manager.project_id
+                )
                 if metrics_project_id:
                     try:
                         manager.metrics_manager.record_call(

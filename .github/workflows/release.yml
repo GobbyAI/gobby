@@ -4,15 +4,39 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      gate_only:
+        description: "Run the release CI gate without publishing artifacts"
+        required: false
+        default: true
+        type: boolean
 
-# NOTE: No "test" job here. ci.yml runs the full pytest matrix on every PR
-# and push to the same product tree this tag points at; re-running it on the
-# tag only adds ~55min and re-rolls flaky dice (it blocked run 26053017263
-# for v0.4.6). Hardening to gate publish on the tagged SHA's ci.yml
-# conclusion is tracked in #14821.
 jobs:
+  verify-ci:
+    name: Verify CI gate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require successful CI for release SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          python scripts/ci/verify_ci_gate.py
+          --repo "$GITHUB_REPOSITORY"
+          --sha "$GITHUB_SHA"
+          --workflow "CI"
+          --timeout-seconds 7200
+          --poll-interval-seconds 30
+
   build:
     name: Build package
+    needs: verify-ci
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +61,7 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -59,6 +84,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     needs: publish
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,6 +107,7 @@ jobs:
   dispatch-homebrew-tap:
     name: Dispatch Homebrew tap update
     needs: github-release
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch tap workflow
@@ -98,10 +125,10 @@ jobs:
           api_response=$(gh api repos/GobbyAI/homebrew-tap/dispatches \
             --method POST \
             -f event_type=gobby-release \
-            -F client_payload[tag]="$TAG_NAME" \
-            -F client_payload[version]="$version" \
-            -F client_payload[gobby_repo]="GobbyAI/gobby" \
-            -F client_payload[helper_repo]="GobbyAI/gobby-cli" 2>&1) || api_status=$?
+            -F "client_payload[tag]=$TAG_NAME" \
+            -F "client_payload[version]=$version" \
+            -F "client_payload[gobby_repo]=GobbyAI/gobby" \
+            -F "client_payload[helper_repo]=GobbyAI/gobby-cli" 2>&1) || api_status=$?
 
           if [ "$api_status" -ne 0 ]; then
             echo "::error::Failed to dispatch Homebrew tap update for ${TAG_NAME} (${version})"

@@ -19,18 +19,27 @@ class AttachmentSessionManager(Protocol):
 
 
 class ChatAttachmentConfig(Protocol):
-    attachment_max_file_bytes: int
-    attachment_max_files_per_message: int
-    attachment_max_total_bytes_per_message: int
+    @property
+    def attachment_max_file_bytes(self) -> int: ...
+
+    @property
+    def attachment_max_files_per_message(self) -> int: ...
+
+    @property
+    def attachment_max_total_bytes_per_message(self) -> int: ...
 
 
 class AttachmentDaemonConfig(Protocol):
-    chat: ChatAttachmentConfig
+    @property
+    def chat(self) -> ChatAttachmentConfig: ...
 
 
 class AttachmentOwner(Protocol):
-    session_manager: AttachmentSessionManager | None
-    daemon_config: AttachmentDaemonConfig | None
+    @property
+    def session_manager(self) -> AttachmentSessionManager | None: ...
+
+    @property
+    def daemon_config(self) -> AttachmentDaemonConfig | None: ...
 
 
 @dataclass(frozen=True)
@@ -103,7 +112,7 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    session_manager = getattr(owner, "session_manager", None)
+    session_manager = owner.session_manager
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
     db = session_manager.db
@@ -116,7 +125,7 @@ def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:
     db = _attachment_db(owner)
     limits = resolve_chat_attachment_limits(
         config_store=ConfigStore(db),
-        daemon_config=getattr(owner, "daemon_config", None),
+        daemon_config=owner.daemon_config,
     )
     return (
         limits.max_file_bytes,
