@@ -14,7 +14,6 @@ from gobby.storage.migrations import (
     migrations_needed,
     run_migrations,
 )
-from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 
 pytestmark = pytest.mark.unit
@@ -43,28 +42,6 @@ def _trigger_names(db: LocalDatabase, table: str) -> set[str]:
     }
 
 
-def _create_legacy_chat_attachments_table(db: LocalDatabase) -> None:
-    db.execute(
-        """
-        CREATE TABLE chat_attachments (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL,
-            draft_id TEXT,
-            conversation_id TEXT,
-            message_id TEXT,
-            target_session_id TEXT,
-            filename TEXT NOT NULL,
-            mime_type TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            local_path TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            bound_at TEXT
-        )
-        """
-    )
-
-
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     """Fresh databases apply the current flattened baseline directly."""
     db_path = tmp_path / "migration_test.db"
@@ -72,7 +49,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
 
     assert BASELINE_VERSION == 260
     assert latest_known_version() == 260
-    assert [version for version, _, _ in MIGRATIONS] == [259, 260]
+    assert MIGRATIONS == []
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
@@ -93,6 +70,10 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     assert "project_id" in _column_names(db, "chat_attachments")
     assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
     assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
+    assert {
+        "trg_chat_attachments_bound_at_write_once",
+        "trg_chat_attachments_updated_at_touch",
+    }.issubset(_trigger_names(db, "chat_attachments"))
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -160,9 +141,9 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     assert repaired["title"] == "_system"
 
 
-@pytest.mark.parametrize("legacy_version", [1, 218, 219, 238, 239, 257])
+@pytest.mark.parametrize("legacy_version", [1, 218, 219, 238, 239, 257, 258, 259])
 def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) -> None:
-    """Historical SQLite upgrades below the v258 baseline are unsupported."""
+    """Historical SQLite upgrades below the v260 baseline are unsupported."""
     db_path = tmp_path / f"legacy_{legacy_version}.db"
     db = LocalDatabase(db_path)
     db.execute(
@@ -207,7 +188,7 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
 
 
 def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
-    """The v258 baseline includes representative storage domains."""
+    """The v260 baseline includes representative storage domains."""
     db_path = tmp_path / "baseline_tables.db"
     db = LocalDatabase(db_path)
 
@@ -250,7 +231,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
 
 
 def test_flattened_baseline_launch_columns(tmp_path) -> None:
-    """The v258 baseline exposes the canonical post-flattening columns."""
+    """The v260 baseline exposes the canonical post-flattening columns."""
     db_path = tmp_path / "baseline_columns.db"
     db = LocalDatabase(db_path)
 
@@ -317,7 +298,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
 
 
 def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
-    """The v258 baseline includes indexes and FK semantics formerly added by migrations."""
+    """The v260 baseline includes indexes and FK semantics formerly added by migrations."""
     db_path = tmp_path / "baseline_indexes.db"
     db = LocalDatabase(db_path)
 
@@ -343,6 +324,10 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
     assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
     assert {
+        "trg_chat_attachments_bound_at_write_once",
+        "trg_chat_attachments_updated_at_touch",
+    }.issubset(_trigger_names(db, "chat_attachments"))
+    assert {
         "tool_name",
         "installed_version",
         "floor_version",
@@ -358,133 +343,6 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
-
-
-def test_v259_adds_inter_session_completion_lookup_index(tmp_path) -> None:
-    """Existing v258 databases receive the mailbox completion lookup index."""
-    db_path = tmp_path / "mailbox_index.db"
-    db = LocalDatabase(db_path)
-    db.execute(
-        """
-        CREATE TABLE schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute("INSERT INTO schema_version (version) VALUES (258)")
-    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
-    db.execute(
-        "INSERT INTO projects (id, name) VALUES (?, ?)",
-        (PERSONAL_PROJECT_ID, "_personal"),
-    )
-    db.execute(
-        """
-        CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            external_id TEXT NOT NULL,
-            machine_id TEXT NOT NULL,
-            source TEXT NOT NULL,
-            project_id TEXT NOT NULL,
-            title TEXT,
-            status TEXT DEFAULT 'active',
-            agent_depth INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE task_dispatch_mutex (
-            task_id TEXT PRIMARY KEY,
-            lease_until TEXT,
-            lease_holder TEXT,
-            run_id TEXT,
-            action_kind TEXT,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE inter_session_messages (
-            id TEXT PRIMARY KEY,
-            from_session TEXT NOT NULL,
-            to_session TEXT NOT NULL,
-            content TEXT NOT NULL,
-            priority TEXT NOT NULL DEFAULT 'normal',
-            sent_at TEXT NOT NULL,
-            read_at TEXT,
-            message_type TEXT NOT NULL DEFAULT 'message',
-            metadata_json TEXT,
-            delivered_at TEXT
-        )
-        """
-    )
-    _create_legacy_chat_attachments_table(db)
-
-    assert run_migrations(db) == 2
-    assert get_current_version(db) == 260
-    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
-    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
-
-
-def test_v260_adds_chat_attachment_lifecycle_objects(tmp_path) -> None:
-    """Existing v259 databases receive attachment GC lookup and lifecycle triggers."""
-    db_path = tmp_path / "chat_attachment_lifecycle.db"
-    db = LocalDatabase(db_path)
-    db.execute(
-        """
-        CREATE TABLE schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute("INSERT INTO schema_version (version) VALUES (259)")
-    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
-    db.execute(
-        "INSERT INTO projects (id, name) VALUES (?, ?)",
-        (PERSONAL_PROJECT_ID, "_personal"),
-    )
-    db.execute(
-        """
-        CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            external_id TEXT NOT NULL,
-            machine_id TEXT NOT NULL,
-            source TEXT NOT NULL,
-            project_id TEXT NOT NULL,
-            title TEXT,
-            status TEXT DEFAULT 'active',
-            agent_depth INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE TABLE task_dispatch_mutex (
-            task_id TEXT PRIMARY KEY,
-            lease_until TEXT,
-            lease_holder TEXT,
-            run_id TEXT,
-            action_kind TEXT,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    _create_legacy_chat_attachments_table(db)
-
-    assert run_migrations(db) == 1
-    assert get_current_version(db) == 260
-    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
-    assert {
-        "trg_chat_attachments_bound_at_write_once",
-        "trg_chat_attachments_updated_at_touch",
-    }.issubset(_trigger_names(db, "chat_attachments"))
 
 
 def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
@@ -527,7 +385,7 @@ def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
 
 
 def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
-    """The v258 baseline contains the repaired stage registry and zero-based defaults."""
+    """The v260 baseline contains the repaired stage registry and zero-based defaults."""
     db_path = tmp_path / "baseline_stages.db"
     db = LocalDatabase(db_path)
 
