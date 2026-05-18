@@ -114,18 +114,18 @@ def add_messaging_tools(
             "are in the same project. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
-            "to agent_runs.result when sending to parent. Legacy positional "
-            "calls are preserved as send_message(from_session, to_session, "
-            "content, priority). Broadcast callers should pass send_to_all=true "
-            "and omit to_session."
+            "to agent_runs.result when sending to parent. Direct message callers "
+            "pass to_session and content. Broadcast callers pass send_to_all=true "
+            "and omit to_session. Optional fields such as priority, message_type, "
+            "metadata, and include_wakeup are keyword-only."
         ),
     )
     async def send_message(
         from_session: str,
         to_session: str | None = None,
         content: str | None = None,
-        priority: str = "normal",
         *,
+        priority: str = "normal",
         send_to_all: bool = False,
         include_wakeup: bool = False,
         message_type: str = "message",

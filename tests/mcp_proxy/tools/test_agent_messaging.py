@@ -234,10 +234,10 @@ class TestSendMessage:
         assert '"task_id": "#14760"' in call_kwargs["metadata_json"]
 
     @pytest.mark.asyncio
-    async def test_send_message_legacy_positional_signature(
+    async def test_send_message_direct_function_accepts_keyword_priority(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Public send_message function preserves legacy positional calls."""
+        """Direct send_message function accepts optional fields only by keyword."""
         mock_session_manager.get.side_effect = lambda sid: {
             "s-from": MockSession(id="s-from", project_id="proj-1"),
             "s-to": MockSession(id="s-to", project_id="proj-1"),
@@ -245,21 +245,34 @@ class TestSendMessage:
         send_message = messaging_registry.get_tool("send_message")
         assert send_message is not None
 
-        result = await send_message("s-from", "s-to", "legacy", "high")
+        result = await send_message("s-from", "s-to", "current", priority="high")
 
         assert result["success"] is True
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
         assert call_kwargs["to_session"] == "s-to"
-        assert call_kwargs["content"] == "legacy"
+        assert call_kwargs["content"] == "current"
         assert call_kwargs["priority"] == "high"
 
+    @pytest.mark.asyncio
+    async def test_send_message_rejects_positional_priority(
+        self, messaging_registry, mock_session_manager
+    ) -> None:
+        """Direct send_message no longer accepts legacy positional priority."""
+        send_message = messaging_registry.get_tool("send_message")
+        assert send_message is not None
+
+        with pytest.raises(TypeError, match="positional"):
+            await send_message("s-from", "s-to", "legacy", "high")
+
+        mock_session_manager.resolve_session_reference.assert_not_called()
+
     def test_send_message_schema_documents_broadcast_parameters(self, messaging_registry) -> None:
-        """Tool description names broadcast args while preserving the public API."""
+        """Tool description names broadcast args and keyword-only optional fields."""
         schema = messaging_registry.get_schema("send_message")
 
         assert schema is not None
         description = schema["description"]
-        assert "send_message(from_session, to_session, content, priority)" in description
+        assert "keyword-only" in description
         assert "send_to_all=true" in description
         assert "send_to_all" in schema["inputSchema"]["properties"]
 
