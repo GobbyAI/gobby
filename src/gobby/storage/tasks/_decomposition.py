@@ -41,19 +41,23 @@ class TaskDecompositionMixin:
             validation_criteria: Observable acceptance criteria for code tasks.
             assigned_agent: Optional agent assignment.
             additional_skills: Optional skills requested for the task.
-            **kwargs: Forward-compatible ignored fields from older callers.
+            **kwargs: Unexpected task metadata fields.
 
         Returns:
             Dict containing the created task projection under ``task``.
 
         Raises:
-            ValueError: If task metadata is invalid.
+            ValueError: If task metadata or field names are invalid.
             TaskIDCollisionError: If ID generation cannot find a free ID.
 
         Example:
             ``manager.create_task_with_decomposition(project_id, "Write tests")``
             returns ``{"task": created_task.to_dict()}``.
         """
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise ValueError(f"Unexpected decomposition task fields: {unexpected}")
+
         task = self.create_task(
             project_id=project_id,
             title=title,

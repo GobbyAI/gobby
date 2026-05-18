@@ -1,12 +1,11 @@
 """Chat message routes for web chat display persistence."""
 
-import asyncio
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
 from gobby.storage import chat_attachments, chat_messages
 
 if TYPE_CHECKING:
@@ -54,16 +53,7 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
     ) -> None:
         records = chat_attachments.delete_attachments_for_conversations(db, conversation_ids)
         for record in records:
-            try:
-                await asyncio.to_thread(Path(record.local_path).unlink)
-            except FileNotFoundError:
-                continue
-            except OSError:
-                logger.warning(
-                    "Failed to delete attachment file for cleared chat %s",
-                    record.id,
-                    exc_info=True,
-                )
+            await unlink_stored_attachment_file(record.local_path, record_id=record.id)
 
     @router.get("/{conversation_id}/messages")
     async def get_messages(

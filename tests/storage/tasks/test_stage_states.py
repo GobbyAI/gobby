@@ -566,7 +566,9 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
         row = stage_row(temp_db, task.id, stage_name)
         assert row["state"] == "ready"
         assert row["entered_at"] is None
+        assert row["entered_by_session_id"] is None
         assert row["completed_at"] is None
+        assert row["completed_by_session_id"] is None
         assert row["completed_commit_sha"] is None
         assert row["artifact_refs"] is None
         assert row["notes"] is None

@@ -295,6 +295,46 @@ describe('stageActions shared helper contract', () => {
     ])
   })
 
+  it('test_optimistic_move_uses_canonical_stage_order', async () => {
+    const { currentStage, optimisticMoveTaskToStage } = await loadStageActions()
+    const task = {
+      id: 'task-1',
+      title: 'Build task',
+      task_type: 'feature',
+      stages: [
+        {
+          name: 'deploy',
+          display_name: 'Deploy',
+          category: 'release',
+          state: 'done',
+          review_policy: 'required',
+          position: 20,
+          updated_at: '2026-05-02T00:00:00Z',
+        },
+        {
+          name: 'build',
+          display_name: 'Build',
+          category: 'delivery',
+          state: 'done',
+          review_policy: 'required',
+          position: 10,
+          updated_at: '2026-05-02T00:00:00Z',
+        },
+      ],
+    }
+
+    const moved = optimisticMoveTaskToStage(task, 'deploy', '2026-05-03T00:00:00Z')
+
+    expect(moved.stages.map((stage: { name: string; state: string }) => [
+      stage.name,
+      stage.state,
+    ])).toEqual([
+      ['build', 'done'],
+      ['deploy', 'ready'],
+    ])
+    expect(currentStage(moved)?.name).toBe('deploy')
+  })
+
   it('test_optimistic_move_exposes_typed_result_without_generic_cast', () => {
     const source = readStageActionsSource()
 

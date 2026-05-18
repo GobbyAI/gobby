@@ -103,10 +103,7 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    try:
-        session_manager = owner.session_manager
-    except AttributeError as exc:
-        raise ValueError("Attachment storage requires session_manager") from exc
+    session_manager = getattr(owner, "session_manager", None)
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
     db = session_manager.db

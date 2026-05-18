@@ -57,6 +57,8 @@ class TaskReopenRequest(BaseModel):
 class TaskDeEscalateRequest(BaseModel):
     """Request body for de-escalating a task."""
 
+    # Strict body parsing prevents accidental or hostile lifecycle fields from
+    # being smuggled into a privileged de-escalation decision payload.
     model_config = ConfigDict(extra="forbid")
 
     decision_context: str = Field(..., description="User's decision or instructions for the agent")

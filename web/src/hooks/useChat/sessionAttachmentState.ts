@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   SessionInteractionMode,
   SessionObservationMeta,
@@ -17,6 +17,23 @@ const AGENT_NAME_RESOLVE_FAILURE_TTL_MS = 30_000;
 interface AgentNameCacheEntry {
   value: string | null;
   expiresAt: number | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readAgentRunName(data: unknown): string | null {
+  if (!isRecord(data) || !isRecord(data.run)) {
+    return null;
+  }
+  for (const value of [data.run.agent_name, data.run.workflow_name]) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
 }
 
 export function useSessionAttachmentState() {
@@ -83,6 +100,22 @@ export function useSessionAttachmentState() {
     continuationRollbackRef.current = null;
   }, []);
 
+  useEffect(() => {
+    const pruneExpiredAgentNameCache = () => {
+      const now = Date.now();
+      for (const [agentRunId, entry] of agentNameCacheRef.current) {
+        if (entry.expiresAt !== null && entry.expiresAt <= now) {
+          agentNameCacheRef.current.delete(agentRunId);
+        }
+      }
+    };
+    const interval = globalThis.setInterval(
+      pruneExpiredAgentNameCache,
+      AGENT_NAME_RESOLVE_FAILURE_TTL_MS,
+    );
+    return () => globalThis.clearInterval(interval);
+  }, []);
+
   const resolveAgentName = useCallback(async (agentRunId: string) => {
     const cached = agentNameCacheRef.current.get(agentRunId);
     if (cached !== undefined) {
@@ -132,17 +165,10 @@ export function useSessionAttachmentState() {
           });
           return null;
         }
-        const run = data && typeof data === "object" && "run" in data
-          ? (data as { run?: unknown }).run
-          : null;
-        const resolved = run && typeof run === "object"
-          ? (run as { agent_name?: unknown; workflow_name?: unknown }).agent_name
-            || (run as { agent_name?: unknown; workflow_name?: unknown }).workflow_name
-            || null
-          : null;
+        const resolved = readAgentRunName(data);
         if (resolved) {
           agentNameCacheRef.current.set(agentRunId, {
-            value: String(resolved),
+            value: resolved,
             expiresAt: Date.now() + AGENT_NAME_RESOLVE_SUCCESS_TTL_MS,
           });
         } else {
@@ -151,7 +177,7 @@ export function useSessionAttachmentState() {
             expiresAt: Date.now() + AGENT_NAME_RESOLVE_FAILURE_TTL_MS,
           });
         }
-        return resolved ? String(resolved) : null;
+        return resolved;
       } catch (error) {
         console.warn("Failed to resolve agent name", { agentRunId, error });
         agentNameCacheRef.current.set(agentRunId, {

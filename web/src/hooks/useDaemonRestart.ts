@@ -1,6 +1,12 @@
 import { useCallback, useState } from 'react'
 import { requestDaemonRestart } from '../lib/api'
 
+function getRestartErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return 'Failed to restart daemon'
+}
+
 export function useDaemonRestart() {
   const [showRestart, setShowRestart] = useState(false)
   const [restartError, setRestartError] = useState<string | null>(null)
@@ -19,8 +25,7 @@ export function useDaemonRestart() {
       return true
     } catch (err) {
       console.error('Failed to restart daemon:', err)
-      const message = err instanceof Error ? err.message : 'Failed to restart daemon'
-      setRestartError(message)
+      setRestartError(getRestartErrorMessage(err))
       return false
     }
   }, [])

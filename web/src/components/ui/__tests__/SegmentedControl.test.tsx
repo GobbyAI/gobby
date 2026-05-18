@@ -120,4 +120,17 @@ describe('SegmentedControl', () => {
 
     expect(screen.getByRole('radio', { name: 'Grid view' })).toBeInTheDocument()
   })
+
+  it('falls back to text labels when ariaLabel is blank', () => {
+    render(
+      <SegmentedControl<'a'>
+        value="a"
+        onChange={vi.fn()}
+        options={[{ value: 'a', label: 'Readable label', ariaLabel: '   ' }]}
+        ariaLabel="Letters"
+      />,
+    )
+
+    expect(screen.getByRole('radio', { name: 'Readable label' })).toBeInTheDocument()
+  })
 })

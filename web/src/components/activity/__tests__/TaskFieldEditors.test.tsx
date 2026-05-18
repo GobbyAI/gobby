@@ -14,11 +14,12 @@ describe("TaskTextField (#14771 / D4)", () => {
     render(
       <TaskTextField value="Old" onCommit={onCommit} ariaLabel="Title" />,
     );
-    const input = screen.getByLabelText("Title");
+    const input = screen.getByLabelText("Title") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "  New  " } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.blur(input);
     expect(onCommit).toHaveBeenCalledWith("New");
+    expect(input.value).toBe("New");
   });
 
   it("Escape reverts the draft and does not commit", () => {
@@ -42,6 +43,18 @@ describe("TaskTextField (#14771 / D4)", () => {
     fireEvent.blur(screen.getByLabelText("Title"));
     expect(onCommit).not.toHaveBeenCalled();
   });
+
+  it("trims an unchanged draft without committing", () => {
+    const onCommit = vi.fn();
+    render(
+      <TaskTextField value="Same" onCommit={onCommit} ariaLabel="Title" />,
+    );
+    const input = screen.getByLabelText("Title") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "  Same  " } });
+    fireEvent.blur(input);
+    expect(input.value).toBe("Same");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
 });
 
 describe("TaskTextAreaField (#14771 / D4)", () => {
@@ -60,14 +73,16 @@ describe("TaskTextAreaField (#14771 / D4)", () => {
         debounceMs={500}
       />,
     );
-    fireEvent.change(screen.getByLabelText("Description"), {
-      target: { value: "draft body" },
+    const area = screen.getByLabelText("Description") as HTMLTextAreaElement;
+    fireEvent.change(area, {
+      target: { value: "  draft body  " },
     });
     expect(onCommit).not.toHaveBeenCalled();
     act(() => {
       vi.advanceTimersByTime(500);
     });
     expect(onCommit).toHaveBeenCalledWith("draft body");
+    expect(area.value).toBe("draft body");
   });
 
   it("Escape reverts and cancels the pending debounce", () => {

@@ -10,6 +10,99 @@ import {
 
 type Setter<T> = (value: T) => void;
 
+const RESTORABLE_CHAT_MODES = new Set<ChatMode>([
+  "accept_edits",
+  "bypass",
+  "normal",
+  "plan",
+]);
+const RESTORABLE_INTERACTION_MODES = new Set(["none", "observe", "proxy"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function nullableRecord<T>(value: unknown): T | null {
+  return isRecord(value) ? (value as T) : null;
+}
+
+function normalizeContextUsage(
+  value: unknown,
+): ContinuationRollbackSnapshot["contextUsage"] {
+  const record = isRecord(value) ? value : {};
+  const numberOrZero = (key: string) => {
+    const field = record[key];
+    return typeof field === "number" ? field : 0;
+  };
+  const contextWindow =
+    typeof record.contextWindow === "number" ? record.contextWindow : null;
+  return {
+    totalInputTokens: numberOrZero("totalInputTokens"),
+    outputTokens: numberOrZero("outputTokens"),
+    contextWindow,
+    uncachedInputTokens: numberOrZero("uncachedInputTokens"),
+    cacheReadTokens: numberOrZero("cacheReadTokens"),
+    cacheCreationTokens: numberOrZero("cacheCreationTokens"),
+  };
+}
+
+function normalizeContinuationSnapshot(
+  snapshot: unknown,
+): ContinuationRollbackSnapshot | null {
+  if (!isRecord(snapshot)) return null;
+  if (typeof snapshot.sourceSessionId !== "string") return null;
+  if (typeof snapshot.conversationId !== "string") return null;
+  if (!Array.isArray(snapshot.messages)) return null;
+
+  const currentMode = RESTORABLE_CHAT_MODES.has(snapshot.currentMode as ChatMode)
+    ? snapshot.currentMode as ChatMode
+    : "plan";
+  const sessionInteractionMode = RESTORABLE_INTERACTION_MODES.has(
+    snapshot.sessionInteractionMode as string,
+  )
+    ? snapshot.sessionInteractionMode as ContinuationRollbackSnapshot["sessionInteractionMode"]
+    : "none";
+
+  return {
+    sourceSessionId: snapshot.sourceSessionId,
+    conversationId: snapshot.conversationId,
+    dbSessionId: nullableString(snapshot.dbSessionId),
+    mainSessionMeta:
+      nullableRecord<ContinuationRollbackSnapshot["mainSessionMeta"]>(
+        snapshot.mainSessionMeta,
+      ),
+    sessionTitle: nullableString(snapshot.sessionTitle),
+    sessionRef: nullableString(snapshot.sessionRef),
+    selectedProvider: nullableString(snapshot.selectedProvider),
+    messages: snapshot.messages as ContinuationRollbackSnapshot["messages"],
+    contextUsage: normalizeContextUsage(snapshot.contextUsage),
+    currentMode,
+    currentBranch: nullableString(snapshot.currentBranch),
+    worktreePath: nullableString(snapshot.worktreePath),
+    viewingSessionId: nullableString(snapshot.viewingSessionId),
+    viewingSessionMeta:
+      nullableRecord<ContinuationRollbackSnapshot["viewingSessionMeta"]>(
+        snapshot.viewingSessionMeta,
+      ),
+    observedSessionId: nullableString(snapshot.observedSessionId),
+    observedSessionMeta:
+      nullableRecord<ContinuationRollbackSnapshot["observedSessionMeta"]>(
+        snapshot.observedSessionMeta,
+      ),
+    attachedSessionId: nullableString(snapshot.attachedSessionId),
+    attachedSessionMeta:
+      nullableRecord<ContinuationRollbackSnapshot["attachedSessionMeta"]>(
+        snapshot.attachedSessionMeta,
+      ),
+    sessionInteractionMode,
+    proxyDeliveryNotice: nullableString(snapshot.proxyDeliveryNotice),
+  };
+}
+
 interface UseContinuationRestoreParams {
   sessionRefs: {
     attachedSessionIdRef: MutableRefObject<string | null>;
@@ -103,54 +196,72 @@ export function useContinuationRestore({
 
   return useCallback(
     (snapshot: ContinuationRollbackSnapshot) => {
-      conversationIdRef.current = snapshot.conversationId;
-      setConversationId(snapshot.conversationId);
-      saveConversationId(snapshot.conversationId);
-      dbSessionIdRef.current = snapshot.dbSessionId;
-      setDbSessionId(snapshot.dbSessionId);
-      saveDbSessionId(snapshot.dbSessionId);
-      setMessages(snapshot.messages);
-      setMainSessionMeta(snapshot.mainSessionMeta);
-      setSessionTitle(snapshot.sessionTitle);
-      setSessionRef(snapshot.sessionRef);
-      setSelectedProvider(snapshot.selectedProvider);
-      setContextUsage(snapshot.contextUsage);
-      setCurrentBranch(snapshot.currentBranch);
-      setWorktreePath(snapshot.worktreePath);
-      setViewingSessionId(snapshot.viewingSessionId);
-      viewingSessionIdRef.current = snapshot.viewingSessionId;
-      saveViewingSessionId(snapshot.viewingSessionId);
-      setViewingSessionMeta(snapshot.viewingSessionMeta);
-      viewingSessionMetaRef.current = snapshot.viewingSessionMeta;
-      observedSessionIdRef.current = snapshot.observedSessionId;
-      observedSessionMetaRef.current = snapshot.observedSessionMeta;
-      setObservedSessionId(snapshot.observedSessionId);
-      attachedSessionIdRef.current = snapshot.attachedSessionId;
-      setAttachedSessionId(snapshot.attachedSessionId);
-      attachedSessionMetaRef.current = snapshot.attachedSessionMeta;
-      setAttachedSessionMeta(snapshot.attachedSessionMeta);
-      sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
-      setSessionInteractionMode(snapshot.sessionInteractionMode);
+      const restored = normalizeContinuationSnapshot(snapshot);
+      if (!restored) {
+        console.warn("Skipped invalid continuation rollback snapshot");
+        setIsLoadingMessages(false);
+        return;
+      }
+
+      conversationIdRef.current = restored.conversationId;
+      setConversationId(restored.conversationId);
+      saveConversationId(restored.conversationId);
+      dbSessionIdRef.current = restored.dbSessionId;
+      setDbSessionId(restored.dbSessionId);
+      saveDbSessionId(restored.dbSessionId);
+      setMessages(restored.messages);
+      setMainSessionMeta(restored.mainSessionMeta);
+      setSessionTitle(restored.sessionTitle);
+      setSessionRef(restored.sessionRef);
+      setSelectedProvider(restored.selectedProvider);
+      setContextUsage(restored.contextUsage);
+      setCurrentBranch(restored.currentBranch);
+      setWorktreePath(restored.worktreePath);
+      setViewingSessionId(restored.viewingSessionId);
+      viewingSessionIdRef.current = restored.viewingSessionId;
+      saveViewingSessionId(restored.viewingSessionId);
+      setViewingSessionMeta(restored.viewingSessionMeta);
+      viewingSessionMetaRef.current = restored.viewingSessionMeta;
+      observedSessionIdRef.current = restored.observedSessionId;
+      observedSessionMetaRef.current = restored.observedSessionMeta;
+      setObservedSessionId(restored.observedSessionId);
+      attachedSessionIdRef.current = restored.attachedSessionId;
+      setAttachedSessionId(restored.attachedSessionId);
+      attachedSessionMetaRef.current = restored.attachedSessionMeta;
+      setAttachedSessionMeta(restored.attachedSessionMeta);
+      sessionInteractionModeRef.current = restored.sessionInteractionMode;
+      setSessionInteractionMode(restored.sessionInteractionMode);
       saveViewingSessionMode(
-        snapshot.viewingSessionId ? snapshot.sessionInteractionMode : "none",
+        restored.viewingSessionId ? restored.sessionInteractionMode : "none",
       );
-      setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
+      setProxyDeliveryNotice(restored.proxyDeliveryNotice);
       setIsLoadingMessages(false);
-      setCurrentMode(snapshot.currentMode);
+      setCurrentMode(restored.currentMode);
 
       if (
-        snapshot.observedSessionId &&
-        snapshot.sessionInteractionMode !== "none" &&
+        restored.observedSessionId &&
+        restored.sessionInteractionMode !== "none" &&
         wsRef.current?.readyState === WebSocket.OPEN
       ) {
-        pendingSessionInteractionModeRef.current =
-          snapshot.sessionInteractionMode === "proxy" ? "proxy" : "observe";
-        wsRef.current.send(
-          JSON.stringify({
+        let payload: string;
+        try {
+          payload = JSON.stringify({
             type: "attach_to_session",
-            session_id: snapshot.observedSessionId,
-          }),
-        );
+            session_id: restored.observedSessionId,
+          });
+        } catch (error) {
+          console.warn("Failed to serialize restored session attach request", error);
+          return;
+        }
+        const ws = wsRef.current;
+        if (ws?.readyState !== WebSocket.OPEN) return;
+        try {
+          ws.send(payload);
+          pendingSessionInteractionModeRef.current =
+            restored.sessionInteractionMode === "proxy" ? "proxy" : "observe";
+        } catch (error) {
+          console.warn("Failed to send restored session attach request", error);
+        }
       }
     },
     [

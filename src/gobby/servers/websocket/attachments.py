@@ -256,9 +256,9 @@ async def cleanup_expired_proxy_attachments(
             if not session_dir.is_dir():
                 continue
             try:
+                child_paths = list(session_dir.rglob("*"))
                 newest_mtime = max(
-                    [session_dir.stat().st_mtime]
-                    + [path.stat().st_mtime for path in session_dir.rglob("*")]
+                    [session_dir.stat().st_mtime] + [path.stat().st_mtime for path in child_paths]
                 )
             except FileNotFoundError:
                 continue
@@ -271,7 +271,7 @@ async def cleanup_expired_proxy_attachments(
                 continue
             if newest_mtime > cutoff:
                 continue
-            file_count = sum(1 for path in session_dir.rglob("*") if path.is_file())
+            file_count = sum(1 for path in child_paths if path.is_file())
             try:
                 shutil.rmtree(session_dir)
             except FileNotFoundError:

@@ -218,9 +218,9 @@ def add_messaging_tools(
                                 "error": str(e),
                             }
                         )
-            send_result.failed_broadcasts = failed_broadcasts
-
             payload = send_result.to_dict()
+            payload["failed_broadcasts"] = failed_broadcasts
+            payload["success"] = bool(payload.get("success")) and not failed_broadcasts
             payload["message"] = msg.to_dict() if msg is not None else None
             return payload
 

@@ -11,6 +11,7 @@ import logging
 import os
 import re
 from shlex import quote
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
@@ -529,6 +530,13 @@ async def handle_set_agent(
                 "Failed to look up existing session %s for agent validation: %s",
                 db_session_id,
                 exc,
+            )
+        if existing_row is None:
+            pending_providers = getattr(mixin, "_pending_providers", {})
+            pending_projects = getattr(mixin, "_pending_projects", {})
+            existing_row = SimpleNamespace(
+                source=pending_providers.get(conversation_id),
+                project_id=pending_projects.get(conversation_id),
             )
         if not await _validate_persona_agent(
             mixin, websocket, session_manager, agent_name, existing_row

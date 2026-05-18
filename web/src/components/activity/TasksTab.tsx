@@ -183,6 +183,7 @@ export const TasksTab = memo(function TasksTab({
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const tasksRef = useRef<GobbyTask[]>([]);
 
   // Fetch tasks, then apply canonical state filters client-side.
   const abortRef = useRef<AbortController | null>(null);
@@ -257,6 +258,10 @@ export const TasksTab = memo(function TasksTab({
     };
   }, [fetchTasks]);
 
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
   // WebSocket: real-time task event subscription
   const handleTaskEventRef = useRef<
     (event: string, taskData: Record<string, unknown>) => void
@@ -313,7 +318,7 @@ export const TasksTab = memo(function TasksTab({
             if (controller.signal.aborted) return;
             if (selectedTaskIdRef.current !== taskId) return;
             const raw = extractTaskPayload(data);
-            const cached = tasks.find((task) => task.id === taskId) ?? null;
+            const cached = tasksRef.current.find((task) => task.id === taskId) ?? null;
             setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
           })
           .catch((err) => {
@@ -332,7 +337,7 @@ export const TasksTab = memo(function TasksTab({
         window.clearTimeout(debouncedRefetchRef.current);
       debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500);
     },
-    [fetchTasks, projectId, tasks],
+    [fetchTasks, projectId],
   );
 
   useEffect(() => {

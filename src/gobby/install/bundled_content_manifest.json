@@ -1,9 +1,6 @@
 {
-  "schema_version": 1,
-  "hash_algorithm": "sha256",
-  "root": "shared",
   "files": {
-    "CLAUDE.md": "ebcde2cd7b884eaef77ab0306aade86b8199ad889dea4b928bf60f3e2ab1db39",
+    "CLAUDE.md": "8996e013ec09fad69e4ff2cc82415af0ac1adcb9f103fa3d8ffa71e2e16f7494",
     "config/.mcp-template.json": "2caff1d30e32212fdef58c54cce1e13c825ed3684cceba1ad2a5c5726a377c51",
     "config/bootstrap.yaml": "c019f23ae49f158d68058f60ae9030b03d1cbf8f7be4b86550741d976e306483",
     "config/config.yaml": "bab454bc0fdf38b76336f02f1fec72a5048131dc24ccd127bb8a47a703ed17fb",
@@ -174,7 +171,7 @@
     "workflows/agents/nightly-test-fixer.yaml": "8fc375a902c334109667315839900d41fb582672dc6033f7da04acbf0366ffac",
     "workflows/agents/plan-adversary.yaml": "8ffb77c482312198ab70c0843d1a4514a64019f8db11427d55043ee21cf8cb5f",
     "workflows/agents/planner.yaml": "046bd55c48668739a5295874235c4eecd0babeb154be0e9e04065741b0eff173",
-    "workflows/agents/product-manager.yaml": "ae75858f49f77ef13193ecde27b62d20497033db7c92ab949afa8d020911aee2",
+    "workflows/agents/product-manager.yaml": "dd2bbee09ec45472f8ab324e8aeee8c0c38169fcc962e4d6ae2cfd12edbdd7e0",
     "workflows/agents/qa-dev.yaml": "72cc7f66f8619ff0db2fc587f15f458d61f838982e7affd16e23b127a8251bde",
     "workflows/agents/qa-reviewer.yaml": "84ce26a8f616f0f5ef2c644665472e8ec4c445548f4dd507fec52d163d22f5e3",
     "workflows/agents/researcher.yaml": "14c48cbbccbf7ab6e87ec3f628557f4027f5b261e0d0addfe470697c90e2f2f2",
@@ -287,5 +284,8 @@
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
     "workflows/variables/gobby-default-variables.yaml": "1d76dbda6d30524c680889824dc442ce2d23214f1230db638766a05ae3c6565a"
-  }
+  },
+  "hash_algorithm": "sha256",
+  "root": "shared",
+  "schema_version": 1
 }

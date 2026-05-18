@@ -97,15 +97,7 @@ export function taskStateAt(
 }
 
 export function currentStage(task: LifecycleTask): StageStateView | null {
-  if (!task.stages?.length) return null
-  const sorted = task.stages
-    .map((row, index) => ({ row, index }))
-    .sort((a, b) => {
-      const aPosition = a.row.position ?? a.index
-      const bPosition = b.row.position ?? b.index
-      return aPosition - bPosition
-    })
-  return sorted.find(({ row }) => row.state !== 'done')?.row ?? null
+  return sortedStages(task).find(row => row.state !== 'done') ?? null
 }
 
 function sortedStages(task: LifecycleTask): StageStateView[] {
@@ -184,7 +176,7 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   targetStageName: string,
   updatedAt: string = new Date().toISOString(),
 ): OptimisticMoveResult<T> {
-  const indexedStages = task.stages.map((row, index) => ({
+  const indexedStages = sortedStages(task).map((row, index) => ({
     row,
     position: row.position ?? index,
   }))

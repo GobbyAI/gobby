@@ -1054,6 +1054,52 @@ describe("useChat viewed session state", () => {
     expect(ws.send.mock.calls).toHaveLength(sendCountBeforeAttach);
   });
 
+  it("ignores non-string agent run names when resolving viewed session metadata", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-bad-agent/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-bad-agent", {
+      session: {
+        id: "sess-bad-agent",
+        seq_num: 2312,
+        source: "claude",
+        title: "Bad agent name",
+        status: "active",
+        model: "sonnet",
+        external_id: "claude-ext-bad-agent",
+        chat_mode: "accept_edits",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+        workflow_name: "release-checks",
+        agent_run_id: "run-bad-agent",
+      },
+    });
+    mockFetch.mockJsonResponse("/api/agents/runs/run-bad-agent", {
+      run: { agent_name: { name: "not-a-string" }, workflow_name: 42 },
+    });
+    const { result } = renderHook(() => useChat());
+    act(() => mockWs.instances[0].simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-bad-agent");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.viewingSessionMeta?.agentRunId).toBe("run-bad-agent");
+    expect(result.current.viewingSessionMeta?.agentName).toBeNull();
+  });
+
   it("does not attach viewed web chat sessions into proxy mode", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(

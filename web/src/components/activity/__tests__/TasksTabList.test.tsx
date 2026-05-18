@@ -98,4 +98,49 @@ describe("TasksTabList keyboard navigation", () => {
     fireEvent.keyDown(openParent, { key: "ArrowLeft" });
     expect(open.onToggleOpen).toHaveBeenCalledWith("parent");
   });
+
+  it("renders a safe fallback when task state derivation fails", () => {
+    const task = makeTask({
+      id: "broken",
+      ref: "#103",
+      seq_num: 103,
+      title: "Broken task",
+    });
+    Object.defineProperty(task, "state", {
+      get: () => {
+        throw new Error("bad task state");
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(
+        <TasksTabList
+          visibleRows={[
+            {
+              node: { id: "broken", task, children: [] },
+              depth: 0,
+              isInternal: false,
+              isOpen: false,
+            },
+          ]}
+          isEmpty={false}
+          isLoading={false}
+          hasAnyTasks
+          selectedTaskId="broken"
+          activeTaskActionId={null}
+          onSelect={vi.fn()}
+          onToggleOpen={vi.fn()}
+          onMenuButtonClick={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole("treeitem", { name: /Broken task: Ready/ })).toBeTruthy();
+      expect(warn).toHaveBeenCalledWith(
+        "Failed to derive task row state",
+        expect.objectContaining({ taskId: "broken" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

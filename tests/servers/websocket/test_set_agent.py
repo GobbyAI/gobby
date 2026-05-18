@@ -24,6 +24,8 @@ class ConcreteSessionControl(SessionControlMixin):
         self._pending_modes: dict[str, str] = {}
         self._pending_worktree_paths: dict[str, str] = {}
         self._pending_agents: dict[str, str] = {}
+        self._pending_projects: dict[str, str] = {}
+        self._pending_providers: dict[str, str] = {}
         self._cancel_active_chat = AsyncMock()
         self._send_error = AsyncMock()
         self._fire_session_end = AsyncMock()
@@ -247,6 +249,43 @@ class TestSetAgentPersonaValidation:
 
         server._send_error.assert_awaited_once()
         assert "missing supports_surface" in server._send_error.call_args.args[1]
+
+    async def test_pending_provider_and_project_scope_persona_validation(self) -> None:
+        server = ConcreteSessionControl()
+        server._pending_providers["conv-1"] = "codex"
+        server._pending_projects["conv-1"] = "project-1"
+        ws = _make_ws()
+        captured: dict[str, Any] = {}
+
+        def _resolve_agent(
+            agent_name: str,
+            _db: Any,
+            source: str | None,
+            project_id: str | None,
+        ) -> AgentDefinitionBody:
+            captured.update(
+                {
+                    "agent_name": agent_name,
+                    "source": source,
+                    "project_id": project_id,
+                }
+            )
+            return AgentDefinitionBody(name="persona-agent", surfaces=["persona"])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("gobby.workflows.agent_resolver.resolve_agent", _resolve_agent)
+            await server._handle_set_agent(
+                ws,
+                {"conversation_id": "conv-1", "agent_name": "persona-agent"},
+            )
+
+        assert captured == {
+            "agent_name": "persona-agent",
+            "source": "codex",
+            "project_id": "project-1",
+        }
+        assert server._pending_agents["conv-1"] == "persona-agent"
+        server._send_error.assert_not_awaited()
 
 
 class TestSetAgentAttachedSession:

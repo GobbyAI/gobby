@@ -9,9 +9,9 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.models import (
     CLEANUP_INTERVAL_SECONDS,
@@ -39,16 +39,7 @@ async def _delete_chat_attachments(
         [conversation_id],
     )
     for record in records:
-        try:
-            await asyncio.to_thread(Path(record.local_path).unlink)
-        except FileNotFoundError:
-            continue
-        except OSError:
-            logger.warning(
-                "Failed to delete attachment file for cleared chat %s",
-                record.id,
-                exc_info=True,
-            )
+        await unlink_stored_attachment_file(record.local_path, record_id=record.id)
 
 
 async def handle_stop_chat(

@@ -77,7 +77,6 @@ async def _feed_attached_session_tts_locked(
                     offset,
                     len(content),
                     type(e).__name__,
-                    exc_info=True,
                 )
                 return
             except Exception:

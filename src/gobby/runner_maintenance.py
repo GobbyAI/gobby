@@ -12,12 +12,12 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from random import SystemRandom
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
@@ -297,15 +297,9 @@ async def cleanup_comms_messages_loop(
 
 
 def _remove_stale_chat_attachment_file(local_path: str) -> bool:
-    path = Path(local_path)
-    removed = False
-    try:
-        path.unlink()
-        removed = True
-    except FileNotFoundError:
-        removed = True
-    except OSError:
-        logger.warning("Failed to remove stale chat attachment file %s", path, exc_info=True)
+    path, removed = unlink_stale_attachment_file_sync(local_path)
+    if path is None:
+        logger.warning("Skipping stale chat attachment outside managed storage: %s", local_path)
         return False
 
     # Empty upload directories are scratch structure; pruning is best effort
