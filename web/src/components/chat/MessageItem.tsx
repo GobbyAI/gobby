@@ -102,7 +102,8 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
           title={resolved.filename}
           src={safeHref}
           className="h-80 w-full bg-background"
-          sandbox="allow-scripts"
+          // PDFs render without script privileges; keep the preview sandbox inert.
+          sandbox=""
         />
         <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
           <span className="truncate font-medium">{resolved.filename}</span>

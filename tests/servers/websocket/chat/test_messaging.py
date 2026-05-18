@@ -159,7 +159,10 @@ class TestInjectPendingMessages:
 class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_no_content(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+        mixin.clients[ws] = {"connected": True}
+
         await mixin._handle_chat_message(ws, {"content": "", "request_id": "req-1"})
+
         ws.send.assert_called_once()
         payload = json.loads(ws.send.call_args[0][0])
         assert "Missing or invalid 'content' field" in payload["error"]
@@ -169,7 +172,10 @@ class TestHandleChatMessage:
     async def test_invalid_content_blocks_message_is_specific(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ):
+        mixin.clients[ws] = {"connected": True}
+
         await mixin._handle_chat_message(ws, {"content_blocks": "bad"})
+
         ws.send.assert_called_once()
         assert "Invalid 'content_blocks' field: expected a list" in ws.send.call_args[0][0]
 
@@ -180,7 +186,9 @@ class TestHandleChatMessage:
         ws: AsyncMock,
     ):
         mixin.clients[ws] = {"connected": True}
-        prepared = SimpleNamespace(prompt_context="Attached files:\n- /tmp/a.txt", records=[object()])
+        prepared = SimpleNamespace(
+            prompt_context="Attached files:\n- /tmp/a.txt", records=[object()]
+        )
 
         with (
             patch(
@@ -206,9 +214,13 @@ class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         # mixin.clients is empty
-        await mixin._handle_chat_message(ws, {"content": "hi"})
-        # Should return silently after warning log
-        assert not ws.send.called
+        await mixin._handle_chat_message(ws, {"content": "hi", "request_id": "req-2"})
+
+        ws.send.assert_called_once()
+        payload = json.loads(ws.send.call_args[0][0])
+        assert payload["error"] == "Client is not registered for chat messages"
+        assert payload["request_id"] == "req-2"
+        assert payload["code"] == "UNREGISTERED_CLIENT"
 
     @pytest.mark.asyncio
     async def test_success_dispatch(self, mixin: DummyMessagingMixin, ws: AsyncMock):

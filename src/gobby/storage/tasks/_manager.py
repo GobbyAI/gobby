@@ -522,7 +522,9 @@ class LocalTaskManager:
         commit_sha: str,
         *,
         reason: str | None = None,
+        force: bool = False,
         closed_in_session_id: str | None = None,
+        validation_override_reason: str | None = None,
         cwd: str | Path | None = None,
     ) -> Task:
         """Link a commit and close the task in one transaction."""
@@ -532,8 +534,10 @@ class LocalTaskManager:
                 self.db,
                 task_id=task_id,
                 reason=reason,
+                force=force,
                 closed_in_session_id=closed_in_session_id,
                 closed_commit_sha=commit_sha,
+                validation_override_reason=validation_override_reason,
             )
         self._notify_listeners()
         return self.get_task(task_id)

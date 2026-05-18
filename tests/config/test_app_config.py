@@ -1295,6 +1295,7 @@ class TestDaemonConfigComposition:
 
 class TestChatConfig:
     def test_attachment_total_default_matches_product_cap(self) -> None:
+        """Default total attachment cap matches file cap times file count."""
         config = ChatConfig()
 
         assert config.attachment_max_total_bytes_per_message == (
@@ -1302,6 +1303,7 @@ class TestChatConfig:
         )
 
     def test_attachment_total_rejects_values_above_product_cap(self) -> None:
+        """Configured total attachment cap cannot exceed the product cap."""
         with pytest.raises(ValidationError, match="attachment_max_total_bytes_per_message"):
             ChatConfig(
                 attachment_max_file_bytes=10,

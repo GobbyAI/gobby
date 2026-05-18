@@ -26,12 +26,6 @@ class TaskClaimRequest(BaseModel):
     force: bool = Field(default=False, description="Override an existing claim")
 
 
-class TaskReleaseClaimRequest(BaseModel):
-    """Request body for releasing task ownership."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class TaskEscalateRequest(BaseModel):
     """Request body for escalation."""
 
@@ -43,6 +37,11 @@ class TaskCloseRequest(BaseModel):
 
     reason: str | None = Field(default=None, description="Reason for closing")
     commit_sha: str | None = Field(default=None, description="Git commit SHA to link")
+    force: bool = Field(default=False, description="Close even when child tasks remain open")
+    validation_override_reason: str | None = Field(
+        default=None,
+        description="Why validation was manually overridden",
+    )
     session_id: str | None = Field(
         default=None,
         description="Session reference or UUID that closed the task",
@@ -148,11 +147,8 @@ def register_task_lifecycle_routes(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.post("/{task_id}/release-claim")
-    async def release_task_claim(
-        task_id: str, request_data: TaskReleaseClaimRequest | None = None
-    ) -> Any:
+    async def release_task_claim(task_id: str) -> Any:
         """Release canonical task ownership without using generic PATCH."""
-        _ = request_data
         try:
             task = resolve_task(task_id)
             resolved_id = task.id
@@ -202,13 +198,17 @@ def register_task_lifecycle_routes(
                     resolved_id,
                     body.commit_sha,
                     reason=body.reason,
+                    force=body.force,
                     closed_in_session_id=resolved_session_id,
+                    validation_override_reason=body.validation_override_reason,
                 )
             else:
                 closed = server.task_manager.close_task(
                     resolved_id,
                     reason=body.reason,
+                    force=body.force,
                     closed_in_session_id=resolved_session_id,
+                    validation_override_reason=body.validation_override_reason,
                 )
             result = closed.to_dict()
             warnings = await broadcast_with_warning("task_closed", result)

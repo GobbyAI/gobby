@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import type { BuildState, GobbyTask } from "../../hooks/useTasks";
 import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
@@ -55,6 +55,7 @@ export function TaskQuickMenu({
 }: TaskQuickMenuProps) {
   const task = menu.task;
   const menuRef = useRef<HTMLDivElement>(null);
+  const enabledItemsRef = useRef<HTMLButtonElement[]>([]);
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
@@ -68,27 +69,40 @@ export function TaskQuickMenu({
     left: menu.x,
     top: menu.y,
   };
-  const enabledMenuItems = () =>
-    Array.from(
+  const refreshEnabledMenuItems = useCallback(() => {
+    enabledItemsRef.current = Array.from(
       menuRef.current?.querySelectorAll<HTMLButtonElement>(
         '[role="menuitem"]:not(:disabled)',
       ) ?? [],
     );
+    return enabledItemsRef.current;
+  }, []);
+
   const focusMenuItem = (index: number) => {
-    const items = enabledMenuItems();
+    const items = enabledItemsRef.current;
     if (!items.length) return;
     const nextIndex = (index + items.length) % items.length;
     items[nextIndex]?.focus();
   };
 
   useEffect(() => {
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
-      ?.focus();
-  }, [menu.task.id]);
+    const items = refreshEnabledMenuItems();
+    items[0]?.focus();
+  }, [
+    busy,
+    chatSessionId,
+    isClaimed,
+    isClosed,
+    menu.task.id,
+    refreshEnabledMenuItems,
+    showBuildControls,
+    showResumeBuild,
+    showStartBuild,
+    showStopBuild,
+  ]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = enabledMenuItems();
+    const items = enabledItemsRef.current;
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();

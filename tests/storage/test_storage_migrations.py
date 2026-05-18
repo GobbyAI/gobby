@@ -33,22 +33,54 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
     return {row["name"] for row in db.fetchall(f"PRAGMA index_list({table})")}
 
 
+def _trigger_names(db: LocalDatabase, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in db.fetchall(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+            (table,),
+        )
+    }
+
+
+def _create_legacy_chat_attachments_table(db: LocalDatabase) -> None:
+    db.execute(
+        """
+        CREATE TABLE chat_attachments (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            draft_id TEXT,
+            conversation_id TEXT,
+            message_id TEXT,
+            target_session_id TEXT,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            local_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            bound_at TEXT
+        )
+        """
+    )
+
+
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     """Fresh databases apply the current flattened baseline directly."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    assert BASELINE_VERSION == 259
-    assert latest_known_version() == 259
-    assert [version for version, _, _ in MIGRATIONS] == [259]
+    assert BASELINE_VERSION == 260
+    assert latest_known_version() == 260
+    assert [version for version, _, _ in MIGRATIONS] == [259, 260]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
     assert applied == 1
-    assert get_current_version(db) == 259
+    assert get_current_version(db) == 260
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [259]
+    assert versions == [260]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
@@ -60,6 +92,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     assert _table_exists(db, "integration_workspace_mutex")
     assert "project_id" in _column_names(db, "chat_attachments")
     assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -70,9 +103,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 259
+    assert get_current_version(db) == 260
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [259]
+    assert versions == [260]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -147,7 +180,7 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
 
     message = str(exc_info.value)
     assert f"Database version {legacy_version}" in message
-    assert "current SQLite baseline 259" in message
+    assert "current SQLite baseline 260" in message
     assert "reset" in message
     assert "manually recover" in message
     assert "~/.gobby/gobby-hub.db" in message
@@ -307,6 +340,7 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_cc_target" in _index_names(db, "code_calls")
     assert "idx_plans_project_state" in _index_names(db, "plans")
     assert "idx_chat_attachments_project" in _index_names(db, "chat_attachments")
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
     assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
     assert {
         "tool_name",
@@ -388,10 +422,69 @@ def test_v259_adds_inter_session_completion_lookup_index(tmp_path) -> None:
         )
         """
     )
+    _create_legacy_chat_attachments_table(db)
+
+    assert run_migrations(db) == 2
+    assert get_current_version(db) == 260
+    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
+
+
+def test_v260_adds_chat_attachment_lifecycle_objects(tmp_path) -> None:
+    """Existing v259 databases receive attachment GC lookup and lifecycle triggers."""
+    db_path = tmp_path / "chat_attachment_lifecycle.db"
+    db = LocalDatabase(db_path)
+    db.execute(
+        """
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute("INSERT INTO schema_version (version) VALUES (259)")
+    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+    db.execute(
+        "INSERT INTO projects (id, name) VALUES (?, ?)",
+        (PERSONAL_PROJECT_ID, "_personal"),
+    )
+    db.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            external_id TEXT NOT NULL,
+            machine_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            title TEXT,
+            status TEXT DEFAULT 'active',
+            agent_depth INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE task_dispatch_mutex (
+            task_id TEXT PRIMARY KEY,
+            lease_until TEXT,
+            lease_holder TEXT,
+            run_id TEXT,
+            action_kind TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    _create_legacy_chat_attachments_table(db)
 
     assert run_migrations(db) == 1
-    assert get_current_version(db) == 259
-    assert "idx_ism_completion_lookup" in _index_names(db, "inter_session_messages")
+    assert get_current_version(db) == 260
+    assert "idx_chat_attachments_local_path" in _index_names(db, "chat_attachments")
+    assert {
+        "trg_chat_attachments_bound_at_write_once",
+        "trg_chat_attachments_updated_at_touch",
+    }.issubset(_trigger_names(db, "chat_attachments"))
 
 
 def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:

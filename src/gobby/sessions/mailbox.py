@@ -153,7 +153,17 @@ class MailboxService:
 
         wake_results: list[dict[str, Any]] = []
         if include_wakeup:
-            wake_results = await asyncio.gather(*(self._wake(rid) for rid in recipient_ids))
+            wake_results = [
+                self._normalize_wake_result(recipient_id, result)
+                for recipient_id, result in zip(
+                    recipient_ids,
+                    await asyncio.gather(
+                        *(self._wake(rid) for rid in recipient_ids),
+                        return_exceptions=True,
+                    ),
+                    strict=True,
+                )
+            ]
 
         return MailboxSendResult(
             messages=messages,
@@ -161,6 +171,22 @@ class MailboxService:
             broadcast_id=broadcast_id,
             wake_results=wake_results,
         )
+
+    @staticmethod
+    def _normalize_wake_result(session_id: str, result: Any) -> dict[str, Any]:
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, BaseException):
+            detail = str(result) or type(result).__name__
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": None,
+                "error": detail,
+                "error_code": "wake_dispatch_failed",
+                "error_message": detail,
+            }
+        return {"session_id": session_id, "delivered": False, "method": None}
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id:

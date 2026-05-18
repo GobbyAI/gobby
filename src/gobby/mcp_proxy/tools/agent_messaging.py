@@ -143,6 +143,9 @@ def add_messaging_tools(
         try:
             if content is None:
                 return {"success": False, "error": "content is required."}
+            content = content.strip()
+            if not content:
+                return {"success": False, "error": "content is required."}
             if send_to_all and to_session is not None:
                 return {
                     "success": False,

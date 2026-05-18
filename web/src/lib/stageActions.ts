@@ -115,10 +115,10 @@ function sortedStages(task: LifecycleTask): StageStateView[] {
       const aHasPosition = a.row.position !== null && a.row.position !== undefined
       const bHasPosition = b.row.position !== null && b.row.position !== undefined
       if (aHasPosition && bHasPosition) {
-        return a.row.position! - b.row.position! || a.row.name.localeCompare(b.row.name)
+        return a.row.position! - b.row.position! || a.index - b.index
       }
       if (aHasPosition !== bHasPosition) return aHasPosition ? -1 : 1
-      return a.index - b.index || a.row.name.localeCompare(b.row.name)
+      return a.index - b.index
     })
     .map(({ row }) => row)
 }

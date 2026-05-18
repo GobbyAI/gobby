@@ -1,10 +1,7 @@
 import type { GobbyTaskDetail } from "../../../hooks/useTasks";
+import { isValidGithubRepoSlug } from "../../../lib/githubRepo";
 import { MetaKVRow } from "./TaskDetailKV";
 import { formatTaskDetailDate } from "./taskDetailFormat";
-
-function isValidGithubRepo(value: string | null | undefined): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
-}
 
 /**
  * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits, PR,
@@ -23,7 +20,7 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
     isolation !== null ||
     dispatchFailures > 0;
 
-  const githubRepo = isValidGithubRepo(task.github_repo) ? task.github_repo : null;
+  const githubRepo = isValidGithubRepoSlug(task.github_repo) ? task.github_repo : null;
   const prUrl =
     task.github_pr_number != null && githubRepo
       ? `https://github.com/${githubRepo}/pull/${task.github_pr_number}`

@@ -9,6 +9,7 @@ interface TasksTabListProps {
   visibleRows: VisibleTaskRow[];
   /** Filtered set is empty (vs. no tasks at all) drives the empty copy. */
   isEmpty: boolean;
+  isLoading: boolean;
   hasAnyTasks: boolean;
   selectedTaskId: string | null;
   activeTaskActionId: string | null;
@@ -28,6 +29,7 @@ interface TasksTabListProps {
 export function TasksTabList({
   visibleRows,
   isEmpty,
+  isLoading,
   hasAnyTasks,
   selectedTaskId,
   activeTaskActionId,
@@ -42,7 +44,7 @@ export function TasksTabList({
       aria-label="Tasks"
       data-testid="task-tree"
       aria-live="polite"
-      aria-busy={activeTaskActionId !== null}
+      aria-busy={isLoading || activeTaskActionId !== null}
     >
       {isEmpty ? (
         <ActivityPanelEmpty

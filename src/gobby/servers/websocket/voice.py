@@ -31,10 +31,10 @@ VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
 
 def _client_matches_conversation(meta: dict[str, Any] | None, conversation_id: str) -> bool:
     if not meta:
-        return True
-    cid = meta.get("conversation_id")
+        return False
     return (
-        cid is None or cid == conversation_id or meta.get("attached_session_id") == conversation_id
+        meta.get("conversation_id") == conversation_id
+        or meta.get("attached_session_id") == conversation_id
     )
 
 

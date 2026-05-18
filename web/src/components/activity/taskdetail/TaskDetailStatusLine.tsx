@@ -29,17 +29,13 @@ export function TaskDetailStatusLine({
     !taskState.is_closed &&
     (taskState.is_claimed || displayState === "in_progress");
 
-  // Prop-sync via the render-phase "adjust state when a prop changes"
-  // pattern (no effect). The effect only re-ticks an active task's label
-  // from inside the interval callback.
   const [timeLabel, setTimeLabel] = useState(() =>
     relativeTime(task.updated_at),
   );
-  const [syncedAt, setSyncedAt] = useState(task.updated_at);
-  if (syncedAt !== task.updated_at) {
-    setSyncedAt(task.updated_at);
+  useEffect(() => {
     setTimeLabel(relativeTime(task.updated_at));
-  }
+  }, [task.updated_at]);
+
   useEffect(() => {
     if (!isActive) return;
     const interval = window.setInterval(

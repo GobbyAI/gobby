@@ -181,6 +181,7 @@ interface UpdateTaskParams {
 
 const REFETCH_DEBOUNCE_MS = 500
 const DEFAULT_PAGE_SIZE = 15
+const moveTaskLocks = new Map<string, Promise<void>>()
 
 function getBaseUrl(): string {
   return ''
@@ -231,9 +232,15 @@ function previewTaskEventPayload(taskData: Record<string, unknown>): Record<stri
   const safeKeys = [
     'id',
     'ref',
+    'seq_num',
     'status',
+    'state',
     'task_type',
     'parent_task_id',
+    'current_stage',
+    'stages',
+    'owner_session_ref',
+    'claimed_by_session_id',
     'created_at',
     'updated_at',
     'project_id',
@@ -308,6 +315,16 @@ function normalizeTaskWithStageRows(task: GobbyTask, stages: RawStagePayload[]):
     stages,
   }
   return normalizeTask(payload)
+}
+
+function serializeTaskMove(taskId: string, action: () => Promise<void>): Promise<void> {
+  const previous = moveTaskLocks.get(taskId) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(action)
+  const barrier = next.catch(() => undefined).finally(() => {
+    if (moveTaskLocks.get(taskId) === barrier) moveTaskLocks.delete(taskId)
+  })
+  moveTaskLocks.set(taskId, barrier)
+  return next
 }
 
 // =============================================================================
@@ -558,59 +575,68 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
 
   const moveTaskToStage = useCallback(
     async (taskId: string, targetStageName: string): Promise<void> => {
-      setError(null)
-      const fallbackSnapshot = allTasksRef.current.find(task => task.id === taskId) ?? null
-      const rollbackSnapshotRef = { current: null as GobbyTask | null }
-      setAllTasks(prev =>
-        prev.map(task => {
-          if (task.id !== taskId) return task
-          rollbackSnapshotRef.current = task
-          return normalizeTask(optimisticMoveTaskToStage(task, targetStageName))
-        })
-      )
-
-      try {
-        const baseUrl = getBaseUrl()
-        const response = await fetch(
-          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(targetStageName)}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'move_to' }),
-          }
-        )
-        if (!response.ok) {
-          let payload: unknown
-          try {
-            payload = await response.json()
-          } catch {
-            payload = { status: response.status, detail: response.statusText }
-          }
-          throw payload
-        }
-        const payload = await response.json() as { stages?: RawStagePayload[] }
-        if (payload.stages) {
-          setAllTasks(prev =>
-            prev.map(task =>
-              task.id === taskId ? normalizeTaskWithStageRows(task, payload.stages ?? []) : task
+      return serializeTaskMove(taskId, async () => {
+        setError(null)
+        const originalSnapshot = allTasksRef.current.find(task => task.id === taskId) ?? null
+        if (originalSnapshot) {
+          setAllTasks(prev => {
+            const next = prev.map(task =>
+              task.id === taskId
+                ? normalizeTask(optimisticMoveTaskToStage(task, targetStageName))
+                : task
             )
-          )
-        }
-      } catch (errorPayload) {
-        const snapshot = rollbackSnapshotRef.current ?? fallbackSnapshot
-        if (snapshot) {
-          setAllTasks(prev =>
-            prev.map(task => task.id === taskId ? snapshot : task)
-          )
-        } else {
-          console.warn('Could not rollback task move; previous task snapshot missing', {
-            taskId,
-            targetStageName,
+            allTasksRef.current = next
+            return next
           })
         }
-        setError(stageMutationErrorMessage(errorPayload, 'Failed to move task'))
-        throw errorPayload
-      }
+
+        try {
+          const baseUrl = getBaseUrl()
+          const response = await fetch(
+            `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(targetStageName)}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'move_to' }),
+            }
+          )
+          if (!response.ok) {
+            let payload: unknown
+            try {
+              payload = await response.json()
+            } catch {
+              payload = { status: response.status, detail: response.statusText }
+            }
+            throw payload
+          }
+          const payload = await response.json() as { stages?: RawStagePayload[] }
+          if (payload.stages) {
+            setAllTasks(prev => {
+              const next = prev.map(task =>
+                task.id === taskId ? normalizeTaskWithStageRows(task, payload.stages ?? []) : task
+              )
+              allTasksRef.current = next
+              return next
+            })
+          }
+          setError(null)
+        } catch (errorPayload) {
+          if (originalSnapshot) {
+            setAllTasks(prev => {
+              const next = prev.map(task => task.id === taskId ? originalSnapshot : task)
+              allTasksRef.current = next
+              return next
+            })
+          } else {
+            console.warn('Could not rollback task move; previous task snapshot missing', {
+              taskId,
+              targetStageName,
+            })
+          }
+          setError(stageMutationErrorMessage(errorPayload, 'Failed to move task'))
+          throw errorPayload
+        }
+      })
     },
     // Uses refs and module-level helpers only; keep this stable for board DnD monitors.
     []

@@ -34,6 +34,19 @@ interface TaskTextFieldProps extends CommonEditorProps {
   placeholder?: string;
 }
 
+function useSkipNextBlurCommit() {
+  const skipNextBlurCommitRef = useRef(false);
+  const skipNextBlurCommit = useCallback(() => {
+    skipNextBlurCommitRef.current = true;
+  }, []);
+  const shouldSkipBlurCommit = useCallback(() => {
+    if (!skipNextBlurCommitRef.current) return false;
+    skipNextBlurCommitRef.current = false;
+    return true;
+  }, []);
+  return { shouldSkipBlurCommit, skipNextBlurCommit };
+}
+
 export function TaskTextField({
   value,
   onCommit,
@@ -43,7 +56,7 @@ export function TaskTextField({
 }: TaskTextFieldProps) {
   const [committed, setCommitted] = useState(value);
   const [draft, setDraft] = useState(value);
-  const skipNextBlurCommitRef = useRef(false);
+  const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
@@ -64,11 +77,11 @@ export function TaskTextField({
       event.currentTarget.blur();
     } else if (event.key === "Escape") {
       event.preventDefault();
-      skipNextBlurCommitRef.current = true;
+      skipNextBlurCommit();
       setDraft(committed);
       event.currentTarget.blur();
     }
-  }, [committed]);
+  }, [committed, skipNextBlurCommit]);
 
   return (
     <input
@@ -81,10 +94,7 @@ export function TaskTextField({
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={onKeyDown}
       onBlur={() => {
-        if (skipNextBlurCommitRef.current) {
-          skipNextBlurCommitRef.current = false;
-          return;
-        }
+        if (shouldSkipBlurCommit()) return;
         commit();
       }}
     />
@@ -111,7 +121,7 @@ export function TaskTextAreaField({
   const [committed, setCommitted] = useState(value);
   const [draft, setDraft] = useState(value);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const skipNextBlurCommitRef = useRef(false);
+  const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -155,12 +165,12 @@ export function TaskTextAreaField({
       if (event.key === "Escape") {
         event.preventDefault();
         clearTimer();
-        skipNextBlurCommitRef.current = true;
+        skipNextBlurCommit();
         setDraft(committed);
         event.currentTarget.blur();
       }
     },
-    [clearTimer, committed],
+    [clearTimer, committed, skipNextBlurCommit],
   );
 
   return (
@@ -174,11 +184,9 @@ export function TaskTextAreaField({
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={onKeyDown}
       onBlur={() => {
+        // Blur commits exactly once after canceling pending debounce.
         clearTimer();
-        if (skipNextBlurCommitRef.current) {
-          skipNextBlurCommitRef.current = false;
-          return;
-        }
+        if (shouldSkipBlurCommit()) return;
         commit(draft);
       }}
     />
@@ -240,7 +248,7 @@ export function TaskTagsField({
   const [committed, setCommitted] = useState<string[]>(value);
   const [tags, setTags] = useState<string[]>(value);
   const [entry, setEntry] = useState("");
-  const skipNextBlurCommitRef = useRef(false);
+  const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
@@ -287,13 +295,13 @@ export function TaskTagsField({
         commit(next);
       } else if (event.key === "Escape") {
         event.preventDefault();
-        skipNextBlurCommitRef.current = true;
+        skipNextBlurCommit();
         setTags(committed);
         setEntry("");
         event.currentTarget.blur();
       }
     },
-    [addTag, commit, committed, entry, tags],
+    [addTag, commit, committed, entry, skipNextBlurCommit, tags],
   );
 
   return (
@@ -325,10 +333,7 @@ export function TaskTagsField({
         onChange={(event) => setEntry(event.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => {
-          if (skipNextBlurCommitRef.current) {
-            skipNextBlurCommitRef.current = false;
-            return;
-          }
+          if (shouldSkipBlurCommit()) return;
           const trimmed = entry.trim();
           const nextTags =
             trimmed && !tags.includes(trimmed) ? [...tags, trimmed] : tags;

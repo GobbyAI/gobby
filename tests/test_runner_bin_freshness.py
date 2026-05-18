@@ -191,6 +191,7 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
             span_cleanup_loop=noop,
             cleanup_zombie_messages_loop=noop,
             cleanup_comms_messages_loop=noop,
+            cleanup_chat_attachments_loop=noop,
             cleanup_expired_isolation_loop=noop,
             metric_snapshot_loop=noop,
             drain_hook_inbox_loop=noop,

@@ -58,6 +58,17 @@ def start_periodic_tasks(
         name="comms-message-cleanup",
     )
     db_executor = getattr(runner, "db_executor", None)
+    chat_config = getattr(runner.config, "chat", None)
+    runner._chat_attachments_cleanup_task = asyncio.create_task(
+        loops["cleanup_chat_attachments_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            retention_hours=getattr(chat_config, "attachment_unbound_retention_hours", 24),
+            interval_minutes=getattr(chat_config, "attachment_gc_interval_minutes", 60),
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="chat-attachment-cleanup",
+    )
     runner._expired_isolation_task = asyncio.create_task(
         loops["cleanup_expired_isolation_loop"](
             runner.database,
@@ -105,6 +116,7 @@ def start_periodic_tasks(
             getattr(runner, "_memory_reconcile_task", None),
             runner._zombie_messages_task,
             runner._comms_messages_task,
+            runner._chat_attachments_cleanup_task,
             runner._expired_isolation_task,
             runner._metric_snapshot_task,
             runner._hook_inbox_task,

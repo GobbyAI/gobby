@@ -115,7 +115,13 @@ def _safe_attachment_name(raw_name: str) -> str:
     return _safe_path_part(raw_name, "attachment")
 
 
-def _write_base64_attachment(target: Path, raw_name: str, raw_data: str) -> int:
+def _write_base64_attachment(
+    target: Path,
+    raw_name: str,
+    raw_data: str,
+    *,
+    max_decoded_bytes: int = MAX_PROXY_ATTACHMENT_BYTES,
+) -> int:
     written = 0
     chunk_size = _BASE64_WRITE_CHUNK_CHARS - (_BASE64_WRITE_CHUNK_CHARS % 4)
     try:
@@ -125,13 +131,15 @@ def _write_base64_attachment(target: Path, raw_name: str, raw_data: str) -> int:
                 try:
                     decoded = base64.b64decode(chunk, validate=True)
                 except binascii.Error as exc:
-                    raise ValueError(
-                        f"Attachment {raw_name!r} has invalid base64 content"
-                    ) from exc
-                written += len(decoded)
-                if written > MAX_PROXY_ATTACHMENT_BYTES:
+                    raise ValueError(f"Attachment {raw_name!r} has invalid base64 content") from exc
+                projected_written = written + len(decoded)
+                if projected_written > MAX_PROXY_ATTACHMENT_BYTES:
                     raise ValueError(f"Attachment {raw_name!r} exceeds 25 MB")
+                if projected_written > max_decoded_bytes:
+                    limit = _format_attachment_size_limit(MAX_PROXY_TOTAL_ATTACHMENT_BYTES)
+                    raise ValueError(f"Attachments exceed {limit} total")
                 handle.write(decoded)
+                written = projected_written
     except Exception:
         target.unlink(missing_ok=True)
         raise
@@ -139,6 +147,7 @@ def _write_base64_attachment(target: Path, raw_name: str, raw_data: str) -> int:
 
 
 def _remove_empty_attachment_dirs(target_dir: Path) -> None:
+    """Best-effort prune for empty scratch dirs after a failed write."""
     root = get_gobby_home() / "attachments"
     current = target_dir
     while True:
@@ -184,11 +193,13 @@ async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> li
         for raw_name, raw_data in prepared_attachments:
             safe_name = _safe_attachment_name(raw_name)
             active_target = target_dir / f"{uuid4().hex}_{safe_name}"
+            remaining_total = MAX_PROXY_TOTAL_ATTACHMENT_BYTES - total_written
             written = await asyncio.to_thread(
                 _write_base64_attachment,
                 active_target,
                 raw_name,
                 raw_data,
+                max_decoded_bytes=remaining_total,
             )
             total_written += written
             if total_written > MAX_PROXY_TOTAL_ATTACHMENT_BYTES:
@@ -213,7 +224,17 @@ async def cleanup_proxy_attachments_for_session(session_id: str) -> int:
         if not target_dir.exists():
             return 0
         removed = sum(1 for path in target_dir.rglob("*") if path.is_file())
-        shutil.rmtree(target_dir)
+        try:
+            shutil.rmtree(target_dir)
+        except FileNotFoundError:
+            return 0
+        except OSError:
+            logger.warning(
+                "Failed to remove proxy attachment directory %s",
+                target_dir,
+                exc_info=True,
+            )
+            return 0
         return removed
 
     return await asyncio.to_thread(remove_tree)
@@ -253,7 +274,9 @@ async def cleanup_expired_proxy_attachments(
             file_count = sum(1 for path in session_dir.rglob("*") if path.is_file())
             try:
                 shutil.rmtree(session_dir)
-            except Exception:
+            except FileNotFoundError:
+                continue
+            except OSError:
                 logger.warning(
                     "Failed to remove expired proxy attachment directory %s",
                     session_dir,

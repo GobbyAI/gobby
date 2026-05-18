@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,56 @@ def test_delete_unbound_attachment_keeps_bound_attachment(
         chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
 
     assert chat_attachments.get_attachment(temp_db, attachment_id) is not None
+
+
+def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    old_unbound = _create_attachment(temp_db, tmp_path, "old-unbound")
+    fresh_unbound = _create_attachment(temp_db, tmp_path, "fresh-unbound")
+    bound = _create_attachment(temp_db, tmp_path, "bound")
+    historically_bound = _create_attachment(temp_db, tmp_path, "historically-bound")
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    old = (cutoff - timedelta(minutes=1)).isoformat()
+    fresh = (cutoff + timedelta(minutes=1)).isoformat()
+
+    chat_attachments.bind_attachments(temp_db, [bound], conversation_id="conv-1")
+    temp_db.execute(
+        """
+        UPDATE chat_attachments
+           SET created_at = CASE id WHEN ? THEN ? ELSE ? END,
+               updated_at = CASE id WHEN ? THEN ? ELSE ? END
+         WHERE id IN (?, ?, ?)
+        """,
+        (
+            fresh_unbound,
+            fresh,
+            old,
+            fresh_unbound,
+            fresh,
+            old,
+            old_unbound,
+            fresh_unbound,
+            bound,
+        ),
+    )
+    temp_db.execute(
+        """
+        UPDATE chat_attachments
+           SET created_at = ?, updated_at = ?, bound_at = ?
+         WHERE id = ?
+        """,
+        (old, old, old, historically_bound),
+    )
+
+    deleted = chat_attachments.delete_stale_unbound_attachments(temp_db, cutoff=cutoff)
+
+    assert [record.id for record in deleted] == [old_unbound]
+    assert chat_attachments.get_attachment(temp_db, old_unbound) is None
+    assert chat_attachments.get_attachment(temp_db, fresh_unbound) is not None
+    assert chat_attachments.get_attachment(temp_db, bound) is not None
+    assert chat_attachments.get_attachment(temp_db, historically_bound) is not None
 
 
 def test_delete_attachments_for_conversations_removes_conversation_and_message_links(

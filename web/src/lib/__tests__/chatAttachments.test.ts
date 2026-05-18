@@ -106,6 +106,19 @@ describe('uploadChatAttachment', () => {
     await rejection
   })
 
+  it('rejects network upload errors and clears progress', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+    const onProgress = vi.fn()
+
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
+    const xhr = FakeXMLHttpRequest.instances[0]
+    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload failed')
+    xhr.onerror?.()
+
+    await rejection
+    expect(onProgress).toHaveBeenLastCalledWith(null)
+  })
+
   it('resolves successful upload payloads with normalized content URLs', async () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 

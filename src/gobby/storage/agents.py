@@ -497,7 +497,7 @@ class LocalAgentRunManager:
     def complete(
         self,
         run_id: str,
-        result: str,
+        result: str | None = None,
         tool_calls_count: int = 0,
         turns_used: int = 0,
     ) -> AgentRun | None:
@@ -506,7 +506,8 @@ class LocalAgentRunManager:
 
         Args:
             run_id: The agent run ID.
-            result: The agent's output/result.
+            result: Optional agent output/result override. When omitted, the
+                current stored result is preserved.
             tool_calls_count: Number of tool calls made.
             turns_used: Number of turns used.
 
@@ -518,7 +519,7 @@ class LocalAgentRunManager:
             """
             UPDATE agent_runs
             SET status = 'success',
-                result = ?,
+                result = COALESCE(?, result),
                 terminal_reason = NULL,
                 tool_calls_count = ?,
                 turns_used = ?,

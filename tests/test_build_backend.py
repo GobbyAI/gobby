@@ -376,11 +376,10 @@ def test_stage_bundled_content_manifest_writes_manifest(tmp_path: Path) -> None:
 
     backend = _load_backend(repo_root)
 
-    manifest_path = backend._stage_bundled_content_manifest()
+    result = backend._stage_bundled_content_manifest()
 
-    assert (
-        manifest_path == repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json"
-    )
+    assert result is None
+    manifest_path = repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 1
     assert manifest["hash_algorithm"] == "sha256"

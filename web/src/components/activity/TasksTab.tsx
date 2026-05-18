@@ -864,6 +864,7 @@ export const TasksTab = memo(function TasksTab({
         <TasksTabList
           visibleRows={visibleRows}
           isEmpty={filtered.length === 0}
+          isLoading={loading}
           hasAnyTasks={tasks.length > 0}
           selectedTaskId={selectedTaskId}
           activeTaskActionId={activeTaskAction?.taskId ?? null}

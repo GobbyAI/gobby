@@ -237,6 +237,18 @@ class ChatMessagingMixin:
                 websocket, f"Invalid provider '{provider}'", request_id=request_id
             )
             return
+
+        client_info = self.clients.get(websocket)
+        if not client_info:
+            logger.warning("Chat message from unregistered client")
+            await self._send_error(
+                websocket,
+                "Client is not registered for chat messages",
+                request_id=request_id,
+                code="UNREGISTERED_CLIENT",
+            )
+            return
+
         try:
             prepared_attachments = await prepare_message_attachments(
                 self,
@@ -258,11 +270,6 @@ class ChatMessagingMixin:
             return
         assert validated_content is not None
         content = validated_content
-
-        client_info = self.clients.get(websocket)
-        if not client_info:
-            logger.warning("Chat message from unregistered client")
-            return
 
         # Track which conversation this client is in (for scoped broadcasts)
         client_info["conversation_id"] = conversation_id
@@ -581,14 +588,13 @@ class ChatMessagingMixin:
 
             # Persist user message to database
             user_text = content if isinstance(content, str) else json.dumps(content)
-            user_content_blocks: list[dict[str, Any]] | None = None
+            if isinstance(content, list):
+                user_content_blocks = list(content)
+            else:
+                user_content_blocks = (
+                    [{"type": "text", "content": content}] if content.strip() else []
+                )
             if attachments and attachments.records:
-                if isinstance(content, list):
-                    user_content_blocks = list(content)
-                else:
-                    user_content_blocks = (
-                        [{"type": "text", "content": content}] if content.strip() else []
-                    )
                 user_content_blocks.extend(attachments.content_blocks)
             await _persist_message(session, "user", user_text, user_content_blocks)
 

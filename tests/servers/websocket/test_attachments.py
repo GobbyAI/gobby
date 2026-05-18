@@ -67,7 +67,7 @@ async def test_store_proxy_attachments_cleans_partial_file_after_write_error(
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
-    def fail_write(target: Path, *_args: object) -> int:
+    def fail_write(target: Path, *_args: object, **_kwargs: object) -> int:
         target.write_bytes(b"partial")
         raise OSError("disk full")
 

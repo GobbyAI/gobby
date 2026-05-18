@@ -291,6 +291,18 @@ class ChatConfig(FeatureDefaultConfig):
         le=100,
         description="Maximum number of chat attachments accepted on one message.",
     )
+    attachment_unbound_retention_hours: int = Field(
+        default=24,
+        ge=1,
+        le=24 * 30,
+        description="How long unbound uploaded chat attachments are retained before cleanup.",
+    )
+    attachment_gc_interval_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=24 * 60,
+        description="How often to remove stale unbound uploaded chat attachments.",
+    )
 
     @field_validator("default_mode")
     @classmethod

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Button } from '../Button'
@@ -30,5 +30,23 @@ describe('Button', () => {
     expect(warn).toHaveBeenCalledWith(
       'Button asChild loading state cannot inject a spinner; render loading UI in the child.',
     )
+  })
+
+  it('blocks activation when asChild is disabled', () => {
+    const onClick = vi.fn()
+
+    render(
+      <Button asChild disabled onClick={onClick}>
+        <a href="/tasks">Tasks</a>
+      </Button>,
+    )
+
+    const link = screen.getByRole('link', { name: /tasks/i })
+    expect(link).toHaveAttribute('aria-disabled', 'true')
+    expect(link).toHaveAttribute('tabindex', '-1')
+
+    fireEvent.click(link)
+
+    expect(onClick).not.toHaveBeenCalled()
   })
 })

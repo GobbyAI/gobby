@@ -183,7 +183,7 @@ def _load_manifest_module() -> ModuleType:
     return module
 
 
-def _stage_bundled_content_manifest() -> Path:
+def _stage_bundled_content_manifest() -> None:
     manifest_module = _load_manifest_module()
     write_manifest = getattr(manifest_module, "write_bundled_content_manifest", None)
     if not callable(write_manifest):
@@ -200,7 +200,6 @@ def _stage_bundled_content_manifest() -> Path:
             f"Bundled content manifest helper failed while writing {_INSTALL_DEST}: {exc}"
         ) from exc
     logger.info("Staged bundled content manifest at %s", manifest_path)
-    return manifest_path
 
 
 def _verify_wheel_contains_required_files(wheel_path: Path) -> None:

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
+import { isValidGithubRepoSlug } from '../../lib/githubRepo'
 import { cn } from '../../lib/utils'
 import { Heading } from '../shared/Heading'
 
@@ -27,8 +28,6 @@ const DELETE_BTN_CONFIRM_CLS =
 
 const RULES_CLS = 'flex flex-col gap-3'
 const RULE_ROW_CLS = 'flex items-center gap-3 [&_button]:min-w-[96px]'
-const GITHUB_REPO_RE =
-  /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$/
 
 type ApprovalRuleRow = { id: string; value: string }
 
@@ -67,7 +66,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
 
   const handleSave = useCallback(async () => {
     const trimmedGithubRepo = githubRepo.trim()
-    if (trimmedGithubRepo && !GITHUB_REPO_RE.test(trimmedGithubRepo)) {
+    if (trimmedGithubRepo && !isValidGithubRepoSlug(trimmedGithubRepo)) {
       setMessage({ type: 'error', text: 'GitHub repo must be owner/repo' })
       return
     }

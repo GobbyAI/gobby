@@ -11,70 +11,96 @@ import {
 type Setter<T> = (value: T) => void;
 
 interface UseContinuationRestoreParams {
-  attachedSessionIdRef: MutableRefObject<string | null>;
-  attachedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
-  conversationIdRef: MutableRefObject<string>;
-  dbSessionIdRef: MutableRefObject<string | null>;
-  observedSessionIdRef: MutableRefObject<string | null>;
-  observedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["observedSessionMeta"]>;
-  pendingSessionInteractionModeRef: MutableRefObject<"observe" | "proxy">;
-  sessionInteractionModeRef: MutableRefObject<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
-  setAttachedSessionId: Setter<string | null>;
-  setAttachedSessionMeta: Setter<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
-  setContextUsage: Setter<ContinuationRollbackSnapshot["contextUsage"]>;
-  setConversationId: Setter<string>;
-  setCurrentBranch: Setter<string | null>;
-  setCurrentMode: (mode: ChatMode) => ChatMode;
-  setDbSessionId: Setter<string | null>;
-  setIsLoadingMessages: Setter<boolean>;
-  setMainSessionMeta: Setter<ContinuationRollbackSnapshot["mainSessionMeta"]>;
-  setMessages: Setter<ContinuationRollbackSnapshot["messages"]>;
-  setObservedSessionId: Setter<string | null>;
-  setProxyDeliveryNotice: Setter<string | null>;
-  setSelectedProvider: Setter<string | null>;
-  setSessionInteractionMode: Setter<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
-  setSessionRef: Setter<string | null>;
-  setSessionTitle: Setter<string | null>;
-  setViewingSessionId: Setter<string | null>;
-  setViewingSessionMeta: Setter<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
-  setWorktreePath: Setter<string | null>;
-  viewingSessionIdRef: MutableRefObject<string | null>;
-  viewingSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
-  wsRef: MutableRefObject<WebSocket | null>;
+  sessionRefs: {
+    attachedSessionIdRef: MutableRefObject<string | null>;
+    conversationIdRef: MutableRefObject<string>;
+    dbSessionIdRef: MutableRefObject<string | null>;
+    observedSessionIdRef: MutableRefObject<string | null>;
+    viewingSessionIdRef: MutableRefObject<string | null>;
+  };
+  sessionSetters: {
+    setAttachedSessionId: Setter<string | null>;
+    setConversationId: Setter<string>;
+    setDbSessionId: Setter<string | null>;
+    setObservedSessionId: Setter<string | null>;
+    setSelectedProvider: Setter<string | null>;
+    setSessionRef: Setter<string | null>;
+    setSessionTitle: Setter<string | null>;
+    setViewingSessionId: Setter<string | null>;
+  };
+  conversationRefs: {
+    attachedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
+    observedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["observedSessionMeta"]>;
+    viewingSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
+    wsRef: MutableRefObject<WebSocket | null>;
+  };
+  conversationSetters: {
+    setAttachedSessionMeta: Setter<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
+    setContextUsage: Setter<ContinuationRollbackSnapshot["contextUsage"]>;
+    setCurrentBranch: Setter<string | null>;
+    setCurrentMode: (mode: ChatMode) => ChatMode;
+    setIsLoadingMessages: Setter<boolean>;
+    setMainSessionMeta: Setter<ContinuationRollbackSnapshot["mainSessionMeta"]>;
+    setMessages: Setter<ContinuationRollbackSnapshot["messages"]>;
+    setProxyDeliveryNotice: Setter<string | null>;
+    setViewingSessionMeta: Setter<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
+    setWorktreePath: Setter<string | null>;
+  };
+  interactionMode: {
+    pendingSessionInteractionModeRef: MutableRefObject<"observe" | "proxy">;
+    sessionInteractionModeRef: MutableRefObject<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
+    setSessionInteractionMode: Setter<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
+  };
 }
 
 export function useContinuationRestore({
-  attachedSessionIdRef,
-  attachedSessionMetaRef,
-  conversationIdRef,
-  dbSessionIdRef,
-  observedSessionIdRef,
-  observedSessionMetaRef,
-  pendingSessionInteractionModeRef,
-  sessionInteractionModeRef,
-  setAttachedSessionId,
-  setAttachedSessionMeta,
-  setContextUsage,
-  setConversationId,
-  setCurrentBranch,
-  setCurrentMode,
-  setDbSessionId,
-  setIsLoadingMessages,
-  setMainSessionMeta,
-  setMessages,
-  setObservedSessionId,
-  setProxyDeliveryNotice,
-  setSelectedProvider,
-  setSessionInteractionMode,
-  setSessionRef,
-  setSessionTitle,
-  setViewingSessionId,
-  setViewingSessionMeta,
-  setWorktreePath,
-  viewingSessionIdRef,
-  viewingSessionMetaRef,
-  wsRef,
+  sessionRefs,
+  sessionSetters,
+  conversationRefs,
+  conversationSetters,
+  interactionMode,
 }: UseContinuationRestoreParams) {
+  const {
+    attachedSessionIdRef,
+    conversationIdRef,
+    dbSessionIdRef,
+    observedSessionIdRef,
+    viewingSessionIdRef,
+  } = sessionRefs;
+  const {
+    setAttachedSessionId,
+    setConversationId,
+    setDbSessionId,
+    setObservedSessionId,
+    setSelectedProvider,
+    setSessionRef,
+    setSessionTitle,
+    setViewingSessionId,
+  } = sessionSetters;
+  const {
+    attachedSessionMetaRef,
+    observedSessionMetaRef,
+    viewingSessionMetaRef,
+    wsRef,
+  } = conversationRefs;
+  const {
+    setAttachedSessionMeta,
+    setContextUsage,
+    setCurrentBranch,
+    setCurrentMode,
+    setIsLoadingMessages,
+    setMainSessionMeta,
+    setMessages,
+    setProxyDeliveryNotice,
+    setViewingSessionMeta,
+    setWorktreePath,
+  } = conversationSetters;
+  const {
+    pendingSessionInteractionModeRef,
+    sessionInteractionModeRef,
+    setSessionInteractionMode,
+  } = interactionMode;
+
   return useCallback(
     (snapshot: ContinuationRollbackSnapshot) => {
       conversationIdRef.current = snapshot.conversationId;

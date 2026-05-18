@@ -133,7 +133,7 @@ export function useAppCommandPalette({
         return;
       }
       if (item.action === "restart_daemon") {
-        restartDaemon(false);
+        void restartDaemon(false);
         return;
       }
       if (item.action === "exit_plan_mode") {
@@ -208,7 +208,7 @@ export function useAppCommandPalette({
         label: "Restart Daemon",
         icon: "\u21BB",
         category: "action",
-        onSelect: () => restartDaemon(true),
+        onSelect: () => { void restartDaemon(true); },
       },
     ];
     for (const page of APP_NAV_PAGES) {

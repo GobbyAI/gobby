@@ -222,9 +222,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
-        Reads the canonical owner from ``state.owner_session_id`` (falling back
-        to the top-level ``claimed_by_session_id``) so the value matches the
-        frontend canonical-state precedence. Unowned tasks get ``None``.
+        ``state.owner_session_id`` is authoritative because it mirrors the
+        canonical task state. Older serialized rows may only expose the legacy
+        top-level ``claimed_by_session_id``, which is used as a fallback. The
+        winning UUID is converted through ``_owner_session_ref``; unowned tasks
+        or non-string owner values receive ``None``.
         """
         for item in task_dicts:
             raw_state = item.get("state")

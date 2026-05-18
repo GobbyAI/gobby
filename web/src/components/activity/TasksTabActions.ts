@@ -6,6 +6,8 @@ import {
 import { getCanonicalStageName } from "../../lib/taskState";
 
 export type TaskActionEndpoint = "release-claim" | "close" | "reopen";
+export const QUICK_BUILD_STOP_RETRY_DELAYS_MS = [150, 400, 900] as const;
+export const QUICK_BUILD_STOP_RETRY_JITTER_MS = 75;
 
 /**
  * PATCH-safe task fields only. Mirrors the backend TaskUpdateRequest subset
@@ -187,14 +189,13 @@ function isSemanticStopError(error: unknown): boolean {
   return /\bnot[- ]running\b|\bno running build\b/i.test(message);
 }
 
-function retryDelay(baseDelay: number): number {
-  return baseDelay + Math.floor(Math.random() * 75);
+export function buildRetryDelay(baseDelay: number): number {
+  return baseDelay + Math.floor(Math.random() * QUICK_BUILD_STOP_RETRY_JITTER_MS);
 }
 
 async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promise<void> {
-  const delays = [150, 400, 900];
   // Attempts are the initial stop call plus one retry for each configured delay.
-  const maxAttempts = delays.length + 1;
+  const maxAttempts = QUICK_BUILD_STOP_RETRY_DELAYS_MS.length + 1;
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
@@ -209,14 +210,14 @@ async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promis
         });
         return;
       }
-      const delay = delays[attempt];
+      const delay = QUICK_BUILD_STOP_RETRY_DELAYS_MS[attempt];
       if (delay === undefined) break;
       console.warn("Quick build stop failed transiently; retrying", {
         taskId: task.id,
         attempt: attempt + 1,
         error,
       });
-      await new Promise((resolve) => setTimeout(resolve, retryDelay(delay)));
+      await new Promise((resolve) => setTimeout(resolve, buildRetryDelay(delay)));
     }
   }
   const ref = taskActionRef(task);

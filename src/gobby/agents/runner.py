@@ -62,7 +62,7 @@ class AgentRunner:
 
         # Workflow handler for hook evaluation on spawned agent tool calls
         self._workflow_handler: WorkflowHookHandler | None = None
-        self.agent_lifecycle_monitor: AgentLifecycleMonitor | None = None
+        self._agent_lifecycle_monitor: AgentLifecycleMonitor | None = None
 
     @property
     def workflow_handler(self) -> WorkflowHookHandler | None:
@@ -72,6 +72,15 @@ class AgentRunner:
     @workflow_handler.setter
     def workflow_handler(self, value: WorkflowHookHandler | None) -> None:
         self._workflow_handler = value
+
+    @property
+    def agent_lifecycle_monitor(self) -> AgentLifecycleMonitor | None:
+        """Lifecycle monitor for terminal agent completion and cleanup."""
+        return self._agent_lifecycle_monitor
+
+    @agent_lifecycle_monitor.setter
+    def agent_lifecycle_monitor(self, value: AgentLifecycleMonitor | None) -> None:
+        self._agent_lifecycle_monitor = value
 
     @property
     def child_session_manager(self) -> ChildSessionManager:

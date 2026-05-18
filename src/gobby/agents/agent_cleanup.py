@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 class AgentCleanupHandler:
@@ -153,9 +154,15 @@ class AgentCleanupHandler:
             return tool_calls_count, turns_used
 
         try:
-            session = await self._run_sqlite(session_manager.get, run.child_session_id)
-        except Exception as e:
-            logger.debug("Failed to read session stats for agent %s: %s", run.id, e)
+            session = await asyncio.wait_for(
+                self._run_sqlite(session_manager.get, run.child_session_id),
+                timeout=SESSION_STATS_LOOKUP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.debug("Timed out reading session stats for agent %s", run.id)
+            return tool_calls_count, turns_used
+        except Exception:
+            logger.debug("Failed to read session stats for agent %s", run.id, exc_info=True)
             return tool_calls_count, turns_used
         if session is None:
             return tool_calls_count, turns_used
@@ -202,14 +209,11 @@ class AgentCleanupHandler:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)
             return False
 
-        final_result = (
-            completion_result if completion_result is not None else (current.result or "")
-        )
         tool_calls_count, turns_used = await self._completion_stats_for_run(current)
         db_run = await self._run_sqlite(
             self._agent_run_manager.complete,
             run_id,
-            result=final_result,
+            result=completion_result,
             tool_calls_count=tool_calls_count,
             turns_used=turns_used,
         )

@@ -283,9 +283,9 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
         if parts[1] == "build_profiles.yaml":
             return "build_profiles"
         logger.warning(
-            "Unknown bundled registry file maps to generic registry sentinel: %s",
+            "Unknown bundled registry file is ignored by sync integrity: %s",
             relative_path,
         )
-        return "registry"
+        return None
 
     return None

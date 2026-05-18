@@ -213,7 +213,7 @@ class TestVerifyBundledIntegrity:
         assert result.untracked_files == ["shared/rules/build/extra.yaml"]
         assert get_dirty_content_types(result.untracked_files, tmp_path) == {"rules"}
 
-    def test_unknown_registry_file_maps_to_registry_sentinel(
+    def test_unknown_registry_file_is_ignored(
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
@@ -225,8 +225,8 @@ class TestVerifyBundledIntegrity:
             tmp_path,
         )
 
-        assert content_types == {"registry"}
-        assert "Unknown bundled registry file maps to generic registry sentinel" in caplog.text
+        assert content_types == set()
+        assert "Unknown bundled registry file is ignored by sync integrity" in caplog.text
 
     def test_clean_repo(self, tmp_path: Path) -> None:
         """All files clean when git reports no changes."""

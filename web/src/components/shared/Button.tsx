@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type MouseEvent } from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
@@ -20,18 +20,44 @@ export interface ButtonProps
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, loading = false, disabled, children, ...props }, ref) => {
+  (
+    {
+      className,
+      variant,
+      size,
+      asChild = false,
+      loading = false,
+      disabled,
+      children,
+      onClick,
+      tabIndex,
+      ...props
+    },
+    ref,
+  ) => {
     const Comp = asChild ? Slot : 'button'
+    const isDisabled = Boolean(disabled || loading)
     if (import.meta.env.DEV && asChild && loading) {
       console.warn('Button asChild loading state cannot inject a spinner; render loading UI in the child.')
     }
+    const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+      if (asChild && isDisabled) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+      onClick?.(event)
+    }
     return (
       <Comp
+        {...props}
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        disabled={disabled || loading}
+        disabled={asChild ? undefined : isDisabled}
+        aria-disabled={asChild && isDisabled ? true : props['aria-disabled']}
         aria-busy={loading || undefined}
-        {...props}
+        tabIndex={asChild && isDisabled ? -1 : tabIndex}
+        onClick={handleClick}
       >
         {asChild ? (
           // Radix Slot enforces a single element child, so the spinner is

@@ -105,9 +105,6 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
     if run.status not in ("pending", "running"):
         return False
 
-    # Use provided result, or preserve existing result from send_message
-    final_result = result if result is not None else (run.result or "")
-
     # Read session stats (message processor writes these to the sessions table).
     # The agent_runs table may still have 0/0 at this point since stats are
     # written to sessions, not agent_runs, during execution.
@@ -121,7 +118,7 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
 
     completed_run = runner._run_storage.complete(
         run_id=run_id,
-        result=final_result,
+        result=result,
         tool_calls_count=tool_calls_count,
         turns_used=turns_used,
     )

@@ -42,6 +42,25 @@ CREATE INDEX IF NOT EXISTS idx_chat_attachments_message
 
 CREATE INDEX IF NOT EXISTS idx_chat_attachments_target_session
     ON chat_attachments(target_session_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_attachments_local_path
+    ON chat_attachments(local_path);
+
+CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_bound_at_write_once
+BEFORE UPDATE OF bound_at ON chat_attachments
+WHEN OLD.bound_at IS NOT NULL AND NEW.bound_at IS NOT OLD.bound_at
+BEGIN
+    SELECT RAISE(ABORT, 'chat_attachments.bound_at is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_updated_at_touch
+AFTER UPDATE ON chat_attachments
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE chat_attachments
+       SET updated_at = datetime('now')
+     WHERE id = NEW.id;
+END;
 """
 
 
@@ -304,6 +323,38 @@ def delete_unbound_attachment(
         if record is not None and record.is_bound:
             raise ValueError("Only unbound queued attachments can be deleted")
         return None
+
+
+def delete_stale_unbound_attachments(
+    db: DatabaseProtocol,
+    *,
+    cutoff: datetime | str,
+    limit: int = 500,
+) -> list[ChatAttachmentRecord]:
+    """Delete never-bound queued uploads older than ``cutoff`` and return their records."""
+    cutoff_value = cutoff.isoformat() if isinstance(cutoff, datetime) else cutoff
+    bounded_limit = max(1, int(limit))
+    with db.transaction_immediate() as conn:
+        rows = conn.execute(
+            """
+            DELETE FROM chat_attachments
+             WHERE id IN (
+                   SELECT id
+                     FROM chat_attachments
+                    WHERE conversation_id IS NULL
+                      AND message_id IS NULL
+                      AND target_session_id IS NULL
+                      AND bound_at IS NULL
+                      AND created_at < ?
+                    ORDER BY created_at ASC
+                    LIMIT ?
+             )
+            RETURNING id, project_id, draft_id, conversation_id, message_id, target_session_id,
+                      filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+            """,
+            (cutoff_value, bounded_limit),
+        ).fetchall()
+    return [_row_to_record(row) for row in rows]
 
 
 def delete_attachments_for_conversations(

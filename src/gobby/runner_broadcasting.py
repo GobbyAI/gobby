@@ -41,6 +41,7 @@ async def _dispatch_pipeline_terminal_event(
     db: Any,
 ) -> None:
     """Run terminal pipeline hooks through run_db when available."""
+
     def invoke_with_db_fallback(hook: Callable[..., Any]) -> Any:
         try:
             return hook(dispatch, payload, db=db)
@@ -49,15 +50,30 @@ async def _dispatch_pipeline_terminal_event(
                 raise
             return hook(dispatch, payload)
 
+    def invoke_dispatch() -> Any:
+        try:
+            return dispatch(payload, db=db)
+        except TypeError as exc:
+            if "db" not in str(exc):
+                raise
+            return dispatch(payload)
+
     if callable(run_db):
         is_async = inspect.iscoroutinefunction(run_db) or inspect.iscoroutinefunction(
             type(run_db).__call__
         )
-        result = invoke_with_db_fallback(run_db) if is_async else await asyncio.to_thread(
-            invoke_with_db_fallback, run_db
+        result = (
+            invoke_with_db_fallback(run_db)
+            if is_async
+            else await asyncio.to_thread(invoke_with_db_fallback, run_db)
         )
     else:
-        result = await asyncio.to_thread(invoke_with_db_fallback, dispatch)
+        is_async_dispatch = inspect.iscoroutinefunction(dispatch) or inspect.iscoroutinefunction(
+            type(dispatch).__call__
+        )
+        result = (
+            invoke_dispatch() if is_async_dispatch else await asyncio.to_thread(invoke_dispatch)
+        )
     if inspect.isawaitable(result):
         await result
 

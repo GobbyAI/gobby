@@ -117,7 +117,6 @@ export function useProviderAgentState() {
     selectedProvider,
     selectedProviderRef,
     setActiveAgent,
-    setProvider: setSelectedProviderRaw,
     setSelectedProvider: setSelectedProviderRaw,
   };
 }

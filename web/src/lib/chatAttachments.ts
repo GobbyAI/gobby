@@ -140,7 +140,10 @@ export function uploadChatAttachment(
       }
       reject(new Error(errorFromResponse(xhr)))
     }
-    xhr.onerror = () => reject(new Error('Attachment upload failed'))
+    xhr.onerror = () => {
+      options.onProgress?.(null)
+      reject(new Error('Attachment upload failed'))
+    }
     xhr.onabort = () => {
       options.onProgress?.(null)
       reject(new Error('Attachment upload canceled'))
@@ -159,7 +162,10 @@ export function uploadChatAttachment(
 
 export async function deleteChatAttachment(attachmentId: string): Promise<Response> {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), ATTACHMENT_DELETE_TIMEOUT_MS)
+  const timeout = globalThis.setTimeout(
+    () => controller.abort(),
+    ATTACHMENT_DELETE_TIMEOUT_MS,
+  )
   try {
     const response = await fetch(apiUrl(`/api/chat/attachments/${encodeURIComponent(attachmentId)}`), {
       method: 'DELETE',
@@ -177,7 +183,7 @@ export async function deleteChatAttachment(attachmentId: string): Promise<Respon
     }
     throw error
   } finally {
-    window.clearTimeout(timeout)
+    globalThis.clearTimeout(timeout)
   }
 }
 

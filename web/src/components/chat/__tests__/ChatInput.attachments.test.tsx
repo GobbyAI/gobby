@@ -146,7 +146,7 @@ describe('ChatInput attachments', () => {
     await waitFor(() => expect(sendButton).not.toBeDisabled())
   })
 
-  it('does not delete uploaded attachments when unmounted', async () => {
+  it('deletes uploaded unsent attachments when unmounted', async () => {
     const onSend = vi.fn()
     const { container, unmount } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
@@ -165,6 +165,53 @@ describe('ChatInput attachments', () => {
     await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
     unmount()
 
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/chat/attachments/att-1', {
+        method: 'DELETE',
+        credentials: 'include',
+        signal: expect.any(AbortSignal),
+      })
+    })
+  })
+
+  it('does not delete uploaded attachments after sending', async () => {
+    const onSend = vi.fn()
+    const { container, unmount } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    MockXMLHttpRequest.instances[0].respond({
+      id: 'att-1',
+      project_id: 'proj-1',
+      filename: 'note.txt',
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      content_url: '/api/chat/attachments/att-1/content',
+    })
+
+    await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
+    fireEvent.click(screen.getByTitle('Send message'))
+    expect(onSend).toHaveBeenCalled()
+    unmount()
+
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('aborts in-flight uploads when attachments become disabled', async () => {
+    const onSend = vi.fn()
+    const { container, rerender } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled={false} />,
+    )
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    const xhr = MockXMLHttpRequest.instances[0]
+    const abortSpy = vi.spyOn(xhr, 'abort')
+
+    rerender(<ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled />)
+
+    await waitFor(() => expect(abortSpy).toHaveBeenCalled())
   })
 })

@@ -198,6 +198,7 @@ export function ChatInput({
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
   const mountedRef = useRef(true)
   const deletedUploadedAttachmentIdsRef = useRef<Set<string>>(new Set())
+  const deleteUploadedAttachmentRef = useRef<(attachmentId: string) => void>(() => {})
   const metaRef = useRef<HTMLDivElement>(null)
   // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
   // but compress: model name + branch label truncate, toolbar buttons show
@@ -238,9 +239,13 @@ export function ChatInput({
       console.warn('Failed to delete uploaded chat attachment', { attachmentId, error })
     })
   }, [])
+  useEffect(() => {
+    deleteUploadedAttachmentRef.current = deleteUploadedAttachment
+  }, [deleteUploadedAttachment])
   const clearQueuedFiles = useCallback((deleteUploaded = false) => {
     queuedFilesRef.current.forEach((qf) => {
       if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+      qf.uploadAbort?.()
       if (deleteUploaded && qf.attachment) deleteUploadedAttachment(qf.attachment.id)
     })
     queuedFilesRef.current = []
@@ -248,15 +253,15 @@ export function ChatInput({
     deletedUploadedAttachmentIdsRef.current.clear()
   }, [deleteUploadedAttachment])
   useEffect(() => {
-    const deletedUploadedAttachmentIds = deletedUploadedAttachmentIdsRef.current
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
         qf.uploadAbort?.()
+        if (qf.attachment) deleteUploadedAttachmentRef.current(qf.attachment.id)
       })
-      deletedUploadedAttachmentIds.clear()
+      deletedUploadedAttachmentIdsRef.current.clear()
     }
-  }, [deleteUploadedAttachment])
+  }, [])
   useEffect(() => {
     if (queuedFiles.length === 0) {
       deletedUploadedAttachmentIdsRef.current.clear()

@@ -516,24 +516,26 @@ async def handle_set_agent(
         return
     conversation_id = raw_conversation_id
 
+    session = mixin._chat_sessions.get(conversation_id)
     session_manager = getattr(mixin, "session_manager", None)
     if session_manager and agent_name != "default":
+        db_session_id = getattr(session, "db_session_id", None) if session is not None else None
+        existing_row = None
         try:
-            existing_row = await run_db(mixin, session_manager.get, conversation_id)
+            if db_session_id:
+                existing_row = await run_db(mixin, session_manager.get, db_session_id)
         except (LookupError, RuntimeError, ValueError) as exc:
             logger.debug(
                 "Failed to look up existing session %s for agent validation: %s",
-                conversation_id,
+                db_session_id,
                 exc,
             )
-            existing_row = None
         if not await _validate_persona_agent(
             mixin, websocket, session_manager, agent_name, existing_row
         ):
             return
 
     # Tear down existing session (same pattern as set_worktree)
-    session = mixin._chat_sessions.get(conversation_id)
     current_agent_name = getattr(session, "_pending_agent_name", None) if session else None
     if session and current_agent_name == agent_name:
         logger.debug("Agent unchanged for conversation %s", conversation_id[:8])

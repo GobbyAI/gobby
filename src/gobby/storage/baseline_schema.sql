@@ -1515,6 +1515,24 @@ CREATE INDEX idx_chat_attachments_message ON chat_attachments(message_id);
 
 CREATE INDEX idx_chat_attachments_target_session ON chat_attachments(target_session_id);
 
+CREATE INDEX idx_chat_attachments_local_path ON chat_attachments(local_path);
+
+CREATE TRIGGER trg_chat_attachments_bound_at_write_once
+BEFORE UPDATE OF bound_at ON chat_attachments
+WHEN OLD.bound_at IS NOT NULL AND NEW.bound_at IS NOT OLD.bound_at
+BEGIN
+    SELECT RAISE(ABORT, 'chat_attachments.bound_at is write-once');
+END;
+
+CREATE TRIGGER trg_chat_attachments_updated_at_touch
+AFTER UPDATE ON chat_attachments
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE chat_attachments
+       SET updated_at = datetime('now')
+     WHERE id = NEW.id;
+END;
+
 CREATE TABLE checkpoints (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

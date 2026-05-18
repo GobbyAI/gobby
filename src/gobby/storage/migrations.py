@@ -56,9 +56,41 @@ class MigrationUnsupportedError(Exception):
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 
-BASELINE_VERSION = 259
+BASELINE_VERSION = 260
 _MIN_MIGRATION_VERSION = 258
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
+
+
+def _migrate_260_chat_attachment_lifecycle(db: LocalDatabase) -> None:
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_chat_attachments_local_path
+            ON chat_attachments(local_path)
+        """
+    )
+    db.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_bound_at_write_once
+        BEFORE UPDATE OF bound_at ON chat_attachments
+        WHEN OLD.bound_at IS NOT NULL AND NEW.bound_at IS NOT OLD.bound_at
+        BEGIN
+            SELECT RAISE(ABORT, 'chat_attachments.bound_at is write-once');
+        END
+        """
+    )
+    db.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_chat_attachments_updated_at_touch
+        AFTER UPDATE ON chat_attachments
+        WHEN NEW.updated_at IS OLD.updated_at
+        BEGIN
+            UPDATE chat_attachments
+               SET updated_at = datetime('now')
+             WHERE id = NEW.id;
+        END
+        """
+    )
+
 
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
@@ -69,6 +101,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
             ON inter_session_messages(to_session, message_type)
             WHERE metadata_json IS NOT NULL;
         """,
+    ),
+    (
+        260,
+        "Add chat attachment lifecycle indexes and triggers",
+        _migrate_260_chat_attachment_lifecycle,
     ),
 ]
 
