@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+from shlex import quote
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
