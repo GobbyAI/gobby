@@ -2,7 +2,7 @@
    Activity Panel
    ============================================ */
 .activity-panel {
-  /* --activity-panel-bar-height inherits from :root (styles/index.css);
+  /* --activity-panel-bar-height inherits from :root (styles/tokens.css);
      redeclaring here shadows the root value and drifts activity-panel bars
      out of sync with .command-bar / .agent-status-bar / .voice-status-bar. */
   --activity-panel-control-height: 2.25rem;

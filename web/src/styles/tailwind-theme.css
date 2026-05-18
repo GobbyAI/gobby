@@ -1,0 +1,49 @@
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --color-muted: var(--bg-tertiary);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-hover: var(--accent-hover);
+  --color-border: var(--border);
+  --color-destructive: var(--color-destructive);
+  --color-destructive-foreground: var(--color-destructive-foreground);
+  --color-warning: var(--color-warning);
+  --color-warning-foreground: var(--color-warning-foreground);
+  --color-success: var(--color-success);
+  --color-success-foreground: var(--color-success-foreground);
+  --color-error: var(--color-error);
+  --color-error-soft: var(--color-error-soft);
+  --color-info: var(--color-info);
+  --color-info-soft: var(--color-info-soft);
+  --color-review: var(--color-review);
+  --color-review-soft: var(--color-review-soft);
+  --color-surface-tint-subtle: var(--surface-tint-subtle);
+  --color-surface-tint: var(--surface-tint);
+  --color-surface-tint-strong: var(--surface-tint-strong);
+  --color-surface-selected: var(--surface-selected, var(--accent-soft));
+}
+
+@theme {
+  --text-2xs: calc(var(--font-size-base) * 0.625);
+  --text-2xs--line-height: 1.25;
+  --text-xs: calc(var(--font-size-base) * 0.6875);
+  --text-xs--line-height: 1.25;
+  --text-sm: calc(var(--font-size-base) * 0.75);
+  --text-sm--line-height: 1.25;
+  --text-md: calc(var(--font-size-base) * 0.8125);
+  --text-md--line-height: 1.25;
+  --text-base: calc(var(--font-size-base) * 0.875);
+  --text-base--line-height: 1.4;
+  --text-lg: var(--font-size-base);
+  --text-lg--line-height: 1.4;
+  --text-xl: calc(var(--font-size-base) * 1.125);
+  --text-xl--line-height: 1.2;
+  --text-2xl: calc(var(--font-size-base) * 1.25);
+  --text-2xl--line-height: 1.2;
+  --text-3xl: calc(var(--font-size-base) * 1.5);
+  --text-3xl--line-height: 1.2;
+  --text-4xl: calc(var(--font-size-base) * 2);
+  --text-4xl--line-height: 1.2;
+}

@@ -9,9 +9,8 @@ export { TraceIcon } from "./ReportsPage.icons";
 // Used across PipelineExecutionsView and ReportingTab; defined here so
 // both consumers can import the same string. Light-theme-specific overrides
 // for these classes that involve color-mix() math (rather than swapping a
-// theme-aware token) live in `web/src/styles/index.css` under the
-// [data-theme="light"] block; everything theme-aware via tokens (badges,
-// soft tints) needs no per-theme variant.
+// theme-aware token) stay as Tailwind arbitrary variants here; everything
+// theme-aware via tokens (badges, soft tints) needs no per-theme variant.
 
 export const PIPELINE_BTN_CLS =
   "px-3 py-1.5 rounded-md text-[length:calc(var(--font-size-base)*0.8)] font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:min-h-11";

@@ -3,7 +3,7 @@
  *
  * Source of truth: this module exports the typed `{ dark, light }` OKLCH
  * pairs. The same values are mirrored as `--lang-*` and `--git-status-*` CSS
- * custom properties in `web/src/styles/index.css`, which lets consumers read
+ * custom properties in `web/src/styles/tokens.css`, which lets consumers read
  * the theme-active variant via `var(--…)` and lets the browser cascade pick
  * the right one for the current `[data-theme]`. The CSS-var rendering path
  * is the project's "small helper that picks the variant from the active
@@ -33,7 +33,7 @@ export interface LanguageColorPair {
 }
 
 /** Typed map of language → {dark, light} OKLCH pairs.
- *  Mirrored by `--lang-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--lang-<key>` tokens in styles/tokens.css. */
 export const LANGUAGE_COLORS: Record<string, LanguageColorPair> = {
   typescript: { dark: "oklch(70% 0.14 240)", light: "oklch(42% 0.18 240)" },
   javascript: { dark: "oklch(82% 0.16 95)", light: "oklch(48% 0.16 95)" },
@@ -52,7 +52,7 @@ export const LANGUAGE_COLORS: Record<string, LanguageColorPair> = {
 };
 
 /** Typed map of git-status code → {dark, light} OKLCH pairs.
- *  Mirrored by `--git-status-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--git-status-<key>` tokens in styles/tokens.css. */
 export const GIT_STATUS_COLORS: Record<string, LanguageColorPair> = {
   modified: { dark: "oklch(78% 0.13 75)", light: "oklch(45% 0.16 75)" },
   added: { dark: "oklch(72% 0.16 130)", light: "oklch(42% 0.18 130)" },
@@ -93,7 +93,7 @@ const EXTENSION_TO_KEY: Record<string, keyof typeof LANGUAGE_COLORS> = {
  *
  * Returns a `var(--lang-<key>)` reference; the active `[data-theme]` selects
  * the dark or light variant declared in this module's `LANGUAGE_COLORS` and
- * mirrored by `web/src/styles/index.css`. No JS subscription to theme state
+ * mirrored by `web/src/styles/tokens.css`. No JS subscription to theme state
  * is needed — the cascade does the work, and theme switches re-paint without
  * a React re-render.
  */

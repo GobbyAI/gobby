@@ -3,7 +3,7 @@
  *
  * Source of truth: this module exports the typed `{ dark, light }` OKLCH
  * pairs. The same values are mirrored as `--isolation-*` CSS custom
- * properties in `web/src/styles/index.css`, which lets consumers read the
+ * properties in `web/src/styles/tokens.css`, which lets consumers read the
  * theme-active variant via `var(--…)` and lets the browser cascade pick
  * the right one for the current `[data-theme]`.
  *
@@ -30,7 +30,7 @@ export interface IsolationColorPair {
 }
 
 /** Typed map of isolation-mode → {dark, light} OKLCH pairs.
- *  Mirrored by `--isolation-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--isolation-<key>` tokens in styles/tokens.css. */
 export const ISOLATION_COLORS: Record<string, IsolationColorPair> = {
   clone: { dark: "oklch(72% 0.20 350)", light: "oklch(52% 0.22 350)" },
   worktree: { dark: "oklch(78% 0.16 75)", light: "oklch(58% 0.16 75)" },
@@ -43,7 +43,7 @@ export const ISOLATION_COLORS: Record<string, IsolationColorPair> = {
  *
  * Returns a `var(--isolation-<key>)` reference; the active `[data-theme]`
  * selects the dark or light variant declared above and mirrored by
- * `web/src/styles/index.css`. Unknown modes collapse to
+ * `web/src/styles/tokens.css`. Unknown modes collapse to
  * `var(--text-muted)`.
  */
 export function getIsolationColorVar(mode: string): string {

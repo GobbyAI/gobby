@@ -1,0 +1,418 @@
+/* Palette: see .impeccable.md (deutan-safe; brand green pushed to chartreuse, magenta replaces red). */
+:root {
+  --font-size-base: 16px;
+
+  /* Typography ladder — every step scales from --font-size-base so the Settings slider rescales the whole UI. */
+  --text-2xs: calc(var(--font-size-base) * 0.625);
+  --text-xs: calc(var(--font-size-base) * 0.6875);
+  --text-sm: calc(var(--font-size-base) * 0.75);
+  --text-md: calc(var(--font-size-base) * 0.8125);
+  --text-base: calc(var(--font-size-base) * 0.875);
+  --text-lg: var(--font-size-base);
+  --text-xl: calc(var(--font-size-base) * 1.125);
+  --text-2xl: calc(var(--font-size-base) * 1.25);
+  --text-3xl: calc(var(--font-size-base) * 1.5);
+  --text-4xl: calc(var(--font-size-base) * 2);
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --bg-primary: oklch(15% 0.005 125);
+  --bg-secondary: oklch(19% 0.006 125);
+  --bg-tertiary: oklch(23% 0.007 125);
+
+  --text-primary: oklch(92% 0.004 125);
+  --text-secondary: oklch(68% 0.005 125);
+  --text-muted: oklch(62% 0.005 125);
+
+  --border: oklch(28% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(28% 0.008 125) 55%, transparent);
+  --code-block-bg: var(--bg-deep);
+
+  --surface-scrim: oklch(0% 0 0 / 0.7);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.92);
+  --surface-tint-subtle: oklch(100% 0 0 / 0.03);
+  --surface-tint: oklch(100% 0 0 / 0.05);
+  --surface-tint-strong: oklch(100% 0 0 / 0.10);
+  --bg-deep: oklch(8% 0.005 125);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.15);
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
+  --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.35);
+  --shadow-xl: 0 20px 40px oklch(0% 0 0 / 0.4);
+  --shadow-popover-up: 0 -4px 12px oklch(0% 0 0 / 0.3);
+  --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.2);
+
+  --accent: oklch(82% 0.20 125);
+  --accent-color: var(--accent);
+  --accent-hover: oklch(75% 0.22 125);
+  --accent-foreground: oklch(15% 0 0);
+  --accent-soft: oklch(82% 0.20 125 / 0.18);
+  --accent-tint: oklch(82% 0.20 125 / 0.10);
+
+  --color-info: oklch(70% 0.16 250);
+  --color-info-bg: oklch(28% 0.08 250);
+  --color-info-soft: oklch(70% 0.16 250 / 0.12);
+
+  --color-warning: oklch(30% 0.08 75);
+  --color-warning-foreground: oklch(78% 0.16 75);
+  --color-warning-soft: oklch(78% 0.16 75 / 0.12);
+  --text-on-warning: oklch(15% 0 0);
+
+  --color-destructive: oklch(28% 0.10 350);
+  --color-destructive-foreground: oklch(72% 0.20 350);
+  --color-error: oklch(65% 0.20 350);
+  --color-error-soft: oklch(65% 0.20 350 / 0.12);
+  --text-on-error: oklch(15% 0 0);
+
+  --color-inactive: oklch(60% 0.04 30);
+
+  --color-success: oklch(25% 0.05 125);
+  --color-success-foreground: oklch(72% 0.10 125);
+  --color-success-soft: oklch(72% 0.10 125 / 0.12);
+  --text-on-success: oklch(15% 0 0);
+
+  --color-review: oklch(72% 0.14 200);
+  --color-review-bg: oklch(28% 0.08 200);
+  --color-review-soft: oklch(72% 0.14 200 / 0.12);
+
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Dark theme lightness descends for stable grayscale order. Use these for
+     line/area strokes only with their paired dash pattern, never as hue-only fills. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(72% 0.12 200);
+  --chart-series-6: oklch(68% 0.14 30);
+
+  --user-bg: oklch(22% 0.06 125);
+  --assistant-bg: oklch(19% 0.006 125);
+  --system-bg: oklch(22% 0.05 350);
+
+  /* Language icon colors — used by file-tree icons (FilesTab).
+     Hues preserve language recognizability; lightness tuned for dark backgrounds. */
+  --lang-typescript: oklch(70% 0.14 240);
+  --lang-javascript: oklch(82% 0.16 95);
+  --lang-python: oklch(68% 0.13 250);
+  --lang-rust: oklch(68% 0.18 35);
+  --lang-go: oklch(72% 0.13 215);
+  --lang-config: oklch(72% 0.14 65);
+  --lang-doc: oklch(60% 0.005 125);
+  --lang-style: oklch(65% 0.15 290);
+  --lang-markup: oklch(68% 0.18 30);
+  --lang-shell: oklch(72% 0.16 130);
+  --lang-sql: oklch(70% 0.14 75);
+  --lang-ruby: oklch(65% 0.18 350);
+  --lang-default: oklch(60% 0.005 125);
+  --lang-folder: oklch(82% 0.14 95);
+
+  /* Git status colors — used by GitStatusBadge (FilesTab). */
+  --git-status-modified: oklch(78% 0.13 75);
+  --git-status-added: oklch(72% 0.16 130);
+  --git-status-deleted: oklch(72% 0.20 350);
+  --git-status-renamed: oklch(70% 0.14 240);
+  --git-status-untracked: oklch(60% 0.005 125);
+
+  /* Pipeline editor step-type accent colors — see lib/pipelineColors.ts. */
+  --step-type-exec: oklch(72% 0.13 200);
+  --step-type-prompt: oklch(70% 0.16 290);
+  --step-type-mcp: oklch(70% 0.14 240);
+  --step-type-invoke_pipeline: oklch(72% 0.16 310);
+  --step-type-activate_workflow: oklch(72% 0.13 180);
+
+  /* Pipeline-execution status dot colors — see lib/pipelineColors.ts. */
+  --exec-status-running: oklch(70% 0.14 240);
+  --exec-status-pending: oklch(60% 0.005 125);
+  --exec-status-completed: oklch(72% 0.16 130);
+  --exec-status-success: oklch(72% 0.16 130);
+  --exec-status-failed: oklch(70% 0.20 350);
+  --exec-status-error: oklch(70% 0.20 350);
+  --exec-status-timeout: oklch(72% 0.18 50);
+  --exec-status-waiting_approval: oklch(78% 0.15 75);
+  --exec-status-skipped: oklch(78% 0.15 75);
+  --exec-status-cancelled: oklch(60% 0.005 125);
+  --exec-status-interrupted: oklch(70% 0.16 290);
+
+  /* Session-source palette — see components/shared/sourceTheme.ts. */
+  --source-claude: oklch(70% 0.16 290);
+  --source-gemini: oklch(72% 0.16 145);
+  --source-qwen: oklch(78% 0.15 75);
+  --source-codex: oklch(70% 0.14 240);
+  --source-droid: oklch(72% 0.13 200);
+  --source-pipeline: oklch(60% 0.005 125);
+  --source-cron: oklch(70% 0.005 125);
+  --source-unknown: oklch(60% 0.005 125);
+  --source-default: oklch(60% 0.005 125);
+
+  /* Agent-provider palette — see components/shared/sourceTheme.ts. */
+  --provider-inherit: oklch(70% 0.005 250);
+  --provider-claude: oklch(70% 0.16 290);
+  --provider-gemini: oklch(72% 0.16 145);
+  --provider-qwen: oklch(78% 0.15 75);
+  --provider-codex: oklch(70% 0.14 240);
+  --provider-droid: oklch(72% 0.13 200);
+  --provider-cursor: oklch(70% 0.14 240);
+  --provider-windsurf: oklch(72% 0.12 190);
+  --provider-copilot: oklch(72% 0.18 50);
+  --provider-unknown: oklch(60% 0.005 125);
+  --provider-default: oklch(60% 0.005 125);
+
+  /* Integration-channel palette — see components/integrations/channelMetadata.ts. */
+  --channel-slack: oklch(72% 0.16 320);
+  --channel-telegram: oklch(72% 0.13 235);
+  --channel-discord: oklch(72% 0.16 270);
+  --channel-teams: oklch(70% 0.12 285);
+  --channel-email: oklch(70% 0.16 25);
+  --channel-sms: oklch(74% 0.15 145);
+  --channel-gobby_chat: oklch(70% 0.005 125);
+
+  /* Task-category palette — see components/agents/AgentPortfolioPage.tsx. */
+  --category-code: oklch(70% 0.18 250);
+  --category-test: oklch(72% 0.20 145);
+  --category-docs: oklch(72% 0.22 295);
+  --category-config: oklch(78% 0.16 75);
+  --category-refactor: oklch(72% 0.13 200);
+  --category-research: oklch(72% 0.22 350);
+  --category-planning: oklch(60% 0.005 125);
+  --category-manual: oklch(72% 0.18 50);
+  --category-default: oklch(50% 0.005 125);
+
+  /* Agent-isolation palette — see components/workflows/isolationColors.ts. */
+  --isolation-clone: oklch(72% 0.20 350);
+  --isolation-worktree: oklch(78% 0.16 75);
+  --isolation-none: oklch(60% 0.005 125);
+  --isolation-inherit: oklch(70% 0.005 250);
+
+  /* Code-chrome palette — see components/shared/codeBlockTheme.ts. */
+  --code-bg: oklch(11% 0.005 125);
+  --code-bg-block: oklch(13% 0.005 125);
+  --code-gutter-border: oklch(28% 0.005 125);
+  --code-gutter-text: oklch(45% 0.005 125);
+  --code-active-line-bg: oklch(18% 0.005 125);
+
+  --font-mono: "JetBrains Mono Variable", "SF Mono", "Fira Code", monospace;
+  --gobby-logo-image: url("/logo.png");
+  /* stylelint-disable value-keyword-case */
+  --font-sans:
+    "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  /* stylelint-enable value-keyword-case */
+  --sidebar-width: 260px;
+
+  /* Primary control row height — drives SegmentedControl, search input,
+     status badges, chat textarea, filter pill button. Promotes to 2.75rem on
+     pointer:coarse so adjacent controls keep matching baselines on touch. */
+  --control-row-height: 2.25rem;
+
+  /* Compact control row height — used by activity-panel toolbars (Sessions,
+     Tasks, Traces, Cron) so their search/segmented/filter cluster reads at
+     btn-sm scale and fits inside --activity-panel-bar-height. Promotes to
+     2.75rem on pointer:coarse for parity with .btn-sm (44px touch floor). */
+  --control-row-height-sm: 1.75rem;
+
+  /* Pane status-bar height — single source of truth for every status-bar
+     surface in the chat UI: .command-bar, .agent-status-bar, .voice-status-bar,
+     .activity-panel-tabs / -toolbar / -status-bar, .mobile-chat-drawer-header.
+     Held at 2.75rem so the touch-coarse and ≤768px branches never push some
+     bars above their desktop siblings. Do not redeclare on inner scopes
+     (.activity-panel etc.); the inheritance from :root is load-bearing. */
+  --activity-panel-bar-height: 2.75rem;
+
+  /* Status-bar action controls keep desktop visual height on touch devices;
+     the bar supplies the 44px row, the button should not fill it. */
+  --status-bar-control-height: 1.75rem;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-row-height: 2.75rem;
+    --control-row-height-sm: 2.75rem;
+  }
+}
+
+[data-theme="light"] {
+  --gobby-logo-image: url("/logo-light.png");
+
+  --bg-primary: oklch(96.5% 0.006 125);
+  --bg-secondary: oklch(94% 0.008 125);
+  --bg-tertiary: oklch(90% 0.008 125);
+
+  /* Selected-state well for chrome selectors (segmented active,
+     command-palette active, chat-scope-btn.active, session-item.attached).
+     A brighter neutral lifted ABOVE the bg-secondary track and bg-primary
+     canvas — selection reads via lightness + weight, not hue
+     (.impeccable.md: color is the fourth signal; deutan-safe; chroma in
+     the locked 0.005-0.008 tint band). Light-only: the dark theme keeps
+     its shipped accent treatment and never resolves this token. */
+  --surface-selected: oklch(98.5% 0.005 125);
+
+  --text-primary: oklch(20% 0.005 125);
+  --text-secondary: oklch(40% 0.005 125);
+  --text-muted: oklch(48% 0.005 125);
+
+  --border: oklch(80% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(80% 0.008 125) 55%, transparent);
+  --code-block-bg: var(--surface-tint-subtle);
+
+  --surface-scrim: oklch(0% 0 0 / 0.45);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
+  --surface-tint-subtle: oklch(0% 0 0 / 0.03);
+  --bg-deep: oklch(88% 0.008 125);
+  --surface-tint: oklch(0% 0 0 / 0.05);
+  --surface-tint-strong: oklch(0% 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.08);
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.12);
+  --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.15);
+  --shadow-xl: 0 20px 40px oklch(0% 0 0 / 0.2);
+  --shadow-popover-up: 0 -4px 12px oklch(0% 0 0 / 0.12);
+  --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.12);
+
+  --accent: oklch(50% 0.18 125);
+  --accent-hover: oklch(42% 0.18 125);
+  --accent-foreground: oklch(99% 0 0);
+  --accent-soft: oklch(50% 0.18 125 / 0.18);
+  --accent-tint: oklch(50% 0.18 125 / 0.10);
+
+  --color-info: oklch(48% 0.18 250);
+  --color-info-bg: oklch(94% 0.05 250);
+  --color-info-soft: oklch(48% 0.18 250 / 0.10);
+
+  --color-warning: oklch(95% 0.06 75);
+  --color-warning-foreground: oklch(58% 0.16 75);
+  --color-warning-soft: oklch(58% 0.16 75 / 0.10);
+  --text-on-warning: oklch(99% 0 0);
+
+  --color-destructive: oklch(95% 0.05 350);
+  --color-destructive-foreground: oklch(52% 0.22 350);
+  --color-error: oklch(52% 0.22 350);
+  --color-error-soft: oklch(52% 0.22 350 / 0.10);
+  --text-on-error: oklch(99% 0 0);
+
+  --color-inactive: oklch(45% 0.06 30);
+
+  --color-success: oklch(95% 0.04 125);
+  --color-success-foreground: oklch(48% 0.10 125);
+  --color-success-soft: oklch(48% 0.10 125 / 0.10);
+  --text-on-success: oklch(99% 0 0);
+
+  --color-review: oklch(48% 0.16 200);
+  --color-review-bg: oklch(94% 0.05 200);
+  --color-review-soft: oklch(48% 0.16 200 / 0.10);
+
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Light theme values are lowered for WCAG 2.2 AA and stable grayscale order.
+     Use these for line/area strokes only with their paired dash pattern. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(42% 0.13 200);
+  --chart-series-6: oklch(48% 0.16 30);
+
+  --user-bg: oklch(95% 0.05 125);
+  --assistant-bg: oklch(94% 0.005 125);
+  --system-bg: oklch(95% 0.04 350);
+
+  /* Language icon colors — see web/src/lib/languageColors.ts. Lightness
+     tightened to clear WCAG 2.2 AA 4.5:1 against --bg-primary (oklch 96.5%). */
+  --lang-typescript: oklch(42% 0.18 240);
+  --lang-javascript: oklch(48% 0.16 95);
+  --lang-python: oklch(40% 0.16 250);
+  --lang-rust: oklch(42% 0.20 35);
+  --lang-go: oklch(42% 0.15 215);
+  --lang-config: oklch(45% 0.16 65);
+  --lang-doc: oklch(38% 0.005 125);
+  --lang-style: oklch(40% 0.18 290);
+  --lang-markup: oklch(42% 0.20 30);
+  --lang-shell: oklch(42% 0.18 130);
+  --lang-sql: oklch(42% 0.16 75);
+  --lang-ruby: oklch(42% 0.20 350);
+  --lang-default: oklch(38% 0.005 125);
+  --lang-folder: oklch(52% 0.16 75);
+
+  /* Git status colors — light theme variants. */
+  --git-status-modified: oklch(45% 0.16 75);
+  --git-status-added: oklch(42% 0.18 130);
+  --git-status-deleted: oklch(45% 0.22 350);
+  --git-status-renamed: oklch(42% 0.16 240);
+  --git-status-untracked: oklch(38% 0.005 125);
+
+  /* Pipeline editor step-type accents — light theme variants. */
+  --step-type-exec: oklch(45% 0.15 200);
+  --step-type-prompt: oklch(42% 0.18 290);
+  --step-type-mcp: oklch(42% 0.16 240);
+  --step-type-invoke_pipeline: oklch(45% 0.18 310);
+  --step-type-activate_workflow: oklch(42% 0.15 180);
+
+  /* Pipeline-execution status dot colors — light theme variants. */
+  --exec-status-running: oklch(42% 0.16 240);
+  --exec-status-pending: oklch(40% 0.005 125);
+  --exec-status-completed: oklch(42% 0.18 130);
+  --exec-status-success: oklch(42% 0.18 130);
+  --exec-status-failed: oklch(45% 0.22 350);
+  --exec-status-error: oklch(45% 0.22 350);
+  --exec-status-timeout: oklch(48% 0.20 50);
+  --exec-status-waiting_approval: oklch(45% 0.18 75);
+  --exec-status-skipped: oklch(45% 0.18 75);
+  --exec-status-cancelled: oklch(40% 0.005 125);
+  --exec-status-interrupted: oklch(42% 0.18 290);
+
+  /* Session-source palette — light theme variants. */
+  --source-claude: oklch(42% 0.18 290);
+  --source-gemini: oklch(42% 0.18 145);
+  --source-qwen: oklch(45% 0.18 75);
+  --source-codex: oklch(42% 0.16 240);
+  --source-droid: oklch(45% 0.15 200);
+  --source-pipeline: oklch(40% 0.005 125);
+  --source-cron: oklch(50% 0.005 125);
+  --source-unknown: oklch(40% 0.005 125);
+  --source-default: oklch(40% 0.005 125);
+
+  /* Agent-provider palette — light theme variants. */
+  --provider-inherit: oklch(45% 0.005 250);
+  --provider-claude: oklch(42% 0.18 290);
+  --provider-gemini: oklch(42% 0.18 145);
+  --provider-qwen: oklch(45% 0.18 75);
+  --provider-codex: oklch(42% 0.16 240);
+  --provider-droid: oklch(45% 0.15 200);
+  --provider-cursor: oklch(42% 0.16 240);
+  --provider-windsurf: oklch(42% 0.14 190);
+  --provider-copilot: oklch(48% 0.20 50);
+  --provider-unknown: oklch(40% 0.005 125);
+  --provider-default: oklch(40% 0.005 125);
+
+  /* Integration-channel palette — light theme variants. */
+  --channel-slack: oklch(38% 0.16 320);
+  --channel-telegram: oklch(45% 0.16 235);
+  --channel-discord: oklch(45% 0.20 270);
+  --channel-teams: oklch(42% 0.14 285);
+  --channel-email: oklch(45% 0.20 25);
+  --channel-sms: oklch(45% 0.16 145);
+  --channel-gobby_chat: oklch(45% 0.005 125);
+
+  /* Task-category palette — light theme variants. */
+  --category-code: oklch(45% 0.20 250);
+  --category-test: oklch(45% 0.20 145);
+  --category-docs: oklch(45% 0.22 295);
+  --category-config: oklch(50% 0.18 75);
+  --category-refactor: oklch(45% 0.15 200);
+  --category-research: oklch(48% 0.22 350);
+  --category-planning: oklch(40% 0.005 125);
+  --category-manual: oklch(48% 0.20 50);
+  --category-default: oklch(45% 0.005 125);
+
+  /* Agent-isolation palette — light theme variants. */
+  --isolation-clone: oklch(52% 0.22 350);
+  --isolation-worktree: oklch(58% 0.16 75);
+  --isolation-none: oklch(45% 0.005 125);
+  --isolation-inherit: oklch(45% 0.005 250);
+
+  /* Code-chrome palette — light theme variants. */
+  --code-bg: oklch(97% 0.003 125);
+  --code-bg-block: oklch(95% 0.005 125);
+  --code-gutter-border: oklch(85% 0.008 125);
+  --code-gutter-text: oklch(55% 0.005 125);
+  --code-active-line-bg: oklch(92% 0.005 125);
+}

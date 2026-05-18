@@ -5,7 +5,7 @@
  * Mirrors the languageColors.ts / pipelineColors.ts pattern: typed
  * `{ dark, light }` OKLCH pairs are the source of truth, mirrored by
  * `--source-*` and `--provider-*` CSS custom properties in
- * `web/src/styles/index.css`. Consumers call the helpers, which return
+ * `web/src/styles/tokens.css`. Consumers call the helpers, which return
  * `var(--…)` references; the cascade picks the variant for the active
  * `[data-theme]` — no JS theme subscription required.
  *
@@ -34,7 +34,7 @@ export interface SourceColorPair {
 }
 
 /** Session-source palette. Mirrored by `--source-<key>` tokens in
- *  styles/index.css. Pipeline / cron / unknown / default share the
+ *  styles/tokens.css. Pipeline / cron / unknown / default share the
  *  neutral slot intentionally — they are state, not brand. */
 export const SOURCE_COLOR_PAIRS: Record<string, SourceColorPair> = {
   claude: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
@@ -49,7 +49,7 @@ export const SOURCE_COLOR_PAIRS: Record<string, SourceColorPair> = {
 };
 
 /** Agent-provider palette. Mirrored by `--provider-<key>` tokens in
- *  styles/index.css. Provider keys overlap session-source keys for the
+ *  styles/tokens.css. Provider keys overlap session-source keys for the
  *  five core CLIs, and add inherit / cursor / windsurf / copilot. */
 export const PROVIDER_COLOR_PAIRS: Record<string, SourceColorPair> = {
   inherit: { dark: "oklch(70% 0.005 250)", light: "oklch(45% 0.005 250)" },
