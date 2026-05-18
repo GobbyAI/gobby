@@ -34,6 +34,25 @@ def _get_qdrant_url(server: "HTTPServer", vector_store: Any | None) -> str | Non
     return config_url if isinstance(config_url, str) and config_url else None
 
 
+def _is_mcp_server_connected(mcp_manager: Any, name: str) -> bool:
+    """Resolve connection state across concrete managers and lightweight test doubles."""
+    is_connected = getattr(mcp_manager, "is_connected", None)
+    if callable(is_connected):
+        try:
+            result = is_connected(name)
+            if isinstance(result, bool):
+                return result
+        except Exception:
+            logger.debug("MCP manager is_connected failed for %s", name, exc_info=True)
+
+    connections = getattr(mcp_manager, "connections", {})
+    if isinstance(connections, dict):
+        return name in connections
+    if isinstance(connections, (list, set, tuple)):
+        return name in connections
+    return False
+
+
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
     async def health_check() -> dict[str, str]:
@@ -114,7 +133,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 # Iterate over all configured servers, not just connected ones
                 for config in server.mcp_manager.server_configs:
                     health = server.mcp_manager.health.get(config.name)
-                    is_connected = config.name in server.mcp_manager.connections
+                    is_connected = _is_mcp_server_connected(server.mcp_manager, config.name)
                     mcp_health[config.name] = {
                         "connected": is_connected,
                         "status": (
