@@ -2453,6 +2453,49 @@ class TestHooksEndpoints:
         assert args[1] == "sess-web-1"
         assert args[2] == "PreToolUse"
         assert args[4] == source
+        assert mock_hold_open.await_args.kwargs["server"] is server
+
+    def test_execute_hook_pre_tool_use_returns_adapter_response_without_app_server_state(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Missing app.state.server must not turn hold-open fallback into a hook error."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True, "adapter": "ok"}
+            MockAdapter.return_value = mock_adapter
+
+            app_state_server = server.app.state.server
+            delattr(server.app.state, "server")
+            try:
+                response = client.post(
+                    "/api/hooks/execute",
+                    headers={"X-Gobby-Session-Id": "sess-web-1"},
+                    json={
+                        "hook_type": "pre-tool-use",
+                        "source": "claude",
+                        "input_data": {
+                            "tool_name": "Bash",
+                            "arguments": {"command": "pwd"},
+                        },
+                    },
+                )
+            finally:
+                server.app.state.server = app_state_server
+
+        assert response.status_code == 200
+        assert response.json() == {"continue": True, "adapter": "ok"}
 
     def test_execute_hook_codex_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Codex source uses CodexHooksAdapter."""

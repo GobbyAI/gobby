@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.datastructures import State
 
 from gobby.servers.routes.mcp.hooks import MAX_PENDING_PER_SESSION, _maybe_hold_open
 
@@ -50,6 +51,16 @@ def _make_session(session_id: str = "sess-1", session_type: str = "terminal") ->
 
 
 # --- Early exits ---
+
+
+@pytest.mark.asyncio
+async def test_missing_server_state_returns_none() -> None:
+    request = MagicMock()
+    request.app.state = State()
+
+    result = await _maybe_hold_open(request, "sess-1", "PreToolUse", {}, "claude")
+
+    assert result is None
 
 
 @pytest.mark.asyncio
