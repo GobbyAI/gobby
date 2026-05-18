@@ -37,7 +37,7 @@ CREATE INDEX idx_ism_party ON inter_session_messages(party_id) WHERE party_id IS
 
 | Tool | Purpose |
 |------|---------|
-| `send_message(to_session_id, content, priority, message_type)` | P2P message — validates same project, no hierarchy check |
+| `send_message(from_session, to_session, content, *, priority, message_type)` | P2P message — validates same project, no hierarchy check |
 | `list_siblings(session_id)` | Find sessions sharing same parent |
 | `discover_agents(project_id, status?, party_id?)` | Find active sessions by criteria |
 | `broadcast_to_party(party_id, content)` | Message all party members |

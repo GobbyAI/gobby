@@ -421,6 +421,7 @@ async def send_message(
     to_session: str,
     content: str,
     from_session: str | None = None,  # was: from_session: str (required)
+    *,
     priority: str = "normal",
 ) -> dict[str, Any]:
     # Resolve from_session: explicit argument > SessionContext > error.

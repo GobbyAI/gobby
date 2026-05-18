@@ -82,7 +82,7 @@ CREATE INDEX idx_inter_session_messages_type ON inter_session_messages(message_t
 
 | Tool | Description |
 |------|-------------|
-| `send_message(from, to, content, priority, type)` | Unrestricted P2P messaging |
+| `send_message(from_session, to_session, content, *, priority, message_type)` | Unrestricted P2P messaging |
 | `list_siblings(session_id)` | Find agents with same parent |
 | `broadcast_to_siblings(session_id, content)` | Send to all siblings |
 | `discover_agents(project_id, status, role)` | Find agents by criteria |
@@ -97,6 +97,7 @@ async def send_message(
     from_session_id: str,
     to_session_id: str,
     content: str,
+    *,
     priority: str = "normal",
     message_type: str = "direct",
 ) -> dict[str, Any]:
