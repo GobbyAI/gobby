@@ -281,8 +281,7 @@ class MailboxService:
         return json.dumps(payload, default=str, sort_keys=True)
 
     async def _wake(self, session_id: str) -> dict[str, Any]:
-        dispatch = getattr(self._wake_dispatcher, "dispatch_live_wake", None)
-        if not callable(dispatch):
+        if self._wake_dispatcher is None:
             return {
                 "session_id": session_id,
                 "delivered": False,
@@ -292,7 +291,7 @@ class MailboxService:
                 "error_message": "Wake dispatcher is unavailable",
             }
         try:
-            result = await dispatch(session_id)
+            result = await self._wake_dispatcher.dispatch_live_wake(session_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

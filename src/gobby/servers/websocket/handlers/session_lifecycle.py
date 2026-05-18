@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
@@ -21,6 +22,33 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
+
+
+async def _delete_chat_attachments(
+    mixin: SessionControlMixin,
+    db: Any,
+    conversation_id: str,
+) -> None:
+    """Delete attachment metadata and files for a cleared chat conversation."""
+    from gobby.storage import chat_attachments
+
+    records = await run_db(
+        mixin,
+        chat_attachments.delete_attachments_for_conversations,
+        db,
+        [conversation_id],
+    )
+    for record in records:
+        try:
+            await asyncio.to_thread(Path(record.local_path).unlink)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.warning(
+                "Failed to delete attachment file for cleared chat %s",
+                record.id,
+                exc_info=True,
+            )
 
 
 async def handle_stop_chat(
@@ -84,6 +112,7 @@ async def handle_clear_chat(
         try:
             from gobby.storage import chat_messages
 
+            await _delete_chat_attachments(mixin, session_manager.db, conversation_id)
             await run_db(mixin, chat_messages.delete_messages, session_manager.db, conversation_id)
         except Exception as e:
             logger.warning(f"Failed to delete chat messages on clear: {e}")

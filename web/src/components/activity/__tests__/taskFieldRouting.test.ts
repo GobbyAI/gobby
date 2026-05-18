@@ -6,7 +6,7 @@ import {
   PATCH_EDITABLE_FIELDS,
 } from "../taskFieldRouting";
 
-const legacyStageField = ["lifecycle", "_stage"].join("");
+const legacyStageField = "lifecycle_stage";
 
 describe("taskFieldRouting — endpoint family classification (#14771 / D4)", () => {
   it("classifies every PATCH-safe field as the patch family", () => {

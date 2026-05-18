@@ -22,22 +22,34 @@ export function TaskCloseDialog({
     reason: "",
     showReasonError: false,
   });
-  if (draft.taskId !== currentTaskId || draft.isClosed !== isClosed) {
+
+  useEffect(() => {
     setDraft({ taskId: currentTaskId, isClosed, reason: "", showReasonError: false });
-  }
+  }, [currentTaskId, isClosed]);
+
   const matchesCurrentTask = draft.taskId === currentTaskId && draft.isClosed === isClosed;
   const reason = matchesCurrentTask ? draft.reason : "";
   const showReasonError = matchesCurrentTask && draft.showReasonError;
   const dialogRef = useRef<HTMLFormElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const isSubmittingRef = useRef(isSubmitting);
   const hasTask = task !== null;
 
   useEffect(() => {
-    if (!hasTask) return;
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    if (!hasTask) {
+      previousFocusRef.current = null;
+      return;
+    }
+    if (previousFocusRef.current === null) {
+      previousFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isSubmitting) {
+      if (event.key === "Escape" && !isSubmittingRef.current) {
         event.preventDefault();
         onCancel();
         return;
@@ -69,7 +81,7 @@ export function TaskCloseDialog({
       }
       previousFocusRef.current = null;
     };
-  }, [hasTask, isSubmitting, onCancel, task?.id]);
+  }, [hasTask, onCancel, task?.id]);
 
   if (!task) return null;
 

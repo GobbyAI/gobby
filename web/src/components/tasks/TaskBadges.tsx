@@ -18,7 +18,11 @@ import {
 import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
 import { taskPriorityLabel } from '../../lib/taskOptions'
 import { cn } from '../../lib/utils'
-import { PRIORITY_GLYPH_PATHS } from './priorityGlyphPaths'
+import {
+  PRIORITY_GLYPH_PATHS,
+  normalizePriorityGlyphLevel,
+  type PriorityGlyphLevel,
+} from './priorityGlyphPaths'
 
 // =============================================================================
 // Color maps
@@ -34,7 +38,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const PRIORITY_STYLES: Record<
-  number,
+  PriorityGlyphLevel,
   { bg: string; color: string }
 > = {
   0: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
@@ -119,7 +123,7 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 // =============================================================================
 
 export function PriorityBadge({ priority }: { priority: number }) {
-  const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
+  const normalizedPriority = normalizePriorityGlyphLevel(priority);
   const label = taskPriorityLabel(normalizedPriority) ?? "Medium";
   return (
     <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
@@ -133,7 +137,7 @@ export function PriorityBadge({ priority }: { priority: number }) {
 // =============================================================================
 
 export function PriorityGlyph({ priority }: { priority: number }) {
-  const p = priority in PRIORITY_STYLES ? priority : 2;
+  const p = normalizePriorityGlyphLevel(priority);
   const style = PRIORITY_STYLES[p];
   const label = taskPriorityLabel(p) ?? "Medium";
   const filled = p <= 1;

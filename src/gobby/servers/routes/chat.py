@@ -1,11 +1,13 @@
 """Chat message routes for web chat display persistence."""
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from gobby.storage import chat_messages
+from gobby.storage import chat_attachments, chat_messages
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -46,6 +48,23 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
         fallback = session.external_id if session.external_id != session.id else None
         return session.id, fallback
 
+    async def _delete_attachment_files_for_conversations(
+        db: Any,
+        conversation_ids: list[str],
+    ) -> None:
+        records = chat_attachments.delete_attachments_for_conversations(db, conversation_ids)
+        for record in records:
+            try:
+                await asyncio.to_thread(Path(record.local_path).unlink)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                logger.warning(
+                    "Failed to delete attachment file for cleared chat %s",
+                    record.id,
+                    exc_info=True,
+                )
+
     @router.get("/{conversation_id}/messages")
     async def get_messages(
         conversation_id: str,
@@ -71,6 +90,10 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
         """Delete all chat messages for a conversation."""
         db = _get_db()
         primary_key, fallback_key = _resolve_chat_message_keys(conversation_id)
+        cleanup_keys = [primary_key]
+        if fallback_key:
+            cleanup_keys.append(fallback_key)
+        await _delete_attachment_files_for_conversations(db, cleanup_keys)
         count = chat_messages.delete_messages(db, primary_key)
         if fallback_key:
             count += chat_messages.delete_messages(db, fallback_key)

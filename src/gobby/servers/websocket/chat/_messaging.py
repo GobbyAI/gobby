@@ -30,6 +30,9 @@ from gobby.servers.websocket.chat_attachments import (
 )
 from gobby.servers.websocket.db import run_db
 
+if TYPE_CHECKING:
+    from gobby.servers.websocket.chat_attachments import AttachmentDaemonConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +49,7 @@ class ChatMessagingMixin:
     _pending_inject_contexts: dict[str, str]
     web_chat_session_registry: Any
     session_manager: AttachmentSessionManager | None
-    daemon_config: Any | None
+    daemon_config: AttachmentDaemonConfig | None
 
     if TYPE_CHECKING:
 
@@ -251,7 +254,7 @@ class ChatMessagingMixin:
             has_attachments=bool(prepared_attachments.records),
         )
         if content_error:
-            await self._send_error(websocket, content_error)
+            await self._send_error(websocket, content_error, request_id=request_id)
             return
         assert validated_content is not None
         content = validated_content

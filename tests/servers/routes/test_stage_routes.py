@@ -138,7 +138,9 @@ def test_patch_move_to_stage_force_overrides_claim(
     temp_db,
     sample_project,
     stage_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level("INFO", logger="gobby.servers.routes.tasks_stage_routes")
     task, _manager = make_task_with_manifest(
         temp_db,
         sample_project,
@@ -158,10 +160,36 @@ def test_patch_move_to_stage_force_overrides_claim(
     response = stage_client.patch(
         f"/api/tasks/{task.id}/stages/pr",
         json={"action": "move_to", "force": True},
+        headers={"X-Gobby-Session-Id": "session-header-1"},
     )
 
     assert response.status_code == 200
     assert response.json()["stage"]["stage_name"] == "pr"
+    forced_log = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "task_stage_forced_move_to"
+    )
+    assert forced_log.task_id == task.id
+    assert forced_log.stage_name == "pr"
+    assert forced_log.force is True
+    assert forced_log.request_session_id == "session-header-1"
+
+
+def test_patch_force_is_only_accepted_for_move_to(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
+
+    response = stage_client.patch(
+        f"/api/tasks/{task.id}/stages/development",
+        json={"action": "start", "force": True},
+    )
+
+    assert response.status_code == 422
+    assert "force is only supported" in response.text
 
 
 def test_list_filter_by_stage_state(

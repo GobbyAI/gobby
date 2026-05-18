@@ -155,9 +155,10 @@ export function TaskResults({ task }: TaskResultsProps) {
       })
     }
 
-    const allCommits = new Set<string>()
-    if (task.closed_commit_sha) allCommits.add(task.closed_commit_sha)
-    if (task.commits) task.commits.forEach(c => allCommits.add(c))
+    const allCommits = new Set<string>([
+      ...(task.closed_commit_sha ? [task.closed_commit_sha] : []),
+      ...(task.commits ? [...task.commits].reverse() : []),
+    ])
 
     if (allCommits.size > 0) {
       const commitList = Array.from(allCommits)

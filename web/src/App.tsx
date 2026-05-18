@@ -344,7 +344,9 @@ export default function App() {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selectedProvider }),
-    }).catch(() => {});
+    }).catch((error) => {
+      console.warn("Failed to persist selected provider", error);
+    });
   }, [selectedProvider, uiSettingsLoaded]);
 
   // Persist project selection to API (only after initial resolution)

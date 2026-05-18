@@ -71,6 +71,24 @@ interface TasksTabProps {
   chatSessionId?: string | null;
 }
 
+function isGobbyTaskDetailSnapshot(task: GobbyTask): task is GobbyTaskDetail {
+  return "description" in task && "validation_status" in task;
+}
+
+function mergeTaskSnapshotIntoDetail(
+  detail: GobbyTaskDetail,
+  snapshot: GobbyTask,
+): GobbyTaskDetail {
+  return {
+    ...detail,
+    ...snapshot,
+    validation_fail_count:
+      typeof snapshot.validation_fail_count === "number"
+        ? snapshot.validation_fail_count
+        : detail.validation_fail_count,
+  };
+}
+
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
@@ -572,7 +590,13 @@ export const TasksTab = memo(function TasksTab({
         prev.map((task) => (task.id === taskId ? snapshot : task)),
       );
       setTaskDetail((prev) =>
-        prev && prev.id === taskId ? (snapshot as GobbyTaskDetail) : prev,
+        prev && prev.id === taskId
+          ? (
+              isGobbyTaskDetailSnapshot(snapshot)
+                ? snapshot
+                : mergeTaskSnapshotIntoDetail(prev, snapshot)
+            )
+          : prev,
       );
     },
     [],

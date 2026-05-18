@@ -31,6 +31,7 @@ export function useContextUsageState() {
     (sessionId: string, rawTimestamp?: string) => {
       const parsed = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
       const now = Date.now();
+      // Live websocket usage beats older hydrated session snapshots.
       lastLiveUsageBySessionRef.current.set(
         sessionId,
         Number.isFinite(parsed) && parsed >= 0 && parsed <= now ? parsed : now,

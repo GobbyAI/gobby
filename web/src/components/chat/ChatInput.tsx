@@ -196,6 +196,7 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const mountedRef = useRef(true)
   const deletedUploadedAttachmentIdsRef = useRef<Set<string>>(new Set())
   const metaRef = useRef<HTMLDivElement>(null)
   // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
@@ -225,6 +226,11 @@ export function ChatInput({
   useEffect(() => {
     attachmentsDisabledRef.current = attachmentsDisabled
   }, [attachmentsDisabled])
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const deleteUploadedAttachment = useCallback((attachmentId: string) => {
     if (deletedUploadedAttachmentIdsRef.current.has(attachmentId)) return
     deletedUploadedAttachmentIdsRef.current.add(attachmentId)
@@ -345,9 +351,11 @@ export function ChatInput({
   }, [onPaletteSelect, onInputChange])
 
   const uploadQueuedFile = useCallback(async (id: string, file: File) => {
+    const disabledAtStart = attachmentsDisabledRef.current
     const upload = uploadChatAttachment(file, {
       projectId,
       onProgress: (progress) => {
+        if (!mountedRef.current) return
         setQueuedFiles((prev) =>
           prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
         )
@@ -358,9 +366,13 @@ export function ChatInput({
     )
     try {
       const attachment = await upload.promise
+      if (!mountedRef.current) {
+        deleteUploadedAttachment(attachment.id)
+        return
+      }
       setQueuedFiles((prev) => {
         const stillQueued = prev.some((qf) => qf.id === id)
-        if (!stillQueued || attachmentsDisabledRef.current) {
+        if (!stillQueued || disabledAtStart || attachmentsDisabledRef.current) {
           deleteUploadedAttachment(attachment.id)
           return prev
         }
@@ -371,6 +383,7 @@ export function ChatInput({
         )
       })
     } catch (error: unknown) {
+      if (!mountedRef.current) return
       const message = error instanceof Error ? error.message : 'Attachment upload failed'
       setQueuedFiles((prev) => {
         const stillQueued = prev.some((qf) => qf.id === id)

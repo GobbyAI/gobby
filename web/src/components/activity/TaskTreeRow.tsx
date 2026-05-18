@@ -23,6 +23,9 @@ interface TaskTreeRowProps {
   onMenuButtonClick: (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => void;
 }
 
+const TASK_ROW_BASE_INDENT_REM = 0.75;
+const TASK_ROW_DEPTH_INDENT_REM = 1.25;
+
 export function TaskTreeRow({
   row,
   isSelected,
@@ -53,7 +56,9 @@ export function TaskTreeRow({
 
   return (
     <div
-      style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
+      style={{
+        paddingLeft: `${row.depth * TASK_ROW_DEPTH_INDENT_REM + TASK_ROW_BASE_INDENT_REM}rem`,
+      }}
       className={taskRowClass}
       role="treeitem"
       tabIndex={isSelected ? 0 : -1}
@@ -76,7 +81,7 @@ export function TaskTreeRow({
             event.stopPropagation();
             onToggleOpen(task.id);
           }}
-          aria-label={`${row.isOpen ? "Collapse" : "Expand"} subtasks for ${task.title}`}
+          aria-label={`${row.isOpen ? "Collapse" : "Expand"} subtasks for ${labelTitle}`}
           title={row.isOpen ? "Collapse subtasks" : "Expand subtasks"}
         >
           <span

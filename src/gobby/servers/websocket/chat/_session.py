@@ -348,7 +348,6 @@ class ChatSessionMixin:
                     cli_source=effective_provider or "claude",
                     project_id=effective_project_for_agent,
                 )
-                persona_selected = False
                 if pending_agent and pending_agent != "default" and agent_body is not None:
                     try:
                         persona_selected = bool(agent_body.supports_surface("persona"))

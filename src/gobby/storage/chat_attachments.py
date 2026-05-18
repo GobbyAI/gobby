@@ -63,6 +63,12 @@ class ChatAttachmentRecord:
 
     @property
     def is_bound(self) -> bool:
+        """Return true when any durable owner field is set.
+
+        Attachments may be bound to a conversation, a specific message, or a
+        target session; any one of those links means the queued upload is no
+        longer safe for draft deletion.
+        """
         return bool(self.conversation_id or self.message_id or self.target_session_id)
 
 
@@ -189,6 +195,25 @@ def get_attachments_by_ids(
     return [by_id[attachment_id] for attachment_id in unique_ids if attachment_id in by_id]
 
 
+def _binding_conflict_error(
+    record: ChatAttachmentRecord,
+    *,
+    conversation_id: str | None,
+    message_id: str | None,
+    target_session_id: str | None,
+) -> ValueError | None:
+    requested = {
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "target_session_id": target_session_id,
+    }
+    for field, requested_value in requested.items():
+        existing = getattr(record, field)
+        if existing is not None and existing != requested_value:
+            return ValueError(f"Attachment {record.id} is already bound: {field}={existing!r}")
+    return None
+
+
 def bind_attachments(
     db: DatabaseProtocol,
     attachment_ids: list[str],
@@ -220,11 +245,14 @@ def bind_attachments(
             raise ValueError(f"Unknown attachment id: {missing_ids[0]}")
 
         for record in records:
-            same_conversation = record.conversation_id in (None, conversation_id)
-            same_message = record.message_id in (None, message_id)
-            same_target = record.target_session_id in (None, target_session_id)
-            if not (same_conversation and same_message and same_target):
-                raise ValueError(f"Attachment {record.id} is already bound")
+            conflict = _binding_conflict_error(
+                record,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                target_session_id=target_session_id,
+            )
+            if conflict is not None:
+                raise conflict
 
         for attachment_id in unique_ids:
             conn.execute(
@@ -257,10 +285,59 @@ def delete_unbound_attachment(
     db: DatabaseProtocol, attachment_id: str
 ) -> ChatAttachmentRecord | None:
     with db.transaction_immediate() as conn:
+        row = conn.execute(
+            """
+            DELETE FROM chat_attachments
+             WHERE id = ?
+               AND conversation_id IS NULL
+               AND message_id IS NULL
+               AND target_session_id IS NULL
+            RETURNING id, project_id, draft_id, conversation_id, message_id, target_session_id,
+                      filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+            """,
+            (attachment_id,),
+        ).fetchone()
+        if row is not None:
+            return _row_to_record(row)
+
         record = _fetch_attachment(conn, attachment_id)
-        if record is None:
-            return None
-        if record.is_bound:
+        if record is not None and record.is_bound:
             raise ValueError("Only unbound queued attachments can be deleted")
-        conn.execute("DELETE FROM chat_attachments WHERE id = ?", (attachment_id,))
-        return record
+        return None
+
+
+def delete_attachments_for_conversations(
+    db: DatabaseProtocol,
+    conversation_ids: list[str],
+) -> list[ChatAttachmentRecord]:
+    """Delete attachment metadata tied to conversations or their chat messages."""
+    unique_ids = [value for value in dict.fromkeys(conversation_ids) if value]
+    if not unique_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in unique_ids)
+    with db.transaction_immediate() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
+                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+              FROM chat_attachments
+             WHERE conversation_id IN ({placeholders})
+                OR message_id IN (
+                    SELECT id
+                      FROM chat_messages
+                     WHERE conversation_id IN ({placeholders})
+                )
+            """,  # nosec B608 # placeholders are generated from the conversation ID count only.
+            (*unique_ids, *unique_ids),
+        ).fetchall()
+        records = [_row_to_record(row) for row in rows]
+        if not records:
+            return []
+        attachment_ids = [record.id for record in records]
+        id_placeholders = ",".join("?" for _ in attachment_ids)
+        conn.execute(
+            f"DELETE FROM chat_attachments WHERE id IN ({id_placeholders})",
+            tuple(attachment_ids),
+        )  # nosec B608 # placeholders are generated from selected attachment rows only.
+        return records

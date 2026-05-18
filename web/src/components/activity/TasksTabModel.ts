@@ -82,7 +82,8 @@ export function buildTree(tasks: GobbyTask[]): TreeNode[] {
     if (
       task.parent_task_id &&
       nodeMap.has(task.parent_task_id) &&
-      !parentWouldCreateCycle(task, nodeMap)
+      !parentWouldCreateCycle(task, nodeMap) &&
+      !parentExceedsMaxDepth(task, nodeMap)
     ) {
       nodeMap.get(task.parent_task_id)!.children.push(node)
     } else {
@@ -103,18 +104,31 @@ function parentWouldCreateCycle(
   nodeMap: Map<string, TreeNode>,
 ): boolean {
   let parentId = task.parent_task_id
-  let depth = 0
-  while (parentId && depth < MAX_TASK_TREE_DEPTH) {
+  const seen = new Set<string>()
+  while (parentId) {
     if (parentId === task.id) return true
+    if (seen.has(parentId)) return true
+    seen.add(parentId)
+    parentId = nodeMap.get(parentId)?.task.parent_task_id ?? null
+  }
+  return false
+}
+
+function parentExceedsMaxDepth(
+  task: GobbyTask,
+  nodeMap: Map<string, TreeNode>,
+): boolean {
+  let parentId = task.parent_task_id
+  let depth = 0
+  const seen = new Set<string>()
+  while (parentId) {
+    if (depth >= MAX_TASK_TREE_DEPTH) return true
+    if (seen.has(parentId)) return false
+    seen.add(parentId)
     parentId = nodeMap.get(parentId)?.task.parent_task_id ?? null
     depth += 1
   }
-  if (depth < MAX_TASK_TREE_DEPTH) return false
-  console.warn('Task tree depth limit reached; treating task as a root', {
-    taskId: task.id,
-    maxDepth: MAX_TASK_TREE_DEPTH,
-  })
-  return true
+  return false
 }
 
 function taskMatchesSearch(task: GobbyTask, term: string): boolean {

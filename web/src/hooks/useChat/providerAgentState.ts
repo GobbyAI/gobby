@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const ACTIVE_AGENT_KEY = "gobby-active-agent";
 const SELECTED_PROVIDER_KEY = "gobby-selected-provider";
@@ -65,12 +65,42 @@ export function useProviderAgentState() {
   const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
     () => storageGet(SELECTED_PROVIDER_KEY) || null,
   );
+  const selectedProviderRef = useRef<string | null>(selectedProvider);
 
-  const setSelectedProvider = useCallback((provider: string | null) => {
-    setSelectedProviderRaw(provider);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key !== null &&
+        event.key !== ACTIVE_AGENT_KEY &&
+        event.key !== SELECTED_PROVIDER_KEY
+      ) {
+        return;
+      }
+      try {
+        if (event.storageArea && event.storageArea !== window.localStorage) return;
+      } catch {
+        return;
+      }
+      if (event.key === null || event.key === ACTIVE_AGENT_KEY) {
+        setActiveAgent(
+          event.key === null
+            ? storageGet(ACTIVE_AGENT_KEY) || DEFAULT_AGENT
+            : event.newValue || DEFAULT_AGENT,
+        );
+      }
+      if (event.key === null || event.key === SELECTED_PROVIDER_KEY) {
+        setSelectedProviderRaw(
+          event.key === null
+            ? storageGet(SELECTED_PROVIDER_KEY) || null
+            : event.newValue || null,
+        );
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const selectedProviderRef = useRef<string | null>(selectedProvider);
   useEffect(() => {
     selectedProviderRef.current = selectedProvider;
     const status = selectedProvider
@@ -87,7 +117,7 @@ export function useProviderAgentState() {
     selectedProvider,
     selectedProviderRef,
     setActiveAgent,
-    setProvider: setSelectedProvider,
-    setSelectedProvider,
+    setProvider: setSelectedProviderRaw,
+    setSelectedProvider: setSelectedProviderRaw,
   };
 }

@@ -227,6 +227,22 @@ def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str,
     }
 
 
+def _coerce_compiled_task_priority(task_id: str, raw_priority: Any) -> int:
+    try:
+        return int(raw_priority)
+    except (TypeError, ValueError):
+        converted_priority = 2
+        logger.warning(
+            "Invalid compiled task priority; using default",
+            extra={
+                "task_id": task_id,
+                "raw_priority": raw_priority,
+                "converted_priority": converted_priority,
+            },
+        )
+        return converted_priority
+
+
 def _normalize_native_compiled_spec(
     self: Any,
     raw_spec: dict[str, Any],
@@ -285,7 +301,10 @@ def _normalize_native_compiled_spec(
             "phase_id": phase_id,
             "title": task_item.get("title") or f"Task {i + 1}",
             "description": description,
-            "priority": int(task_item.get("priority", 2)),
+            "priority": _coerce_compiled_task_priority(
+                stable_id,
+                task_item.get("priority", 2),
+            ),
             "task_type": task_item.get("task_type", "task"),
             "category": task_item.get("category", "code"),
             "validation": task_item.get("validation") or task_item.get("validation_criteria"),

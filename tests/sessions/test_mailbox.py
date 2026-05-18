@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.database import LocalDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+
+class WakeDispatcherProtocol(Protocol):
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
 
 
 class FakeWakeDispatcher:
@@ -37,7 +43,7 @@ def _register_session(
     external_id: str,
     *,
     agent_depth: int = 0,
-) -> Any:
+) -> Session:
     return session_manager.register(
         external_id=external_id,
         machine_id="machine-1",
@@ -49,9 +55,9 @@ def _register_session(
 
 
 def _mailbox(
-    temp_db: Any,
+    temp_db: LocalDatabase,
     session_manager: SessionManager,
-    wake_dispatcher: Any | None = None,
+    wake_dispatcher: WakeDispatcherProtocol | None = None,
 ) -> MailboxService:
     return MailboxService(
         db=temp_db,
@@ -62,7 +68,7 @@ def _mailbox(
 
 
 def _setup_broadcast_scenario(
-    temp_db: Any,
+    temp_db: LocalDatabase,
     project_manager: LocalProjectManager,
     session_manager: SessionManager,
     project_id: str,
@@ -137,7 +143,7 @@ def _setup_broadcast_scenario(
 
 
 async def _send_project_broadcast(
-    temp_db: Any,
+    temp_db: LocalDatabase,
     session_manager: SessionManager,
     sender_id: str,
     project_id: str,
@@ -156,7 +162,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_direct_send_creates_durable_row_and_wakes(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -197,7 +203,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_direct_send_requires_recipient(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -212,7 +218,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_wake_unavailable_preserves_delivery_shape(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -240,7 +246,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_wake_exception_reports_error_code_and_message(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -274,7 +280,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_with_no_recipients_logs_empty_broadcast(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
@@ -308,7 +314,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_targets_active_agent_run_sessions(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -336,7 +342,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_uses_active_parent_when_child_session_expired(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -360,7 +366,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_enforces_project_scope_and_sender_exclusion(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -386,7 +392,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_writes_broadcast_metadata(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -425,7 +431,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_send_to_all_rejects_explicit_recipient(
         self,
-        temp_db: Any,
+        temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:

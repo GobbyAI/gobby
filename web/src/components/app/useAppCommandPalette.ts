@@ -80,7 +80,7 @@ export function useAppCommandPalette({
 
   const restartDaemon = useCallback(
     async (showFailureMessage: boolean) => {
-      addSystemMessage("Restarting daemon...");
+      addSystemMessage("Requesting daemon restart...");
       try {
         const response = await requestDaemonRestart();
         if (!response.ok) {

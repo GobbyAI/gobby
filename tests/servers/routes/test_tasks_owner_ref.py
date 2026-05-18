@@ -34,7 +34,7 @@ def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
 
 
 @pytest.fixture
-def session(temp_db, project_id: str) -> Session:
+def session(temp_db: LocalDatabase, project_id: str) -> Session:
     return SessionManager(temp_db).register(
         external_id="owner-ref-session",
         machine_id="test-machine",

@@ -183,6 +183,7 @@ export async function deleteChatAttachment(attachmentId: string): Promise<Respon
 
 export function formatAttachmentSize(bytes: number): string {
   if (bytes <= 0) return '0 B'
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${bytes} B`

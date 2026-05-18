@@ -251,8 +251,15 @@ class TestSyncProductionMode:
         mock_verify.return_value = integrity_result
 
         result = runner.invoke(sync, ["--verify-only"], catch_exceptions=False)
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "Blocking tampered content types: skills" in result.output
+
+        fail_result = runner.invoke(
+            sync,
+            ["--verify-only", "--fail-on-verify"],
+            catch_exceptions=False,
+        )
+        assert fail_result.exit_code == 1
 
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -274,8 +281,15 @@ class TestSyncProductionMode:
         )
 
         result = runner.invoke(sync, ["--verify-only", "--verbose"], catch_exceptions=False)
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "Integrity verification unavailable" in result.output
+
+        fail_result = runner.invoke(
+            sync,
+            ["--verify-only", "--fail-on-verify", "--verbose"],
+            catch_exceptions=False,
+        )
+        assert fail_result.exit_code == 1
 
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))

@@ -64,8 +64,8 @@ class TaskDeEscalateRequest(BaseModel):
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
-ResolveTask = Callable[..., "Task"]
-ResolveSessionRef = Callable[..., str]
+ResolveTask = Callable[[str], "Task"]
+ResolveSessionRef = Callable[[str, str | None], str]
 BroadcastTask = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
@@ -114,7 +114,7 @@ def register_task_lifecycle_routes(
             resolved_id = task.id
             resolved_session_id = resolve_session_ref(
                 request_data.session_id,
-                project_id=task.project_id,
+                task.project_id,
             )
             claimed_task = server.task_manager.claim_task(
                 resolved_id,
@@ -192,7 +192,7 @@ def register_task_lifecycle_routes(
             resolved_id = task.id
             body = request_data or TaskCloseRequest()
             resolved_session_id = (
-                resolve_session_ref(body.session_id, project_id=task.project_id)
+                resolve_session_ref(body.session_id, task.project_id)
                 if body.session_id is not None
                 else None
             )

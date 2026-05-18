@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.storage.tasks._stage_types import (
@@ -20,6 +21,8 @@ from gobby.storage.tasks._stage_types import (
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.storage.tasks._models import Task
+
+logger = logging.getLogger(__name__)
 
 
 class StagePatchRequest(BaseModel):
@@ -47,6 +50,12 @@ class StagePatchRequest(BaseModel):
         default=False,
         description="Explicitly override stage move guards for operator-driven recovery.",
     )
+
+    @model_validator(mode="after")
+    def _validate_force_scope(self) -> StagePatchRequest:
+        if "force" in self.model_fields_set and self.action != "move_to":
+            raise ValueError("force is only supported for action='move_to'")
+        return self
 
 
 class StageStateView(BaseModel):
@@ -139,6 +148,7 @@ def register_task_stage_routes(
         task_id: str,
         stage_name: str,
         request_data: StagePatchRequest,
+        request: Request,
     ) -> Any:
         """Apply a stage transition or structural manifest mutation."""
         try:
@@ -199,6 +209,18 @@ def register_task_stage_routes(
                     notes=request_data.notes,
                     force=request_data.force,
                 )
+                if request_data.force:
+                    log_extra: dict[str, Any] = {
+                        "event": "task_stage_forced_move_to",
+                        "task_id": task.id,
+                        "stage_name": stage_name,
+                        "notes": request_data.notes,
+                        "force": request_data.force,
+                    }
+                    request_session_id = request.headers.get("x-gobby-session-id")
+                    if request_session_id:
+                        log_extra["request_session_id"] = request_session_id
+                    logger.info("Forced task stage move", extra=log_extra)
                 event = "stage_changed"
             elif request_data.action == "add":
                 if request_data.position is None:

@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import gobby.servers.routes.chat_attachments as chat_attachment_routes
 from gobby.config.app import DaemonConfig
 from gobby.servers.routes.chat_attachments import (
     create_chat_attachments_router,
@@ -155,6 +156,46 @@ def test_upload_sanitizes_traversal_filename_preserving_extension(
     row = temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (payload["id"],))
     assert row is not None
     assert Path(row["local_path"]).name == "_note.txt"
+
+
+def test_upload_truncates_oversized_filename_suffix_to_safe_path_part(
+    client: TestClient,
+    temp_db: LocalDatabase,
+) -> None:
+    filename = f"a.{'x' * 300}"
+
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": (filename, b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    row = temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (payload["id"],))
+    assert row is not None
+    stored_name = Path(row["local_path"]).name
+    assert len(stored_name.encode("utf-8")) <= 255
+    assert stored_name == payload["filename"]
+
+
+def test_upload_checks_disk_space_once_using_known_file_size(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked_sizes: list[int] = []
+
+    def fake_ensure_disk_space(_directory: Path, incoming_bytes: int) -> None:
+        checked_sizes.append(incoming_bytes)
+
+    monkeypatch.setattr(chat_attachment_routes, "_ensure_disk_space", fake_ensure_disk_space)
+
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert checked_sizes == [5]
 
 
 def test_upload_rejects_mismatched_mime_without_persisting(

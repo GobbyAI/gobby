@@ -40,7 +40,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
     ) -> None:
-        await ws.send(json.dumps({"error": msg}))
+        await ws.send(json.dumps({"error": msg, "request_id": request_id, "code": code}))
 
     async def _cancel_active_chat(self, cid: str) -> None:
         pass
@@ -159,9 +159,11 @@ class TestInjectPendingMessages:
 class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_no_content(self, mixin: DummyMessagingMixin, ws: AsyncMock):
-        await mixin._handle_chat_message(ws, {"content": ""})
+        await mixin._handle_chat_message(ws, {"content": "", "request_id": "req-1"})
         ws.send.assert_called_once()
-        assert "Missing or invalid 'content' field" in ws.send.call_args[0][0]
+        payload = json.loads(ws.send.call_args[0][0])
+        assert "Missing or invalid 'content' field" in payload["error"]
+        assert payload["request_id"] == "req-1"
 
     @pytest.mark.asyncio
     async def test_invalid_content_blocks_message_is_specific(

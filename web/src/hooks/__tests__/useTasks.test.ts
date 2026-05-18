@@ -28,6 +28,11 @@ type Phase6TasksApi = ReturnType<typeof useTasks> & {
   moveTaskToStage: (taskId: string, targetStageName: string) => Promise<unknown>
 }
 
+const STAGE_TEST_METADATA: Record<string, { displayName: string; category: string }> = {
+  build: { displayName: 'Build', category: 'delivery' },
+  deploy: { displayName: 'Deploy', category: 'release' },
+}
+
 function installFetchSpy(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ) {
@@ -60,10 +65,14 @@ function stageState(
   position = 0,
   reviewPolicy: 'required' | 'none' | 'optional' = 'required',
 ) {
+  const metadata = STAGE_TEST_METADATA[name] ?? {
+    displayName: name.charAt(0).toUpperCase() + name.slice(1),
+    category: 'delivery',
+  }
   return {
     name,
-    display_name: name === 'deploy' ? 'Deploy' : 'Build',
-    category: name === 'deploy' ? 'release' : 'delivery',
+    display_name: metadata.displayName,
+    category: metadata.category,
     state,
     review_policy: reviewPolicy,
     position,

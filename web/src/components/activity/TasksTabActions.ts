@@ -193,8 +193,10 @@ function retryDelay(baseDelay: number): number {
 
 async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promise<void> {
   const delays = [150, 400, 900];
+  // Attempts are the initial stop call plus one retry for each configured delay.
+  const maxAttempts = delays.length + 1;
   let lastError: unknown;
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       await postBuildControl(baseUrl, "stop", task);
       return;
@@ -207,13 +209,14 @@ async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promis
         });
         return;
       }
-      if (attempt === delays.length) break;
+      const delay = delays[attempt];
+      if (delay === undefined) break;
       console.warn("Quick build stop failed transiently; retrying", {
         taskId: task.id,
         attempt: attempt + 1,
         error,
       });
-      await new Promise((resolve) => setTimeout(resolve, retryDelay(delays[attempt])));
+      await new Promise((resolve) => setTimeout(resolve, retryDelay(delay)));
     }
   }
   const ref = taskActionRef(task);

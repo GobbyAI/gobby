@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
@@ -58,16 +59,25 @@ def _safe_path_part(value: str, fallback: str) -> str:
 def _truncate_path_part_utf8(value: str, fallback: str) -> str:
     if len(value.encode("utf-8")) <= _SAFE_PATH_PART_MAX_BYTES:
         return value
+
+    def utf8_prefix(text: str, max_bytes: int) -> str:
+        if max_bytes <= 0:
+            return ""
+        encoded = text.encode("utf-8")[:max_bytes]
+        return encoded.decode("utf-8", errors="ignore")
+
+    fallback_name = utf8_prefix(fallback, _SAFE_PATH_PART_MAX_BYTES) or "attachment"
     suffix = Path(value).suffix
-    suffix_bytes = suffix.encode("utf-8")
-    budget = max(1, _SAFE_PATH_PART_MAX_BYTES - len(suffix_bytes))
     stem = value[: -len(suffix)] if suffix else value
-    encoded = stem.encode("utf-8")[:budget]
-    stem = encoded.decode("utf-8", errors="ignore").rstrip("._-")
-    candidate = f"{stem}{suffix}" if stem else fallback
-    while len(candidate.encode("utf-8")) > _SAFE_PATH_PART_MAX_BYTES:
-        candidate = candidate[:-1]
-    return candidate or fallback
+    if suffix:
+        suffix = utf8_prefix(suffix, _SAFE_PATH_PART_MAX_BYTES - 1)
+    suffix_bytes = suffix.encode("utf-8")
+    stem_budget = _SAFE_PATH_PART_MAX_BYTES - len(suffix_bytes)
+    stem = utf8_prefix(stem, stem_budget).rstrip("._-")
+    candidate = f"{stem}{suffix}" if stem else fallback_name
+    if len(candidate.encode("utf-8")) > _SAFE_PATH_PART_MAX_BYTES:
+        candidate = utf8_prefix(candidate, _SAFE_PATH_PART_MAX_BYTES)
+    return candidate or fallback_name
 
 
 def _temp_upload_name(safe_name: str) -> str:
@@ -297,7 +307,13 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
 
         try:
             await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(_ensure_disk_space, target_dir, limits.max_file_bytes)
+            known_file_size = getattr(file, "size", None)
+            reserved_bytes = (
+                min(limits.max_file_bytes, known_file_size)
+                if isinstance(known_file_size, int) and known_file_size >= 0
+                else limits.max_file_bytes
+            )
+            await asyncio.to_thread(_ensure_disk_space, target_dir, reserved_bytes)
             async with aiofiles.open(temp_path, "wb") as out:
                 while True:
                     remaining = limits.max_file_bytes - size
@@ -314,7 +330,6 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                                 f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
                             ),
                         )
-                    await asyncio.to_thread(_ensure_disk_space, target_dir, len(chunk))
                     await out.write(chunk)
 
             await _validate_declared_mime(
@@ -370,7 +385,11 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=404, detail="Attachment not found")
 
         path = Path(record.local_path)
-        if not path.is_file():
+        try:
+            stat_result = await asyncio.to_thread(path.stat)
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="Attachment content not found") from exc
+        if not stat.S_ISREG(stat_result.st_mode):
             raise HTTPException(status_code=404, detail="Attachment content not found")
 
         return FileResponse(
@@ -378,6 +397,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             media_type=record.mime_type,
             filename=record.filename,
             content_disposition_type=_content_disposition(record.mime_type),
+            stat_result=stat_result,
         )
 
     @router.delete("/{attachment_id}")

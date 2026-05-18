@@ -164,7 +164,7 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
     compatAssignee ??
     null
   const ownerSessionRef =
-    task.owner_session_ref ?? task.state?.owner_session_ref ?? null
+    task.state?.owner_session_ref ?? task.owner_session_ref ?? null
   const current = deriveCurrentStage(task)
   const currentState = current?.state ?? null
   const isClosed =

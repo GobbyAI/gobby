@@ -238,8 +238,9 @@ describe('formatAttachmentSize', () => {
     expect(formatAttachmentSize(-1)).toBe('0 B')
   })
 
-  it('formats KB and MB byte counts', () => {
+  it('formats KB, MB, and GB byte counts', () => {
     expect(formatAttachmentSize(1536)).toBe('1.5 KB')
     expect(formatAttachmentSize(2 * 1024 * 1024)).toBe('2.0 MB')
+    expect(formatAttachmentSize(3 * 1024 * 1024 * 1024)).toBe('3.0 GB')
   })
 })

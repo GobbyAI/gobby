@@ -33,6 +33,11 @@ class FakeWakeDispatcher:
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
 
+class FailingWebsocketServer:
+    def __init__(self) -> None:
+        self.broadcast_task_event = AsyncMock(side_effect=RuntimeError("ws down"))
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -622,7 +627,7 @@ class TestLifecycleMutations:
         assert len(messages) == 1
         message = messages[0]
         assert message["priority"] == "high"
-        assert "#1 assigned: Sample task" in message["content"]
+        assert f"{sample_task['ref']} assigned: Sample task" in message["content"]
         metadata = json.loads(message["metadata_json"])
         assert metadata["task_id"] == sample_task["id"]
         assert metadata["task_ref"] == sample_task["ref"]
@@ -661,11 +666,7 @@ class TestLifecycleMutations:
         sample_task: dict,
         session_id: str,
     ) -> None:
-        server.services.websocket_server = type(
-            "FailingWebsocketServer",
-            (),
-            {"broadcast_task_event": AsyncMock(side_effect=RuntimeError("ws down"))},
-        )()
+        server.services.websocket_server = FailingWebsocketServer()
 
         response = client.post(
             f"/api/tasks/{sample_task['id']}/claim",

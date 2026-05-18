@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,6 +14,9 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import get_github_url
 
 logger = logging.getLogger(__name__)
+
+_GITHUB_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def record_build_delivery_campaign(
@@ -83,6 +87,8 @@ def normalize_github_repo(repo: str | None) -> str:
         or "/" in name
         or owner.strip() != owner
         or name.strip() != name
+        or not _is_valid_github_owner(owner)
+        or not _is_valid_github_repo_name(name)
     ):
         raise ValueError(f"Invalid GitHub repo {repo!r}; expected 'owner/repo'")
     return f"{owner}/{name}"
@@ -108,4 +114,17 @@ def _repo_from_path(path: str) -> str | None:
     name = parts[1].removesuffix(".git")
     if not owner or not name:
         return None
-    return f"{owner}/{name}"
+    try:
+        return normalize_github_repo(f"{owner}/{name}")
+    except ValueError:
+        return None
+
+
+def _is_valid_github_owner(owner: str) -> bool:
+    return bool(_GITHUB_OWNER_RE.fullmatch(owner))
+
+
+def _is_valid_github_repo_name(name: str) -> bool:
+    if name in {".", ".."} or name.endswith(".git"):
+        return False
+    return bool(_GITHUB_REPO_RE.fullmatch(name))

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import gobby.storage.chat_attachments as chat_attachments
+from gobby.storage import chat_messages
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
@@ -125,7 +126,10 @@ def test_bind_attachments_rejects_conflicting_binding(
     attachment_id = _create_attachment(temp_db, tmp_path)
     chat_attachments.bind_attachments(temp_db, [attachment_id], conversation_id="conv-1")
 
-    with pytest.raises(ValueError, match=f"Attachment {attachment_id} is already bound"):
+    with pytest.raises(
+        ValueError,
+        match=f"Attachment {attachment_id} is already bound: conversation_id='conv-1'",
+    ):
         chat_attachments.bind_attachments(temp_db, [attachment_id], conversation_id="conv-2")
 
 
@@ -214,3 +218,40 @@ def test_delete_unbound_attachment_keeps_bound_attachment(
         chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
 
     assert chat_attachments.get_attachment(temp_db, attachment_id) is not None
+
+
+def test_delete_attachments_for_conversations_removes_conversation_and_message_links(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    conversation_attachment = _create_attachment(temp_db, tmp_path, "conversation-attachment")
+    message_attachment = _create_attachment(temp_db, tmp_path, "message-attachment")
+    other_attachment = _create_attachment(temp_db, tmp_path, "other-attachment")
+    message_id = chat_messages.save_message(
+        temp_db,
+        conversation_id="conv-1",
+        role="user",
+        content="hello",
+    )
+    chat_attachments.bind_attachments(
+        temp_db,
+        [conversation_attachment],
+        conversation_id="conv-1",
+    )
+    chat_attachments.bind_attachments(
+        temp_db,
+        [message_attachment],
+        message_id=message_id,
+    )
+    chat_attachments.bind_attachments(
+        temp_db,
+        [other_attachment],
+        conversation_id="conv-2",
+    )
+
+    deleted = chat_attachments.delete_attachments_for_conversations(temp_db, ["conv-1"])
+
+    assert {record.id for record in deleted} == {conversation_attachment, message_attachment}
+    assert chat_attachments.get_attachment(temp_db, conversation_attachment) is None
+    assert chat_attachments.get_attachment(temp_db, message_attachment) is None
+    assert chat_attachments.get_attachment(temp_db, other_attachment) is not None

@@ -28,6 +28,11 @@ CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
 @click.option("--force", is_flag=True, help="Skip integrity check even in production mode.")
 @click.option("--verify-only", is_flag=True, help="Only run integrity check, don't sync.")
 @click.option(
+    "--fail-on-verify",
+    is_flag=True,
+    help="With --verify-only, exit non-zero when integrity verification fails.",
+)
+@click.option(
     "--type",
     "types",
     multiple=True,
@@ -38,6 +43,7 @@ CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
 def sync(
     force: bool,
     verify_only: bool,
+    fail_on_verify: bool,
     types: tuple[str, ...],
     verbose: bool,
 ) -> None:
@@ -69,6 +75,7 @@ def sync(
             for err in result.errors:
                 click.echo(f"  {err}", err=True)
             skip_types = set(BUNDLED_SYNC_CONTENT_TYPES)
+            tampered_types = set(BUNDLED_SYNC_CONTENT_TYPES)
         else:
             if not result.git_available and result.source == "manifest" and verbose:
                 click.echo("  Git not available; verified packaged manifest")
@@ -88,12 +95,12 @@ def sync(
                     result.dirty_files + result.untracked_files, install_dir
                 )
                 if tampered:
-                    tampered_types = tampered
                     skip_types = tampered
+                    tampered_types = set(skip_types)
                     click.echo(f"  Blocking tampered content types: {', '.join(sorted(tampered))}")
 
         if verify_only:
-            sys.exit(0 if (result.checked and result.all_clean) else 1)
+            sys.exit(1 if fail_on_verify and not (result.checked and result.all_clean) else 0)
     elif dev_mode and not force:
         if verbose:
             click.echo("Dev mode: skipping integrity check")

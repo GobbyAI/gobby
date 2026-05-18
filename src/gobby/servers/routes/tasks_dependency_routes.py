@@ -47,7 +47,7 @@ def register_task_dependency_routes(
 
     async def _enrich_dependency_nodes(
         node: dict[str, Any],
-        cache: dict[str, Any | None],
+        cache: dict[str, EnrichmentTaskView | None],
         *,
         depth: int,
         max_depth: int,
@@ -62,16 +62,24 @@ def register_task_dependency_routes(
         if isinstance(node_id, str) and node_id:
             if node_id not in cache:
                 try:
-                    cache[node_id] = await server.run_db(server.task_manager.get_task, node_id)
+                    task = await server.run_db(server.task_manager.get_task, node_id)
+                    cache[node_id] = (
+                        EnrichmentTaskView(
+                            id=task.id,
+                            seq_num=task.seq_num,
+                            title=task.title,
+                            task_type=task.task_type,
+                        )
+                        if task is not None
+                        else None
+                    )
                 except (ValueError, TaskNotFoundError):
                     cache[node_id] = None
             resolved = cache[node_id]
             if resolved is not None:
-                seq_num = getattr(resolved, "seq_num", None)
-                resolved_id = getattr(resolved, "id", node_id)
-                node["ref"] = f"#{seq_num}" if seq_num else resolved_id[:8]
-                node["title"] = getattr(resolved, "title", "")
-                node["task_type"] = getattr(resolved, "task_type", "")
+                node["ref"] = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
+                node["title"] = resolved.title
+                node["task_type"] = resolved.task_type
         if depth >= max_depth:
             return
         for key in ("blockers", "blocking"):
@@ -98,7 +106,7 @@ def register_task_dependency_routes(
                 if isinstance(child, dict):
                     _collect_dependency_node_ids(child, ids)
 
-    def _load_dependency_tasks(ids: list[str]) -> dict[str, Any | None]:
+    def _load_dependency_tasks(ids: list[str]) -> dict[str, EnrichmentTaskView | None]:
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)

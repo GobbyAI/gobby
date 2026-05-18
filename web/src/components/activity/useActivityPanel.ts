@@ -114,7 +114,10 @@ export function loadLayoutMode(): LayoutMode {
 
 export function useActivityPanel(isMobile: boolean) {
   const [mode, setMode] = useState<LayoutMode>(loadLayoutMode)
-  const [mobileView, setMobileView] = useState<MobileView>('chat')
+  const [mobileView, setMobileView] = useState<MobileView>(() => {
+    if (!isMobile) return 'chat'
+    return loadLayoutMode() === 'panel' ? 'panel' : 'chat'
+  })
 
   const [panelWidth, setPanelWidth] = useState(() => {
     try {

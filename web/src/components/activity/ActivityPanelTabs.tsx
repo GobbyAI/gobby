@@ -23,7 +23,13 @@ const iconProps = {
   strokeLinejoin: "round" as const,
 };
 
-export const ACTIVITY_PANEL_TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
+export interface ActivityPanelTab {
+  id: ActivityTab;
+  label: string;
+  icon: ReactNode;
+}
+
+export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
   {
     id: "sessions",
     label: "Sessions",

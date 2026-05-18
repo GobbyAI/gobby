@@ -42,7 +42,7 @@ export function TasksTabList({
       aria-label="Tasks"
       data-testid="task-tree"
       aria-live="polite"
-      aria-busy={false}
+      aria-busy={activeTaskActionId !== null}
     >
       {isEmpty ? (
         <ActivityPanelEmpty

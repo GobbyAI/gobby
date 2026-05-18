@@ -146,7 +146,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.debug(f"Failed to broadcast task event {event}: {e}")
 
-    def _resolve_session_ref(session_ref: str, *, project_id: str | None) -> str:
+    def _resolve_session_ref(session_ref: str, project_id: str | None) -> str:
         """Resolve session references to canonical UUIDs before storage writes."""
         if server.session_manager is None:
             return session_ref
@@ -301,7 +301,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """List tasks with optional filters and state distribution stats."""
         try:
-            legacy_stage_key = "lifecycle_" + "stage"
+            legacy_stage_key = "lifecycle_stage"
             unsupported_filters = {"status", legacy_stage_key} & set(request.query_params)
             if unsupported_filters:
                 names = ", ".join(sorted(unsupported_filters))
@@ -420,7 +420,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             resolved_id = task.id
 
-            legacy_stage_key = "lifecycle_" + "stage"
+            legacy_stage_key = "lifecycle_stage"
             extra_fields = set(request_data.model_extra or {})
             legacy_fields = {"status", "lifecycle", legacy_stage_key} & extra_fields
             if legacy_fields:

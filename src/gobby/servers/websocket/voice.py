@@ -14,7 +14,7 @@ import importlib
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
@@ -85,7 +85,22 @@ async def _broadcast_tts_status(
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
     from gobby.servers.websocket.session_control import SessionControlMixin
+    from gobby.servers.websocket.voice_attached import AttachedVoiceServer
     from gobby.voice.tts import TTSProvider
+
+
+def _is_attached_voice_server(value: Any) -> TypeGuard[AttachedVoiceServer]:
+    return (
+        isinstance(getattr(value, "_attached_tts_offsets", None), dict)
+        and isinstance(getattr(value, "_active_tts_pipelines", None), dict)
+        and hasattr(getattr(value, "_attached_tts_lock", None), "acquire")
+        and callable(getattr(value, "_is_voice_mode", None))
+        and callable(getattr(value, "_create_tts_pipeline", None))
+    )
+
+
+def _is_session_control_host(value: Any) -> TypeGuard[SessionControlMixin]:
+    return hasattr(value, "session_manager") and callable(getattr(value, "_send_error", None))
 
 
 class TTSPipeline:
@@ -640,13 +655,12 @@ class VoiceMixin:
     async def feed_attached_session_tts(
         self, session_id: str, message: dict[str, Any], *, complete: bool = False
     ) -> None:
-        from gobby.servers.websocket.voice_attached import (
-            AttachedVoiceServer,
-            feed_attached_session_tts,
-        )
+        from gobby.servers.websocket.voice_attached import feed_attached_session_tts
 
+        if not _is_attached_voice_server(self):
+            raise RuntimeError("Voice host is missing attached-session TTS state")
         await feed_attached_session_tts(
-            cast(AttachedVoiceServer, self),
+            self,
             session_id,
             message,
             complete=complete,
@@ -695,11 +709,23 @@ class VoiceMixin:
         request_id_raw = data.get("request_id", "")
         request_id = request_id_raw if isinstance(request_id_raw, str) else ""
         project_id = data.get("project_id")
-        target_session_id = data.get("target_session_id")
-        if not isinstance(target_session_id, str) or not target_session_id:
-            client_meta = self.clients.get(websocket) or {}
+        target_session_raw = data.get("target_session_id")
+        target_session_id = (
+            target_session_raw.strip()
+            if isinstance(target_session_raw, str) and target_session_raw.strip()
+            else None
+        )
+        if target_session_id is None:
+            try:
+                client_meta = self.clients.get(websocket) or {}
+            except TypeError:
+                client_meta = {}
             attached = client_meta.get("attached_session_id")
-            target_session_id = attached if attached == conversation_id else None
+            target_session_id = (
+                attached
+                if isinstance(attached, str) and attached and attached == conversation_id
+                else None
+            )
 
         logger.info(
             f"Voice audio received: {len(audio_data_b64)} chars b64, "
@@ -798,8 +824,22 @@ class VoiceMixin:
                     handle_send_to_cli_session,
                 )
 
+                if not _is_session_control_host(self):
+                    error = "Voice attached-session routing requires a session-control host"
+                    logger.error(error)
+                    await websocket.send(
+                        json.dumps(
+                            _voice_status_payload(
+                                conversation_id,
+                                request_id,
+                                "error",
+                                error=error,
+                            )
+                        )
+                    )
+                    return
                 await handle_send_to_cli_session(
-                    cast("SessionControlMixin", self),
+                    self,
                     websocket,
                     {
                         "session_id": target_session_id,

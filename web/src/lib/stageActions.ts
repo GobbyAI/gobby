@@ -68,6 +68,7 @@ export interface LifecycleTask {
   is_escalated?: boolean
   ref?: string
   priority?: number | null
+  owner_session_ref?: unknown | null
 }
 
 export function resolveAdvanceAction(
@@ -108,11 +109,18 @@ export function currentStage(task: LifecycleTask): StageStateView | null {
 }
 
 function sortedStages(task: LifecycleTask): StageStateView[] {
-  return [...(task.stages ?? [])].sort((a, b) => {
-    const aPosition = a.position ?? 0
-    const bPosition = b.position ?? 0
-    return aPosition - bPosition || a.name.localeCompare(b.name)
-  })
+  return (task.stages ?? [])
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const aHasPosition = a.row.position !== null && a.row.position !== undefined
+      const bHasPosition = b.row.position !== null && b.row.position !== undefined
+      if (aHasPosition && bHasPosition) {
+        return a.row.position! - b.row.position! || a.row.name.localeCompare(b.row.name)
+      }
+      if (aHasPosition !== bHasPosition) return aHasPosition ? -1 : 1
+      return a.index - b.index || a.row.name.localeCompare(b.row.name)
+    })
+    .map(({ row }) => row)
 }
 
 export function terminalStage(task: LifecycleTask): StageStateView | null {
@@ -147,6 +155,7 @@ export type OptimisticMoveResult<T extends LifecycleTask> =
     | 'escalated_at'
     | 'escalation_reason'
     | 'is_escalated'
+    | 'owner_session_ref'
     | 'stages'
     | 'state'
     | 'validation_fail_count'
@@ -163,6 +172,7 @@ export type OptimisticMoveResult<T extends LifecycleTask> =
     escalation_reason: null
     is_blocked: false
     is_escalated: false
+    owner_session_ref: null
     blocked_reason: null
     stages: StageStateView[]
     state: OptimisticTaskState<T>
@@ -223,6 +233,7 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
       : task.state,
     assignee: null,
     claimed_by_session_id: null,
+    owner_session_ref: null,
     closed_at: null,
     closed_reason: null,
     closed_in_session_id: null,

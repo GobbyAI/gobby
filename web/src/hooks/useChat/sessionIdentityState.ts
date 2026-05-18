@@ -58,6 +58,7 @@ export function useSessionIdentityState({
   );
   const dbSessionIdRef = useRef<string | null>(dbSessionId);
   const creatingSessionIdRef = useRef<Promise<string | null> | null>(null);
+  const creatingForceNewSessionIdRef = useRef<Promise<string | null> | null>(null);
   const lastSeqRef = useRef<number>(0);
 
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
@@ -136,6 +137,9 @@ export function useSessionIdentityState({
       if (!options?.forceNew && creatingSessionIdRef.current) {
         return await creatingSessionIdRef.current;
       }
+      if (options?.forceNew && creatingForceNewSessionIdRef.current) {
+        return await creatingForceNewSessionIdRef.current;
+      }
 
       const pending = createWebChatSession({
         projectId: options?.projectId ?? projectIdRef.current,
@@ -170,10 +174,22 @@ export function useSessionIdentityState({
           throw error;
         })
         .finally(() => {
-          creatingSessionIdRef.current = null;
+          if (options?.forceNew) {
+            if (creatingForceNewSessionIdRef.current === pending) {
+              creatingForceNewSessionIdRef.current = null;
+            }
+            return;
+          }
+          if (creatingSessionIdRef.current === pending) {
+            creatingSessionIdRef.current = null;
+          }
         });
 
-      creatingSessionIdRef.current = pending;
+      if (options?.forceNew) {
+        creatingForceNewSessionIdRef.current = pending;
+      } else {
+        creatingSessionIdRef.current = pending;
+      }
       return await pending;
     },
     [

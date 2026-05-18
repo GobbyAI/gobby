@@ -45,7 +45,7 @@ describe('StatusDot — honest task-state glyphs (#14769 / D2)', () => {
   // data-kind is the OKLCH lightness band; it must NOT be remapped, so
   // in_progress stays 'warning' (L≈78) and blocked stays 'error' (L≈65)
   // even though their shapes are now honest.
-  const CASES: Array<[string, string, string]> = [
+  const cases: Array<[string, string, string]> = [
     ['open', 'circle', 'info'],
     ['in_progress', 'activity', 'warning'],
     ['needs_review', 'eye', 'info'],
@@ -56,7 +56,7 @@ describe('StatusDot — honest task-state glyphs (#14769 / D2)', () => {
 
   it('maps every state to a distinct, non-alarm shape with its lightness band intact', () => {
     const seenGlyphs = new Set<string>()
-    for (const [status, glyph, kind] of CASES) {
+    for (const [status, glyph, kind] of cases) {
       const { container, unmount } = render(<StatusDot status={status} />)
       const span = container.querySelector(
         'span.activity-row-status-dot',
@@ -67,7 +67,7 @@ describe('StatusDot — honest task-state glyphs (#14769 / D2)', () => {
       seenGlyphs.add(glyph)
       unmount()
     }
-    expect(seenGlyphs.size).toBe(CASES.length)
+    expect(seenGlyphs.size).toBe(cases.length)
   })
 
   it('never paints in_progress as a caution triangle or blocked as a failure X', () => {
