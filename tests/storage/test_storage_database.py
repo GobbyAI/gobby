@@ -173,7 +173,7 @@ class TestLocalDatabase:
 
         def worker(thread_id: str):
             conn = db.connection
-            connections.append((thread_id, id(conn)))
+            connections.append((thread_id, conn))
 
         threads = [threading.Thread(target=worker, args=(f"thread-{i}",)) for i in range(3)]
 
@@ -182,9 +182,11 @@ class TestLocalDatabase:
         for t in threads:
             t.join()
 
-        # Each thread should have a different connection object
-        connection_ids = [conn_id for _, conn_id in connections]
-        assert len(set(connection_ids)) == 3
+        # Hold strong references to every connection object so none can be
+        # GC'd and have its id() reused by a later one — that reuse would
+        # otherwise cause a false collision and a flaky failure.
+        conn_objs = [conn for _, conn in connections]
+        assert len({id(c) for c in conn_objs}) == 3
 
         db.close()
 
