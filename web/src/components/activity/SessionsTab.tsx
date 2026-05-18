@@ -705,7 +705,7 @@ export const SessionsTab = memo(function SessionsTab({
                   <ActivityRowStatusDot
                     kind={
                       entry.status === "active"
-                        ? "success"
+                        ? "active"
                         : entry.status === "expired"
                           ? "stopped"
                           : entry.status === "paused"

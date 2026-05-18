@@ -14,6 +14,7 @@ import {
 const WARNING_TRIANGLE_D = 'm21.73 18-8-14a2 2 0 0 0-3.48 0'
 
 const KINDS: StatusKind[] = [
+  'active',
   'success',
   'info',
   'warning',
@@ -24,6 +25,7 @@ const KINDS: StatusKind[] = [
 ]
 
 const TOKENS: Record<StatusKind, string> = {
+  active: 'var(--accent)',
   success: 'var(--color-success-foreground)',
   info: 'var(--color-info)',
   warning: 'var(--color-warning-foreground)',
@@ -34,6 +36,7 @@ const TOKENS: Record<StatusKind, string> = {
 }
 
 const EXPECTED_DEFAULT_LIGHTNESS: Array<[string, number]> = [
+  ['--accent', 82],
   ['--color-warning-foreground', 78],
   ['--color-success-foreground', 72],
   ['--color-info', 70],
@@ -69,6 +72,7 @@ function tokenLightness(block: string, token: string): number {
 // icon identity, which is what we assert on — recolouring to gray cannot
 // collapse two kinds onto the same shape.
 const ICON_CLASS: Record<StatusKind, string> = {
+  active: 'activity-row-status-dot__glyph--active',
   success: 'activity-row-status-dot__glyph--success',
   info: 'activity-row-status-dot__glyph--info',
   warning: 'activity-row-status-dot__glyph--warning',
@@ -110,6 +114,22 @@ describe('ActivityRowStatusDot — deutan-safe state rendering (#14586)', () => 
     // Each kind gets a distinct local glyph; uniqueness is the guard
     // against any future regression to a hue-only indicator.
     expect(seenClasses.size).toBe(KINDS.length)
+  })
+
+  it('renders active as an accent play glyph that can pulse', () => {
+    const span = renderDot('active', { pulse: true, label: 'Session active' })
+    const svg = span.querySelector('svg')
+    const polygon = svg?.querySelector('polygon')
+
+    expect(span.getAttribute('data-kind')).toBe('active')
+    expect(span.style.color).toBe('var(--accent)')
+    expect(span.getAttribute('class')).toContain(
+      'activity-row-status-dot--pulse',
+    )
+    expect(svg?.getAttribute('class')).toContain(
+      'activity-row-status-dot__glyph--active',
+    )
+    expect(polygon?.getAttribute('points')).toBe('6 3 20 12 6 21 6 3')
   })
 
   it('binds each kind to a distinct OKLCH lightness token', () => {

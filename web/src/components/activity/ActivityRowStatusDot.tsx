@@ -1,6 +1,7 @@
 import { memo, type ReactNode, type SVGProps } from "react";
 
 export type StatusKind =
+  | "active"
   | "success"
   | "info"
   | "warning"
@@ -24,9 +25,11 @@ interface ActivityRowStatusDotProps {
 
 // Each kind anchors to a distinct OKLCH lightness band so grayscale viewers
 // can rank states by L alone:
-//   warning (L≈78) > success (L≈72) > info (L≈70) > paused (L≈68)
-//   > error (L≈65) > disabled (L≈62) > inactive/stopped (L≈60)
+//   active (L≈82) > warning (L≈78) > success (L≈72) > info (L≈70)
+//   > paused (L≈68) > error (L≈65) > disabled (L≈62)
+//   > inactive/stopped (L≈60)
 const KIND_TOKEN: Record<StatusKind, string> = {
+  active: "var(--accent)",
   success: "var(--color-success-foreground)",
   info: "var(--color-info)",
   warning: "var(--color-warning-foreground)",
@@ -65,6 +68,11 @@ function LocalGlyph({ children, className, ...props }: LocalGlyphProps) {
 export type StatusGlyph = (props: SVGProps<SVGSVGElement>) => ReactNode;
 
 const KIND_ICON: Record<StatusKind, StatusGlyph> = {
+  active: (props) => (
+    <LocalGlyph {...props}>
+      <polygon points="6 3 20 12 6 21 6 3" />
+    </LocalGlyph>
+  ),
   success: (props) => (
     <LocalGlyph {...props}>
       <path d="M21.801 10A10 10 0 1 1 17 3.335" />
