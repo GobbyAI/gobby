@@ -1,5 +1,5 @@
 import "./styles.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type {
@@ -21,6 +21,10 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
+import {
+  getVisibleActivitySessions,
+  toSwappedSessionTarget,
+} from "../activity/activitySessionVisibility";
 import type { SessionsFilters } from "../activity/sessionsFilters";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import { AgentStatusBar } from "./AgentStatusBar";
@@ -338,6 +342,26 @@ export function ChatPage({
   // in the panel list.
   const activityPanelChatSessionId =
     chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId;
+  const commandPaletteSessions = useMemo(
+    () =>
+      getVisibleActivitySessions(activitySessions ?? allProjectSessions, {
+        chatSessionId: activityPanelChatSessionId,
+        liveOnly: true,
+      }),
+    [activityPanelChatSessionId, activitySessions, allProjectSessions],
+  );
+  const handleCommandPaletteSelectSession = useCallback(
+    (session: GobbySession) => handleSwapSession(toSwappedSessionTarget(session)),
+    [handleSwapSession],
+  );
+  const handleCommandPaletteDeleteSession = useCallback(
+    (session: GobbySession) => {
+      if (session.session_type === "web_chat") {
+        conversations.onDeleteSession?.(session);
+      }
+    },
+    [conversations],
+  );
 
   const handleResumeViewedSession = useCallback(() => {
     if (
@@ -963,10 +987,10 @@ export function ChatPage({
       <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
-        sessions={conversations.sessions}
-        activeSessionId={conversations.activeSessionId}
-        onSelectSession={conversations.onSelectSession}
-        onDeleteSession={conversations.onDeleteSession}
+        sessions={commandPaletteSessions}
+        activeSessionId={activityPanelChatSessionId ?? conversations.activeSessionId}
+        onSelectSession={handleCommandPaletteSelectSession}
+        onDeleteSession={handleCommandPaletteDeleteSession}
         onRenameSession={conversations.onRenameSession}
         actions={paletteActions}
       />

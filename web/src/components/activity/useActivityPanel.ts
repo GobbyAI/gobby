@@ -72,7 +72,7 @@ function loadActiveTab(): ActivityTab {
   } catch {
     /* ignore */
   }
-  return 'tasks'
+  return 'sessions'
 }
 
 /**

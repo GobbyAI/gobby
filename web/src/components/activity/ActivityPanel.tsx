@@ -157,6 +157,10 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
   },
 ];
 
+const DROPDOWN_TABS = [...TABS].sort((left, right) =>
+  left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
+);
+
 const noopFetchDiff = async (): Promise<string> => "";
 
 // Width constants shared between the inline style, ResizeHandle, and the
@@ -476,7 +480,7 @@ export function ActivityPanel({
           <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
           <div className="activity-panel-tabs">
             <ActivityDropdown
-              tabs={TABS}
+              tabs={DROPDOWN_TABS}
               activeTab={activeTab}
               activeTabConfig={activeTabConfig}
               isOpen={showMobileTabMenu}
@@ -548,7 +552,7 @@ export function ActivityPanel({
         <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
         <div className="activity-panel-tabs">
           <ActivityDropdown
-            tabs={TABS}
+            tabs={DROPDOWN_TABS}
             activeTab={activeTab}
             activeTabConfig={activeTabConfig}
             isOpen={showMobileTabMenu}

@@ -24,10 +24,10 @@ import {
   countActiveFilters,
   DEFAULT_LIVE_STATUSES,
   defaultSessionsFilters,
-  matchesSessionsFilters,
   type SessionStatus,
   type SessionsFilters,
 } from "./sessionsFilters";
+import { getVisibleActivitySessions } from "./activitySessionVisibility";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -37,13 +37,10 @@ import {
   type WatchingSessionEntry,
   type SessionContextMenu,
   WATCHING_SESSION_ID_KEY,
-  HIDDEN_SOURCES,
   getBaseUrl,
   resolveLocalFlag,
   renderBadges,
-  matchesSearch,
   entryTimestamp,
-  parseTimestamp,
 } from "./SessionsTab.helpers";
 import { WatchingTranscript } from "./WatchingTranscript";
 
@@ -268,21 +265,13 @@ export const SessionsTab = memo(function SessionsTab({
   );
 
   const visibleSessions = useMemo(
-    () => {
-      const now = new Date();
-      return sessions
-        .filter((session) => session.id !== chatSessionId)
-        .filter((session) => !expiringIds.has(session.id))
-        .filter((session) => !HIDDEN_SOURCES.has(session.source))
-        .filter((session) => matchesSearch(session, search))
-        .filter((session) => matchesSessionsFilters(session, filters, now))
-        .sort((a, b) => {
-          const aSeq = a.seq_num ?? -Infinity;
-          const bSeq = b.seq_num ?? -Infinity;
-          if (aSeq !== bSeq) return bSeq - aSeq;
-          return parseTimestamp(b.created_at) - parseTimestamp(a.created_at);
-        });
-    },
+    () =>
+      getVisibleActivitySessions(sessions, {
+        chatSessionId,
+        expiringIds,
+        search,
+        filters,
+      }),
     [chatSessionId, expiringIds, search, sessions, filters],
   );
 

@@ -211,6 +211,50 @@ describe('ActivityPanel', () => {
     expect(onTabChange).toHaveBeenCalledWith('tasks')
   })
 
+  it('orders dropdown menu labels alphabetically while preserving the selected trigger', async () => {
+    render(
+      <ActivityPanel
+        mode={"split"}
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /sessions/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /sessions/i }))
+
+    expect(
+      screen.getAllByRole('menuitemradio').map((item) => item.textContent),
+    ).toEqual([
+      'A2UI Canvas',
+      'Artifacts',
+      'Changes',
+      'Cron',
+      'Files',
+      'Pipelines',
+      'Plans',
+      'Sessions',
+      'Tasks',
+      'Traces',
+    ])
+    expect(screen.getByRole('menuitemradio', { name: /sessions/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+  })
+
   it('clamps the desktop panel between the activity and chat 320px floors', () => {
     const previousWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {

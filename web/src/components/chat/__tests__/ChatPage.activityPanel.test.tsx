@@ -8,7 +8,9 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPage } from "../ChatPage";
+import type { GobbySession } from "../../../types/sessions";
 import {
+  commandPalettePropsSpy,
   createChat,
   createConversations,
   createVoice,
@@ -59,6 +61,38 @@ vi.mock("../../../hooks/useFileChanges", async () =>
 vi.mock("../../../hooks/useConfirmDialog", async () =>
   (await import("./chatPageTestSetup")).useConfirmDialogMockFactory(),
 );
+
+function makeSession(overrides: Partial<GobbySession>): GobbySession {
+  return {
+    id: "session-1",
+    ref: "#1",
+    external_id: "external-1",
+    source: "codex",
+    project_id: "proj-1",
+    title: "Session",
+    status: "active",
+    model: "gpt-5.4",
+    message_count: 1,
+    created_at: "2026-05-04T12:00:00Z",
+    updated_at: "2026-05-04T12:01:00Z",
+    seq_num: 1,
+    summary_markdown: null,
+    digest_markdown: null,
+    git_branch: "main",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    had_edits: false,
+    agent_depth: 0,
+    chat_mode: "plan",
+    agent_run_id: null,
+    parent_session_id: null,
+    session_type: "web_chat",
+    terminal_context: null,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
+    ...overrides,
+  };
+}
 
 // The tri-state crossing logic (desktop<->mobile derivation, never both
 // collapsed, localStorage migration) lives in `useActivityPanel` and is
@@ -171,6 +205,98 @@ describe("ChatPage – activity panel wiring", () => {
     );
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
     expect(dismissOnMobileSpy).not.toHaveBeenCalled();
+  });
+
+  it("feeds the command palette active and paused activity sessions", async () => {
+    const activitySessions = [
+      makeSession({ id: "db-session-1", ref: "#10", seq_num: 10 }),
+      makeSession({
+        id: "terminal-live",
+        ref: "#14",
+        seq_num: 14,
+        session_type: "terminal",
+      }),
+      makeSession({
+        id: "web-paused",
+        ref: "#12",
+        seq_num: 12,
+        status: "paused",
+      }),
+      makeSession({
+        id: "expired-session",
+        ref: "#11",
+        seq_num: 11,
+        status: "expired",
+      }),
+      makeSession({
+        id: "hidden-cron",
+        ref: "#13",
+        seq_num: 13,
+        source: "cron",
+      }),
+    ];
+
+    render(
+      <ChatPage
+        chat={createChat({ dbSessionId: "db-session-1" })}
+        conversations={createConversations()}
+        voice={createVoice()}
+        activitySessions={activitySessions}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("command-bar-open-palette"));
+    });
+
+    expect(screen.getByTestId("command-palette-session-ids")).toHaveTextContent(
+      "terminal-live,web-paused",
+    );
+    expect(commandPalettePropsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ activeSessionId: "db-session-1" }),
+    );
+  });
+
+  it("routes command-palette non-web session selection through swap viewing", async () => {
+    const viewSession = vi.fn();
+    const observeSession = vi.fn();
+    const onSelectSession = vi.fn();
+    const terminalSession = makeSession({
+      id: "terminal-live",
+      ref: "#14",
+      seq_num: 14,
+      session_type: "terminal",
+    });
+
+    render(
+      <ChatPage
+        chat={createChat({
+          dbSessionId: "db-session-1",
+          viewSession,
+          observeSession,
+        })}
+        conversations={{
+          ...createConversations(),
+          onSelectSession,
+        }}
+        voice={createVoice()}
+        activitySessions={[terminalSession]}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("command-bar-open-palette"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("command-palette-select-terminal-live"));
+    });
+
+    expect(showTabSpy).toHaveBeenCalledWith("sessions");
+    expect(viewSession).toHaveBeenCalledWith("terminal-live", {
+      forceRefresh: true,
+    });
+    expect(observeSession).toHaveBeenCalledWith("terminal-live", "observe");
+    expect(onSelectSession).not.toHaveBeenCalled();
   });
 
   it("hides the swapped terminal while keeping the parked web chat focused", async () => {

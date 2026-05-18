@@ -6,6 +6,7 @@ import type {
   ConversationState,
   VoiceProps,
 } from "../../../types/chat";
+import type { GobbySession } from "../../../types/sessions";
 import type { LayoutMode } from "../../activity/useActivityPanel";
 
 export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
@@ -20,6 +21,7 @@ export const showTabSpy = vi.fn();
 export const toggleFromChatSpy = vi.fn();
 export const toggleFromPanelSpy = vi.fn();
 export const dismissOnMobileSpy = vi.fn();
+export const commandPalettePropsSpy = vi.fn();
 
 export const messageListMockFactory = () => ({
   MessageList: React.forwardRef((_props: unknown, ref) => {
@@ -103,8 +105,23 @@ export const chatInputMockFactory = () => ({
 });
 
 export const commandBarMockFactory = () => ({
-  CommandBar: ({ onTogglePanel }: { onTogglePanel?: () => void }) => (
+  CommandBar: ({
+    onOpenPalette,
+    onTogglePanel,
+  }: {
+    onOpenPalette?: () => void;
+    onTogglePanel?: () => void;
+  }) => (
     <div data-testid="command-bar">
+      {onOpenPalette && (
+        <button
+          type="button"
+          data-testid="command-bar-open-palette"
+          onClick={onOpenPalette}
+        >
+          Open Palette
+        </button>
+      )}
       {onTogglePanel && (
         <button
           type="button"
@@ -119,7 +136,49 @@ export const commandBarMockFactory = () => ({
 });
 
 export const commandPaletteMockFactory = () => ({
-  CommandPalette: () => null,
+  CommandPalette: ({
+    isOpen,
+    sessions,
+    activeSessionId,
+    onSelectSession,
+    onDeleteSession,
+  }: {
+    isOpen: boolean;
+    sessions: GobbySession[];
+    activeSessionId: string | null;
+    onSelectSession: (session: GobbySession) => void;
+    onDeleteSession?: (session: GobbySession) => void;
+  }) => {
+    commandPalettePropsSpy({ sessions, activeSessionId });
+    if (!isOpen) return null;
+    return (
+      <div data-testid="command-palette">
+        <span data-testid="command-palette-session-ids">
+          {sessions.map((session) => session.id).join(",")}
+        </span>
+        {sessions.map((session) => (
+          <button
+            key={`select-${session.id}`}
+            type="button"
+            data-testid={`command-palette-select-${session.id}`}
+            onClick={() => onSelectSession(session)}
+          >
+            Select {session.id}
+          </button>
+        ))}
+        {sessions.map((session) => (
+          <button
+            key={`delete-${session.id}`}
+            type="button"
+            data-testid={`command-palette-delete-${session.id}`}
+            onClick={() => onDeleteSession?.(session)}
+          >
+            Delete {session.id}
+          </button>
+        ))}
+      </div>
+    );
+  },
 });
 
 export const activityPanelMockFactory = () => ({

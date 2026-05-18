@@ -84,6 +84,7 @@ describe('useActivityPanel — desktop', () => {
 
     expect(result.current.mode).toBe('split')
     expect(result.current.effectiveMode).toBe('split')
+    expect(result.current.activeTab).toBe('sessions')
   })
 
   it('toggleFromChat walks split -> chat -> split and persists', () => {
