@@ -31,8 +31,8 @@ class TestReregisterActiveSessions:
 
 
 class TestDispatchSessionSummaries:
-    @patch("gobby.hooks.hook_manager.asyncio.get_running_loop")
-    @patch("gobby.hooks.hook_manager.asyncio.run_coroutine_threadsafe")
+    @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
+    @patch("gobby.hooks.session_summary_dispatcher.asyncio.run_coroutine_threadsafe")
     @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
     def test_dispatches_on_running_loop(self, mock_generate, mock_threadsafe, mock_get_loop):
         """Tests that if a running loop exists, it creates a task on it."""
@@ -58,8 +58,8 @@ class TestDispatchSessionSummaries:
             # To test the side-effects of the coro, we'd have to execute it,
             # but we just verified the correct branch was taken.
 
-    @patch("gobby.hooks.hook_manager.asyncio.get_running_loop")
-    @patch("gobby.hooks.hook_manager.asyncio.run_coroutine_threadsafe")
+    @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
+    @patch("gobby.hooks.session_summary_dispatcher.asyncio.run_coroutine_threadsafe")
     @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
     def test_dispatches_threadsafe_when_no_running_loop(
         self, mock_generate, mock_threadsafe, mock_get_loop
@@ -86,8 +86,8 @@ class TestDispatchSessionSummaries:
             assert mock_threadsafe.call_count == 1
             assert mock_threadsafe.call_args is not None
 
-    @patch("gobby.hooks.hook_manager.asyncio.get_running_loop")
-    @patch("threading.Thread")
+    @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
+    @patch("gobby.hooks.session_summary_dispatcher.threading.Thread")
     @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
     def test_dispatches_in_new_thread(self, mock_generate, mock_thread, mock_get_loop):
         """Tests fallback to a new daemon thread when no loop is available/running."""

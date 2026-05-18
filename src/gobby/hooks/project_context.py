@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,70 @@ class HookProjectResolution:
     source: str | None = None
     skipped: bool = False
     reason: str | None = None
+
+
+class ProjectIdResolver:
+    """Resolve hook project IDs from explicit input, cwd, or personal fallback."""
+
+    def __init__(
+        self,
+        *,
+        session_manager: HookSessionManager | None = None,
+        logger: logging.Logger | None = None,
+        ensure_project_in_db: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        self.session_manager = session_manager
+        self.logger = logger
+        self._ensure_project_in_db = ensure_project_in_db
+
+    def resolve(self, project_id: str | None, cwd: str | None) -> str:
+        """Resolve a project ID from an explicit ID or a .gobby/project.json cwd."""
+        if project_id:
+            return project_id
+
+        if not cwd:
+            from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+            return PERSONAL_PROJECT_ID
+
+        working_dir = Path(cwd)
+
+        from gobby.utils.project_context import get_project_context
+
+        project_context = get_project_context(working_dir)
+        if project_context and project_context.get("id"):
+            self._ensure_project(project_context)
+            return str(project_context["id"])
+
+        raise ValueError(
+            f"No .gobby/project.json found in {working_dir}. "
+            f"Run 'gobby init' in your project directory first."
+        )
+
+    def _ensure_project(self, project_context: dict[str, Any]) -> None:
+        if self._ensure_project_in_db:
+            self._ensure_project_in_db(project_context)
+            return
+        self.ensure_project_in_db(project_context)
+
+    def ensure_project_in_db(self, project_context: dict[str, Any]) -> None:
+        """Ensure a project from project.json exists in the local database."""
+        if self.session_manager is None:
+            return
+
+        from gobby.storage.projects import LocalProjectManager
+
+        project_id = str(project_context["id"])
+        project_name = project_context.get("name", "unknown")
+        repo_path = project_context.get("project_path")
+
+        try:
+            db = self.session_manager.db
+            project_manager = LocalProjectManager(db)
+            project_manager.ensure_exists(project_id, project_name, repo_path)
+        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+            if self.logger:
+                self.logger.warning("Failed to ensure project in database: %s", exc)
 
 
 def is_unusable_hook_cwd(cwd: str | None) -> bool:

@@ -4,6 +4,7 @@ Hook Event Broadcaster.
 Broadcasting of hook events to WebSocket clients with filtering and sanitization.
 """
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -54,6 +55,32 @@ EVENT_TYPE_TO_HOOK_TYPE: dict[str, HookType] = {
     "permission_request": HookType.PERMISSION_REQUEST,
     "permission_denied": HookType.PERMISSION_DENIED,
 }
+
+
+def schedule_hook_broadcast(
+    broadcaster: Any | None,
+    event: HookEvent,
+    response: HookResponse,
+    loop: asyncio.AbstractEventLoop | None,
+    hook_logger: logging.Logger,
+) -> None:
+    """Schedule hook event broadcasting without blocking hook handling."""
+    if not broadcaster:
+        return
+
+    try:
+        running_loop = asyncio.get_running_loop()
+        running_loop.create_task(broadcaster.broadcast_event(event, response))
+    except RuntimeError:
+        if loop:
+            coro = broadcaster.broadcast_event(event, response)
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            except Exception as exc:
+                coro.close()
+                hook_logger.warning("Failed to schedule broadcast threadsafe: %s", exc)
+        else:
+            hook_logger.debug("No event loop available for broadcasting")
 
 
 class HookEventBroadcaster:
