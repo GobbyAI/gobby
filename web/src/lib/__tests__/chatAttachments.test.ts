@@ -39,6 +39,10 @@ class FakeXMLHttpRequest {
   send(body?: Document | XMLHttpRequestBodyInit | null) {
     this.body = body ?? null
   }
+
+  abort() {
+    this.onabort?.()
+  }
 }
 
 const originalXMLHttpRequest = globalThis.XMLHttpRequest
@@ -55,7 +59,7 @@ describe('uploadChatAttachment', () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
     const onProgress = vi.fn()
 
-    const promise = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
     const xhr = FakeXMLHttpRequest.instances[0]
 
     xhr.upload.onprogress?.(
@@ -65,7 +69,7 @@ describe('uploadChatAttachment', () => {
         total: 2,
       }) as ProgressEvent<XMLHttpRequestEventTarget>,
     )
-    const rejection = expect(promise).rejects.toThrow('Attachment upload timed out')
+    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload timed out')
     xhr.ontimeout?.()
 
     await rejection
@@ -77,11 +81,43 @@ describe('uploadChatAttachment', () => {
   it('rejects invalid upload JSON responses', async () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
 
-    const promise = uploadChatAttachment(new File(['hello'], 'note.txt'))
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
     const xhr = FakeXMLHttpRequest.instances[0]
     xhr.status = 200
     xhr.responseText = '{bad'
-    const rejection = expect(promise).rejects.toThrow('Attachment upload returned invalid JSON')
+    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload returned invalid JSON')
+    xhr.onload?.()
+
+    await rejection
+  })
+
+  it('returns an abort handle that cancels the XHR', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+    const onProgress = vi.fn()
+
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
+    const xhr = FakeXMLHttpRequest.instances[0]
+    const abort = vi.fn(() => xhr.onabort?.())
+    xhr.abort = abort
+    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload canceled')
+
+    upload.abort()
+
+    await rejection
+    expect(abort).toHaveBeenCalled()
+    expect(onProgress).toHaveBeenLastCalledWith(null)
+  })
+
+  it('rejects upload JSON with an invalid attachment shape', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
+    const xhr = FakeXMLHttpRequest.instances[0]
+    xhr.status = 200
+    xhr.responseText = JSON.stringify({ id: 'att-1' })
+    const rejection = expect(upload.promise).rejects.toThrow(
+      'Attachment upload returned invalid payload',
+    )
     xhr.onload?.()
 
     await rejection

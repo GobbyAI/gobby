@@ -262,8 +262,10 @@ export function TaskTagsField({
   }, [entry, tags]);
 
   const removeTag = useCallback((tag: string) => {
-    setTags((prev) => prev.filter((existing) => existing !== tag));
-  }, []);
+    const next = tags.filter((existing) => existing !== tag);
+    setTags(next);
+    commit(next);
+  }, [commit, tags]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -272,7 +274,9 @@ export function TaskTagsField({
         addTag();
       } else if (event.key === "Backspace" && entry === "" && tags.length > 0) {
         event.preventDefault();
-        setTags((prev) => prev.slice(0, -1));
+        const next = tags.slice(0, -1);
+        setTags(next);
+        commit(next);
       } else if (event.key === "Escape") {
         event.preventDefault();
         skipNextBlurCommitRef.current = true;
@@ -281,7 +285,7 @@ export function TaskTagsField({
         event.currentTarget.blur();
       }
     },
-    [addTag, committed, entry, tags.length],
+    [addTag, commit, committed, entry, tags],
   );
 
   return (

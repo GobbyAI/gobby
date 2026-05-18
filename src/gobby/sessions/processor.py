@@ -10,6 +10,7 @@ Supports two transcript formats:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -102,7 +103,7 @@ class SessionMessageProcessor:
         if self.websocket_server is None:
             return
         tts_feed = getattr(self.websocket_server, "feed_attached_session_tts", None)
-        if not callable(tts_feed):
+        if not inspect.iscoroutinefunction(tts_feed):
             return
         try:
             await tts_feed(session_id, rendered, complete=complete)

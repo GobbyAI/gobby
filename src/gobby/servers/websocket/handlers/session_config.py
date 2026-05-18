@@ -40,7 +40,7 @@ async def _set_attached_session_mode(
 
     try:
         session = await run_db(mixin, session_manager.get, target_session_id)
-    except Exception as exc:
+    except (LookupError, RuntimeError, ValueError) as exc:
         logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
         await mixin._send_error(
             websocket,
@@ -81,7 +81,7 @@ async def _set_attached_session_mode(
                 target_session_id,
                 {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
             )
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         logger.warning(
             "Failed to sync mode_level for attached session %s: %s",
             target_session_id[:8],
@@ -105,7 +105,7 @@ async def _validate_persona_agent(
     if agent_name == "default":
         return True
     try:
-        from gobby.workflows.agent_resolver import resolve_agent
+        from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
         agent_body = await run_db(
             mixin,
@@ -115,7 +115,7 @@ async def _validate_persona_agent(
             getattr(existing_row, "source", None),
             getattr(existing_row, "project_id", None),
         )
-    except Exception as e:
+    except (AgentResolutionError, RuntimeError, TypeError, ValueError) as e:
         logger.warning("Failed to resolve persona candidate '%s': %s", agent_name, e)
         agent_body = None
 
@@ -131,7 +131,7 @@ async def _validate_persona_agent(
         return False
     try:
         persona_supported = bool(supports_surface("persona"))
-    except Exception:
+    except (RuntimeError, TypeError, ValueError):
         logger.warning(
             "Agent definition '%s' failed persona surface validation",
             agent_name,
@@ -204,9 +204,9 @@ async def _set_attached_session_agent(
             tmux_pane,
             f"/gobby persona {agent_name}\n",
         )
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
-            "tmux persona send_keys failed for %s: %s",
+            "tmux persona send_keys failed for pane %s: %s",
             tmux_pane,
             exc,
             exc_info=True,

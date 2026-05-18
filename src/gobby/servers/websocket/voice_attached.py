@@ -6,6 +6,7 @@ import logging
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
+EXPECTED_TTS_FEED_ERRORS = (RuntimeError, ValueError, OSError)
 
 
 class AttachedTtsPipeline(Protocol):
@@ -45,16 +46,25 @@ async def feed_attached_session_tts(
         delta = content[offset:]
         server._attached_tts_offsets[offset_key] = len(content)
         pipeline = pipeline or server._create_tts_pipeline(session_id)
+        if pipeline:
+            server._active_tts_pipelines[session_id] = pipeline
         if pipeline and delta.strip():
             try:
                 pipeline.feed_text(delta)
-            except Exception as e:
+            except EXPECTED_TTS_FEED_ERRORS as e:
                 logger.warning(
                     "Failed to feed attached-session TTS for session %s (%s)",
                     session_id,
                     type(e).__name__,
                     exc_info=True,
                 )
+            except Exception:
+                logger.error(
+                    "Unexpected attached-session TTS feed failure for session %s",
+                    session_id,
+                    exc_info=True,
+                )
+                raise
 
     if complete:
         server._attached_tts_offsets.pop(offset_key, None)

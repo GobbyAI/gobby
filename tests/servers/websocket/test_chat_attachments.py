@@ -111,6 +111,29 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
 
 
 @pytest.mark.asyncio
+async def test_prepare_message_attachments_checks_current_total_size_limit_before_binding(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    ConfigStore(temp_db).set("chat.attachment_max_total_bytes_per_message", 8)
+    first = _attachment(temp_db, tmp_path, attachment_id="att-1", size_bytes=5)
+    second = _attachment(temp_db, tmp_path, attachment_id="att-2", size_bytes=5)
+
+    with pytest.raises(ValueError, match="exceed configured 8 byte total limit"):
+        await prepare_message_attachments(
+            _owner(temp_db),
+            [{"id": first}, {"id": second}],
+            conversation_id="conv-1",
+        )
+
+    rows = temp_db.fetchall(
+        "SELECT conversation_id FROM chat_attachments WHERE id IN (?, ?)",
+        (first, second),
+    )
+    assert [row["conversation_id"] for row in rows] == [None, None]
+
+
+@pytest.mark.asyncio
 async def test_prepare_message_attachments_requires_session_manager() -> None:
     with pytest.raises(ValueError, match="requires session_manager"):
         await prepare_message_attachments(SimpleNamespace(), [{"id": "att-1"}])
@@ -139,3 +162,26 @@ def test_append_prepared_attachment_context() -> None:
     assert append_prepared_attachment_context("Look", prepared) == (
         "Look\n\nAttached files:\n- /tmp/a.txt"
     )
+
+
+def test_prepared_attachment_context_marks_missing_local_path() -> None:
+    record = chat_attachments.ChatAttachmentRecord(
+        id="att-1",
+        project_id=PERSONAL_PROJECT_ID,
+        draft_id=None,
+        conversation_id=None,
+        message_id=None,
+        target_session_id=None,
+        filename="missing.txt",
+        mime_type="text/plain",
+        size_bytes=1,
+        local_path="",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        bound_at=None,
+    )
+    from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
+
+    prepared = PreparedMessageAttachments(records=[record])
+
+    assert "<no local path>" in (prepared.prompt_context or "")

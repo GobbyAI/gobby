@@ -138,6 +138,22 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     assert temp_db.fetchall("SELECT * FROM chat_attachments") == []
 
 
+def test_upload_sanitizes_traversal_filename_preserving_extension(
+    client: TestClient,
+    temp_db: LocalDatabase,
+) -> None:
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("../note.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    row = temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (payload["id"],))
+    assert row is not None
+    assert Path(row["local_path"]).name == "_note.txt"
+
+
 def test_upload_rejects_mismatched_mime_without_persisting(
     client: TestClient,
     temp_db: LocalDatabase,
@@ -194,7 +210,7 @@ def test_content_route_returns_404_when_content_path_is_directory(
     content_dir.mkdir()
     create_attachment(
         temp_db,
-        attachment_id="directory-attachment",
+        attachment_id="00000000-0000-4000-8000-000000000001",
         project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         filename="directory.txt",
@@ -203,10 +219,17 @@ def test_content_route_returns_404_when_content_path_is_directory(
         local_path=str(content_dir),
     )
 
-    response = client.get("/api/chat/attachments/directory-attachment/content")
+    response = client.get("/api/chat/attachments/00000000-0000-4000-8000-000000000001/content")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Attachment content not found"
+
+
+def test_content_route_rejects_invalid_attachment_id(client: TestClient) -> None:
+    response = client.get("/api/chat/attachments/not-a-uuid/content")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Invalid attachment_id"
 
 
 def test_delete_only_removes_unbound_uploads(

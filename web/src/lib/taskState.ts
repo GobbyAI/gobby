@@ -211,6 +211,10 @@ export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
   return 'ready'
 }
 
+export function getCanonicalStageName(task: TaskStateLike): string | null {
+  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null
+}
+
 export function isTaskClosed(task: TaskStateLike): boolean {
   return getTaskDisplayState(task) === 'closed'
 }

@@ -754,8 +754,8 @@ class TestPipelineEventBroadcasting:
         )
 
     @pytest.mark.asyncio
-    async def test_terminal_dispatch_uses_thread_for_sync_dispatch(self) -> None:
-        """Sync terminal hooks run in a worker thread when run_db is not awaitable."""
+    async def test_terminal_dispatch_uses_thread_for_sync_run_db(self) -> None:
+        """Sync DB bridge is invoked in a worker thread when run_db is not awaitable."""
         from gobby.runner_broadcasting import setup_pipeline_event_broadcasting
 
         mock_ws_server = AsyncMock()
@@ -773,11 +773,11 @@ class TestPipelineEventBroadcasting:
                 task_id="task-2",
             )
 
-        run_db.assert_not_called()
-        handler.assert_called_once()
-        args, kwargs = handler.call_args
-        assert args[0].execution_id == "pe-124"
-        assert args[0].data == {"task_id": "task-2"}
+        run_db.assert_called_once()
+        args, kwargs = run_db.call_args
+        assert args[0] is handler
+        assert args[1].execution_id == "pe-124"
+        assert args[1].data == {"task_id": "task-2"}
         assert kwargs == {"db": mock_pipeline_executor.db}
         mock_ws_server.broadcast_pipeline_event.assert_awaited_once_with(
             event="pipeline_failed",

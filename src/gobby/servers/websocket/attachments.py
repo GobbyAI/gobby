@@ -37,9 +37,19 @@ def _safe_path_part(value: str, fallback: str) -> str:
     normalized = unicodedata.normalize("NFC", value.replace("\x00", ""))
     cleaned = _SAFE_PATH_PART_PATTERN.sub("_", normalized)
     cleaned = re.sub(r"_+", "_", cleaned).strip("_-")
-    cleaned = cleaned.lstrip(".").strip("_-")
-    cleaned = cleaned[:_SAFE_PATH_PART_MAX_LENGTH].strip("_-")
+    cleaned = cleaned.lstrip(".").rstrip("_-")
+    cleaned = _truncate_preserving_extension(cleaned, fallback)
     return cleaned or fallback
+
+
+def _truncate_preserving_extension(value: str, fallback: str) -> str:
+    if len(value) <= _SAFE_PATH_PART_MAX_LENGTH:
+        return value
+    suffix = Path(value).suffix
+    budget = max(1, _SAFE_PATH_PART_MAX_LENGTH - len(suffix))
+    stem = value[: -len(suffix)] if suffix else value
+    stem = stem[:budget].rstrip("._-")
+    return f"{stem}{suffix}" if stem else fallback
 
 
 def _raw_attachment_name(item: dict[str, Any]) -> str:

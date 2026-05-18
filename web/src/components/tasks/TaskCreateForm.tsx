@@ -3,7 +3,11 @@ import type { GobbyTask } from '../../hooks/useTasks'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { inputFocusCls } from '../shared/focusStyles'
-import { TASK_CATEGORY_OPTIONS, TASK_PRIORITY_OPTIONS } from '../../lib/taskOptions'
+import {
+  DEFAULT_TASK_PRIORITY,
+  TASK_CATEGORY_OPTIONS,
+  TASK_PRIORITY_OPTIONS,
+} from '../../lib/taskOptions'
 import {
   TASK_MODAL_BACKDROP_BASE_CLS,
   TASK_MODAL_CLOSE_BTN_CLS,
@@ -69,7 +73,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState('task')
-  const [priority, setPriority] = useState(2)
+  const [priority, setPriority] = useState(DEFAULT_TASK_PRIORITY)
   const [category, setCategory] = useState('')
   const [parentTaskId, setParentTaskId] = useState('')
   const [labelsInput, setLabelsInput] = useState('')
@@ -80,7 +84,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     setTitle('')
     setDescription('')
     setTaskType('task')
-    setPriority(2)
+    setPriority(DEFAULT_TASK_PRIORITY)
     setCategory('')
     setParentTaskId('')
     setLabelsInput('')
@@ -95,7 +99,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       setTitle(defaults?.title || '')
       setDescription(defaults?.description || '')
       setTaskType(defaults?.taskType || 'task')
-      setPriority(defaults?.priority ?? 2)
+      setPriority(defaults?.priority ?? DEFAULT_TASK_PRIORITY)
       setCategory(defaults?.category || '')
       setParentTaskId(defaults?.parentTaskId || '')
       setLabelsInput(defaults?.labels?.join(', ') || '')
@@ -114,7 +118,8 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       priority,
     }
     if (description.trim()) params.description = description.trim()
-    if (category) params.category = category
+    const trimmedCategory = category.trim()
+    if (trimmedCategory) params.category = trimmedCategory
     if (parentTaskId) params.parent_task_id = parentTaskId
     if (labelsInput.trim()) {
       params.labels = labelsInput.split(',').map(l => l.trim()).filter(Boolean)

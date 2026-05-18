@@ -100,6 +100,21 @@ async def test_store_proxy_attachments_rejects_estimated_total_size_before_writi
 
 
 @pytest.mark.asyncio
+async def test_store_proxy_attachments_marks_traversal_filename(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    paths = await store_proxy_attachments(
+        "session-1",
+        [{"name": "../note.txt", "base64": "aGVsbG8="}],
+    )
+
+    assert paths[0].name.endswith("_note.txt")
+
+
+@pytest.mark.asyncio
 async def test_cleanup_proxy_attachments_for_session_removes_session_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

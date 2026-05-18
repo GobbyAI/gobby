@@ -162,7 +162,7 @@ def _service_git_manager(services: object | None, project_id: str) -> object | N
     if callable(getter):
         try:
             return cast(object | None, getter(project_id))
-        except Exception as exc:
+        except (LookupError, OSError, RuntimeError, TypeError, ValueError) as exc:
             raise RuntimeError(
                 f"Failed to resolve dispatch git manager for project {project_id}"
             ) from exc

@@ -11,7 +11,7 @@ Contains MCP proxy and tool feature Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
 
@@ -274,10 +274,16 @@ class ChatConfig(FeatureDefaultConfig):
         description="Default chat mode for new sessions. One of: normal, accept_edits, bypass, plan.",
     )
     attachment_max_file_bytes: int = Field(
-        default=1_073_741_824,
+        default=100_000_000,
         ge=1,
-        le=5_368_709_120,
+        le=500_000_000,
         description="Maximum size for one uploaded chat attachment in bytes.",
+    )
+    attachment_max_total_bytes_per_message: int = Field(
+        default=2_147_483_648,
+        ge=1,
+        le=2_147_483_648,
+        description="Maximum total size for chat attachments on one message in bytes.",
     )
     attachment_max_files_per_message: int = Field(
         default=20,
@@ -294,6 +300,14 @@ class ChatConfig(FeatureDefaultConfig):
         if v not in valid:
             raise ValueError(f"default_mode must be one of {valid}, got '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def cap_attachment_total_by_file_product(self) -> "ChatConfig":
+        """Cap message total by the configured per-file and file-count product."""
+        product_cap = self.attachment_max_file_bytes * self.attachment_max_files_per_message
+        if self.attachment_max_total_bytes_per_message > product_cap:
+            self.attachment_max_total_bytes_per_message = product_cap
+        return self
 
 
 class HookStageConfig(BaseModel):

@@ -344,15 +344,19 @@ export function ChatInput({
   }, [onPaletteSelect, onInputChange])
 
   const uploadQueuedFile = useCallback(async (id: string, file: File) => {
+    const upload = uploadChatAttachment(file, {
+      projectId,
+      onProgress: (progress) => {
+        setQueuedFiles((prev) =>
+          prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
+        )
+      },
+    })
+    setQueuedFiles((prev) =>
+      prev.map((qf) => qf.id === id ? { ...qf, uploadAbort: upload.abort } : qf),
+    )
     try {
-      const attachment = await uploadChatAttachment(file, {
-        projectId,
-        onProgress: (progress) => {
-          setQueuedFiles((prev) =>
-            prev.map((qf) => qf.id === id ? { ...qf, progress } : qf),
-          )
-        },
-      })
+      const attachment = await upload.promise
       setQueuedFiles((prev) => {
         const stillQueued = prev.some((qf) => qf.id === id)
         if (!stillQueued || attachmentsDisabledRef.current) {
@@ -361,17 +365,21 @@ export function ChatInput({
         }
         return prev.map((qf) =>
           qf.id === id
-            ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null }
+            ? { ...qf, status: 'uploaded', progress: 1, attachment, error: null, uploadAbort: null }
             : qf,
         )
       })
     } catch (error: unknown) {
-      console.warn('Attachment upload failed', { id, error })
       const message = error instanceof Error ? error.message : 'Attachment upload failed'
+      const stillQueued = queuedFilesRef.current.some((qf) => qf.id === id)
+      if (message === 'Attachment upload canceled' && !stillQueued) {
+        return
+      }
+      console.warn('Attachment upload failed', { id, error })
       setQueuedFiles((prev) =>
         prev.map((qf) =>
           qf.id === id
-            ? { ...qf, status: 'error', progress: null, attachment: null, error: message }
+            ? { ...qf, status: 'error', progress: null, attachment: null, error: message, uploadAbort: null }
             : qf,
         ),
       )
@@ -386,7 +394,7 @@ export function ChatInput({
       const previewUrl = isImage ? URL.createObjectURL(file) : null
       setQueuedFiles((prev) => [
         ...prev,
-        { id, file, previewUrl, status: 'uploading', progress: null, attachment: null, error: null },
+        { id, file, previewUrl, status: 'uploading', progress: null, attachment: null, error: null, uploadAbort: null },
       ])
       void uploadQueuedFile(id, file)
     })
@@ -396,6 +404,7 @@ export function ChatInput({
     setQueuedFiles((prev) => {
       const removed = prev.find((f) => f.id === id)
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      removed?.uploadAbort?.()
       if (removed?.attachment) deleteUploadedAttachment(removed.attachment.id)
       return prev.filter((f) => f.id !== id)
     })
@@ -407,7 +416,7 @@ export function ChatInput({
     setQueuedFiles((prev) =>
       prev.map((qf) =>
         qf.id === id
-          ? { ...qf, status: 'uploading', progress: null, attachment: null, error: null }
+          ? { ...qf, status: 'uploading', progress: null, attachment: null, error: null, uploadAbort: null }
           : qf,
       ),
     )

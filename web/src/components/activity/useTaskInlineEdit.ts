@@ -126,7 +126,7 @@ export function useTaskInlineEdit({
 
       const taskId = task.id;
       const pendingKey = `${taskId}:${field}`;
-      const snapshot = task;
+      const snapshot = { ...task };
       const generation = bumpGeneration(taskId);
 
       clearError(taskId);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -152,8 +153,7 @@ class MailboxService:
 
         wake_results = []
         if include_wakeup:
-            for recipient_id in recipient_ids:
-                wake_results.append(await self._wake(recipient_id))
+            wake_results = list(await asyncio.gather(*(self._wake(rid) for rid in recipient_ids)))
 
         return MailboxSendResult(
             messages=messages,
@@ -294,6 +294,12 @@ class MailboxService:
         try:
             result = await dispatch(session_id)
         except Exception as exc:
+            logger.warning(
+                "Mailbox wake dispatch failed for session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
             return {
                 "session_id": session_id,
                 "delivered": False,

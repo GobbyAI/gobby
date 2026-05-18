@@ -308,6 +308,11 @@ class StageStateTransitions:
                     raise ValueError(
                         "Task is claimed by another session; pass force=True to move stages"
                     )
+                preserved_claim = (
+                    claimed_by_session_id
+                    if claimed_by_session_id and claimed_by_session_id == by_session_id
+                    else None
+                )
                 conn.execute(
                     """
                     UPDATE tasks
@@ -319,13 +324,13 @@ class StageStateTransitions:
                            escalation_reason = NULL,
                            is_escalated = 0,
                            assignee = NULL,
-                           claimed_by_session_id = NULL,
+                           claimed_by_session_id = ?,
                            validation_fail_count = 0,
                            dispatch_failure_count = 0,
                            updated_at = ?
                      WHERE id = ?
                     """,
-                    (now, task_id),
+                    (preserved_claim, now, task_id),
                 )
 
                 for row in stages:

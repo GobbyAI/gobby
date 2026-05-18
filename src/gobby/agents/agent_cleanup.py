@@ -184,7 +184,19 @@ class AgentCleanupHandler:
         message: str,
         completion_result: str | None = None,
     ) -> bool:
-        """Mark an active run successful, notify waiters, and clean the child session."""
+        """Complete an active run, notify subscribers, and clean child-owned state.
+
+        Args:
+            run_id: Agent run id to mark complete.
+            notify_result: Payload delivered to completion subscribers.
+            message: Completion message delivered alongside the payload.
+            completion_result: Optional final result to persist instead of the
+                run's current result.
+
+        Returns:
+            True when the run transitioned to complete; False when the run was
+            already terminal or missing after cleanup reconciliation.
+        """
         current = await self._run_sqlite(self._agent_run_manager.get, run_id)
         if current is None:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)

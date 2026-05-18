@@ -9,11 +9,13 @@ class MockXMLHttpRequest {
   onload: (() => void) | null = null
   onerror: (() => void) | null = null
   onabort: (() => void) | null = null
+  ontimeout: (() => void) | null = null
   status = 0
   statusText = ''
   responseText = ''
   requestBody: XMLHttpRequestBodyInit | null = null
   withCredentials = false
+  timeout = 0
 
   constructor() {
     MockXMLHttpRequest.instances.push(this)
@@ -23,6 +25,10 @@ class MockXMLHttpRequest {
 
   send(body?: XMLHttpRequestBodyInit | null) {
     this.requestBody = body ?? null
+  }
+
+  abort() {
+    this.onabort?.()
   }
 
   respond(body: unknown, status = 200) {

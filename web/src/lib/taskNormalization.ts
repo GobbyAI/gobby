@@ -1,6 +1,7 @@
 import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
 import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from './taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
+import { DEFAULT_TASK_PRIORITY } from './taskOptions'
 
 const STAGE_STATES: readonly StageState5[] = [
   'ready',
@@ -190,7 +191,7 @@ function isOptionalOwnerSessionRef(value: unknown): boolean {
     value.session_id.trim().length > 0 &&
     typeof value.ref === 'string' &&
     value.ref.trim().length > 0 &&
-    (value.source === null || typeof value.source === 'string')
+    (value.source === undefined || value.source === null || typeof value.source === 'string')
   )
 }
 
@@ -255,6 +256,9 @@ export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
 export function extractTaskPayload(data: unknown): RawTaskPayload | null {
   if (isRawTaskPayload(data)) return data
   if (isRecord(data) && isRawTaskPayload(data.task)) return data.task
+  if (isRecord(data) && isRecord(data.data)) {
+    return extractTaskPayload(data.data)
+  }
   return null
 }
 
@@ -396,7 +400,7 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
     ...task,
     ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
     title: task.title ?? '',
-    priority: task.priority ?? 2,
+    priority: task.priority ?? DEFAULT_TASK_PRIORITY,
     task_type: task.task_type ?? task.type ?? 'task',
     parent_task_id: task.parent_task_id ?? null,
     created_at: task.created_at ?? '',

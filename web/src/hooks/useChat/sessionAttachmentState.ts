@@ -104,17 +104,17 @@ export function useSessionAttachmentState() {
             agentRunId,
             status: res.status,
           });
-          agentNameCacheRef.current.set(agentRunId, null);
           return null;
         }
         const data = await res.json();
         const resolved =
           data?.run?.agent_name || data?.run?.workflow_name || null;
-        agentNameCacheRef.current.set(agentRunId, resolved);
+        if (resolved) {
+          agentNameCacheRef.current.set(agentRunId, resolved);
+        }
         return resolved;
       } catch (error) {
         console.warn("Failed to resolve agent name", { agentRunId, error });
-        agentNameCacheRef.current.set(agentRunId, null);
         return null;
       } finally {
         window.clearTimeout(timeout);

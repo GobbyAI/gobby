@@ -6,9 +6,10 @@ import asyncio
 import logging
 import mimetypes
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import aiofiles
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -43,24 +44,54 @@ _ZIP_CONTAINER_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+_SAFE_PATH_PART_MAX_BYTES = 255
 
 
 def _safe_path_part(value: str, fallback: str) -> str:
     cleaned = value.replace("\x00", "").replace("/", "_").replace("\\", "_")
     cleaned = cleaned.lstrip(".")
     cleaned = re.sub(r"[^\w.\-]", "_", cleaned)
-    return cleaned or fallback
+    return _truncate_path_part_utf8(cleaned or fallback, fallback)
+
+
+def _truncate_path_part_utf8(value: str, fallback: str) -> str:
+    if len(value.encode("utf-8")) <= _SAFE_PATH_PART_MAX_BYTES:
+        return value
+    suffix = Path(value).suffix
+    suffix_bytes = suffix.encode("utf-8")
+    budget = max(1, _SAFE_PATH_PART_MAX_BYTES - len(suffix_bytes))
+    stem = value[: -len(suffix)] if suffix else value
+    encoded = stem.encode("utf-8")[:budget]
+    stem = encoded.decode("utf-8", errors="ignore").rstrip("._-")
+    candidate = f"{stem}{suffix}" if stem else fallback
+    while len(candidate.encode("utf-8")) > _SAFE_PATH_PART_MAX_BYTES:
+        candidate = candidate[:-1]
+    return candidate or fallback
 
 
 def _attachment_dir(project_id: str, attachment_id: str) -> Path:
+    safe_project_id = _safe_path_part(project_id, "project")
     return (
         get_gobby_home()
         / "projects"
-        / project_id
+        / safe_project_id
         / "attachments"
         / attachment_id[:2]
         / attachment_id
     )
+
+
+def _validate_uuid_param(value: str, name: str) -> None:
+    try:
+        UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=f"Invalid {name}") from exc
+
+
+def _ensure_disk_space(directory: Path, incoming_bytes: int) -> None:
+    usage = shutil.disk_usage(directory)
+    if usage.free < incoming_bytes:
+        raise HTTPException(status_code=507, detail="Insufficient disk space for attachment")
 
 
 def _content_disposition(mime_type: str) -> str:
@@ -189,10 +220,11 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         attachment_id = str(uuid4())
-        filename = Path(file.filename or "attachment").name or "attachment"
-        safe_name = _safe_path_part(filename, "attachment")
+        raw_filename = (file.filename or "attachment").replace("\x00", "") or "attachment"
+        safe_name = _safe_path_part(raw_filename, "attachment")
+        filename = safe_name
         mime_type = _declared_mime_type(
-            file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            file.content_type or mimetypes.guess_type(raw_filename)[0] or "application/octet-stream"
         )
         target_dir = _attachment_dir(resolved_project_id, attachment_id)
         target_path = target_dir / safe_name
@@ -211,6 +243,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                                 f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
                             ),
                         )
+                    await asyncio.to_thread(_ensure_disk_space, target_dir, len(chunk))
                     await out.write(chunk)
 
             await _validate_declared_mime(temp_path, mime_type)
@@ -235,6 +268,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/{attachment_id}/content")
     async def get_attachment_content(attachment_id: str) -> FileResponse:
+        _validate_uuid_param(attachment_id, "attachment_id")
         record = await server.run_db(
             chat_attachments.get_attachment,
             server.services.database,
@@ -256,6 +290,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
 
     @router.delete("/{attachment_id}")
     async def delete_attachment(attachment_id: str) -> dict[str, bool]:
+        _validate_uuid_param(attachment_id, "attachment_id")
         try:
             record = await server.run_db(
                 chat_attachments.delete_unbound_attachment,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -38,7 +39,7 @@ def register_task_dependency_routes(
 
     async def _enrich_dependency_nodes(
         node: dict[str, Any],
-        cache: dict[str, Task | None],
+        cache: dict[str, Any | None],
     ) -> None:
         """Attach the real task identity (ref/title/type) to each tree node.
 
@@ -55,15 +56,58 @@ def register_task_dependency_routes(
                     cache[node_id] = None
             resolved = cache[node_id]
             if resolved is not None:
-                node["ref"] = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
-                node["title"] = resolved.title
-                node["task_type"] = resolved.task_type
+                seq_num = getattr(resolved, "seq_num", None)
+                resolved_id = getattr(resolved, "id", node_id)
+                node["ref"] = f"#{seq_num}" if seq_num else resolved_id[:8]
+                node["title"] = getattr(resolved, "title", "")
+                node["task_type"] = getattr(resolved, "task_type", "")
         for key in ("blockers", "blocking"):
             children = node.get(key)
             if isinstance(children, list):
                 for child in children:
                     if isinstance(child, dict):
                         await _enrich_dependency_nodes(child, cache)
+
+    def _collect_dependency_node_ids(node: dict[str, Any], ids: set[str]) -> None:
+        node_id = node.get("id")
+        if isinstance(node_id, str) and node_id:
+            ids.add(node_id)
+        for key in ("blockers", "blocking"):
+            children = node.get(key)
+            if not isinstance(children, list):
+                continue
+            for child in children:
+                if isinstance(child, dict):
+                    _collect_dependency_node_ids(child, ids)
+
+    def _load_dependency_tasks(ids: list[str]) -> dict[str, Any | None]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = server.task_manager.db.fetchall(
+            f"SELECT id, seq_num, title, task_type FROM tasks WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+        loaded = {row["id"]: row for row in rows}
+        cache: dict[str, Any | None] = {}
+        for task_id in ids:
+            row = loaded.get(task_id)
+            if row is None:
+                cache[task_id] = None
+                continue
+            cache[task_id] = SimpleNamespace(
+                id=row["id"],
+                seq_num=row["seq_num"],
+                title=row["title"],
+                task_type=row["task_type"],
+            )
+        return cache
+
+    async def _enrich_dependency_tree(tree: dict[str, Any]) -> None:
+        ids: set[str] = set()
+        _collect_dependency_node_ids(tree, ids)
+        raw_cache = await server.run_db(_load_dependency_tasks, sorted(ids))
+        await _enrich_dependency_nodes(tree, raw_cache)
 
     @router.get("/{task_id}/dependencies")
     async def get_dependency_tree(
@@ -77,7 +121,7 @@ def register_task_dependency_routes(
             task = resolve_task(task_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
             tree = dep_manager.get_dependency_tree(task.id, direction=direction)
-            await _enrich_dependency_nodes(tree, {})
+            await _enrich_dependency_tree(tree)
             return tree
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

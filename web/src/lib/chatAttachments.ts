@@ -3,9 +3,34 @@ import type { ChatAttachment } from '../types/chat'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const ATTACHMENT_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
 
-function attachmentUrl(path: string): string {
+export interface ChatAttachmentUpload {
+  promise: Promise<ChatAttachment>
+  abort: () => void
+}
+
+function apiUrl(path: string): string {
   if (!API_BASE_URL || !path.startsWith('/')) return path
   return `${API_BASE_URL}${path}`
+}
+
+function isChatAttachment(value: unknown): value is ChatAttachment {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.id === 'string' &&
+    typeof record.project_id === 'string' &&
+    typeof record.filename === 'string' &&
+    typeof record.mime_type === 'string' &&
+    typeof record.size_bytes === 'number' &&
+    typeof record.content_url === 'string'
+  )
+}
+
+function parseChatAttachment(value: unknown): ChatAttachment {
+  if (!isChatAttachment(value)) {
+    throw new Error('Attachment upload returned invalid payload')
+  }
+  return value
 }
 
 function errorFromResponse(xhr: XMLHttpRequest): string {
@@ -21,7 +46,7 @@ function errorFromResponse(xhr: XMLHttpRequest): string {
 export function normalizeAttachmentUrl(attachment: ChatAttachment): ChatAttachment {
   return {
     ...attachment,
-    content_url: attachmentUrl(attachment.content_url),
+    content_url: apiUrl(attachment.content_url),
   }
 }
 
@@ -32,9 +57,9 @@ export function uploadChatAttachment(
     projectId?: string | null
     onProgress?: (progress: number | null) => void
   } = {},
-): Promise<ChatAttachment> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
+): ChatAttachmentUpload {
+  const xhr = new XMLHttpRequest()
+  const promise = new Promise<ChatAttachment>((resolve, reject) => {
     const form = new FormData()
     form.append('file', file)
     if (options.draftId) form.append('draft_id', options.draftId)
@@ -49,26 +74,37 @@ export function uploadChatAttachment(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(normalizeAttachmentUrl(JSON.parse(xhr.responseText) as ChatAttachment))
-        } catch {
-          reject(new Error('Attachment upload returned invalid JSON'))
+          resolve(normalizeAttachmentUrl(parseChatAttachment(JSON.parse(xhr.responseText))))
+        } catch (error) {
+          reject(
+            error instanceof SyntaxError
+              ? new Error('Attachment upload returned invalid JSON')
+              : error,
+          )
         }
         return
       }
       reject(new Error(errorFromResponse(xhr)))
     }
     xhr.onerror = () => reject(new Error('Attachment upload failed'))
-    xhr.onabort = () => reject(new Error('Attachment upload canceled'))
+    xhr.onabort = () => {
+      options.onProgress?.(null)
+      reject(new Error('Attachment upload canceled'))
+    }
     xhr.ontimeout = () => {
       options.onProgress?.(null)
       reject(new Error('Attachment upload timed out'))
     }
     xhr.send(form)
   })
+  return {
+    promise,
+    abort: () => xhr.abort(),
+  }
 }
 
 export async function deleteChatAttachment(attachmentId: string): Promise<Response> {
-  const response = await fetch(`${API_BASE_URL}/api/chat/attachments/${encodeURIComponent(attachmentId)}`, {
+  const response = await fetch(apiUrl(`/api/chat/attachments/${encodeURIComponent(attachmentId)}`), {
     method: 'DELETE',
     credentials: 'include',
   })

@@ -85,7 +85,10 @@ def write_bundled_content_manifest(install_dir: Path) -> Path:
         raise FileNotFoundError(f"Shared directory not found: {shared_dir}")
     manifest_path = install_dir / MANIFEST_FILENAME
     manifest = build_bundled_content_manifest(shared_dir)
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return manifest_path
 
 

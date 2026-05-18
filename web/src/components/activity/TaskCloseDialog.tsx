@@ -44,8 +44,8 @@ export function TaskCloseDialog({
     <div
       className="activity-task-close-backdrop"
       role="presentation"
-      onClick={() => {
-        if (!isSubmitting) onCancel();
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !isSubmitting) onCancel();
       }}
     >
       <form
@@ -53,6 +53,7 @@ export function TaskCloseDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="activity-task-close-title"
+        aria-describedby={showReasonError ? "activity-task-close-error" : undefined}
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
@@ -74,7 +75,7 @@ export function TaskCloseDialog({
           autoFocus
         />
         {showReasonError && (
-          <div className="activity-task-close-error" role="alert">
+          <div id="activity-task-close-error" className="activity-task-close-error" role="alert">
             Reason is required.
           </div>
         )}

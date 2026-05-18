@@ -4,7 +4,7 @@ import {
   normalizeTaskPayload,
   type RawTaskPayload,
 } from "../../lib/taskNormalization";
-import { getCanonicalTaskState } from "../../lib/taskState";
+import { getCanonicalStageName } from "../../lib/taskState";
 
 export function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
@@ -48,7 +48,7 @@ export function areSetsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): bo
 }
 
 export function getCurrentStageName(task: GobbyTask): string | null {
-  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null;
+  return getCanonicalStageName(task);
 }
 
 export function mergeTasksById(...taskGroups: GobbyTask[][]): GobbyTask[] {

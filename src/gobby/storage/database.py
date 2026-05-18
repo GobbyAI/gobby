@@ -519,7 +519,7 @@ class LocalDatabase:
         try:
             conn.close()
         except Exception as e:
-            logger.debug(f"Connection close failed: {e}")
+            logger.debug("Connection close failed: %s", e)
 
     @staticmethod
     def _close_tracked_connections(
@@ -536,7 +536,7 @@ class LocalDatabase:
             try:
                 conn.close()
             except Exception as e:
-                logger.debug(f"Connection close failed: {e}")
+                logger.debug("Connection close failed: %s", e)
 
         if hasattr(local_state, "connection"):
             local_state.connection = None

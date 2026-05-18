@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractTaskPayload,
   isRawTaskPayload,
   normalizeStageRow,
   normalizeStagesRegistryResponse,
@@ -47,6 +48,26 @@ describe('isRawTaskPayload optional field guard', () => {
         },
       }),
     ).toBe(true)
+  })
+
+  it('accepts resolved owner session refs without source', () => {
+    expect(
+      isRawTaskPayload({
+        id: 'task-1',
+        owner_session_ref: {
+          session_id: 'sess-1',
+          ref: '#12',
+        },
+      }),
+    ).toBe(true)
+  })
+})
+
+describe('extractTaskPayload', () => {
+  it('extracts nested task payloads from data wrappers', () => {
+    expect(extractTaskPayload({ data: { data: { task: { id: 'task-1' } } } })).toEqual({
+      id: 'task-1',
+    })
   })
 })
 

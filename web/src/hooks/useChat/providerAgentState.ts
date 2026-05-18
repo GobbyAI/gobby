@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const ACTIVE_AGENT_KEY = "gobby-active-agent";
 const SELECTED_PROVIDER_KEY = "gobby-selected-provider";
+const DEFAULT_AGENT = "default";
 
 function storageGet(key: string): string | null {
   try {
@@ -34,13 +35,16 @@ function storageRemove(key: string): "removed" | "unavailable" | "failed" {
 
 export function useProviderAgentState() {
   const [activeAgent, setActiveAgent] = useState<string>(
-    () => storageGet(ACTIVE_AGENT_KEY) || "default",
+    () => storageGet(ACTIVE_AGENT_KEY) || DEFAULT_AGENT,
   );
   const activeAgentRef = useRef(activeAgent);
 
   useEffect(() => {
     activeAgentRef.current = activeAgent;
-    if (storageSet(ACTIVE_AGENT_KEY, activeAgent) === "failed") {
+    const status = activeAgent === DEFAULT_AGENT
+      ? storageRemove(ACTIVE_AGENT_KEY)
+      : storageSet(ACTIVE_AGENT_KEY, activeAgent);
+    if (status === "failed") {
       console.warn("Failed to persist active agent selection");
     }
   }, [activeAgent]);

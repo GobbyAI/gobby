@@ -234,6 +234,36 @@ class TestSendMessage:
         assert '"task_id": "#14760"' in call_kwargs["metadata_json"]
 
     @pytest.mark.asyncio
+    async def test_send_message_legacy_positional_signature(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Public send_message function preserves legacy positional calls."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-to": MockSession(id="s-to", project_id="proj-1"),
+        }.get(sid)
+        send_message = messaging_registry.get_tool("send_message")
+        assert send_message is not None
+
+        result = await send_message("s-from", "s-to", "legacy", "high")
+
+        assert result["success"] is True
+        call_kwargs = mock_message_manager.create_message.call_args.kwargs
+        assert call_kwargs["to_session"] == "s-to"
+        assert call_kwargs["content"] == "legacy"
+        assert call_kwargs["priority"] == "high"
+
+    def test_send_message_schema_documents_broadcast_parameters(self, messaging_registry) -> None:
+        """Tool description names broadcast args while preserving the public API."""
+        schema = messaging_registry.get_schema("send_message")
+
+        assert schema is not None
+        description = schema["description"]
+        assert "send_message(from_session, to_session, content, priority)" in description
+        assert "send_to_all=true" in description
+        assert "send_to_all" in schema["inputSchema"]["properties"]
+
+    @pytest.mark.asyncio
     async def test_send_message_rejects_target_with_broadcast(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:

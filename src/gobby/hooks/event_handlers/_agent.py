@@ -102,6 +102,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and prompt.strip():
+            skill_identifier = prompt.strip().split(None, 1)[0]
             try:
                 skill_context = self._intercept_skill_command(prompt.strip(), session_id)
                 if skill_context:
@@ -112,7 +113,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
-                self.logger.error(f"Failed skill interception: {e}", exc_info=True)
+                self.logger.error(
+                    "Failed skill interception for %s: %s",
+                    skill_identifier,
+                    e,
+                    exc_info=True,
+                )
 
         response = HookResponse(
             decision="allow",

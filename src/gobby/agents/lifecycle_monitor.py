@@ -185,7 +185,21 @@ class AgentLifecycleMonitor:
         message: str,
         completion_result: str | None = None,
     ) -> bool:
-        """Mark an active run successful, notify waiters, and clean child-owned state."""
+        """Terminalize a successful active run.
+
+        Args:
+            run_id: Agent run id to complete.
+            notify_result: Payload sent to completion subscribers.
+            message: Human-readable completion notification.
+            completion_result: Optional persisted result override.
+
+        Returns:
+            True when the run was completed by this call; False for an already
+            terminal or missing run.
+
+        Delegates persistence, subscriber notification, and child-session cleanup
+        to AgentCleanupHandler.
+        """
         return await self._cleanup_handler.terminalize_successful_run(
             run_id,
             notify_result=notify_result,

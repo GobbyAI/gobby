@@ -43,7 +43,7 @@ class PreparedMessageAttachments:
             return None
         lines = [
             f"- {record.filename} ({record.mime_type}, {record.size_bytes} bytes): "
-            f"{record.local_path}"
+            f"{record.local_path or '<no local path>'}"
             for record in self.records
         ]
         return "Attached files are available on the local filesystem:\n" + "\n".join(lines)
@@ -86,7 +86,7 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    session_manager = owner.session_manager
+    session_manager = getattr(owner, "session_manager", None)
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
     db = session_manager.db
@@ -95,13 +95,17 @@ def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
     return db
 
 
-def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int]:
+def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:
     db = _attachment_db(owner)
     limits = resolve_chat_attachment_limits(
         config_store=ConfigStore(db),
         daemon_config=getattr(owner, "daemon_config", None),
     )
-    return limits.max_file_bytes, limits.max_files_per_message
+    return (
+        limits.max_file_bytes,
+        limits.max_files_per_message,
+        limits.max_total_bytes_per_message,
+    )
 
 
 def _bind_attachments_sync(
@@ -109,6 +113,7 @@ def _bind_attachments_sync(
     attachment_ids: list[str],
     *,
     max_file_bytes: int,
+    max_total_bytes: int,
     conversation_id: str | None,
     message_id: str | None,
     target_session_id: str | None,
@@ -124,6 +129,9 @@ def _bind_attachments_sync(
             raise ValueError(
                 f"Attachment {record.filename!r} exceeds configured {max_file_bytes} byte limit"
             )
+    total_size = sum(record.size_bytes for record in records)
+    if total_size > max_total_bytes:
+        raise ValueError(f"Attachments exceed configured {max_total_bytes} byte total limit")
     return chat_attachments.bind_attachments(
         db,
         attachment_ids,
@@ -145,7 +153,9 @@ async def prepare_message_attachments(
     if not attachment_ids:
         return PreparedMessageAttachments(records=[])
 
-    max_file_bytes, max_files_per_message = await run_db(owner, _resolve_limits_sync, owner)
+    max_file_bytes, max_files_per_message, max_total_bytes = await run_db(
+        owner, _resolve_limits_sync, owner
+    )
     if len(attachment_ids) > max_files_per_message:
         raise ValueError(f"Too many attachments: maximum is {max_files_per_message}")
 
@@ -155,6 +165,7 @@ async def prepare_message_attachments(
         owner,
         attachment_ids,
         max_file_bytes=max_file_bytes,
+        max_total_bytes=max_total_bytes,
         conversation_id=conversation_id,
         message_id=message_id,
         target_session_id=target_session_id,

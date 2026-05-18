@@ -414,6 +414,35 @@ def test_stage_bundled_content_manifest_rejects_invalid_helper(
     assert str(backend._MANIFEST_MODULE) in message
 
 
+def test_stage_bundled_content_manifest_wraps_helper_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build backend should include helper context when manifest generation fails."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+
+    backend = _load_backend(repo_root)
+
+    def fail_manifest(_install_dir: Path) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        backend,
+        "_load_manifest_module",
+        lambda: SimpleNamespace(write_bundled_content_manifest=fail_manifest),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_bundled_content_manifest()
+
+    message = str(exc_info.value)
+    assert "Bundled content manifest helper failed" in message
+    assert "disk full" in message
+
+
 def test_build_sdist_generates_bundled_content_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

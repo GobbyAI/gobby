@@ -4,12 +4,14 @@ friendly ref (never the raw UUID) and the dependency tree carries real tasks.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.config import DaemonConfig
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -21,13 +23,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db) -> str:
+def project_id(temp_db: LocalDatabase) -> str:
     pm = LocalProjectManager(temp_db)
     return pm.create(name="owner-ref", repo_path="/tmp/owner-ref").id
 
 
 @pytest.fixture
-def task_manager(temp_db) -> LocalTaskManager:
+def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
@@ -43,7 +45,11 @@ def session(temp_db, project_id: str) -> Session:
 
 
 @pytest.fixture
-def client(temp_db, task_manager, project_id) -> TestClient:
+def client(
+    temp_db: LocalDatabase,
+    task_manager: LocalTaskManager,
+    project_id: str,
+) -> Iterator[TestClient]:
     server = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
@@ -54,7 +60,12 @@ def client(temp_db, task_manager, project_id) -> TestClient:
         yield TestClient(server.app)
 
 
-def test_get_task_owner_ref_is_friendly_not_uuid(client, task_manager, project_id, session) -> None:
+def test_get_task_owner_ref_is_friendly_not_uuid(
+    client: TestClient,
+    task_manager: LocalTaskManager,
+    project_id: str,
+    session: Session,
+) -> None:
     task = task_manager.create_task(project_id=project_id, title="Claimed")
     task_manager.claim_task(task.id, session_id=session.id)
 
@@ -69,7 +80,12 @@ def test_get_task_owner_ref_is_friendly_not_uuid(client, task_manager, project_i
     assert len(ref["ref"]) < len(session.id)
 
 
-def test_list_tasks_carries_owner_ref(client, task_manager, project_id, session) -> None:
+def test_list_tasks_carries_owner_ref(
+    client: TestClient,
+    task_manager: LocalTaskManager,
+    project_id: str,
+    session: Session,
+) -> None:
     task = task_manager.create_task(project_id=project_id, title="Listed")
     task_manager.claim_task(task.id, session_id=session.id)
 
@@ -80,7 +96,11 @@ def test_list_tasks_carries_owner_ref(client, task_manager, project_id, session)
     assert listed["owner_session_ref"]["source"] == "claude"
 
 
-def test_unclaimed_task_owner_ref_is_none(client, task_manager, project_id) -> None:
+def test_unclaimed_task_owner_ref_is_none(
+    client: TestClient,
+    task_manager: LocalTaskManager,
+    project_id: str,
+) -> None:
     task = task_manager.create_task(project_id=project_id, title="Unclaimed")
 
     body = client.get(f"/api/tasks/{task.id}").json()
@@ -88,7 +108,11 @@ def test_unclaimed_task_owner_ref_is_none(client, task_manager, project_id) -> N
     assert body["owner_session_ref"] is None
 
 
-def test_dependency_tree_resolves_actual_tasks(client, task_manager, project_id) -> None:
+def test_dependency_tree_resolves_actual_tasks(
+    client: TestClient,
+    task_manager: LocalTaskManager,
+    project_id: str,
+) -> None:
     blocker = task_manager.create_task(
         project_id=project_id, title="Upstream migration", task_type="task"
     )

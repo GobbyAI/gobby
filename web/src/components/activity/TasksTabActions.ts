@@ -3,7 +3,7 @@ import {
   extractTaskPayload,
   type RawTaskPayload,
 } from "../../lib/taskNormalization";
-import { getCanonicalTaskState } from "../../lib/taskState";
+import { getCanonicalStageName } from "../../lib/taskState";
 
 export type TaskActionEndpoint = "release-claim" | "close" | "reopen";
 
@@ -47,7 +47,7 @@ export function taskActionRef(task: GobbyTask): string {
 }
 
 export function currentStageName(task: GobbyTask): string | null {
-  return getCanonicalTaskState(task).current_stage?.name ?? task.current_stage?.name ?? null;
+  return getCanonicalStageName(task);
 }
 
 export async function claimTaskForSession(

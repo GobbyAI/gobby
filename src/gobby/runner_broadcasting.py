@@ -199,7 +199,7 @@ def setup_pipeline_event_broadcasting(
                 if inspect.iscoroutinefunction(run_db):
                     await run_db(dispatch, payload, db=db)
                 elif callable(run_db):
-                    await asyncio.to_thread(dispatch, payload, db=db)
+                    await asyncio.to_thread(run_db, dispatch, payload, db=db)
                 else:
                     await asyncio.to_thread(dispatch, payload, db=db)
             except Exception as exc:
