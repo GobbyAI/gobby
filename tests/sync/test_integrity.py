@@ -213,6 +213,21 @@ class TestVerifyBundledIntegrity:
         assert result.untracked_files == ["shared/rules/build/extra.yaml"]
         assert get_dirty_content_types(result.untracked_files, tmp_path) == {"rules"}
 
+    def test_unknown_registry_file_maps_to_registry_sentinel(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("WARNING", logger="gobby.sync.integrity")
+
+        content_types = get_dirty_content_types(
+            ["shared/registry/experimental.yaml"],
+            tmp_path,
+        )
+
+        assert content_types == {"registry"}
+        assert "Unknown bundled registry file maps to generic registry sentinel" in caplog.text
+
     def test_clean_repo(self, tmp_path: Path) -> None:
         """All files clean when git reports no changes."""
         shared = tmp_path / "shared"
@@ -394,6 +409,8 @@ class TestGetDirtyContentTypes:
         assert result == {"pipelines", "rules", "variables", "build_profiles"}
 
     def test_content_type_dirs_matches_sync_targets(self) -> None:
-        """CONTENT_TYPE_DIRS covers all DB-synced content types."""
+        """Directory mappings plus explicit file mappings cover synced types."""
         expected = BUNDLED_SYNC_CONTENT_TYPES
-        assert set(CONTENT_TYPE_DIRS.values()) == expected
+        explicit_file_targets = {"build_profiles"}
+        assert set(CONTENT_TYPE_DIRS.values()) | explicit_file_targets == expected
+        assert "build_profiles" not in set(CONTENT_TYPE_DIRS.values())

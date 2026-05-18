@@ -95,16 +95,13 @@ export function TaskQuickMenu({
       return;
     }
     if (!items.length) return;
-    const currentIndex = Math.max(
-      0,
-      items.indexOf(document.activeElement as HTMLButtonElement),
-    );
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      focusMenuItem(currentIndex + 1);
+      focusMenuItem(currentIndex === -1 ? 0 : currentIndex + 1);
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      focusMenuItem(currentIndex - 1);
+      focusMenuItem(currentIndex === -1 ? items.length - 1 : currentIndex - 1);
     } else if (event.key === "Home") {
       event.preventDefault();
       focusMenuItem(0);
@@ -129,9 +126,7 @@ export function TaskQuickMenu({
         <button
           className="session-ctx-item"
           role="menuitem"
-          onClick={() => {
-            void onAssignToMainChat();
-          }}
+          onClick={onAssignToMainChat}
           disabled={!chatSessionId || busy}
         >
           Assign to Main Chat

@@ -38,7 +38,11 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
 
 describe("CommandPalette", () => {
   it("only deletes web-chat sessions from the keyboard shortcut", () => {
-    Element.prototype.scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
     const onDeleteSession = vi.fn();
     const terminalSession = makeSession({
       id: "terminal-1",
@@ -53,24 +57,35 @@ describe("CommandPalette", () => {
       session_type: "web_chat",
     });
 
-    render(
-      <CommandPalette
-        isOpen={true}
-        onClose={vi.fn()}
-        sessions={[terminalSession, webSession]}
-        activeSessionId={null}
-        onSelectSession={vi.fn()}
-        onDeleteSession={onDeleteSession}
-        actions={[]}
-      />,
-    );
+    try {
+      render(
+        <CommandPalette
+          isOpen={true}
+          onClose={vi.fn()}
+          sessions={[terminalSession, webSession]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onDeleteSession={onDeleteSession}
+          actions={[]}
+        />,
+      );
 
-    const input = screen.getByPlaceholderText("Search");
-    fireEvent.keyDown(input, { key: "Backspace" });
-    expect(onDeleteSession).not.toHaveBeenCalled();
+      const input = screen.getByPlaceholderText("Search");
+      fireEvent.keyDown(input, { key: "Backspace" });
+      expect(onDeleteSession).not.toHaveBeenCalled();
 
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "Backspace" });
-    expect(onDeleteSession).toHaveBeenCalledWith(webSession);
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Backspace" });
+      expect(onDeleteSession).toHaveBeenCalledWith(webSession);
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
   });
 });

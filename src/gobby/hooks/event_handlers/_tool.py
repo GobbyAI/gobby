@@ -21,6 +21,19 @@ EDIT_TOOLS = {
 }
 
 
+class SkillResolutionError(RuntimeError):
+    """Expected failure while resolving a Skill tool name."""
+
+
+_EXPECTED_SKILL_RESOLUTION_ERRORS = (
+    ConnectionError,
+    LookupError,
+    OSError,
+    TimeoutError,
+    ValueError,
+)
+
+
 class ToolEventHandlerMixin(EventHandlersBase):
     """Mixin for handling tool-related events."""
 
@@ -47,8 +60,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 skill_response = self._resolve_skill_tool_call(input_data)
                 if skill_response is not None:
                     return skill_response
-            except Exception:
-                self.logger.error(
+            except SkillResolutionError:
+                self.logger.warning(
                     "Failed to resolve Skill tool call; allowing native handler",
                     exc_info=True,
                 )
@@ -81,13 +94,23 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         # --- Tier 1: Local DB resolve ---
         if self._skill_manager:
-            skill = self._skill_manager.resolve_skill_name(skill_name)
+            try:
+                skill = self._skill_manager.resolve_skill_name(skill_name)
+            except _EXPECTED_SKILL_RESOLUTION_ERRORS as exc:
+                raise SkillResolutionError(
+                    f"Local skill resolution failed for {skill_name!r}"
+                ) from exc
             if skill is not None:
                 return self._build_skill_response(skill.name, raw_skill_name, tool_input)
 
         # --- Tier 2: gobby-skills MCP get_skill fallback ---
         if self._call_tool:
-            result = self._call_tool("gobby-skills", "get_skill", {"name": skill_name})
+            try:
+                result = self._call_tool("gobby-skills", "get_skill", {"name": skill_name})
+            except _EXPECTED_SKILL_RESOLUTION_ERRORS as exc:
+                raise SkillResolutionError(
+                    f"MCP skill resolution failed for {skill_name!r}"
+                ) from exc
             if result and isinstance(result, dict) and result.get("success"):
                 skill_data = result.get("skill") or result.get("result", {}).get("skill")
                 if skill_data and isinstance(skill_data, dict) and skill_data.get("name"):

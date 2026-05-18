@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   loadLayoutMode,
@@ -12,6 +12,10 @@ const LEGACY_TAB_KEY = 'gobby-activity-panel-tab'
 const TAB_KEY = 'gobby-activity-panel-tab-v2'
 const LAYOUT_KEY = 'gobby-activity-panel-layout'
 const LEGACY_PINNED_KEY = 'gobby-activity-panel-pinned'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('layout reducers', () => {
   it('reduceToggleFromChat is decision-complete for every mode', () => {
@@ -52,6 +56,19 @@ describe('loadLayoutMode migration', () => {
 
     expect(loadLayoutMode()).toBe('chat')
     expect(localStorage.getItem(LAYOUT_KEY)).toBe('chat')
+    expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
+  })
+
+  it('removes the legacy pinned key even when writing the migrated key fails', () => {
+    localStorage.setItem(LEGACY_PINNED_KEY, 'true')
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    setItem.mockImplementation((key: string, value: string) => {
+      if (key === LAYOUT_KEY) throw new DOMException('denied', 'QuotaExceededError')
+      return originalSetItem.call(localStorage, key, value)
+    })
+
+    expect(loadLayoutMode()).toBe('split')
     expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
   })
 
@@ -177,6 +194,20 @@ describe('useActivityPanel — mobile', () => {
 
     act(() => result.current.toggleFromChat())
     expect(result.current.effectiveMode).toBe('chat')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
+  })
+
+  it('handles rapid mobile toggles without touching the desktop preference', () => {
+    localStorage.setItem(LAYOUT_KEY, 'split')
+    const { result } = renderHook(() => useActivityPanel(true))
+
+    act(() => {
+      result.current.toggleFromChat()
+      result.current.toggleFromChat()
+      result.current.toggleFromChat()
+    })
+
+    expect(result.current.effectiveMode).toBe('panel')
     expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
   })
 

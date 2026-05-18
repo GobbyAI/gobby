@@ -12,8 +12,6 @@ export const HIDDEN_ACTIVITY_SESSION_SOURCES = new Set([
   "system",
 ]);
 
-const LIVE_ACTIVITY_SESSION_STATUSES = new Set<string>(DEFAULT_LIVE_STATUSES);
-
 interface ActivitySessionVisibilityOptions {
   chatSessionId?: string | null;
   expiringIds?: ReadonlySet<string>;
@@ -34,13 +32,17 @@ export function getVisibleActivitySessions(
     liveOnly = false,
   }: ActivitySessionVisibilityOptions = {},
 ): GobbySession[] {
+  const query = search.trim().toLowerCase();
   return sessions
-    .filter((session) => session.id !== chatSessionId)
-    .filter((session) => !expiringIds?.has(session.id))
-    .filter((session) => !HIDDEN_ACTIVITY_SESSION_SOURCES.has(session.source))
-    .filter((session) => !liveOnly || LIVE_ACTIVITY_SESSION_STATUSES.has(session.status))
-    .filter((session) => matchesActivitySessionSearch(session, search))
-    .filter((session) => !filters || matchesSessionsFilters(session, filters, now))
+    .filter(
+      (session) =>
+        session.id !== chatSessionId &&
+        !expiringIds?.has(session.id) &&
+        !HIDDEN_ACTIVITY_SESSION_SOURCES.has(session.source) &&
+        (!liveOnly || DEFAULT_LIVE_STATUSES.some((status) => status === session.status)) &&
+        matchesActivitySessionSearch(session, query) &&
+        (!filters || matchesSessionsFilters(session, filters, now)),
+    )
     .sort(compareActivitySessions);
 }
 
@@ -56,12 +58,11 @@ export function toSwappedSessionTarget(
 
 function matchesActivitySessionSearch(
   session: GobbySession,
-  search: string,
+  query: string,
 ): boolean {
-  if (!search.trim()) {
+  if (!query) {
     return true;
   }
-  const query = search.trim().toLowerCase();
   return (
     (session.title && session.title.toLowerCase().includes(query)) ||
     session.ref.toLowerCase().includes(query) ||

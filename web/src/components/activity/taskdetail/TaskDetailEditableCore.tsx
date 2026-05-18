@@ -1,6 +1,7 @@
 import type { GobbyTaskDetail } from "../../../hooks/useTasks";
 import {
   TASK_CATEGORY_OPTIONS,
+  DEFAULT_TASK_PRIORITY,
   TASK_PRIORITY_OPTIONS,
 } from "../../../lib/taskOptions";
 import {
@@ -46,10 +47,22 @@ export function TaskDetailEditableCore({
 
   if (!edit) {
     const hasBody = Boolean(description) || Boolean(validationCriteria);
-    if (!hasBody && labels.length === 0) return null;
+    if (!hasBody) return null;
     return (
       <section className="activity-task-detail-core">
         <h3 className="activity-task-detail-kv__title">Details</h3>
+        {labels.length > 0 && (
+          <div className="activity-task-detail-core-row">
+            <span className="activity-task-detail-core-row__label">Labels</span>
+            <div className="activity-task-detail-pillrow">
+              {labels.map((label) => (
+                <span key={label} className="activity-task-detail-label">
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {description && (
           <StaticBlock label="Description" value={description} />
         )}
@@ -80,13 +93,16 @@ export function TaskDetailEditableCore({
       <div className="activity-task-detail-core-row">
         <span className="activity-task-detail-core-row__label">Priority</span>
         <TaskSelectField
-          value={String(task.priority ?? 4)}
+          value={String(task.priority ?? DEFAULT_TASK_PRIORITY)}
           ariaLabel="Priority"
           options={PRIORITY_SELECT_OPTIONS}
           disabled={edit.isFieldPending(task.id, "priority")}
-          onCommit={(value) =>
-            edit.commitField({ task, field: "priority", value: Number(value) })
-          }
+          onCommit={(value) => {
+            const priority = Number(value);
+            if (Number.isInteger(priority)) {
+              edit.commitField({ task, field: "priority", value: priority });
+            }
+          }}
         />
       </div>
 

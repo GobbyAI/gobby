@@ -22,6 +22,49 @@ export type PatchTaskFields = {
   validation_criteria?: string;
 };
 
+class TaskActionHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(message);
+  }
+}
+
+export function extractResponseErrorMessage(
+  body: string,
+  statusText: string,
+  fallback: string,
+  status: number,
+): string {
+  const fallbackWithStatus = `${fallback} (${status})`;
+  const trimmed = body.trim();
+  if (trimmed) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      for (const key of ["detail", "error", "message"]) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.trim()) return value;
+        if (value !== undefined && value !== null) return JSON.stringify(value);
+      }
+    } catch {
+      return trimmed;
+    }
+    return trimmed;
+  }
+  return statusText || fallbackWithStatus;
+}
+
+async function taskActionError(response: Response, fallback: string): Promise<TaskActionHttpError> {
+  const body = await response.text().catch(() => "");
+  return new TaskActionHttpError(
+    extractResponseErrorMessage(body, response.statusText, fallback, response.status),
+    response.status,
+    body,
+  );
+}
+
 export async function patchTaskFields(
   baseUrl: string,
   taskId: string,
@@ -36,7 +79,7 @@ export async function patchTaskFields(
     },
   );
   if (!response.ok) {
-    throw new Error(`Failed to update task (${response.status})`);
+    throw await taskActionError(response, "Failed to update task");
   }
   return extractTaskPayload(await response.json());
 }
@@ -65,7 +108,7 @@ export async function claimTaskForSession(
     },
   );
   if (!response.ok) {
-    throw new Error(`Failed to claim task (${response.status})`);
+    throw await taskActionError(response, "Failed to claim task");
   }
   return extractTaskPayload(await response.json());
 }
@@ -85,7 +128,7 @@ export async function postTaskLifecycleAction(
     },
   );
   if (!response.ok) {
-    throw new Error(`Task action failed (${response.status})`);
+    throw await taskActionError(response, "Task action failed");
   }
   return extractTaskPayload(await response.json());
 }
@@ -118,7 +161,7 @@ export async function postBuildControl(
     body: JSON.stringify({ input_ref: taskActionRef(task) }),
   });
   if (!response.ok) {
-    throw new Error(`Build ${action} failed (${response.status})`);
+    throw await taskActionError(response, `Build ${action} failed`);
   }
 }
 
@@ -132,8 +175,20 @@ async function postBuildRequest(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`Build failed (${response.status})`);
+    throw await taskActionError(response, "Build failed");
   }
+}
+
+function isSemanticStopError(error: unknown): boolean {
+  if (error instanceof TaskActionHttpError && [404, 409, 410].includes(error.status)) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bnot[- ]running\b|\bno running build\b/i.test(message);
+}
+
+function retryDelay(baseDelay: number): number {
+  return baseDelay + Math.floor(Math.random() * 75);
 }
 
 async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promise<void> {
@@ -145,8 +200,20 @@ async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promis
       return;
     } catch (error) {
       lastError = error;
+      if (isSemanticStopError(error)) {
+        console.info("Quick build stop skipped; build is no longer running", {
+          taskId: task.id,
+          error,
+        });
+        return;
+      }
       if (attempt === delays.length) break;
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      console.warn("Quick build stop failed transiently; retrying", {
+        taskId: task.id,
+        attempt: attempt + 1,
+        error,
+      });
+      await new Promise((resolve) => setTimeout(resolve, retryDelay(delays[attempt])));
     }
   }
   const ref = taskActionRef(task);

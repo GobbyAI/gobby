@@ -110,25 +110,26 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
         </div>
       </div>
     )
-
-    return (
-      <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
-        <span className="font-medium text-foreground truncate">{resolved.filename}</span>
-        <span className="text-muted-foreground">{formatAttachmentSize(resolved.size_bytes)}</span>
-        <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
-      </div>
-    )
   }
 
-  interface MessageItemProps {
-    message: ChatMessage
-    isStreaming?: boolean
-    isThinking?: boolean
-    onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-    onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-    canvasSurfaces?: Map<string, A2UISurfaceState>
-    onCanvasInteraction?: (canvasId: string, action: UserAction) => void
-  }
+  return (
+    <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
+      <span className="font-medium text-foreground truncate">{resolved.filename}</span>
+      <span className="text-muted-foreground">{formatAttachmentSize(resolved.size_bytes)}</span>
+      <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
+    </div>
+  )
+}
+
+interface MessageItemProps {
+  message: ChatMessage
+  isStreaming?: boolean
+  isThinking?: boolean
+  onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  canvasSurfaces?: Map<string, A2UISurfaceState>
+  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
+}
 
   function ProtocolAwareText({
     content,

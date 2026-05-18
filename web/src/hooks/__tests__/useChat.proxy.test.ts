@@ -451,6 +451,7 @@ describe("useChat proxy session messaging", () => {
             content_url: "/api/chat/attachments/att-1/content",
           },
           error: null,
+          uploadAbort: null,
         },
       ]);
     });

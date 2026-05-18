@@ -1499,7 +1499,7 @@ CREATE TABLE chat_attachments (
     local_path TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    bound_at TEXT
+    bound_at TEXT -- Set once when an attachment is first bound to a message/session.
 );
 
 CREATE INDEX idx_chat_attachments_project ON chat_attachments(project_id);

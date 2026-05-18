@@ -15,13 +15,19 @@ export function TaskCloseDialog({
   onConfirm,
 }: TaskCloseDialogProps) {
   const currentTaskId = task?.id ?? null;
+  const isClosed = Boolean(task?.state?.is_closed) || task?.status === "closed";
   const [draft, setDraft] = useState({
     taskId: null as string | null,
+    isClosed: false,
     reason: "",
     showReasonError: false,
   });
-  const reason = draft.taskId === currentTaskId ? draft.reason : "";
-  const showReasonError = draft.taskId === currentTaskId && draft.showReasonError;
+  if (draft.taskId !== currentTaskId || draft.isClosed !== isClosed) {
+    setDraft({ taskId: currentTaskId, isClosed, reason: "", showReasonError: false });
+  }
+  const matchesCurrentTask = draft.taskId === currentTaskId && draft.isClosed === isClosed;
+  const reason = matchesCurrentTask ? draft.reason : "";
+  const showReasonError = matchesCurrentTask && draft.showReasonError;
   const dialogRef = useRef<HTMLFormElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const hasTask = task !== null;
@@ -70,7 +76,7 @@ export function TaskCloseDialog({
   const submit = () => {
     const trimmed = reason.trim();
     if (!trimmed) {
-      setDraft({ taskId: currentTaskId, reason, showReasonError: true });
+      setDraft({ taskId: currentTaskId, isClosed, reason, showReasonError: true });
       return;
     }
     onConfirm(trimmed);
@@ -108,6 +114,7 @@ export function TaskCloseDialog({
           onChange={(event) => {
             setDraft({
               taskId: currentTaskId,
+              isClosed,
               reason: event.currentTarget.value,
               showReasonError: false,
             });

@@ -74,14 +74,6 @@ class AgentCleanupHandler:
         """Notify waiters about a terminal run transition."""
         if not self._completion_registry:
             return
-        get_result = getattr(self._completion_registry, "get_result", None)
-        if callable(get_result):
-            existing_result = get_result(run_id)
-            if isinstance(existing_result, dict):
-                logger.debug(
-                    "Completion notification already recorded for run %s; skipping", run_id
-                )
-                return
         try:
             await self._completion_registry.notify(run_id, result=result, message=message)
         except Exception as e:
@@ -168,11 +160,19 @@ class AgentCleanupHandler:
         if session is None:
             return tool_calls_count, turns_used
 
-        session_tool_calls = getattr(session, "tool_call_count", 0)
-        session_turns = getattr(session, "turn_count", 0)
-        if isinstance(session_tool_calls, int) and tool_calls_count == 0:
+        session_tool_calls = getattr(session, "tool_call_count", None)
+        session_turns = getattr(session, "turn_count", None)
+        if (
+            isinstance(session_tool_calls, int)
+            and not isinstance(session_tool_calls, bool)
+            and tool_calls_count == 0
+        ):
             tool_calls_count = session_tool_calls
-        if isinstance(session_turns, int) and turns_used == 0:
+        if (
+            isinstance(session_turns, int)
+            and not isinstance(session_turns, bool)
+            and turns_used == 0
+        ):
             turns_used = session_turns
         return tool_calls_count, turns_used
 

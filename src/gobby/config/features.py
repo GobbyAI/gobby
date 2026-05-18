@@ -280,7 +280,7 @@ class ChatConfig(FeatureDefaultConfig):
         description="Maximum size for one uploaded chat attachment in bytes.",
     )
     attachment_max_total_bytes_per_message: int = Field(
-        default=2_147_483_648,
+        default=2_000_000_000,
         ge=1,
         le=2_147_483_648,
         description="Maximum total size for chat attachments on one message in bytes.",
@@ -303,10 +303,13 @@ class ChatConfig(FeatureDefaultConfig):
 
     @model_validator(mode="after")
     def cap_attachment_total_by_file_product(self) -> "ChatConfig":
-        """Cap message total by the configured per-file and file-count product."""
+        """Reject totals above the configured per-file and file-count product."""
         product_cap = self.attachment_max_file_bytes * self.attachment_max_files_per_message
         if self.attachment_max_total_bytes_per_message > product_cap:
-            self.attachment_max_total_bytes_per_message = product_cap
+            raise ValueError(
+                "attachment_max_total_bytes_per_message cannot exceed "
+                "attachment_max_file_bytes * attachment_max_files_per_message"
+            )
         return self
 
 

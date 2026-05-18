@@ -93,7 +93,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
       <TasksTabDetailPanel task={makeTask()} />,
     );
     expect(queryByText("Path")).toBeNull();
-    expect(container.textContent).not.toContain("src/secret/path/to/file.ts");
+    expect(container.textContent).not.toContain("fixture-path-cache");
   });
 
   it("renders the escalation block only when the task is escalated", () => {
@@ -156,6 +156,19 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     expect(getByLabelText("Labels")).toBeTruthy();
     expect(getByLabelText("Description")).toBeTruthy();
     expect(getByLabelText("Validation criteria")).toBeTruthy();
+  });
+
+  it("does not render read-only details solely for labels", () => {
+    const { getByText, container } = render(
+      <TasksTabDetailPanel
+        task={makeTask({ labels: ["backend", "bug"], description: null, validation_criteria: null })}
+      />,
+    );
+
+    expect(getByText("Labels")).toBeTruthy();
+    expect(getByText("backend")).toBeTruthy();
+    expect(getByText("bug")).toBeTruthy();
+    expect(container.querySelector(".activity-task-detail-core")).toBeNull();
   });
 
   it("surfaces a single inline edit error with a dismiss control", () => {

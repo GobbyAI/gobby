@@ -373,18 +373,16 @@ export function ChatInput({
       })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Attachment upload failed'
-      const stillQueued = queuedFilesRef.current.some((qf) => qf.id === id)
-      if (message === 'Attachment upload canceled' && !stillQueued) {
-        return
-      }
-      console.warn('Attachment upload failed', { id, error })
-      setQueuedFiles((prev) =>
-        prev.map((qf) =>
+      setQueuedFiles((prev) => {
+        const stillQueued = prev.some((qf) => qf.id === id)
+        if (message === 'Attachment upload canceled' && !stillQueued) return prev
+        console.warn('Attachment upload failed', { id, error })
+        return prev.map((qf) =>
           qf.id === id
             ? { ...qf, status: 'error', progress: null, attachment: null, error: message, uploadAbort: null }
             : qf,
-        ),
-      )
+        )
+      })
     }
   }, [deleteUploadedAttachment, projectId])
 

@@ -697,10 +697,7 @@ class VoiceMixin:
         project_id = data.get("project_id")
         target_session_id = data.get("target_session_id")
         if not isinstance(target_session_id, str) or not target_session_id:
-            try:
-                client_meta = self.clients.get(websocket) or {}
-            except TypeError:
-                client_meta = {}
+            client_meta = self.clients.get(websocket) or {}
             attached = client_meta.get("attached_session_id")
             target_session_id = attached if attached == conversation_id else None
 

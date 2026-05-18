@@ -81,7 +81,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
             "database": server.services.database,
             "session_manager": server.services.session_manager,
         }
-        if server.services.agent_runner is not None:
+        if (
+            server.services.agent_runner is not None
+            and server.services.agent_lifecycle_monitor is not None
+        ):
             server.services.agent_runner.agent_lifecycle_monitor = (
                 server.services.agent_lifecycle_monitor
             )

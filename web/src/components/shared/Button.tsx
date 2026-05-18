@@ -22,12 +22,15 @@ export interface ButtonProps
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, loading = false, disabled, children, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button'
+    if (import.meta.env.DEV && asChild && loading) {
+      console.warn('Button asChild loading state cannot inject a spinner; render loading UI in the child.')
+    }
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         disabled={disabled || loading}
-        aria-busy={loading || undefined}
+        aria-busy={loading ? true : undefined}
         {...props}
       >
         {asChild ? (

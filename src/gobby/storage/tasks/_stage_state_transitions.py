@@ -339,26 +339,36 @@ class StageStateTransitions:
                         conn.execute(
                             """
                             UPDATE task_stage_states
-                               SET state = 'done',
+                               SET state = ?,
                                    completed_at = CASE
-                                       WHEN state != 'done' THEN ? ELSE completed_at
+                                       WHEN state != ? THEN ? ELSE completed_at
                                    END,
                                    completed_by_session_id = CASE
-                                       WHEN state != 'done' THEN ? ELSE completed_by_session_id
+                                       WHEN state != ? THEN ? ELSE completed_by_session_id
                                    END,
                                    completed_commit_sha = CASE
-                                       WHEN state != 'done' THEN NULL ELSE completed_commit_sha
+                                       WHEN state != ? THEN NULL ELSE completed_commit_sha
                                    END,
                                    updated_at = ?
                              WHERE task_id = ? AND stage_name = ?
                             """,
-                            (now, holder, now, task_id, row.stage_name),
+                            (
+                                to_state,
+                                to_state,
+                                now,
+                                to_state,
+                                holder,
+                                to_state,
+                                now,
+                                task_id,
+                                row.stage_name,
+                            ),
                         )
                     else:
                         conn.execute(
                             """
                             UPDATE task_stage_states
-                               SET state = 'ready',
+                               SET state = ?,
                                    entered_at = NULL,
                                    entered_by_session_id = NULL,
                                    completed_at = NULL,
@@ -372,7 +382,7 @@ class StageStateTransitions:
                                    updated_at = ?
                              WHERE task_id = ? AND stage_name = ?
                             """,
-                            (target_stage_name, notes, now, task_id, row.stage_name),
+                            (to_state, target_stage_name, notes, now, task_id, row.stage_name),
                         )
                     if row.state == to_state:
                         continue

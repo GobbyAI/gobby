@@ -48,7 +48,6 @@ CONTENT_TYPE_DIRS: dict[str, str] = {
     "workflows/agents": "agents",
     "workflows/variables": "variables",
     "workflows/pipelines": "pipelines",
-    "registry/build_profiles": "build_profiles",
 }
 
 _GIT_PROTECTED_PATHS: tuple[str, ...] = (
@@ -280,7 +279,13 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
         return None
 
     if parts[0] == "registry" and len(parts) >= 2:
+        # build_profiles is a single protected registry file, not a directory.
         if parts[1] == "build_profiles.yaml":
             return "build_profiles"
+        logger.warning(
+            "Unknown bundled registry file maps to generic registry sentinel: %s",
+            relative_path,
+        )
+        return "registry"
 
     return None

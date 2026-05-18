@@ -9,7 +9,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.servers.routes.chat_attachments import create_chat_attachments_router
+from gobby.servers.routes.chat_attachments import (
+    create_chat_attachments_router,
+    resolve_mime_type,
+)
 from gobby.storage.chat_attachments import bind_attachments, create_attachment
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
@@ -170,6 +173,31 @@ def test_upload_rejects_mismatched_mime_without_persisting(
     assert not any((tmp_path / "gobby-home").rglob("screen.png"))
 
 
+def test_resolve_mime_type_prefers_content_type_and_guesses_filename() -> None:
+    assert resolve_mime_type("text/plain; charset=utf-8", "data.bin") == "text/plain"
+    assert resolve_mime_type(None, "screen.png") == "image/png"
+
+
+def test_upload_rejects_late_invalid_utf8_text(
+    client: TestClient,
+    temp_db: LocalDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("WARNING", logger="gobby.servers.routes.chat_attachments")
+    payload = (b"a" * 600) + b"\xff"
+
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("bad.txt", payload, "text/plain")},
+    )
+
+    assert response.status_code == 415
+    assert "not valid UTF-8 text" in response.json()["detail"]
+    assert "bad.txt" in caplog.text
+    assert "attachment_id=" in caplog.text
+    assert temp_db.fetchall("SELECT * FROM chat_attachments") == []
+
+
 @pytest.mark.parametrize(
     ("filename", "content_type", "expected_disposition"),
     [
@@ -272,11 +300,20 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
         "/api/chat/attachments",
         files={"file": ("queued.txt", b"queued", "text/plain")},
     ).json()
+    uploaded_row = temp_db.fetchone(
+        "SELECT local_path FROM chat_attachments WHERE id = ?",
+        (uploaded["id"],),
+    )
+    assert uploaded_row is not None
+    target_path = Path(uploaded_row["local_path"])
+    original_unlink = Path.unlink
 
-    def fail_unlink(self: Path) -> None:
-        raise PermissionError(str(self))
+    def guarded_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == target_path:
+            raise PermissionError(str(self))
+        original_unlink(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr(Path, "unlink", guarded_unlink)
 
     response = client.delete(f"/api/chat/attachments/{uploaded['id']}")
 

@@ -72,10 +72,14 @@ describe('extractTaskPayload', () => {
 
   it('caps nested payload extraction depth', () => {
     expect(
-      extractTaskPayload({
-        data: { data: { data: { data: { data: { data: { task: { id: 'task-1' } } } } } } },
-      }),
+      extractTaskPayload({ data: { data: { data: { data: { data: { task: { id: 'task-1' } } } } } } }),
     ).toBeNull()
+  })
+
+  it('extracts payloads before the depth guard boundary', () => {
+    expect(
+      extractTaskPayload({ data: { data: { data: { data: { task: { id: 'task-1' } } } } } }),
+    ).toEqual({ id: 'task-1' })
   })
 })
 

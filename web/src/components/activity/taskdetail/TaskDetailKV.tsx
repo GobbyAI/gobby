@@ -61,11 +61,11 @@ export function ValidationRow({
   status: string;
   failCount: number;
 }) {
-  const normalized = status.toLowerCase();
+  const normalized = status.trim().toLowerCase();
   const variant: ValidationStatus =
-    normalized === "passed" || normalized === "approved"
+    ["pass", "passed", "approve", "approved"].includes(normalized)
       ? "ok"
-      : normalized === "failed" || normalized === "rejected"
+      : ["fail", "failed", "reject", "rejected"].includes(normalized)
         ? "fail"
         : "neutral";
   return (

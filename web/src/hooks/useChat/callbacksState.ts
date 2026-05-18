@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { ChatMode } from "../../types/chat";
+import { normalizeChatMode } from "../../types/chat";
 
 type ModeChangedCallback = (mode: ChatMode) => void;
 type PlanReadyCallback = (content: string | null) => void;
@@ -19,6 +20,12 @@ export function usePlanArtifactCallbacks() {
   const onModeChangedRef = useRef<ModeChangedCallback | null>(null);
   const setOnModeChanged = useCallback((fn: ModeChangedCallback) => {
     onModeChangedRef.current = fn;
+  }, []);
+  const setCurrentMode = useCallback((mode: ChatMode) => {
+    const normalizedMode = normalizeChatMode(mode);
+    currentModeRef.current = normalizedMode;
+    onModeChangedRef.current?.(normalizedMode);
+    return normalizedMode;
   }, []);
 
   const onPlanReadyRef = useRef<PlanReadyCallback | null>(null);
@@ -58,6 +65,7 @@ export function usePlanArtifactCallbacks() {
     setOnArtifactEvent,
     setOnChatCleared,
     setOnChatDeleted,
+    setCurrentMode,
     setOnModeChanged,
     setOnPlanReady,
     setPlanPendingApproval,

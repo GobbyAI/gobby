@@ -31,7 +31,7 @@ export function makeTask(
     created_at: "2026-05-14T17:00:00Z",
     updated_at: "2026-05-14T17:55:00Z",
     seq_num: 101,
-    path_cache: "src/secret/path/to/file.ts",
+    path_cache: "fixture-path-cache",
     requires_user_review: false,
     assignee: null,
     agent_name: null,

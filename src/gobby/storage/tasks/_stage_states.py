@@ -219,15 +219,16 @@ class StageStatesManager:
     def move_to_stage(
         self,
         task_id: str,
-        stage_name: str,
+        target_stage_name: str,
         *,
         by_session_id: str | None,
         notes: str | None = None,
         force: bool = False,
     ) -> StageState:
+        """Move a task to the target stage, resetting stage rows as needed."""
         return self._transitions.move_task_to_stage(
             task_id,
-            stage_name,
+            target_stage_name,
             by_session_id=by_session_id,
             notes=notes,
             force=force,

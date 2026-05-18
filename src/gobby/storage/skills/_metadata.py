@@ -47,11 +47,21 @@ class SkillMetadataMixin:
         return cast(_SkillMetadataHost, self)
 
     def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+        """Run a read query in a new transaction.
+
+        Callers that already own a transaction should execute on that connection
+        directly to avoid nested transaction behavior.
+        """
         with self.db.transaction() as conn:
             row = conn.execute(query, params).fetchone()
             return cast(sqlite3.Row | None, row)
 
     def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        """Run a read query in a new transaction.
+
+        Callers that already own a transaction should execute on that connection
+        directly to avoid nested transaction behavior.
+        """
         with self.db.transaction() as conn:
             rows = conn.execute(query, params).fetchall()
             return cast(list[sqlite3.Row], rows)

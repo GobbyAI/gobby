@@ -62,7 +62,29 @@ describe('ChatInput attachments', () => {
 
   it('uploads selected files with multipart form data without FileReader base64', async () => {
     const readAsDataURL = vi.fn()
-    vi.stubGlobal('FileReader', vi.fn(() => ({ readAsDataURL })))
+    class MockFileReader {
+      result: string | ArrayBuffer | null = null
+      error: DOMException | null = null
+      readyState = 0
+      onabort: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      onloadend: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      onloadstart: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      onprogress: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
+      abort = vi.fn()
+      readAsArrayBuffer = vi.fn()
+      readAsBinaryString = vi.fn()
+      readAsText = vi.fn()
+      readAsDataURL = readAsDataURL
+      addEventListener = vi.fn()
+      removeEventListener = vi.fn()
+      dispatchEvent = vi.fn(() => true)
+      EMPTY = 0 as const
+      LOADING = 1 as const
+      DONE = 2 as const
+    }
+    vi.stubGlobal('FileReader', MockFileReader)
     const onSend = vi.fn()
     const { container } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
@@ -101,7 +123,7 @@ describe('ChatInput attachments', () => {
 
   it('keeps submit disabled until upload finishes', async () => {
     const onSend = vi.fn()
-    const { container } = render(<ChatInput onSend={onSend} />)
+    const { container } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
 

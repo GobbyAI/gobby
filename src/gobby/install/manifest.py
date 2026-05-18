@@ -16,6 +16,7 @@ MANIFEST_ROOT = "shared"
 _EXCLUDED_FILE_NAMES = {".DS_Store"}
 _EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 _EXCLUDED_DIR_NAMES = {"__pycache__"}
+# Hash bundled files in modest chunks to avoid loading large artifacts at once.
 _HASH_CHUNK_BYTES = 64 * 1024
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = set(string.hexdigits)
@@ -34,6 +35,7 @@ def hash_file_bytes(path: Path) -> str:
     """Return the SHA-256 hash of *path*'s raw bytes."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
+        # iter(..., b"") reads until EOF while preserving binary bytes exactly.
         for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
             digest.update(chunk)
     return digest.hexdigest()

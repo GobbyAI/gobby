@@ -67,6 +67,22 @@ class TestRegisterAndNotify:
         assert registry.get_result("nonexistent") is None
 
     @pytest.mark.asyncio
+    async def test_duplicate_notify_keeps_first_result_and_wakes_once(self) -> None:
+        woken: list[tuple[str, str, dict]] = []
+
+        async def wake(session_id: str, message: str, result: dict) -> None:
+            woken.append((session_id, message, result))
+
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register("pe-abc123", subscribers=["sess-1"])
+
+        await registry.notify("pe-abc123", {"status": "first"}, message="first")
+        await registry.notify("pe-abc123", {"status": "second"}, message="second")
+
+        assert registry.get_result("pe-abc123") == {"status": "first"}
+        assert woken == [("sess-1", "first", {"status": "first"})]
+
+    @pytest.mark.asyncio
     async def test_wait_unregistered_raises(self, registry: CompletionEventRegistry) -> None:
         """Waiting on an unregistered ID raises KeyError."""
         with pytest.raises(KeyError):

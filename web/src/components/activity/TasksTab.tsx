@@ -254,7 +254,7 @@ export const TasksTab = memo(function TasksTab({
 
       if (event === "task_deleted") {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
-        if (taskId === selectedTaskId) {
+        if (taskId === selectedTaskIdRef.current) {
           userSelectedRef.current = false;
           setSelectedTaskId(null);
         }
@@ -280,7 +280,7 @@ export const TasksTab = memo(function TasksTab({
       // Re-fetch detail if the affected task is currently selected.
       // Abort any previous in-flight detail fetch so a stale response can't
       // overwrite a newer one (or land after the component unmounts).
-      if (taskId === selectedTaskId && event !== "task_deleted") {
+      if (taskId === selectedTaskIdRef.current && event !== "task_deleted") {
         // Server truth landed: drop in-flight optimistic-edit bookkeeping so a
         // slow PATCH resolve/reject can't stomp this update.
         reconcileInlineEditRef.current(taskId);
@@ -293,6 +293,7 @@ export const TasksTab = memo(function TasksTab({
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (controller.signal.aborted) return;
+            if (selectedTaskIdRef.current !== taskId) return;
             const raw = extractTaskPayload(data);
             const cached = tasks.find((task) => task.id === taskId) ?? null;
             setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
@@ -313,7 +314,7 @@ export const TasksTab = memo(function TasksTab({
         window.clearTimeout(debouncedRefetchRef.current);
       debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500);
     },
-    [fetchTasks, projectId, selectedTaskId, tasks],
+    [fetchTasks, projectId, tasks],
   );
 
   useEffect(() => {
@@ -346,6 +347,7 @@ export const TasksTab = memo(function TasksTab({
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        if (selectedTaskIdRef.current !== selectedTaskId) return;
         const raw = extractTaskPayload(data);
         const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
         setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
@@ -544,7 +546,7 @@ export const TasksTab = memo(function TasksTab({
   const applyRawTaskUpdate = useCallback(
     (taskId: string, rawTask: RawTaskPayload | null) => {
       if (!rawTask) {
-        if (selectedTaskId === taskId) {
+        if (selectedTaskIdRef.current === taskId) {
           setTaskDetail(null);
         }
         return;
@@ -554,13 +556,13 @@ export const TasksTab = memo(function TasksTab({
           task.id === taskId ? normalizeActivityTask(rawTask, task) : task,
         ),
       );
-      if (selectedTaskId === taskId) {
+      if (selectedTaskIdRef.current === taskId) {
         setTaskDetail((prev) =>
           normalizeActivityTask(rawTask, prev ?? undefined) as GobbyTaskDetail,
         );
       }
     },
-    [selectedTaskId],
+    [],
   );
 
   // Restore the pre-edit snapshot when an optimistic inline edit fails.

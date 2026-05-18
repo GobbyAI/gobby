@@ -105,6 +105,15 @@ def add_messaging_tools(
         project_id = ctx.get("id") if ctx else None
         return session_manager.resolve_session_reference(ref, project_id)
 
+    from gobby.sessions.mailbox import MailboxService
+
+    mailbox = MailboxService(
+        db=db,
+        message_manager=message_manager,
+        session_manager=session_manager,
+        wake_dispatcher=wake_dispatcher,
+    )
+
     # ── send_message ───────────────────────────────────────────────
 
     @registry.tool(
@@ -148,14 +157,6 @@ def add_messaging_tools(
 
             to_id = _resolve(to_session) if to_session is not None else None
 
-            from gobby.sessions.mailbox import MailboxService
-
-            mailbox = MailboxService(
-                db=db,
-                message_manager=message_manager,
-                session_manager=session_manager,
-                wake_dispatcher=wake_dispatcher,
-            )
             send_result = await mailbox.send(
                 from_session_id=from_id,
                 to_session_id=to_id,

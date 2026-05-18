@@ -11,6 +11,12 @@ import {
 } from "./core";
 
 const AGENT_NAME_RESOLVE_TIMEOUT_MS = 5_000;
+const AGENT_NAME_RESOLVE_FAILURE_TTL_MS = 30_000;
+
+interface AgentNameCacheEntry {
+  value: string | null;
+  expiresAt: number | null;
+}
 
 export function useSessionAttachmentState() {
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(() =>
@@ -45,7 +51,7 @@ export function useSessionAttachmentState() {
   const [proxyDeliveryNotice, setProxyDeliveryNotice] = useState<string | null>(
     null,
   );
-  const agentNameCacheRef = useRef<Map<string, string | null>>(new Map());
+  const agentNameCacheRef = useRef<Map<string, AgentNameCacheEntry>>(new Map());
   const agentNameInflightRef = useRef<Map<string, Promise<string | null>>>(
     new Map(),
   );
@@ -79,7 +85,10 @@ export function useSessionAttachmentState() {
   const resolveAgentName = useCallback(async (agentRunId: string) => {
     const cached = agentNameCacheRef.current.get(agentRunId);
     if (cached !== undefined) {
-      return cached;
+      if (cached.expiresAt === null || cached.expiresAt > Date.now()) {
+        return cached.value;
+      }
+      agentNameCacheRef.current.delete(agentRunId);
     }
 
     const inflight = agentNameInflightRef.current.get(agentRunId);
@@ -104,17 +113,33 @@ export function useSessionAttachmentState() {
             agentRunId,
             status: res.status,
           });
+          agentNameCacheRef.current.set(agentRunId, {
+            value: null,
+            expiresAt: Date.now() + AGENT_NAME_RESOLVE_FAILURE_TTL_MS,
+          });
           return null;
         }
         const data = await res.json();
         const resolved =
           data?.run?.agent_name || data?.run?.workflow_name || null;
         if (resolved) {
-          agentNameCacheRef.current.set(agentRunId, resolved);
+          agentNameCacheRef.current.set(agentRunId, {
+            value: resolved,
+            expiresAt: null,
+          });
+        } else {
+          agentNameCacheRef.current.set(agentRunId, {
+            value: null,
+            expiresAt: Date.now() + AGENT_NAME_RESOLVE_FAILURE_TTL_MS,
+          });
         }
         return resolved;
       } catch (error) {
         console.warn("Failed to resolve agent name", { agentRunId, error });
+        agentNameCacheRef.current.set(agentRunId, {
+          value: null,
+          expiresAt: Date.now() + AGENT_NAME_RESOLVE_FAILURE_TTL_MS,
+        });
         return null;
       } finally {
         window.clearTimeout(timeout);

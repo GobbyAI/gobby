@@ -38,9 +38,11 @@ export function TasksTabList({
   return (
     <div
       className="activity-tasks-pane min-h-0 h-full overflow-y-auto"
-      role={isEmpty ? undefined : "tree"}
-      aria-label={isEmpty ? undefined : "Tasks"}
-      data-testid={isEmpty ? undefined : "task-tree"}
+      role="tree"
+      aria-label="Tasks"
+      data-testid="task-tree"
+      aria-live="polite"
+      aria-busy={false}
     >
       {isEmpty ? (
         <ActivityPanelEmpty

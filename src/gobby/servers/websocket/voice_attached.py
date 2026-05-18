@@ -62,7 +62,10 @@ async def _feed_attached_session_tts_locked(
     pipeline = server._active_tts_pipelines.get(session_id)
     if len(content) > offset:
         delta = content[offset:]
-        pipeline = pipeline or server._create_tts_pipeline(session_id)
+        if pipeline is None:
+            pipeline = server._create_tts_pipeline(session_id)
+            if pipeline is not None:
+                server._active_tts_pipelines[session_id] = pipeline
         if pipeline and delta.strip():
             try:
                 pipeline.feed_text(delta)

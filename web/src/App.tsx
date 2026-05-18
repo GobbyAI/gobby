@@ -320,6 +320,7 @@ export default function App() {
       .then((data) => {
         if (cancelled) return;
         if (data?.selectedProjectId) setSelectedProjectId(data.selectedProjectId);
+        if (data?.selectedProvider) setSelectedProvider(data.selectedProvider);
         setUiSettingsLoaded(true);
       })
       .catch(() => {
@@ -328,7 +329,23 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setSelectedProvider]);
+
+  // Persist selected provider to API after the initial UI settings hydrate.
+  const isFirstProviderRender = useRef(true);
+  useEffect(() => {
+    if (!uiSettingsLoaded) return;
+    if (isFirstProviderRender.current) {
+      isFirstProviderRender.current = false;
+      return;
+    }
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    fetch(`${baseUrl}/api/config/ui-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedProvider }),
+    }).catch(() => {});
+  }, [selectedProvider, uiSettingsLoaded]);
 
   // Persist project selection to API (only after initial resolution)
   const isFirstProjectRender = useRef(true);

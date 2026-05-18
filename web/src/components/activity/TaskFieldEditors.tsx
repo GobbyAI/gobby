@@ -119,6 +119,8 @@ export function TaskTextAreaField({
   }, []);
 
   if (committed !== value) {
+    // eslint-disable-next-line react-hooks/refs
+    clearTimer();
     setCommitted(value);
     setDraft(value);
   }

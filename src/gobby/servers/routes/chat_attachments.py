@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import mimetypes
 import re
@@ -50,7 +51,7 @@ _SAFE_PATH_PART_MAX_BYTES = 255
 def _safe_path_part(value: str, fallback: str) -> str:
     cleaned = value.replace("\x00", "").replace("/", "_").replace("\\", "_")
     cleaned = cleaned.lstrip(".")
-    cleaned = re.sub(r"[^\w.\-]", "_", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9.\-]", "_", cleaned)
     return _truncate_path_part_utf8(cleaned or fallback, fallback)
 
 
@@ -67,6 +68,16 @@ def _truncate_path_part_utf8(value: str, fallback: str) -> str:
     while len(candidate.encode("utf-8")) > _SAFE_PATH_PART_MAX_BYTES:
         candidate = candidate[:-1]
     return candidate or fallback
+
+
+def _temp_upload_name(safe_name: str) -> str:
+    temp_name = f".{safe_name}.part"
+    if len(temp_name.encode("utf-8")) <= _SAFE_PATH_PART_MAX_BYTES:
+        return temp_name
+    budget = _SAFE_PATH_PART_MAX_BYTES - len("..part")
+    encoded = safe_name.encode("utf-8")[:budget]
+    stem = encoded.decode("utf-8", errors="ignore").rstrip("._-") or "attachment"
+    return f".{stem}.part"
 
 
 def _attachment_dir(project_id: str, attachment_id: str) -> Path:
@@ -102,6 +113,12 @@ def _content_disposition(mime_type: str) -> str:
 
 def _declared_mime_type(value: str) -> str:
     return value.split(";", 1)[0].strip().lower() or "application/octet-stream"
+
+
+def resolve_mime_type(content_type: str | None, filename: str) -> str:
+    """Resolve the normalized MIME type for an upload."""
+    guessed_type = mimetypes.guess_type(filename)[0]
+    return _declared_mime_type(content_type or guessed_type or "application/octet-stream")
 
 
 def _sniff_mime_type(sample: bytes) -> str | None:
@@ -142,12 +159,48 @@ def _mime_matches_declared(declared: str, sniffed: str | None) -> bool:
     return False
 
 
-async def _validate_declared_mime(path: Path, declared: str) -> None:
+def _requires_utf8_validation(declared: str, sniffed: str | None) -> bool:
+    return (
+        sniffed == "text/plain"
+        or declared.startswith("text/")
+        or declared in _TEXT_COMPATIBLE_MIME_TYPES
+    )
+
+
+def _validate_utf8_file_sync(path: Path) -> None:
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_UPLOAD_CHUNK_BYTES):
+            decoder.decode(chunk, final=False)
+    decoder.decode(b"", final=True)
+
+
+async def _validate_declared_mime(
+    path: Path,
+    declared: str,
+    *,
+    filename: str = "attachment",
+    attachment_id: str = "unknown",
+) -> None:
     def read_sample() -> bytes:
         with path.open("rb") as handle:
             return handle.read(512)
 
     sniffed = _sniff_mime_type(await asyncio.to_thread(read_sample))
+    if _requires_utf8_validation(declared, sniffed):
+        try:
+            await asyncio.to_thread(_validate_utf8_file_sync, path)
+        except UnicodeDecodeError as exc:
+            logger.warning(
+                "Uploaded text attachment failed UTF-8 validation: filename=%s attachment_id=%s",
+                filename,
+                attachment_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=415,
+                detail=f"Uploaded file {filename!r} is not valid UTF-8 text",
+            ) from exc
     if _mime_matches_declared(declared, sniffed):
         return
     raise HTTPException(
@@ -232,12 +285,10 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         raw_filename = (file.filename or "attachment").replace("\x00", "") or "attachment"
         safe_name = _safe_path_part(raw_filename, "attachment")
         filename = safe_name
-        mime_type = _declared_mime_type(
-            file.content_type or mimetypes.guess_type(raw_filename)[0] or "application/octet-stream"
-        )
+        mime_type = resolve_mime_type(file.content_type, raw_filename)
         target_dir = _attachment_dir(resolved_project_id, attachment_id)
         target_path = target_dir / safe_name
-        temp_path = target_dir / f".{safe_name}.part"
+        temp_path = target_dir / _temp_upload_name(safe_name)
         size = 0
 
         await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
@@ -246,6 +297,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             async with aiofiles.open(temp_path, "wb") as out:
                 while True:
                     remaining = limits.max_file_bytes - size
+                    # Read one byte past the budget so oversized uploads are rejected immediately.
                     read_size = min(_UPLOAD_CHUNK_BYTES, max(remaining + 1, 1))
                     chunk = await file.read(read_size)
                     if not chunk:
@@ -258,9 +310,15 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
                                 f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
                             ),
                         )
+                    _ensure_disk_space(target_dir, len(chunk))
                     await out.write(chunk)
 
-            await _validate_declared_mime(temp_path, mime_type)
+            await _validate_declared_mime(
+                temp_path,
+                mime_type,
+                filename=filename,
+                attachment_id=attachment_id,
+            )
             await asyncio.to_thread(temp_path.replace, target_path)
             record = await server.run_db(
                 chat_attachments.create_attachment,

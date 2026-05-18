@@ -933,7 +933,7 @@ export function ChatPage({
                 isSwappedTerminal && chat.sessionInteractionMode === "proxy"
               }
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
-              attachmentsDisabled={false}
+              attachmentsDisabled={isProxyAttached}
             />
           )}
         </ArtifactContext.Provider>

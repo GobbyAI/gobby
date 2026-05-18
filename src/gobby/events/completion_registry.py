@@ -77,6 +77,9 @@ class CompletionEventRegistry:
         if event is None:
             logger.debug(f"notify() called for unregistered ID {completion_id} - ignoring")
             return
+        if completion_id in self._results:
+            logger.debug("notify() called for completed ID %s - ignoring duplicate", completion_id)
+            return
 
         # Include continuation_prompt in result so wake dispatcher can use it
         # Enrich a copy to avoid mutating the caller's dict

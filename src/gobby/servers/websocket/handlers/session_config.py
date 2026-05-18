@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
+_SAFE_PERSONA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 async def _set_attached_session_mode(
@@ -493,6 +495,12 @@ async def handle_set_agent(
         )
         return
     agent_name = raw_agent_name
+    if not _SAFE_PERSONA_NAME_RE.fullmatch(agent_name):
+        await mixin._send_error(
+            websocket,
+            "set_agent agent_name may only contain letters, numbers, '.', '_' and '-'",
+        )
+        return
 
     if target_session_id:
         await _set_attached_session_agent(mixin, websocket, str(target_session_id), agent_name)

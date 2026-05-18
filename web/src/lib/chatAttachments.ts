@@ -1,7 +1,8 @@
 import type { ChatAttachment } from '../types/chat'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const ATTACHMENT_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
+export const ATTACHMENT_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
+export const MAX_ATTACHMENT_SIZE_BYTES = 100_000_000
 
 export interface ChatAttachmentUpload {
   promise: Promise<ChatAttachment>
@@ -58,6 +59,16 @@ export function uploadChatAttachment(
     onProgress?: (progress: number | null) => void
   } = {},
 ): ChatAttachmentUpload {
+  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+    return {
+      promise: Promise.reject(
+        new Error(
+          `Attachment exceeds ${formatAttachmentSize(MAX_ATTACHMENT_SIZE_BYTES)} limit`,
+        ),
+      ),
+      abort: () => {},
+    }
+  }
   const xhr = new XMLHttpRequest()
   const promise = new Promise<ChatAttachment>((resolve, reject) => {
     const form = new FormData()

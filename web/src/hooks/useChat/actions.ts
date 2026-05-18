@@ -89,7 +89,6 @@ export function useChatActions(params: UseChatActionsParams) {
     messagesRef,
     observedSessionId,
     observedSessionMetaRef,
-    onModeChangedRef,
     pendingMessagesRef,
     pendingPlanFeedbackRef,
     pendingProxyMessagesRef,
@@ -109,6 +108,7 @@ export function useChatActions(params: UseChatActionsParams) {
     setContextUsage,
     setConversationId,
     setConversationSwitchKey,
+    setCurrentMode,
     setIsContinuingSession,
     setIsLoadingMessages,
     setIsStreaming,
@@ -183,8 +183,9 @@ const switchConversation = useCallback(
         applyMainSessionMeta(s);
         if (s.chat_mode) {
           const restored = normalizeChatMode(s.chat_mode);
+          const previousMode = currentModeRef.current;
           if (
-            restored !== currentModeRef.current &&
+            restored !== previousMode &&
             wsRef.current?.readyState === WebSocket.OPEN &&
             Date.now() - lastServerModeTimestampRef.current > 2000
           ) {
@@ -196,7 +197,9 @@ const switchConversation = useCallback(
               }),
             );
           }
-          currentModeRef.current = restored;
+          if (restored !== previousMode) {
+            setCurrentMode(restored);
+          }
         }
       })
       .catch(() => {});
@@ -207,6 +210,7 @@ const switchConversation = useCallback(
     clearPreAttachContextUsage,
     clearSessionObservationState,
     resetMainChatState,
+    setCurrentMode,
   ],
 );
 
@@ -233,10 +237,12 @@ const startNewChat = useCallback(
 // Switch provider. Existing conversations fork to a new server-owned session;
 // a blank draft stays local until the first user send.
 const switchProvider = useCallback(
-  (
+  async (
     newProvider: string,
     options?: { model?: string | null; reasoningEffort?: string | null },
   ) => {
+    const hadServerBackedChat =
+      Boolean(dbSessionIdRef.current) || messagesRef.current.length > 0;
     if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
@@ -249,16 +255,16 @@ const switchProvider = useCallback(
     clearSessionObservationState();
     resetMainChatState();
     bindActiveSession(null);
+    setSelectedProvider(newProvider);
     setConversationSwitchKey((k) => k + 1);
 
     // Keep fresh-chat provider changes local until the first user send
     // actually creates the backing web chat session.
-    if (!dbSessionIdRef.current && messagesRef.current.length === 0) {
-      setSelectedProvider(newProvider);
+    if (!hadServerBackedChat) {
       return;
     }
 
-    void ensureMainSession({
+    await ensureMainSession({
       projectId: projectIdRef.current,
       provider: newProvider,
       model: options?.model ?? null,
@@ -395,8 +401,7 @@ const continueSessionInChat = useCallback(
       setSelectedProvider(continuationProvider);
     }
     if (sourceChatMode) {
-      currentModeRef.current = sourceChatMode;
-      onModeChangedRef.current?.(sourceChatMode);
+      setCurrentMode(sourceChatMode);
     }
 
     // Fetch source session's messages for display
@@ -461,6 +466,7 @@ const continueSessionInChat = useCallback(
     resetMainChatState,
     selectedProvider,
     setContextUsage,
+    setCurrentMode,
     setSelectedProvider,
     sessionInteractionMode,
     sessionRef,
@@ -532,7 +538,7 @@ const stopStreaming = useCallback(() => {
 const sendMode = useCallback((mode: ChatMode) => {
   const normalizedMode = normalizeChatMode(mode);
   if (currentModeRef.current === normalizedMode) return;
-  currentModeRef.current = normalizedMode;
+  setCurrentMode(normalizedMode);
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   if (!conversationIdRef.current) return;
   setPlanPendingApproval(false);

@@ -12,6 +12,7 @@ import {
   PRIORITY_TEXT_WEIGHTS,
   type VisibleTaskRow,
 } from "./TasksTabModel";
+import { DEFAULT_TASK_PRIORITY } from "../../lib/taskOptions";
 
 interface TaskTreeRowProps {
   row: VisibleTaskRow;
@@ -34,12 +35,14 @@ export function TaskTreeRow({
   const taskState = getCanonicalTaskState(task);
   const currentStage = taskState.current_stage;
   const stateSummary = getTaskStateSummary(task);
-  const priority = task.priority ?? 3;
+  const priority = task.priority ?? DEFAULT_TASK_PRIORITY;
   const textColor =
     PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
   const textWeight =
     PRIORITY_TEXT_WEIGHTS[priority] ?? "var(--font-weight-normal)";
   const ref = task.seq_num != null ? `#${task.seq_num}` : null;
+  const labelRef = ref ?? task.ref ?? task.id;
+  const labelTitle = task.title || "Untitled task";
   const taskRowClass = [
     "activity-task-row",
     isSelected && "activity-task-row--selected",
@@ -56,7 +59,7 @@ export function TaskTreeRow({
       tabIndex={isSelected ? 0 : -1}
       aria-level={row.depth + 1}
       aria-expanded={row.isInternal ? row.isOpen : undefined}
-      aria-label={`${ref ?? task.ref} ${task.title}: ${stateSummary}`}
+      aria-label={`${labelRef} ${labelTitle}: ${stateSummary}`}
       title={stateSummary}
       onClick={() => onSelect(task.id)}
       onKeyDown={(event) => {

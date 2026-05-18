@@ -52,20 +52,27 @@ class PreparedMessageAttachments:
         if not self.records:
             return None
         lines = [
-            f"- {record.filename} ({record.mime_type}, {record.size_bytes} bytes): "
-            f"{record.local_path or '<no local path>'}"
+            f"- {record.filename} ({record.mime_type}, {record.size_bytes} bytes): id={record.id}"
             for record in self.records
         ]
-        return "Attached files are available on the local filesystem:\n" + "\n".join(lines)
+        return "Attached files were uploaded by the user:\n" + "\n".join(lines)
 
 
-def extract_attachment_ids(attachments: Any) -> list[str]:
+@dataclass(frozen=True)
+class AttachmentPartitions:
+    ids: list[str]
+    legacy_items: list[Any]
+
+
+def partition_attachment_items(attachments: Any) -> AttachmentPartitions:
     if not isinstance(attachments, list):
-        return []
+        return AttachmentPartitions(ids=[], legacy_items=[])
     ids: list[str] = []
+    legacy_items: list[Any] = []
     seen: set[str] = set()
     for item in attachments:
         if not isinstance(item, dict):
+            legacy_items.append(item)
             continue
         attachment_id = item.get("id")
         if isinstance(attachment_id, str) and attachment_id.strip():
@@ -73,17 +80,17 @@ def extract_attachment_ids(attachments: Any) -> list[str]:
             if normalized not in seen:
                 seen.add(normalized)
                 ids.append(normalized)
-    return ids
+            continue
+        legacy_items.append(item)
+    return AttachmentPartitions(ids=ids, legacy_items=legacy_items)
+
+
+def extract_attachment_ids(attachments: Any) -> list[str]:
+    return partition_attachment_items(attachments).ids
 
 
 def legacy_attachment_items(attachments: Any) -> list[Any]:
-    if not isinstance(attachments, list):
-        return []
-    return [
-        item
-        for item in attachments
-        if not (isinstance(item, dict) and isinstance(item.get("id"), str))
-    ]
+    return partition_attachment_items(attachments).legacy_items
 
 
 def append_prepared_attachment_context(content: str, prepared: PreparedMessageAttachments) -> str:
@@ -96,7 +103,10 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    session_manager = getattr(owner, "session_manager", None)
+    try:
+        session_manager = owner.session_manager
+    except AttributeError as exc:
+        raise ValueError("Attachment storage requires session_manager") from exc
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
     db = session_manager.db
@@ -162,16 +172,17 @@ async def prepare_message_attachments(
     message_id: str | None = None,
     target_session_id: str | None = None,
 ) -> PreparedMessageAttachments:
-    attachment_ids = extract_attachment_ids(attachments)
+    attachment_ids = (
+        attachments.ids
+        if isinstance(attachments, AttachmentPartitions)
+        else partition_attachment_items(attachments).ids
+    )
     if not attachment_ids:
         return PreparedMessageAttachments(records=[])
 
     max_file_bytes, max_files_per_message, max_total_bytes = await run_db(
         owner, _resolve_limits_sync, owner
     )
-    if len(attachment_ids) > max_files_per_message:
-        raise ValueError(f"Too many attachments: maximum is {max_files_per_message}")
-
     records = await run_db(
         owner,
         _bind_attachments_sync,

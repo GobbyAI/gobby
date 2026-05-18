@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.routes.tasks_assignment import MailboxService
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
@@ -640,7 +641,7 @@ class TestLifecycleMutations:
         async def fail_send(*_args: object, **_kwargs: object) -> object:
             raise RuntimeError("mailbox down")
 
-        monkeypatch.setattr("gobby.sessions.mailbox.MailboxService.send", fail_send)
+        monkeypatch.setattr(MailboxService, "send", fail_send)
 
         response = client.post(
             f"/api/tasks/{sample_task['id']}/claim",
@@ -652,6 +653,29 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
         assert data["warnings"] == [{"source": "assignment_notification", "error": "mailbox down"}]
+
+    def test_claim_task_returns_success_when_broadcast_fails(
+        self,
+        client: TestClient,
+        server,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        server.services.websocket_server = type(
+            "FailingWebsocketServer",
+            (),
+            {"broadcast_task_event": AsyncMock(side_effect=RuntimeError("ws down"))},
+        )()
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id, "force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert {"source": "broadcast", "error": "ws down"} in data["warnings"]
 
     def test_release_task_claim(
         self,

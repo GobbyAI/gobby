@@ -320,6 +320,52 @@ describe("App wiring", () => {
     });
   });
 
+  it("hydrates and persists selected provider via UI settings", async () => {
+    const setSelectedProvider = vi.fn();
+    const chatState = {
+      ...makeChatHookState(),
+      selectedProvider: "claude",
+      setSelectedProvider,
+    };
+    vi.mocked(useChat).mockReturnValue(chatState as never);
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      if (!init) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ selectedProvider: "codex" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(setSelectedProvider).toHaveBeenCalledWith("codex");
+    });
+
+    vi.clearAllMocks();
+    vi.mocked(useChat).mockReturnValue({
+      ...chatState,
+      selectedProvider: "gemini",
+    } as never);
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/config/ui-settings",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ selectedProvider: "gemini" }),
+        }),
+      );
+    });
+  });
+
   it("preserves an explicit fresh draft instead of restoring the most recent session", async () => {
     const switchConversation = vi.fn();
     const startNewChat = vi.fn();

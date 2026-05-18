@@ -301,7 +301,7 @@ describe("TasksTab — events and row actions", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
-      "Failed to assign task to main chat: Failed to claim task (500)",
+      "Failed to assign task to main chat: Server Error",
     );
   });
 

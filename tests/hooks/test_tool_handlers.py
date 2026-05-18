@@ -414,15 +414,30 @@ class TestSkillToolInterception:
 
         assert response.decision == "allow"
 
-    def test_skill_tool_error_allows_native_handler(
+    def test_skill_tool_programming_error_propagates(
+        self,
+        handlers_with_skills: EventHandlers,
+        skill_manager: MagicMock,
+    ) -> None:
+        """Programming errors during skill resolution are not swallowed."""
+        skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            handlers_with_skills.handle_before_tool(event)
+
+    def test_skill_tool_resolution_failure_allows_native_handler(
         self,
         handlers_with_skills: EventHandlers,
         skill_manager: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Exception during skill resolution is logged and falls through."""
-        skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
-        caplog.set_level(logging.ERROR)
+        """Expected resolution failures are logged and fall through."""
+        skill_manager.resolve_skill_name.side_effect = ValueError("temporary miss")
+        caplog.set_level(logging.WARNING)
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},

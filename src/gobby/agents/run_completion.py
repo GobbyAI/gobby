@@ -38,8 +38,6 @@ async def complete_and_notify_agent_run(
         return False
 
     if completion_registry and notify_result is not None:
-        if completion_registry.get_result(run_id) is not None:
-            return True
         try:
             await completion_registry.notify(run_id, notify_result, message=message)
         except Exception:

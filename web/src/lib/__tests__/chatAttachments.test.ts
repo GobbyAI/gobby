@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  ATTACHMENT_UPLOAD_TIMEOUT_MS,
+  MAX_ATTACHMENT_SIZE_BYTES,
   deleteChatAttachment,
   formatAttachmentSize,
   uploadChatAttachment,
@@ -56,6 +58,17 @@ afterEach(() => {
 })
 
 describe('uploadChatAttachment', () => {
+  it('rejects oversized files before creating an XHR', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+    const file = new File(['x'], 'huge.bin')
+    Object.defineProperty(file, 'size', { value: MAX_ATTACHMENT_SIZE_BYTES + 1 })
+
+    const upload = uploadChatAttachment(file)
+
+    await expect(upload.promise).rejects.toThrow('Attachment exceeds 95.4 MB limit')
+    expect(FakeXMLHttpRequest.instances).toHaveLength(0)
+  })
+
   it('times out uploads after ten minutes and clears progress', async () => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
     const onProgress = vi.fn()
@@ -74,7 +87,7 @@ describe('uploadChatAttachment', () => {
     xhr.ontimeout?.()
 
     await rejection
-    expect(xhr.timeout).toBe(10 * 60 * 1000)
+    expect(xhr.timeout).toBe(ATTACHMENT_UPLOAD_TIMEOUT_MS)
     expect(onProgress).toHaveBeenNthCalledWith(1, 0.5)
     expect(onProgress).toHaveBeenLastCalledWith(null)
   })
@@ -90,6 +103,29 @@ describe('uploadChatAttachment', () => {
     xhr.onload?.()
 
     await rejection
+  })
+
+  it('resolves successful upload payloads with normalized content URLs', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+
+    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
+    const xhr = FakeXMLHttpRequest.instances[0]
+    xhr.status = 201
+    xhr.responseText = JSON.stringify({
+      id: 'att-1',
+      project_id: 'proj-1',
+      filename: 'note.txt',
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      content_url: '/api/chat/attachments/att-1/content',
+    })
+    xhr.onload?.()
+
+    await expect(upload.promise).resolves.toMatchObject({
+      id: 'att-1',
+      filename: 'note.txt',
+      content_url: '/api/chat/attachments/att-1/content',
+    })
   })
 
   it('returns an abort handle that cancels the XHR', async () => {
@@ -126,6 +162,14 @@ describe('uploadChatAttachment', () => {
 })
 
 describe('deleteChatAttachment', () => {
+  it('resolves successful delete responses', async () => {
+    const response = new Response(null, { status: 204 })
+    const fetchMock = vi.fn().mockResolvedValue(response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(deleteChatAttachment('att-1')).resolves.toBe(response)
+  })
+
   it('encodes IDs and throws on non-OK responses with the response body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('delete denied', {
@@ -160,7 +204,7 @@ describe('deleteChatAttachment', () => {
     const result = expect(deleteChatAttachment('att-1')).rejects.toThrow(
       'Attachment delete timed out',
     )
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(ATTACHMENT_UPLOAD_TIMEOUT_MS)
     await result
     vi.useRealTimers()
   })
@@ -170,5 +214,10 @@ describe('formatAttachmentSize', () => {
   it('clamps non-positive byte counts to zero bytes', () => {
     expect(formatAttachmentSize(0)).toBe('0 B')
     expect(formatAttachmentSize(-1)).toBe('0 B')
+  })
+
+  it('formats KB and MB byte counts', () => {
+    expect(formatAttachmentSize(1536)).toBe('1.5 KB')
+    expect(formatAttachmentSize(2 * 1024 * 1024)).toBe('2.0 MB')
   })
 })

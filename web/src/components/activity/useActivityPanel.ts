@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ActivityTab } from './ActivityPanel'
+import type { ActivityTab } from './ActivityPanelTabs'
 
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
 const LEGACY_STORAGE_KEY_PINNED = 'gobby-activity-panel-pinned'
@@ -93,9 +93,14 @@ export function loadLayoutMode(): LayoutMode {
       const migrated: LayoutMode = legacy === 'true' ? 'split' : 'chat'
       try {
         localStorage.setItem(STORAGE_KEY_LAYOUT, migrated)
-        localStorage.removeItem(LEGACY_STORAGE_KEY_PINNED)
       } catch {
         /* ignore */
+      } finally {
+        try {
+          localStorage.removeItem(LEGACY_STORAGE_KEY_PINNED)
+        } catch {
+          /* ignore */
+        }
       }
       return migrated
     }

@@ -2,6 +2,10 @@ import type { GobbyTaskDetail } from "../../../hooks/useTasks";
 import { MetaKVRow } from "./TaskDetailKV";
 import { formatTaskDetailDate } from "./taskDetailFormat";
 
+function isValidGithubRepo(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
+}
+
 /**
  * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits, PR,
  * and close provenance. "Path" is intentionally cut. Escalation is handled
@@ -19,14 +23,15 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
     isolation !== null ||
     dispatchFailures > 0;
 
+  const githubRepo = isValidGithubRepo(task.github_repo) ? task.github_repo : null;
   const prUrl =
-    task.github_pr_number != null && task.github_repo
-      ? `https://github.com/${task.github_repo}/pull/${task.github_pr_number}`
+    task.github_pr_number != null && githubRepo
+      ? `https://github.com/${githubRepo}/pull/${task.github_pr_number}`
       : null;
   const prLabel =
     task.github_pr_number != null
-      ? task.github_repo
-        ? `${task.github_repo}#${task.github_pr_number}`
+      ? githubRepo
+        ? `${githubRepo}#${task.github_pr_number}`
         : `#${task.github_pr_number}`
       : null;
 

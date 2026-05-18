@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
+
+RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
 
 # Module-level reference so broadcast_agent_event can be called directly
 # from spawn and completion paths without going through the registry.
@@ -187,7 +190,8 @@ def setup_pipeline_event_broadcasting(
 
             payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
             db = getattr(pipeline_executor, "db", None)
-            run_db = getattr(pipeline_executor, "run_db", None)
+            # run_db hooks may be async (daemon executor) or sync (tests/adapters).
+            run_db: RunDbHook | None = getattr(pipeline_executor, "run_db", None)
             try:
                 if event == "pipeline_completed":
                     dispatch = _dispatch.on_pipeline_completed

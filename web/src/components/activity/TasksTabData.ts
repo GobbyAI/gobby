@@ -7,6 +7,7 @@ import {
 import { getCanonicalStageName } from "../../lib/taskState";
 
 export function getBaseUrl(): string {
+  // Empty means same-origin; production serves the UI and API from one daemon origin.
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
@@ -98,11 +99,17 @@ export async function fetchMissingTaskAncestors(
 ): Promise<GobbyTask[]> {
   const taskMap = new Map(seedTasks.map((task) => [task.id, task]));
   const queuedParentIds = new Set<string>();
+  const attemptedParentIds = new Set<string>();
   const parentQueue: string[] = [];
 
   const enqueueParent = (task: GobbyTask) => {
     const parentId = task.parent_task_id;
-    if (!parentId || taskMap.has(parentId) || queuedParentIds.has(parentId)) {
+    if (
+      !parentId ||
+      taskMap.has(parentId) ||
+      queuedParentIds.has(parentId) ||
+      attemptedParentIds.has(parentId)
+    ) {
       return;
     }
     queuedParentIds.add(parentId);
@@ -123,8 +130,9 @@ export async function fetchMissingTaskAncestors(
 
   while (parentQueue.length > 0) {
     const parentId = parentQueue.shift();
-    if (!parentId || signal.aborted) break;
+    if (!parentId) continue;
     queuedParentIds.delete(parentId);
+    attemptedParentIds.add(parentId);
 
     let operation: AncestorOperation = "fetch";
     try {

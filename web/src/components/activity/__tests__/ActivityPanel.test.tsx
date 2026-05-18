@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ActivityPanel } from '../ActivityPanel'
+import { ACTIVITY_PANEL_DROPDOWN_TABS } from '../ActivityPanelTabs'
 
 vi.mock('../../chat/artifacts/ResizeHandle', () => ({
   ResizeHandle: ({
@@ -237,18 +238,7 @@ describe('ActivityPanel', () => {
 
     expect(
       screen.getAllByRole('menuitemradio').map((item) => item.textContent),
-    ).toEqual([
-      'A2UI Canvas',
-      'Artifacts',
-      'Changes',
-      'Cron',
-      'Files',
-      'Pipelines',
-      'Plans',
-      'Sessions',
-      'Tasks',
-      'Traces',
-    ])
+    ).toEqual(ACTIVITY_PANEL_DROPDOWN_TABS.map((tab) => tab.label))
     expect(screen.getByRole('menuitemradio', { name: /sessions/i })).toHaveAttribute(
       'aria-checked',
       'true',

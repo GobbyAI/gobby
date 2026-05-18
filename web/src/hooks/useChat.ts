@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatMessage, QueuedFile } from "../types/chat";
-import { normalizeChatMode } from "../types/chat";
 import type { A2UISurfaceState } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
 import {
   clearPendingProxyMessages,
-  saveConversationId,
   saveDbSessionId,
   saveViewingSessionId,
   saveViewingSessionMode,
@@ -13,7 +11,6 @@ import {
   type ChatError,
   type ChatStreamChunk,
   type ChatThinkingMessage,
-  type ContinuationRollbackSnapshot,
   type ModelSwitchedMessage,
   type ToolStatusMessage,
 } from "./useChat/core";
@@ -30,6 +27,7 @@ import { useSessionAttachmentState } from "./useChat/sessionAttachmentState";
 import { useSessionIdentityState } from "./useChat/sessionIdentityState";
 import { useChatSessionViewing } from "./useChat/sessionViewing";
 import { useChatTransport } from "./useChat/transport";
+import { useContinuationRestore } from "./useChat/useContinuationRestore";
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -78,6 +76,7 @@ export function useChat() {
     setOnArtifactEvent,
     setOnChatCleared,
     setOnChatDeleted,
+    setCurrentMode,
     setOnModeChanged,
     setOnPlanReady,
     setPlanPendingApproval,
@@ -274,96 +273,45 @@ export function useChat() {
     {
       content: string;
       model?: string | null;
+      files?: QueuedFile[];
       projectId?: string | null;
       reasoningEffort?: string | null;
       ttsEnabled?: boolean;
     }[]
   >([]);
 
-  const restoreContinuationState = useCallback(
-    (snapshot: ContinuationRollbackSnapshot) => {
-      conversationIdRef.current = snapshot.conversationId;
-      setConversationId(snapshot.conversationId);
-      saveConversationId(snapshot.conversationId);
-      dbSessionIdRef.current = snapshot.dbSessionId;
-      setDbSessionId(snapshot.dbSessionId);
-      saveDbSessionId(snapshot.dbSessionId);
-      setMessages(snapshot.messages);
-      setMainSessionMeta(snapshot.mainSessionMeta);
-      setSessionTitle(snapshot.sessionTitle);
-      setSessionRef(snapshot.sessionRef);
-      setSelectedProvider(snapshot.selectedProvider);
-      setContextUsage(snapshot.contextUsage);
-      setCurrentBranch(snapshot.currentBranch);
-      setWorktreePath(snapshot.worktreePath);
-      setViewingSessionId(snapshot.viewingSessionId);
-      viewingSessionIdRef.current = snapshot.viewingSessionId;
-      saveViewingSessionId(snapshot.viewingSessionId);
-      setViewingSessionMeta(snapshot.viewingSessionMeta);
-      viewingSessionMetaRef.current = snapshot.viewingSessionMeta;
-      observedSessionIdRef.current = snapshot.observedSessionId;
-      observedSessionMetaRef.current = snapshot.observedSessionMeta;
-      setObservedSessionId(snapshot.observedSessionId);
-      attachedSessionIdRef.current = snapshot.attachedSessionId;
-      setAttachedSessionId(snapshot.attachedSessionId);
-      attachedSessionMetaRef.current = snapshot.attachedSessionMeta;
-      setAttachedSessionMeta(snapshot.attachedSessionMeta);
-      sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
-      setSessionInteractionMode(snapshot.sessionInteractionMode);
-      saveViewingSessionMode(
-        snapshot.viewingSessionId ? snapshot.sessionInteractionMode : "none",
-      );
-      setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
-      setIsLoadingMessages(false);
-      currentModeRef.current = normalizeChatMode(snapshot.currentMode);
-      onModeChangedRef.current?.(normalizeChatMode(snapshot.currentMode));
-
-      if (
-        snapshot.observedSessionId &&
-        snapshot.sessionInteractionMode !== "none" &&
-        wsRef.current?.readyState === WebSocket.OPEN
-      ) {
-        pendingSessionInteractionModeRef.current =
-          snapshot.sessionInteractionMode === "proxy" ? "proxy" : "observe";
-        wsRef.current.send(
-          JSON.stringify({
-            type: "attach_to_session",
-            session_id: snapshot.observedSessionId,
-          }),
-        );
-      }
-    },
-    [
-      attachedSessionIdRef,
-      attachedSessionMetaRef,
-      conversationIdRef,
-      currentModeRef,
-      dbSessionIdRef,
-      observedSessionIdRef,
-      observedSessionMetaRef,
-      onModeChangedRef,
-      pendingSessionInteractionModeRef,
-      setAttachedSessionId,
-      setAttachedSessionMeta,
-      setContextUsage,
-      setConversationId,
-      setCurrentBranch,
-      setDbSessionId,
-      setMainSessionMeta,
-      setObservedSessionId,
-      setProxyDeliveryNotice,
-      setSelectedProvider,
-      setSessionInteractionMode,
-      setSessionRef,
-      setSessionTitle,
-      setViewingSessionId,
-      setViewingSessionMeta,
-      setWorktreePath,
-      sessionInteractionModeRef,
-      viewingSessionIdRef,
-      viewingSessionMetaRef,
-    ],
-  );
+  const restoreContinuationState = useContinuationRestore({
+    attachedSessionIdRef,
+    attachedSessionMetaRef,
+    conversationIdRef,
+    dbSessionIdRef,
+    observedSessionIdRef,
+    observedSessionMetaRef,
+    pendingSessionInteractionModeRef,
+    sessionInteractionModeRef,
+    setAttachedSessionId,
+    setAttachedSessionMeta,
+    setContextUsage,
+    setConversationId,
+    setCurrentBranch,
+    setCurrentMode,
+    setDbSessionId,
+    setIsLoadingMessages,
+    setMainSessionMeta,
+    setMessages,
+    setObservedSessionId,
+    setProxyDeliveryNotice,
+    setSelectedProvider,
+    setSessionInteractionMode,
+    setSessionRef,
+    setSessionTitle,
+    setViewingSessionId,
+    setViewingSessionMeta,
+    setWorktreePath,
+    viewingSessionIdRef,
+    viewingSessionMetaRef,
+    wsRef,
+  });
 
   /** Returns true if the chunk belongs to the currently active request. */
   function isActiveRequest(requestId?: string): boolean {
@@ -565,6 +513,7 @@ export function useChat() {
     setContextUsage,
     setConversationId,
     setConversationSwitchKey,
+    setCurrentMode,
     setIsContinuingSession,
     setIsLoadingMessages,
     setIsStreaming,

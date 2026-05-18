@@ -12,6 +12,7 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.websocket.chat_attachments import (
     append_prepared_attachment_context,
     legacy_attachment_items,
+    partition_attachment_items,
     prepare_message_attachments,
 )
 from gobby.storage.config_store import ConfigStore
@@ -51,7 +52,7 @@ def _attachment(
 
 
 @pytest.mark.asyncio
-async def test_prepare_message_attachments_binds_ids_and_formats_path_context(
+async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
     temp_db: LocalDatabase,
     tmp_path: Path,
 ) -> None:
@@ -67,6 +68,8 @@ async def test_prepare_message_attachments_binds_ids_and_formats_path_context(
     assert prepared.records[0].id == attachment_id
     assert prepared.content_blocks[0]["attachment"]["id"] == attachment_id
     assert "att-1.txt" in (prepared.prompt_context or "")
+    assert f"id={attachment_id}" in (prepared.prompt_context or "")
+    assert str(tmp_path) not in (prepared.prompt_context or "")
     assert "base64" not in (prepared.prompt_context or "").lower()
 
     row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (attachment_id,))
@@ -156,6 +159,23 @@ def test_legacy_attachment_items_filters_id_references() -> None:
     ) == [{"name": "legacy.txt", "base64": "aGVsbG8="}]
 
 
+def test_partition_attachment_items_splits_stored_ids_and_legacy_items() -> None:
+    partitions = partition_attachment_items(
+        [
+            {"id": " stored "},
+            {"id": "stored"},
+            {"name": "legacy.txt", "base64": "aGVsbG8="},
+            "legacy-string",
+        ]
+    )
+
+    assert partitions.ids == ["stored"]
+    assert partitions.legacy_items == [
+        {"name": "legacy.txt", "base64": "aGVsbG8="},
+        "legacy-string",
+    ]
+
+
 def test_append_prepared_attachment_context() -> None:
     prepared = SimpleNamespace(prompt_context="Attached files:\n- /tmp/a.txt")
 
@@ -164,7 +184,7 @@ def test_append_prepared_attachment_context() -> None:
     )
 
 
-def test_prepared_attachment_context_marks_missing_local_path() -> None:
+def test_prepared_attachment_context_hides_local_path() -> None:
     record = chat_attachments.ChatAttachmentRecord(
         id="att-1",
         project_id=PERSONAL_PROJECT_ID,
@@ -184,4 +204,6 @@ def test_prepared_attachment_context_marks_missing_local_path() -> None:
 
     prepared = PreparedMessageAttachments(records=[record])
 
-    assert "<no local path>" in (prepared.prompt_context or "")
+    assert "missing.txt" in (prepared.prompt_context or "")
+    assert "id=att-1" in (prepared.prompt_context or "")
+    assert "<no local path>" not in (prepared.prompt_context or "")

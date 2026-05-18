@@ -870,7 +870,13 @@ class TestUISettings:
         """PUT settings then GET them back."""
         put_resp = client.put(
             "/api/config/ui-settings",
-            json={"fontSize": 18, "model": "sonnet", "theme": "light", "defaultChatMode": "act"},
+            json={
+                "fontSize": 18,
+                "model": "sonnet",
+                "theme": "light",
+                "defaultChatMode": "act",
+                "selectedProvider": "codex",
+            },
         )
         assert put_resp.status_code == 200
         assert put_resp.json()["ok"] is True
@@ -882,6 +888,7 @@ class TestUISettings:
         assert data["model"] == "sonnet"
         assert data["theme"] == "light"
         assert data["defaultChatMode"] == "act"
+        assert data["selectedProvider"] == "codex"
 
     def test_put_partial_update(self, client: TestClient) -> None:
         """PUT with only some keys updates only those."""

@@ -250,6 +250,20 @@ class TestSetAgentPersonaValidation:
 
 
 class TestSetAgentAttachedSession:
+    async def test_rejects_unsafe_persona_name_before_tmux_send(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        await server._handle_set_agent(
+            ws,
+            {"target_session_id": "term-1", "agent_name": "persona\n/clear"},
+        )
+
+        server._send_error.assert_awaited_once()
+        assert "may only contain" in server._send_error.await_args.args[1]
+        server.session_manager.get.assert_not_called()
+        ws.send.assert_not_awaited()
+
     async def test_routes_persona_switch_to_attached_terminal_pane(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()

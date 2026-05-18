@@ -255,7 +255,7 @@ export function isRawTaskPayload(value: unknown): value is RawTaskPayload {
 }
 
 export function extractTaskPayload(data: unknown, depth = 0): RawTaskPayload | null {
-  if (depth > MAX_TASK_PAYLOAD_EXTRACT_DEPTH) return null
+  if (depth >= MAX_TASK_PAYLOAD_EXTRACT_DEPTH) return null
   if (isRawTaskPayload(data)) return data
   if (isRecord(data) && isRawTaskPayload(data.task)) return data.task
   if (isRecord(data) && isRecord(data.data)) {

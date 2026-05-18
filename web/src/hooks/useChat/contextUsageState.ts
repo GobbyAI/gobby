@@ -30,9 +30,10 @@ export function useContextUsageState() {
   const markSessionUsageFresh = useCallback(
     (sessionId: string, rawTimestamp?: string) => {
       const parsed = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+      const now = Date.now();
       lastLiveUsageBySessionRef.current.set(
         sessionId,
-        Number.isFinite(parsed) ? parsed : Date.now(),
+        Number.isFinite(parsed) && parsed >= 0 && parsed <= now ? parsed : now,
       );
     },
     [],

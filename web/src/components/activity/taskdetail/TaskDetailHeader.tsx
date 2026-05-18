@@ -4,6 +4,7 @@ import {
   TaskStateBadges,
   TypeBadge,
 } from "../../tasks/TaskBadges";
+import { DEFAULT_TASK_PRIORITY } from "../../../lib/taskOptions";
 import { TaskTextField } from "../TaskFieldEditors";
 import type { TaskInlineEditApi } from "./taskDetailFormat";
 
@@ -29,7 +30,7 @@ export function TaskDetailHeader({
         <span className="activity-task-detail-header__ref">{task.ref}</span>
         <div className="activity-task-detail-header__chips">
           <TaskStateBadges task={task} />
-          <PriorityBadge priority={task.priority ?? 4} />
+          <PriorityBadge priority={task.priority ?? DEFAULT_TASK_PRIORITY} />
           <TypeBadge type={task.task_type} />
         </div>
       </div>

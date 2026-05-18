@@ -4,11 +4,22 @@ const ACTIVE_AGENT_KEY = "gobby-active-agent";
 const SELECTED_PROVIDER_KEY = "gobby-selected-provider";
 const DEFAULT_AGENT = "default";
 
+function isExpectedStorageError(error: unknown): boolean {
+  return error instanceof DOMException || error instanceof TypeError;
+}
+
+function logUnexpectedStorageError(action: string, key: string, error: unknown) {
+  if (!isExpectedStorageError(error)) {
+    console.warn("Unexpected localStorage error", { action, key, error });
+  }
+}
+
 function storageGet(key: string): string | null {
   try {
     if (!globalThis.localStorage) return null;
     return globalThis.localStorage.getItem(key);
-  } catch {
+  } catch (error) {
+    logUnexpectedStorageError("get", key, error);
     return null;
   }
 }
@@ -18,7 +29,8 @@ function storageSet(key: string, value: string): "stored" | "unavailable" | "fai
     if (!globalThis.localStorage) return "unavailable";
     globalThis.localStorage.setItem(key, value);
     return "stored";
-  } catch {
+  } catch (error) {
+    logUnexpectedStorageError("set", key, error);
     return "failed";
   }
 }
@@ -28,7 +40,8 @@ function storageRemove(key: string): "removed" | "unavailable" | "failed" {
     if (!globalThis.localStorage) return "unavailable";
     globalThis.localStorage.removeItem(key);
     return "removed";
-  } catch {
+  } catch (error) {
+    logUnexpectedStorageError("remove", key, error);
     return "failed";
   }
 }
@@ -55,17 +68,17 @@ export function useProviderAgentState() {
 
   const setSelectedProvider = useCallback((provider: string | null) => {
     setSelectedProviderRaw(provider);
-    const status = provider
-      ? storageSet(SELECTED_PROVIDER_KEY, provider)
-      : storageRemove(SELECTED_PROVIDER_KEY);
-    if (status === "failed") {
-      console.warn("Failed to persist selected provider");
-    }
   }, []);
 
   const selectedProviderRef = useRef<string | null>(selectedProvider);
   useEffect(() => {
     selectedProviderRef.current = selectedProvider;
+    const status = selectedProvider
+      ? storageSet(SELECTED_PROVIDER_KEY, selectedProvider)
+      : storageRemove(SELECTED_PROVIDER_KEY);
+    if (status === "failed") {
+      console.warn("Failed to persist selected provider");
+    }
   }, [selectedProvider]);
 
   return {

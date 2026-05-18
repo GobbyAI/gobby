@@ -151,9 +151,9 @@ class MailboxService:
                 )
             )
 
-        wake_results = []
+        wake_results: list[dict[str, Any]] = []
         if include_wakeup:
-            wake_results = list(await asyncio.gather(*(self._wake(rid) for rid in recipient_ids)))
+            wake_results = await asyncio.gather(*(self._wake(rid) for rid in recipient_ids))
 
         return MailboxSendResult(
             messages=messages,
@@ -293,6 +293,8 @@ class MailboxService:
             }
         try:
             result = await dispatch(session_id)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Mailbox wake dispatch failed for session %s: %s",

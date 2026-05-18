@@ -6,7 +6,7 @@ import { TaskQuickMenu, type TaskContextMenu } from "../TaskQuickMenu";
 import type { BuildState, GobbyTask } from "../../../hooks/useTasks";
 
 function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
-  return {
+  const base = {
     id: "task-1",
     ref: "#13909",
     title: "Sample task",
@@ -32,8 +32,8 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
     allow_automation: null,
     yolo: null,
     isolation: null,
-    ...overrides,
-  } as GobbyTask;
+  } satisfies GobbyTask;
+  return { ...base, ...overrides };
 }
 
 function renderMenu(
@@ -151,5 +151,17 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
     expect(document.activeElement).toBe(assign);
     fireEvent.keyDown(menu, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("starts keyboard navigation from the first item when nothing is focused", () => {
+    renderMenu(makeTask({ build_state: "never_started" }));
+    const menu = screen.getByRole("menu", { name: "Task actions" });
+    const assign = screen.getByRole("menuitem", { name: "Assign to Main Chat" });
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).not.toBe(assign);
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+
+    expect(document.activeElement).toBe(assign);
   });
 });

@@ -14,6 +14,10 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.websocket.chat._message_validation import (
+    as_optional_str,
+    validate_chat_content,
+)
 from gobby.servers.websocket.chat._session import _resolve_git_branch
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import (
@@ -215,13 +219,13 @@ class ChatMessagingMixin:
             websocket: Client WebSocket connection
             data: Parsed chat message
         """
-        content: str | list[dict[str, Any]] = data.get("content", "")
+        content: str | list[dict[str, Any]]
+        raw_content = data.get("content", "")
         content_blocks = data.get("content_blocks")
         conversation_id = data.get("conversation_id") or str(uuid4())
         model = data.get("model")
         request_id = data.get("request_id", "")
-        raw_message_id = data.get("message_id")
-        message_id = raw_message_id if isinstance(raw_message_id, str) else None
+        message_id = as_optional_str(data.get("message_id"))
         project_id = data.get("project_id")
         provider = data.get("provider")
         reasoning_effort = data.get("reasoning_effort")
@@ -241,15 +245,16 @@ class ChatMessagingMixin:
             await self._send_error(websocket, str(exc), request_id=request_id)
             return
 
-        # Use content_blocks (multimodal) if provided, otherwise plain text
-        if content_blocks and isinstance(content_blocks, list):
-            content = content_blocks
-        elif not isinstance(content, str):
-            await self._send_error(websocket, "Missing or invalid 'content' field")
+        validated_content, content_error = validate_chat_content(
+            raw_content,
+            content_blocks,
+            has_attachments=bool(prepared_attachments.records),
+        )
+        if content_error:
+            await self._send_error(websocket, content_error)
             return
-        elif not content.strip() and not prepared_attachments.records:
-            await self._send_error(websocket, "Missing or invalid 'content' field")
-            return
+        assert validated_content is not None
+        content = validated_content
 
         client_info = self.clients.get(websocket)
         if not client_info:

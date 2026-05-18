@@ -18,7 +18,7 @@ from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_polic
 from gobby.servers.websocket.attachments import append_attachment_paths, store_proxy_attachments
 from gobby.servers.websocket.chat_attachments import (
     append_prepared_attachment_context,
-    legacy_attachment_items,
+    partition_attachment_items,
     prepare_message_attachments,
 )
 from gobby.servers.websocket.db import run_db
@@ -108,7 +108,7 @@ async def _load_live_session_variables(
         return {}
     try:
         variables = await run_db(mixin, _read_session_variables, db, session_id)
-        return cast(dict[str, Any], variables) if isinstance(variables, dict) else {}
+        return variables if isinstance(variables, dict) else {}
     except Exception as exc:
         logger.debug("Failed to read live session variables for %s: %s", session_id, exc)
         return {}
@@ -750,7 +750,11 @@ async def handle_send_to_cli_session(
     }
     """
     session_id = _as_str(data.get("session_id"))
-    content = str(data.get("content", "")).strip()
+    content_value = data.get("content")
+    if content_value is not None and not isinstance(content_value, str):
+        await mixin._send_error(websocket, "send_to_cli_session content must be a string")
+        return
+    content = (content_value or "").strip()
     attachments = data.get("attachments")
     attachment_items = attachments if isinstance(attachments, list) else []
     client_message_id = _as_str(data.get("client_message_id"))
@@ -786,14 +790,17 @@ async def handle_send_to_cli_session(
 
     if attachment_items:
         try:
+            attachment_partitions = partition_attachment_items(attachment_items)
             prepared = await prepare_message_attachments(
                 mixin,
-                attachment_items,
+                attachment_partitions,
                 target_session_id=session_id,
             )
             content = append_prepared_attachment_context(content, prepared)
-            legacy_items = legacy_attachment_items(attachment_items)
-            stored_paths = await store_proxy_attachments(session_id, legacy_items)
+            stored_paths = await store_proxy_attachments(
+                session_id,
+                attachment_partitions.legacy_items,
+            )
             content = append_attachment_paths(content, stored_paths)
         except ValueError as exc:
             await mixin._send_error(websocket, str(exc), code="INVALID_ATTACHMENT")

@@ -256,7 +256,7 @@ describe('stageActions shared helper contract', () => {
     const source = readStageActionsSource()
 
     expect(source).toMatch(/export\s+type\s+OptimisticMoveResult\b/)
-    expect(source).not.toMatch(/as\s+T\b/)
+    expect(source).not.toMatch(/as\s+unknown\s+as\s+[A-Za-z_$][\w$]*/)
   })
 
   it('test_module_is_only_authoring_site', () => {

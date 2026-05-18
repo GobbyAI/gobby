@@ -65,18 +65,22 @@ class TaskAssignmentNotifier:
         else:
             task_status = "open"
 
+        raw_ref = task_dict.get("ref")
+        task_ref = raw_ref if isinstance(raw_ref, str) and raw_ref.strip() else "(unknown-ref)"
+        raw_title = task_dict.get("title")
+        task_title = raw_title if isinstance(raw_title, str) and raw_title.strip() else "(Untitled)"
         metadata = {
             "task_id": task_dict["id"],
-            "task_ref": task_dict.get("ref"),
-            "task_title": task_dict.get("title"),
+            "task_ref": task_ref,
+            "task_title": task_title,
             "task_status": task_status,
             "task_stage": current_stage,
             "assigned_session_id": to_session_id,
         }
-        content = f"{task_dict.get('ref', task_dict['id'])} assigned: {task_dict.get('title', '')}"
+        content = f"{task_ref} assigned: {task_title}"
         log_context = {
             "task_id": task_dict["id"],
-            "task_ref": task_dict.get("ref"),
+            "task_ref": task_ref,
             "to_session_id": to_session_id,
             "project_id": task_dict.get("project_id"),
             "message_type": "task_assignment",

@@ -166,7 +166,7 @@ export interface QueuedFile {
   progress: number | null;
   attachment: ChatAttachment | null;
   error: string | null;
-  uploadAbort?: (() => void) | null;
+  uploadAbort: (() => void) | null;
 }
 
 export interface ChatSendOptions {

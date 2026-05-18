@@ -253,6 +253,8 @@ class TestLocalDatabase:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 executor.submit(query).result(timeout=5)
 
+        # CPython keeps thread-local objects alive until the worker thread is fully
+        # joined and a collection pass runs, so force GC after the executors exit.
         gc.collect()
 
         assert db.connection_count == 1  # main thread only

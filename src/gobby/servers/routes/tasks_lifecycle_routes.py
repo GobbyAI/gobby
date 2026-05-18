@@ -87,6 +87,25 @@ def register_task_lifecycle_routes(
     assignment_notifier = TaskAssignmentNotifier(server)
     claim_broadcaster = broadcast_claim_task or broadcast_task
 
+    async def broadcast_with_warning(
+        event_type: str,
+        task_dict: dict[str, Any],
+        broadcaster: BroadcastTask = broadcast_task,
+    ) -> list[dict[str, str]]:
+        try:
+            await broadcaster(event_type, task_dict)
+        except Exception as exc:
+            logger.exception(
+                "Task lifecycle committed but broadcast failed",
+                extra={
+                    "event_type": event_type,
+                    "task_id": task_dict.get("id"),
+                    "task_ref": task_dict.get("ref"),
+                },
+            )
+            return [_warning_from_exception("broadcast", exc)]
+        return []
+
     @router.post("/{task_id}/claim")
     async def claim_task(task_id: str, request_data: TaskClaimRequest) -> Any:
         """Claim a task for a session."""
@@ -119,14 +138,7 @@ def register_task_lifecycle_routes(
                     },
                 )
                 warnings.append(_warning_from_exception("assignment_notification", exc))
-            try:
-                await claim_broadcaster("task_claimed", result)
-            except Exception as exc:
-                logger.exception(
-                    "Task claim committed but broadcast failed",
-                    extra={"task_id": resolved_id, "task_ref": result.get("ref")},
-                )
-                warnings.append(_warning_from_exception("broadcast", exc))
+            warnings.extend(await broadcast_with_warning("task_claimed", result, claim_broadcaster))
             if warnings:
                 result["warnings"] = warnings
             return result
@@ -146,7 +158,9 @@ def register_task_lifecycle_routes(
             resolved_id = task.id
             released = server.task_manager.release_task_claim(resolved_id)
             result = released.to_dict()
-            await broadcast_task("task_claim_released", result)
+            warnings = await broadcast_with_warning("task_claim_released", result)
+            if warnings:
+                result["warnings"] = warnings
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -161,7 +175,9 @@ def register_task_lifecycle_routes(
             resolved_id = task.id
             updated = server.task_manager.escalate_task(resolved_id, reason=request_data.reason)
             result = updated.to_dict()
-            await broadcast_task("task_escalated", result)
+            warnings = await broadcast_with_warning("task_escalated", result)
+            if warnings:
+                result["warnings"] = warnings
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -191,7 +207,9 @@ def register_task_lifecycle_routes(
                 closed_commit_sha=body.commit_sha,
             )
             result = closed.to_dict()
-            await broadcast_task("task_closed", result)
+            warnings = await broadcast_with_warning("task_closed", result)
+            if warnings:
+                result["warnings"] = warnings
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -207,7 +225,9 @@ def register_task_lifecycle_routes(
             body = request_data or TaskReopenRequest()
             reopened = server.task_manager.reopen_task(resolved_id, reason=body.reason)
             result = reopened.to_dict()
-            await broadcast_task("task_reopened", result)
+            warnings = await broadcast_with_warning("task_reopened", result)
+            if warnings:
+                result["warnings"] = warnings
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -226,7 +246,9 @@ def register_task_lifecycle_routes(
                 reset_validation=request_data.reset_validation,
             )
             result = updated.to_dict()
-            await broadcast_task("task_de_escalated", result)
+            warnings = await broadcast_with_warning("task_de_escalated", result)
+            if warnings:
+                result["warnings"] = warnings
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

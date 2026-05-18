@@ -165,5 +165,5 @@ def sync(
 def _sync_targets_for_cli_types(types: set[str]) -> set[str]:
     targets: set[str] = set()
     for content_type in types:
-        targets.update(CONTENT_TYPE_SYNC_TARGETS[content_type])
+        targets.update(CONTENT_TYPE_SYNC_TARGETS.get(content_type, []))
     return targets
