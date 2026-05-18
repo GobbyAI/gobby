@@ -7,6 +7,7 @@ Uses ChatterboxTurboTTS for sub-200ms latency with zero-shot voice cloning.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -71,6 +72,20 @@ def _reference_availability_error(reference_audio: Path) -> str | None:
         return f"Chatterbox reference audio not found: {reference_audio}"
     if not reference_audio.is_file():
         return f"Chatterbox reference audio is not a file: {reference_audio}"
+    return None
+
+
+def _runtime_import_error() -> str | None:
+    if not _module_is_available("chatterbox"):
+        return "chatterbox not installed (uv sync --extra voice)"
+
+    try:
+        importlib.import_module("chatterbox.tts_turbo")
+    except Exception as exc:
+        message = str(exc).strip()
+        if message:
+            return f"Chatterbox runtime import failed: {message}"
+        return f"Chatterbox runtime import failed: {type(exc).__name__}"
     return None
 
 
@@ -156,8 +171,9 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._runtime_primed = False
 
     def _availability(self) -> tuple[bool, str]:
-        if not _module_is_available("chatterbox"):
-            return False, "chatterbox not installed (uv sync --extra voice)"
+        runtime_error = _runtime_import_error()
+        if runtime_error is not None:
+            return False, runtime_error
 
         reference_error = _reference_availability_error(self._reference_audio)
         if reference_error is not None:

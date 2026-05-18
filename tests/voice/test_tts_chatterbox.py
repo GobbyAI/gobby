@@ -88,6 +88,25 @@ class TestChatterboxTurboProvider:
         # Returns bool without crashing regardless of chatterbox being installed
         assert isinstance(provider.is_available, bool)
 
+    def test_runtime_import_failure_makes_provider_unavailable(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        with patch.dict(sys.modules, {"chatterbox": ModuleType("chatterbox")}):
+            with patch(
+                "gobby.voice.tts_chatterbox.importlib.import_module",
+                side_effect=OSError("Could not load this library: libtorchaudio.so"),
+            ):
+                provider = ChatterboxTurboProvider(voice_config)
+                status = provider.get_status()
+
+        assert status.available is False
+        assert (
+            status.reason == "Chatterbox runtime import failed: "
+            "Could not load this library: libtorchaudio.so"
+        )
+
     @pytest.mark.asyncio
     async def test_synthesize_stream_yields_pcm(self, voice_config: VoiceConfig) -> None:
         """Test that synthesize_stream yields correct PCM int16 bytes."""
@@ -302,7 +321,7 @@ class TestChatterboxTurboProvider:
     ) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
-        with patch.dict(sys.modules, {"chatterbox": MagicMock()}):
+        with patch.dict(sys.modules, _fake_chatterbox_turbo_modules()):
             provider = ChatterboxTurboProvider(voice_config_no_ref)
             status = provider.get_status()
 
