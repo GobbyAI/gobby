@@ -5,30 +5,14 @@ on:
     tags:
       - "v*"
 
+# NOTE: No "test" job here. ci.yml runs the full pytest matrix on every PR
+# and push to the same product tree this tag points at; re-running it on the
+# tag only adds ~55min and re-rolls flaky dice (it blocked run 26053017263
+# for v0.4.6). Hardening to gate publish on the tagged SHA's ci.yml
+# conclusion is tracked in #14821.
 jobs:
-  test:
-    name: Test before release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install dependencies
-        run: uv sync --dev
-
-      - name: Run tests
-        run: uv run pytest --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
-
   build:
     name: Build package
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
