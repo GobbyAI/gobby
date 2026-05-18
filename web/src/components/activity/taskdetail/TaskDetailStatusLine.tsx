@@ -29,17 +29,23 @@ export function TaskDetailStatusLine({
     !taskState.is_closed &&
     (taskState.is_claimed || displayState === "in_progress");
 
-  const [timeLabel, setTimeLabel] = useState(() =>
-    relativeTime(task.updated_at),
-  );
-  useEffect(() => {
-    setTimeLabel(relativeTime(task.updated_at));
-  }, [task.updated_at]);
+  const [timeSnapshot, setTimeSnapshot] = useState(() => ({
+    updatedAt: task.updated_at,
+    label: relativeTime(task.updated_at),
+  }));
+  const timeLabel =
+    timeSnapshot.updatedAt === task.updated_at
+      ? timeSnapshot.label
+      : relativeTime(task.updated_at);
 
   useEffect(() => {
     if (!isActive) return;
     const interval = window.setInterval(
-      () => setTimeLabel(relativeTime(task.updated_at)),
+      () =>
+        setTimeSnapshot({
+          updatedAt: task.updated_at,
+          label: relativeTime(task.updated_at),
+        }),
       30000,
     );
     return () => window.clearInterval(interval);

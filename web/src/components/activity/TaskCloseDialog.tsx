@@ -16,16 +16,12 @@ export function TaskCloseDialog({
 }: TaskCloseDialogProps) {
   const currentTaskId = task?.id ?? null;
   const isClosed = Boolean(task?.state?.is_closed) || task?.status === "closed";
-  const [draft, setDraft] = useState({
-    taskId: null as string | null,
-    isClosed: false,
+  const [draft, setDraft] = useState(() => ({
+    taskId: currentTaskId,
+    isClosed,
     reason: "",
     showReasonError: false,
-  });
-
-  useEffect(() => {
-    setDraft({ taskId: currentTaskId, isClosed, reason: "", showReasonError: false });
-  }, [currentTaskId, isClosed]);
+  }));
 
   const matchesCurrentTask = draft.taskId === currentTaskId && draft.isClosed === isClosed;
   const reason = matchesCurrentTask ? draft.reason : "";
