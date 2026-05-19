@@ -119,6 +119,11 @@ class HubDatabase(Protocol):
         """Open a transaction and yield a backend-neutral executor."""
         ...
 
+    @contextmanager
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
+        """Open a write-intent transaction for a typed lock target."""
+        ...
+
     def apply_migrations(self) -> None:
         """Apply pending migrations for the backing database."""
         ...
