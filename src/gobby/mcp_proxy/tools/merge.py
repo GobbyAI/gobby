@@ -59,6 +59,8 @@ _PROTECTED_PUSH_MARKERS = (
     "gh006",
 )
 _PROTECTION_PROBE_TIMEOUT_SECONDS = 30
+_GIT_NO_FF_TIER = "git_no_ff"
+_NO_FF_STRATEGIES = {"no-ff", "no_ff"}
 
 
 def _parse_github_remote(remote_url: str) -> tuple[str, str] | None:
@@ -122,6 +124,14 @@ def _protection_payload(
         "protection_unknown": protection_unknown,
         "error": error,
     }
+
+
+def _git_output(result: Any) -> str:
+    return (result.stderr or result.stdout or "").strip()
+
+
+def _strategy_requests_no_ff(strategy: str) -> bool:
+    return strategy.strip().lower() in _NO_FF_STRATEGIES
 
 
 def _parse_protection_response(
@@ -258,6 +268,118 @@ def create_merge_registry(
 
         return None
 
+    async def _merge_head_exists(wt_path: str) -> bool:
+        if git_manager is None:
+            return False
+        result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            cwd=wt_path,
+            timeout=10,
+        )
+        return result.returncode == 0
+
+    async def _rev_parse_head(cwd: str) -> str | None:
+        if git_manager is None:
+            return None
+        result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            ["rev-parse", "HEAD"],
+            cwd=cwd,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    async def _complete_direct_merge(resolution: Any, wt_path: str) -> dict[str, Any]:
+        """Land a clean direct merge when merge_start left no MERGE_HEAD."""
+        if git_manager is None:
+            return {"success": False, "error": "git_manager not configured"}
+
+        repo_path = str(getattr(git_manager, "repo_path", None) or wt_path)
+        original_branch_result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path,
+            timeout=10,
+        )
+        if original_branch_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Failed to determine current branch: {_git_output(original_branch_result)}",
+            }
+
+        original_branch = original_branch_result.stdout.strip()
+        target_branch = resolution.target_branch
+        source_branch = resolution.source_branch
+        restore_original = original_branch and original_branch != target_branch
+        strategy_name = "no-ff" if resolution.tier_used == _GIT_NO_FF_TIER else "ff-only"
+
+        try:
+            if restore_original:
+                checkout_result = await asyncio.to_thread(
+                    git_manager.run_git_command,
+                    ["checkout", target_branch],
+                    cwd=repo_path,
+                    timeout=30,
+                )
+                if checkout_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Failed to checkout target branch '{target_branch}': "
+                            f"{_git_output(checkout_result)}"
+                        ),
+                    }
+
+            merge_args = (
+                ["merge", "--no-ff", "--no-edit", source_branch]
+                if strategy_name == "no-ff"
+                else ["merge", "--ff-only", source_branch]
+            )
+            merge_result = await asyncio.to_thread(
+                git_manager.run_git_command,
+                merge_args,
+                cwd=repo_path,
+                timeout=60,
+            )
+            if merge_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Direct {strategy_name} merge failed: {_git_output(merge_result)}",
+                    "merge_strategy": strategy_name,
+                }
+
+            merge_sha = await _rev_parse_head(repo_path)
+            if not merge_sha:
+                return {
+                    "success": False,
+                    "error": "Direct merge completed but HEAD could not be resolved",
+                    "merge_strategy": strategy_name,
+                }
+
+            return {
+                "success": True,
+                "merge_sha": merge_sha,
+                "merge_strategy": strategy_name,
+                "merge_output": (merge_result.stdout or merge_result.stderr or "").strip(),
+            }
+        finally:
+            if restore_original:
+                restore_result = await asyncio.to_thread(
+                    git_manager.run_git_command,
+                    ["checkout", original_branch],
+                    cwd=repo_path,
+                    timeout=30,
+                )
+                if restore_result.returncode != 0:
+                    logger.warning(
+                        "Failed to restore branch %s after direct merge: %s",
+                        original_branch,
+                        _git_output(restore_result),
+                    )
+
     @registry.tool(
         name="merge_start",
         description="Start a merge operation with AI-powered conflict resolution.",
@@ -293,8 +415,13 @@ def create_merge_registry(
                 source_branch=source_branch,
                 target_branch=target_branch,
             )
+            no_ff_requested = _strategy_requests_no_ff(strategy)
             if existing:
-                existing_response = _existing_resolution_start_response(existing)
+                existing_response = (
+                    None
+                    if no_ff_requested and existing.status == "resolved"
+                    else _existing_resolution_start_response(existing)
+                )
                 if existing_response is not None:
                     return existing_response
                 resolution = existing
@@ -320,7 +447,11 @@ def create_merge_registry(
                     status="pending",
                 )
                 if not created:
-                    existing_response = _existing_resolution_start_response(resolution)
+                    existing_response = (
+                        None
+                        if no_ff_requested and resolution.status == "resolved"
+                        else _existing_resolution_start_response(resolution)
+                    )
                     if existing_response is not None:
                         return existing_response
 
@@ -354,10 +485,11 @@ def create_merge_registry(
             )
 
             # Update resolution with result
+            tier_used = _GIT_NO_FF_TIER if result.success and no_ff_requested else result.tier.value
             merge_storage.update_resolution(
                 resolution_id=resolution.id,
                 status="resolved" if result.success else "pending",
-                tier_used=result.tier.value if result.success else None,
+                tier_used=tier_used if result.success else None,
             )
 
             # Create conflict records if needed
@@ -374,7 +506,7 @@ def create_merge_registry(
             return {
                 "success": result.success,
                 "resolution_id": resolution.id,
-                "tier": result.tier.value,
+                "tier": tier_used,
                 "needs_human_review": result.needs_human_review,
                 "conflicts": [{"file": c.get("file", "")} for c in result.unresolved_conflicts],
                 "resolved_files": result.resolved_files,
@@ -611,6 +743,38 @@ def create_merge_registry(
                     "unmerged_files": unmerged,
                 }
 
+            merge_in_progress = await _merge_head_exists(wt_path)
+            if not merge_in_progress:
+                if written:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Cannot complete merge: resolved files were applied but git has no "
+                            "MERGE_HEAD"
+                        ),
+                    }
+
+                direct_result = await _complete_direct_merge(resolution, wt_path)
+                if not direct_result["success"]:
+                    return direct_result
+
+                updated = merge_storage.update_resolution(
+                    resolution_id=resolution_id,
+                    status="resolved",
+                    tier_used=resolution.tier_used or "manual",
+                )
+
+                return {
+                    "success": True,
+                    "resolution": updated.to_dict() if updated else None,
+                    "message": "Merge completed successfully",
+                    "files_merged": written,
+                    "merge_sha": direct_result["merge_sha"],
+                    "commit_sha": direct_result["merge_sha"],
+                    "merge_strategy": direct_result["merge_strategy"],
+                    "direct_merge": True,
+                }
+
             commit_result = await asyncio.to_thread(
                 git_manager.run_git_command,
                 ["commit", "--no-edit"],
@@ -620,11 +784,12 @@ def create_merge_registry(
             if commit_result.returncode != 0:
                 return {
                     "success": False,
-                    "error": (
-                        f"git commit failed: "
-                        f"{(commit_result.stderr or commit_result.stdout).strip()}"
-                    ),
+                    "error": f"git commit failed: {_git_output(commit_result)}",
                 }
+
+            merge_sha = await _rev_parse_head(wt_path)
+            if not merge_sha:
+                return {"success": False, "error": "Merge committed but HEAD could not be resolved"}
 
             updated = merge_storage.update_resolution(
                 resolution_id=resolution_id,
@@ -637,6 +802,9 @@ def create_merge_registry(
                 "resolution": updated.to_dict() if updated else None,
                 "message": "Merge completed successfully",
                 "files_merged": written,
+                "merge_sha": merge_sha,
+                "commit_sha": merge_sha,
+                "direct_merge": False,
             }
 
         except Exception as e:

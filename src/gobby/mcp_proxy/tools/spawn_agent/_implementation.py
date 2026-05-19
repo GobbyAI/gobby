@@ -538,6 +538,7 @@ async def spawn_agent_impl(
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
+    code_index_preflight_warning: dict[str, str] | None = None
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
@@ -548,20 +549,15 @@ async def spawn_agent_impl(
             except Exception as e:
                 reason = str(e)
                 logger.warning(
-                    "Code index preflight failed for isolated agent cwd=%s: %s",
+                    "Continuing isolated spawn after code index preflight failed "
+                    "for cwd=%s: %s",
                     isolation_ctx.cwd,
                     reason,
                 )
-                # Keep code_index preflight failures structured so callers can distinguish
-                # isolation failures from normal spawn failures without parsing text.
-                return {
-                    "success": False,
-                    "error": "code_index_preflight_failed",
+                code_index_preflight_warning = {
+                    "preflight": "code_index",
+                    "cwd": isolation_ctx.cwd,
                     "message": reason,
-                    "details": {
-                        "preflight": "code_index",
-                        "cwd": isolation_ctx.cwd,
-                    },
                 }
 
     # 8. Build enhanced prompt with isolation context
@@ -590,6 +586,10 @@ async def spawn_agent_impl(
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
+    if code_index_preflight_warning is not None:
+        effective_initial_variables["code_index_preflight_warning"] = (
+            code_index_preflight_warning
+        )
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills
@@ -870,7 +870,7 @@ async def spawn_agent_impl(
             "reasoning": reasoning.to_dict(),
         }
 
-    return {
+    response = {
         "success": True,
         "run_id": run_id,
         "child_session_id": spawn_result.child_session_id,
@@ -887,3 +887,6 @@ async def spawn_agent_impl(
         "message": spawn_result.message,
         "reasoning": reasoning.to_dict(),
     }
+    if code_index_preflight_warning is not None:
+        response["warnings"] = [code_index_preflight_warning]
+    return response

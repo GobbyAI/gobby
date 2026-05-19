@@ -329,6 +329,96 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
     assert artifacts.clone_id is None
 
 
+def test_successful_merge_cleanup_defers_active_agent_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Merged while agent still exits",
+        category="code",
+        task_type="task",
+    )
+    worktree_path = tmp_path / "active-worktree"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-active-worktree",
+        worktree_path=str(worktree_path),
+        base_branch="0.4.7",
+        task_id=task.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="abc123",
+    )
+
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="merge-parent",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id="merge-child",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+        parent_session_id=parent.id,
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        provider="claude",
+        prompt="merge",
+        task_id=task.id,
+        run_id="run-active-merge-cleanup",
+    )
+    run_manager.start(run.id)
+    run_manager.update_runtime(run.id, worktree_id=worktree.id)
+
+    class ExplodingWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("active agent worktree must not be deleted")
+
+    monkeypatch.setattr(controls, "WorktreeGitManager", ExplodingWorktreeGitManager)
+
+    def fail_branch_cleanup(*_args: object, **_kwargs: object) -> tuple[int, list[str]]:
+        raise AssertionError("branch cleanup must wait while an agent owns the worktree")
+
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", fail_branch_cleanup)
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        task.id,
+        project_id=sample_project["id"],
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].deferred is True
+    assert artifacts[0].deleted is False
+    assert worktree_path.exists()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
+    stored = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert stored.worktree_id == worktree.id
+    assert stored.worktree_path == str(worktree_path)
+
+
 @pytest.mark.asyncio
 async def test_clean_force_resets_runtime_state_without_artifacts(
     temp_db,
