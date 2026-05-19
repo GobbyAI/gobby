@@ -318,6 +318,51 @@ def list_automation_candidates(
     return [task for task in tasks if not is_blocked_by_deps(task)]
 
 
+def sweep_stale_claims(
+    db: DatabaseProtocol,
+    *,
+    project_id: str | None = None,
+) -> int:
+    """Release task claims held by sessions that are no longer active.
+
+    A daemon restart kills agent sessions without releasing their task
+    claims. ``list_automation_candidates`` requires
+    ``claimed_by_session_id IS NULL``, so a claim held by a dead session
+    would otherwise wedge that task out of dispatch forever. Mirrors
+    ``sweep_expired_leases`` for the dispatch mutex: a claim is stale when
+    no ``sessions`` row with that id is still ``active``.
+    """
+    now = datetime.now(UTC).isoformat()
+    params: list[Any] = [now]
+    project_filter = ""
+    if project_id is not None:
+        project_filter = "AND project_id = ?"
+        params.append(project_id)
+
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE tasks
+               SET claimed_by_session_id = NULL,
+                   assignee = NULL,
+                   updated_at = ?
+             WHERE allow_automation = 1
+               AND closed_at IS NULL
+               AND escalated_at IS NULL
+               AND COALESCE(is_escalated, 0) = 0
+               AND claimed_by_session_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM sessions s
+                    WHERE s.id = tasks.claimed_by_session_id
+                      AND s.status = 'active'
+               )
+               {project_filter}
+            """,  # nosec B608 # project_filter is static SQL selected above.
+            tuple(params),
+        )
+        return cursor.rowcount
+
+
 def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     """Find a task by ID prefix. Returns None if no match or multiple matches."""
     # First try exact match

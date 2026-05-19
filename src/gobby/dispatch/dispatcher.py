@@ -51,7 +51,12 @@ from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
 )
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._crud import get_task, list_automation_candidates, update_task
+from gobby.storage.tasks._crud import (
+    get_task,
+    list_automation_candidates,
+    sweep_stale_claims,
+    update_task,
+)
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
@@ -133,6 +138,9 @@ async def run_heartbeat(
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         sweep_expired_leases(mutex_storage)
+        reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
+        if reclaimed:
+            logger.info("Dispatcher startup reclaimed %d task(s) from dead sessions", reclaimed)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = list_automation_candidates(resolved_db, project_id=project_id)
