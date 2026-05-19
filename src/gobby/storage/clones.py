@@ -7,6 +7,7 @@ Clones are full repository copies while worktrees share a single .git directory.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -48,7 +49,7 @@ class Clone:
     workspace_role: str = "task"
 
     @classmethod
-    def from_row(cls, row: Any) -> Clone:
+    def from_row(cls, row: Mapping[str, Any]) -> Clone:
         """Create Clone from database row."""
 
         def _safe_get(field: str) -> Any:

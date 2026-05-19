@@ -31,10 +31,14 @@ def save_message(
     with db.transaction() as conn:
         if seq is None:
             row = conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE conversation_id = ?",
+                """
+                SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+                  FROM chat_messages
+                 WHERE conversation_id = ?
+                """,
                 (conversation_id,),
             ).fetchone()
-            seq = row[0]
+            seq = row["next_seq"]
         conn.execute(
             """INSERT INTO chat_messages (
                    id, conversation_id, role, content, tool_calls_json,

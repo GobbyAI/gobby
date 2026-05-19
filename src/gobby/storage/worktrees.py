@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -43,7 +44,7 @@ class Worktree:
     workspace_role: str = "task"
 
     @classmethod
-    def from_row(cls, row: Any) -> Worktree:
+    def from_row(cls, row: Mapping[str, Any]) -> Worktree:
         """Create Worktree from database row."""
 
         def _safe_get(field: str) -> Any:

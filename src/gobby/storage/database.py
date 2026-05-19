@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -81,11 +81,11 @@ class DatabaseProtocol(Protocol):
         """Execute SQL statement with multiple parameter sets."""
         ...
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Execute query and fetch one row."""
         ...
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Execute query and fetch all rows."""
         ...
 
@@ -273,19 +273,19 @@ class LocalDatabase:
         """Execute SQL statement with multiple parameter sets."""
         return self.connection.executemany(sql, params_list)
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Execute query and fetch one row."""
         cursor = self.execute(sql, params)
         try:
-            return cast(sqlite3.Row | None, cursor.fetchone())
+            return cast(Mapping[str, Any] | None, cursor.fetchone())
         finally:
             cursor.close()
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Execute query and fetch all rows."""
         cursor = self.execute(sql, params)
         try:
-            return cursor.fetchall()
+            return cast(list[Mapping[str, Any]], cursor.fetchall())
         finally:
             cursor.close()
 

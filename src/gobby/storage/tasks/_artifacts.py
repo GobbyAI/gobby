@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -67,7 +67,7 @@ class TaskArtifacts:
     updated_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> TaskArtifacts:
+    def from_row(cls, row: Mapping[str, Any]) -> TaskArtifacts:
         return cls(
             task_id=row["task_id"],
             plan_file_path=row["plan_file_path"],

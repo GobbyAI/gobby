@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -413,7 +413,7 @@ class TokenEventStore:
         return " ".join(clauses), params
 
     @staticmethod
-    def _row_to_event_dict(row: Any) -> dict[str, Any]:
+    def _row_to_event_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         metadata = _row_value(row, "metadata")
         parsed_metadata: dict[str, Any] | None = None
         if isinstance(metadata, str) and metadata:

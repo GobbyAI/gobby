@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -46,7 +46,7 @@ class SkillMetadataMixin:
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
 
-    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
@@ -54,9 +54,9 @@ class SkillMetadataMixin:
         """
         with self.db.transaction() as conn:
             row = conn.execute(query, params).fetchone()
-            return cast(sqlite3.Row | None, row)
+            return cast(Mapping[str, Any] | None, row)
 
-    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
@@ -64,7 +64,7 @@ class SkillMetadataMixin:
         """
         with self.db.transaction() as conn:
             rows = conn.execute(query, params).fetchall()
-            return cast(list[sqlite3.Row], rows)
+            return cast(list[Mapping[str, Any]], rows)
 
     def create_skill(
         self,

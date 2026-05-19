@@ -1,5 +1,5 @@
 import logging
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -20,7 +20,7 @@ class TaskDependency:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskDependency":
+    def from_row(cls, row: Mapping[str, Any]) -> "TaskDependency":
         return cls(
             id=row["id"],
             task_id=row["task_id"],

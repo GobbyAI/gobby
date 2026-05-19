@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -65,7 +65,7 @@ class Symbol:
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Symbol:
+    def from_row(cls, row: Mapping[str, Any]) -> Symbol:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -157,7 +157,7 @@ class IndexedFile:
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> IndexedFile:
+    def from_row(cls, row: Mapping[str, Any]) -> IndexedFile:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -202,7 +202,7 @@ class IndexedProject:
     index_duration_ms: int = 0
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> IndexedProject:
+    def from_row(cls, row: Mapping[str, Any]) -> IndexedProject:
         return cls(
             id=row["id"],
             root_path=row["root_path"],

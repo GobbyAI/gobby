@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -37,7 +38,7 @@ class GitHubTriageConfig:
     updated_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubTriageConfig:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageConfig:
         repositories = json.loads(row["repositories_json"] or "[]")
         return cls(
             project_id=row["project_id"],
@@ -94,7 +95,7 @@ class GitHubTriageDelivery:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubTriageDelivery:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageDelivery:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -138,7 +139,7 @@ class GitHubIssueTriageRecord:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubIssueTriageRecord:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubIssueTriageRecord:
         labels = json.loads(row["labels_json"] or "[]")
         return cls(
             id=row["id"],

@@ -191,8 +191,8 @@ class TaskFTS5Searcher:
             return []
 
         # Normalize scores
-        ids = [str(row[0]) for row in rows]
-        raw_scores = [float(row[1]) for row in rows]
+        ids = [str(row["id"]) for row in rows]
+        raw_scores = [float(row["rank"]) for row in rows]
         positive = [-s for s in raw_scores]
         max_score = max(positive) if positive else 1.0
         if max_score == 0:

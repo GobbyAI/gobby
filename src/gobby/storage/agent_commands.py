@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ class AgentCommand:
     completed_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> AgentCommand:
+    def from_row(cls, row: Mapping[str, Any]) -> AgentCommand:
         """Create instance from database row."""
         return cls(
             id=row["id"],
