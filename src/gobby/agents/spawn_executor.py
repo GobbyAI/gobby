@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
+    QwenSandboxResolver,
     SandboxConfig,
     compute_sandbox_paths,
 )
@@ -336,17 +337,6 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
-    # Build command for fresh Gemini session (not resume)
-    # Session context is injected via additionalContext at SessionStart by the daemon
-    cmd, _cmd_env = build_cli_command(
-        cli="gemini",
-        prompt=request.prompt,
-        auto_approve=True,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-    )
-
-    # Resolve sandbox config if provided
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if request.sandbox_config and request.sandbox_config.enabled:
@@ -356,8 +346,17 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
             workspace_path=request.cwd,
         )
         sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
-        # Append sandbox args to command
-        cmd.extend(sandbox_args)
+
+    # Build command for fresh Gemini session (not resume)
+    # Session context is injected via additionalContext at SessionStart by the daemon.
+    cmd, _cmd_env = build_cli_command(
+        cli="gemini",
+        prompt=request.prompt,
+        auto_approve=True,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
+    )
 
     # Merge env vars: spawn context + sandbox
     env = spawn_context.env_vars.copy()
@@ -453,24 +452,24 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if request.sandbox_config and request.sandbox_config.enabled:
+        resolver = QwenSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=request.sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
     )
-
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
-        resolver = GeminiSandboxResolver()
-        paths = compute_sandbox_paths(
-            config=request.sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
-        cmd.extend(sandbox_args)
 
     env = spawn_context.env_vars.copy()
     if sandbox_env:

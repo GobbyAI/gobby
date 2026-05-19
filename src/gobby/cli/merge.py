@@ -129,8 +129,7 @@ def merge_start(
     manager = get_merge_manager()
 
     try:
-        # Create resolution record with strategy
-        resolution = manager.create_resolution(
+        resolution, _created = manager.get_or_create_resolution(
             worktree_id=worktree_id,
             source_branch=source_branch,
             target_branch=target_branch,

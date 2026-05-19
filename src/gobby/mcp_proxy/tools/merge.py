@@ -228,6 +228,36 @@ def create_merge_registry(
         description="AI-powered merge conflict resolution - start merges, resolve conflicts, and apply resolutions",
     )
 
+    def _existing_resolution_start_response(resolution: Any) -> dict[str, Any] | None:
+        conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
+        unresolved_conflicts = [
+            conflict for conflict in conflicts if conflict.status != ConflictStatus.RESOLVED.value
+        ]
+
+        if resolution.status == "resolved":
+            return {
+                "success": True,
+                "resolution_id": resolution.id,
+                "tier": resolution.tier_used,
+                "needs_human_review": False,
+                "conflicts": [],
+                "resolved_files": [],
+                "reused_resolution": True,
+            }
+
+        if resolution.status == "pending" and conflicts:
+            return {
+                "success": False,
+                "resolution_id": resolution.id,
+                "tier": resolution.tier_used,
+                "needs_human_review": bool(unresolved_conflicts),
+                "conflicts": [{"file": conflict.file_path} for conflict in unresolved_conflicts],
+                "resolved_files": [],
+                "reused_resolution": True,
+            }
+
+        return None
+
     @registry.tool(
         name="merge_start",
         description="Start a merge operation with AI-powered conflict resolution.",
@@ -258,13 +288,41 @@ def create_merge_registry(
 
         resolution = None
         try:
-            # Create resolution record
-            resolution = merge_storage.create_resolution(
+            existing = merge_storage.get_resolution_for_merge(
                 worktree_id=worktree_id,
                 source_branch=source_branch,
                 target_branch=target_branch,
-                status="pending",
             )
+            if existing:
+                existing_response = _existing_resolution_start_response(existing)
+                if existing_response is not None:
+                    return existing_response
+                resolution = existing
+            else:
+                active = merge_storage.get_active_resolution(worktree_id)
+                if active and (
+                    active.source_branch != source_branch or active.target_branch != target_branch
+                ):
+                    return {
+                        "success": False,
+                        "error": (
+                            "Active merge resolution already exists for worktree "
+                            f"'{worktree_id}' with source '{active.source_branch}' "
+                            f"and target '{active.target_branch}'"
+                        ),
+                        "resolution_id": active.id,
+                    }
+
+                resolution, created = merge_storage.get_or_create_resolution(
+                    worktree_id=worktree_id,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    status="pending",
+                )
+                if not created:
+                    existing_response = _existing_resolution_start_response(resolution)
+                    if existing_response is not None:
+                        return existing_response
 
             # Attempt merge resolution
             from gobby.worktrees.merge import ResolutionTier

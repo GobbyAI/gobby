@@ -53,6 +53,7 @@ _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
 )
 logger = logging.getLogger(__name__)
+_GEMINI_INCLUDE_DIRECTORY_LIMIT = 5
 
 
 def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
@@ -318,6 +319,25 @@ class GeminiSandboxResolver(SandboxResolver):
         network_suffix = "open" if paths.allow_external_network else "proxied"
         return f"{mode_prefix}-{network_suffix}"
 
+    @staticmethod
+    def _external_write_paths(paths: ResolvedSandboxPaths) -> list[str]:
+        """Return deduped writable paths that sit outside the workspace root."""
+        workspace = _normalize_sandbox_path(paths.workspace_path)
+        external_paths: list[str] = []
+        seen: set[str] = set()
+
+        for raw_path in paths.write_paths:
+            resolved_path = _normalize_sandbox_path(raw_path, base=workspace)
+            if resolved_path == workspace or resolved_path.is_relative_to(workspace):
+                continue
+            path_text = str(resolved_path)
+            if path_text in seen:
+                continue
+            seen.add(path_text)
+            external_paths.append(path_text)
+
+        return external_paths
+
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths
     ) -> tuple[list[str], dict[str, str]]:
@@ -325,6 +345,16 @@ class GeminiSandboxResolver(SandboxResolver):
             return ([], {})
 
         args = ["-s"]
+        include_dirs = self._external_write_paths(paths)
+        if len(include_dirs) > _GEMINI_INCLUDE_DIRECTORY_LIMIT:
+            raise ValueError(
+                "Gemini/Qwen sandbox supports at most "
+                f"{_GEMINI_INCLUDE_DIRECTORY_LIMIT} external "
+                f"--include-directories paths; got {len(include_dirs)}"
+            )
+        for path in include_dirs:
+            args.extend(["--include-directories", path])
+
         env = {"SEATBELT_PROFILE": self.seatbelt_profile(config, paths)}
 
         return (args, env)
@@ -544,3 +574,13 @@ def _resolve_git_metadata_path(workspace: Path, raw_path: str) -> str | None:
         return str(path.resolve(strict=False))
     except OSError:
         return str(path)
+
+
+def _normalize_sandbox_path(raw_path: str, *, base: Path | None = None) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() and base is not None:
+        path = base / path
+    try:
+        return path.resolve(strict=False)
+    except OSError:
+        return path

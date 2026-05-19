@@ -10,6 +10,9 @@ from typing import Any, Literal
 from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _release_current_agent_dispatch_mutex,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
 from gobby.storage.delivery import TaskDeliveryStateManager
@@ -174,10 +177,17 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Complete a stage according to its review policy."""
         resolved_id = _resolve_task(ctx, task_id)
+        resolved_session_id = _session_id(ctx)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
         stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,
             stage_name,
-            by_session_id=_session_id(ctx),
+            by_session_id=resolved_session_id,
             commit_sha=commit_sha,
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
@@ -208,6 +218,13 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Return a failed in-progress stage to ready or escalate after caps."""
         resolved_id = _resolve_task(ctx, task_id)
+        resolved_session_id = _session_id(ctx)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
         cited_ids = (
             [_resolve_task(ctx, cited_subtask) for cited_subtask in cited_subtasks]
             if cited_subtasks
@@ -218,7 +235,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             stage_name,
             reason=reason,
             needs_human=needs_human,
-            by_session_id=_session_id(ctx),
+            by_session_id=resolved_session_id,
             cited_subtasks=cited_ids,
         )
         return _operation_response(resolved_id, stage)
@@ -325,18 +342,32 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             last_error="" if verdict == "approve" else findings_body,
         )
         if verdict == "approve":
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.approve_review(
                 resolved_id,
                 "pr",
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
                 notes=findings_body,
             )
         elif verdict == "request_changes":
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.reject_review(
                 resolved_id,
                 "pr",
                 reason=findings_body,
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
                 notes=findings_body,
             )
         else:
@@ -452,12 +483,19 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 merge_report_ref=report_ref or failure_reason,
                 last_error=failure_reason,
             )
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.fail_stage(
                 resolved_id,
                 "merge",
                 reason=failure_reason,
                 needs_human=False,
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
             )
             return _operation_response(resolved_id, stage)
 
@@ -470,10 +508,17 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             merge_report_ref=report_ref or "",
             last_error="",
         )
+        resolved_session_id = _session_id(ctx)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
         stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,
             "merge",
-            by_session_id=_session_id(ctx),
+            by_session_id=resolved_session_id,
             commit_sha=merge_sha,
         )
         try:
