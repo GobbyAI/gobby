@@ -1,8 +1,7 @@
-"""Task search module using FTS5.
+"""Task search module using dialect-aware keyword backends.
 
-Provides full-text search for tasks using SQLite FTS5 virtual tables.
-The tasks_fts table is content-synced with triggers — no manual index
-management needed.
+Provides full-text search for tasks using SQLite FTS5 or PostgreSQL pg_search
+BM25 through the hub database seam.
 """
 
 from __future__ import annotations
@@ -10,15 +9,33 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.search.fts5 import FTS5SearchBackend, sanitize_fts_query
+from gobby.search.keyword import (
+    BM25SearchBackend,
+    FTS5SearchBackend,
+    KeywordSearchBackend,
+    SearchHit,
+    SearchMode,
+    fetch_all,
+    pick_search_backend,
+    placeholder,
+    row_value,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
-# bm25 weights: title(10), description(5), labels(2), task_type(1), category(2)
-_TASK_BM25_WEIGHTS = (10.0, 5.0, 2.0, 1.0, 2.0)
+__all__ = [
+    "BM25SearchBackend",
+    "FTS5SearchBackend",
+    "KeywordSearchBackend",
+    "SearchHit",
+    "SearchMode",
+    "TaskFTS5Searcher",
+    "pick_search_backend",
+    "search_tasks",
+]
 
 
 def search_tasks(
@@ -57,13 +74,7 @@ class TaskFTS5Searcher:
 
     def __init__(self, db: DatabaseProtocol):
         self._db = db
-        self._backend = FTS5SearchBackend(
-            db=db,
-            fts_table="tasks_fts",
-            content_table="tasks",
-            id_column="id",
-            weights=_TASK_BM25_WEIGHTS,
-        )
+        self._backend = pick_search_backend(db, "tasks")
 
     def search(
         self,
@@ -93,123 +104,247 @@ class TaskFTS5Searcher:
         Returns:
             List of (task_id, normalized_score) tuples, highest score first.
         """
+        fetch_limit = top_k * 3 if min_score > 0 else top_k
+        if current_stage_state:
+            hits = self._search_with_stage_state(
+                query=query,
+                limit=fetch_limit,
+                project_id=project_id,
+                current_stage_state=current_stage_state,
+                task_type=task_type,
+                priority=priority,
+                parent_task_id=parent_task_id,
+                category=category,
+            )
+        else:
+            filters = {
+                "project_id": project_id,
+                "task_type": task_type,
+                "priority": priority,
+                "parent_task_id": parent_task_id,
+                "category": category,
+            }
+            hits = self._backend.search(query, fetch_limit, filters=filters)
+
+        results: list[tuple[str, float]] = []
+        for hit in hits:
+            if hit.score < min_score:
+                continue
+            results.append((hit.id, hit.score))
+            if len(results) >= top_k:
+                break
+        return results
+
+    def _search_with_stage_state(
+        self,
+        *,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        current_stage_state: str | list[str],
+        task_type: str | None,
+        priority: int | None,
+        parent_task_id: str | None,
+        category: str | None,
+    ) -> list[SearchHit]:
+        if getattr(self._db, "dialect", "sqlite") == "postgres":
+            return self._search_postgres_with_stage_state(
+                query=query,
+                limit=limit,
+                project_id=project_id,
+                current_stage_state=current_stage_state,
+                task_type=task_type,
+                priority=priority,
+                parent_task_id=parent_task_id,
+                category=category,
+            )
+        return self._search_sqlite_with_stage_state(
+            query=query,
+            limit=limit,
+            project_id=project_id,
+            current_stage_state=current_stage_state,
+            task_type=task_type,
+            priority=priority,
+            parent_task_id=parent_task_id,
+            category=category,
+        )
+
+    def _search_sqlite_with_stage_state(
+        self,
+        *,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        current_stage_state: str | list[str],
+        task_type: str | None,
+        priority: int | None,
+        parent_task_id: str | None,
+        category: str | None,
+    ) -> list[SearchHit]:
+        from gobby.search.fts5 import sanitize_fts_query
+
         fts_query = sanitize_fts_query(query)
         if not fts_query:
             return []
 
-        weights_csv = ", ".join(str(w) for w in _TASK_BM25_WEIGHTS)
-        bm25_expr = f"bm25(tasks_fts, {weights_csv})"
-
-        conditions = ["tasks_fts MATCH ?"]
-        params: list[Any] = [fts_query]
-
-        if project_id:
-            conditions.append("t.project_id = ?")
-            params.append(project_id)
-
-        if current_stage_state:
-            raw_states = (
-                [current_stage_state]
-                if isinstance(current_stage_state, str)
-                else list(current_stage_state)
-            )
-            states = [
-                str(state).strip().lower().replace("-", "_")
-                for state in raw_states
-                if str(state).strip()
-            ]
-            if states:
-                placeholders = ", ".join("?" for _ in states)
-                stage_clauses = [
-                    f"""
-                    EXISTS (
-                        SELECT 1
-                          FROM task_stage_states current_stage
-                         WHERE current_stage.task_id = t.id
-                           AND current_stage.state != 'done'
-                           AND current_stage.position = (
-                               SELECT MIN(stage_scan.position)
-                                 FROM task_stage_states stage_scan
-                                WHERE stage_scan.task_id = t.id
-                                  AND stage_scan.state != 'done'
-                           )
-                           AND current_stage.state IN ({placeholders})
-                    )
-                    """
-                ]
-                if "ready" in states:
-                    stage_clauses.append(
-                        """
-                        NOT EXISTS (
-                            SELECT 1
-                              FROM task_stage_states stage_any
-                             WHERE stage_any.task_id = t.id
-                        )
-                        """
-                    )
-                conditions.append(f"({' OR '.join(stage_clauses)})")
-                params.extend(states)
-                conditions.append("t.closed_at IS NULL")
-
-        if task_type:
-            conditions.append("t.task_type = ?")
-            params.append(task_type)
-
-        if priority is not None:
-            conditions.append("t.priority = ?")
-            params.append(priority)
-
-        if parent_task_id:
-            conditions.append("t.parent_task_id = ?")
-            params.append(parent_task_id)
-
-        if category:
-            conditions.append("t.category = ?")
-            params.append(category)
-
-        where = " AND ".join(conditions)
-        # Fetch extra to allow for min_score filtering
-        fetch_limit = top_k * 3 if min_score > 0 else top_k
-        params.append(fetch_limit)
+        params: list[Any] = []
+        conditions = [f"tasks_fts MATCH {self._add_param(params, fts_query)}"]
+        self._append_common_filters(
+            params=params,
+            conditions=conditions,
+            project_id=project_id,
+            task_type=task_type,
+            priority=priority,
+            parent_task_id=parent_task_id,
+            category=category,
+        )
+        self._append_stage_filter(params, conditions, current_stage_state)
+        limit_placeholder = self._add_param(params, limit)
 
         sql = f"""
-            SELECT t.id, {bm25_expr} as rank
-            FROM tasks_fts fts
-            JOIN tasks t ON t.rowid = fts.rowid
-            WHERE {where}
-            ORDER BY rank
-            LIMIT ?
+            SELECT t.id AS id,
+                   bm25(tasks_fts, 10.0, 5.0, 2.0, 1.0, 2.0) AS score
+              FROM tasks_fts fts
+              JOIN tasks t ON t.rowid = fts.rowid
+             WHERE {" AND ".join(conditions)}
+             ORDER BY score ASC, id ASC
+             LIMIT {limit_placeholder}
         """
-
         try:
-            rows = self._db.fetchall(sql, tuple(params))
+            rows = fetch_all(self._db, sql, params)
         except Exception as e:
             logger.warning(f"FTS5 task search failed: {e}")
             return []
+        scores = _normalize_fts_scores([float(row_value(row, "score")) for row in rows])
+        return [
+            SearchHit(id=str(row_value(row, "id")), score=score)
+            for row, score in zip(rows, scores, strict=False)
+        ]
 
-        if not rows:
+    def _search_postgres_with_stage_state(
+        self,
+        *,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        current_stage_state: str | list[str],
+        task_type: str | None,
+        priority: int | None,
+        parent_task_id: str | None,
+        category: str | None,
+    ) -> list[SearchHit]:
+        bm25_query = " ".join(ch if ch.isalnum() or ch in (" ", "_", "-") else " " for ch in query)
+        bm25_query = " ".join(bm25_query.split())
+        if not bm25_query:
             return []
 
-        # Normalize scores
-        ids = [str(row[0]) for row in rows]
-        raw_scores = [float(row[1]) for row in rows]
-        positive = [-s for s in raw_scores]
-        max_score = max(positive) if positive else 1.0
-        if max_score == 0:
-            normalized = [0.0] * len(positive)
-        else:
-            normalized = [s / max_score for s in positive]
+        params: list[Any] = []
+        query_placeholder = self._add_param(params, bm25_query)
+        conditions = [f"(t.title @@@ {query_placeholder} OR t.description @@@ {query_placeholder})"]
+        self._append_common_filters(
+            params=params,
+            conditions=conditions,
+            project_id=project_id,
+            task_type=task_type,
+            priority=priority,
+            parent_task_id=parent_task_id,
+            category=category,
+        )
+        self._append_stage_filter(params, conditions, current_stage_state)
+        limit_placeholder = self._add_param(params, limit)
 
-        # Apply min_score filter and limit
-        results: list[tuple[str, float]] = []
-        for task_id, score in zip(ids, normalized, strict=False):
-            if score < min_score:
-                continue
-            results.append((task_id, score))
-            if len(results) >= top_k:
-                break
+        sql = f"""
+            SELECT t.id AS id, pdb.score(t.id) AS score
+              FROM tasks t
+             WHERE {" AND ".join(conditions)}
+             ORDER BY score DESC, id ASC
+             LIMIT {limit_placeholder}
+        """
+        try:
+            rows = fetch_all(self._db, sql, params)
+        except Exception as e:
+            logger.warning(f"pg_search task search failed: {e}")
+            return []
+        scores = _normalize_positive_scores([float(row_value(row, "score")) for row in rows])
+        return [
+            SearchHit(id=str(row_value(row, "id")), score=score)
+            for row, score in zip(rows, scores, strict=False)
+        ]
 
-        return results
+    def _append_common_filters(
+        self,
+        *,
+        params: list[Any],
+        conditions: list[str],
+        project_id: str | None,
+        task_type: str | None,
+        priority: int | None,
+        parent_task_id: str | None,
+        category: str | None,
+    ) -> None:
+        if project_id:
+            conditions.append(f"t.project_id = {self._add_param(params, project_id)}")
+        if task_type:
+            conditions.append(f"t.task_type = {self._add_param(params, task_type)}")
+        if priority is not None:
+            conditions.append(f"t.priority = {self._add_param(params, priority)}")
+        if parent_task_id:
+            conditions.append(f"t.parent_task_id = {self._add_param(params, parent_task_id)}")
+        if category:
+            conditions.append(f"t.category = {self._add_param(params, category)}")
+
+    def _append_stage_filter(
+        self,
+        params: list[Any],
+        conditions: list[str],
+        current_stage_state: str | list[str],
+    ) -> None:
+        raw_states = (
+            [current_stage_state]
+            if isinstance(current_stage_state, str)
+            else list(current_stage_state)
+        )
+        states = [
+            str(state).strip().lower().replace("-", "_")
+            for state in raw_states
+            if str(state).strip()
+        ]
+        if not states:
+            return
+        state_placeholders = ", ".join(self._add_param(params, state) for state in states)
+        stage_clauses = [
+            f"""
+            EXISTS (
+                SELECT 1
+                  FROM task_stage_states current_stage
+                 WHERE current_stage.task_id = t.id
+                   AND current_stage.state != 'done'
+                   AND current_stage.position = (
+                       SELECT MIN(stage_scan.position)
+                         FROM task_stage_states stage_scan
+                        WHERE stage_scan.task_id = t.id
+                          AND stage_scan.state != 'done'
+                   )
+                   AND current_stage.state IN ({state_placeholders})
+            )
+            """
+        ]
+        if "ready" in states:
+            stage_clauses.append(
+                """
+                NOT EXISTS (
+                    SELECT 1
+                      FROM task_stage_states stage_any
+                     WHERE stage_any.task_id = t.id
+                )
+                """
+            )
+        conditions.append(f"({' OR '.join(stage_clauses)})")
+        conditions.append("t.closed_at IS NULL")
+
+    def _add_param(self, params: list[Any], value: Any) -> str:
+        params.append(value)
+        return placeholder(self._db, len(params))
 
     def reindex(self) -> dict[str, Any]:
         """Rebuild the FTS5 index from the tasks table.
@@ -219,6 +354,8 @@ class TaskFTS5Searcher:
         Returns:
             Dict with index statistics.
         """
+        if getattr(self._db, "dialect", "sqlite") != "sqlite":
+            return self.get_stats()
         try:
             self._db.execute("DELETE FROM tasks_fts")
             self._db.execute("""
@@ -233,3 +370,16 @@ class TaskFTS5Searcher:
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the search index."""
         return self._backend.get_stats()
+
+
+def _normalize_fts_scores(raw_scores: list[float]) -> list[float]:
+    return _normalize_positive_scores([-score for score in raw_scores])
+
+
+def _normalize_positive_scores(raw_scores: list[float]) -> list[float]:
+    if not raw_scores:
+        return []
+    max_score = max(raw_scores)
+    if max_score <= 0:
+        return [0.0] * len(raw_scores)
+    return [score / max_score for score in raw_scores]

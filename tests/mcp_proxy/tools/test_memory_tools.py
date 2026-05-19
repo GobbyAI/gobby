@@ -634,9 +634,11 @@ class TestGetRelatedMemories:
             MockMemory(id="related-2"),
         ]
 
-        result = await memory_registry.call(
-            "get_related_memories", {"memory_id": "mem-123", "limit": 5, "min_similarity": 0.3}
-        )
+        with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
+            result = await memory_registry.call(
+                "get_related_memories",
+                {"memory_id": "mem-123", "limit": 5, "min_similarity": 0.3},
+            )
 
         assert result["success"] is True
         assert result["memory_id"] == "mem-123"

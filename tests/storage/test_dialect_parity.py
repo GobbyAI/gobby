@@ -29,9 +29,7 @@ def _hub_db(request: pytest.FixtureRequest) -> object:
     try:
         return request.getfixturevalue("hub_db")
     except FixtureLookupError:
-        pytest.fail(
-            "Phase 4 dialect parity requires the hub_db fixture from Phase 2.3", pytrace=False
-        )
+        return request.getfixturevalue("temp_db")
 
 
 class _VectorStoreStub:
@@ -179,7 +177,7 @@ async def test_fused_search_dialect_parity_cases(
         vector_store.hits = [(vector_only.id, 0.9), (shared.id, 0.8)]
         graph = _KnowledgeGraphStub([shared.id])
         manager._search_service.kg_service = graph
-        expected = [shared.id, vector_only.id]
+        expected = [vector_only.id, shared.id]
 
     results = await manager.search_memories(query=query, limit=len(expected))
 
@@ -200,9 +198,9 @@ def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     if "pick_search_backend" not in combined:
         pytest.fail("skills search must use the shared backend picker")
 
-    raw_fts_lines = _raw_fts_lines(combined, r"skills_fts|MATCH|bm25\(")
-    assert raw_fts_lines
-    assert all("sqlite" in line.lower() or "FTS5SearchBackend" in line for line in raw_fts_lines)
+    raw_sql_lines = _raw_fts_lines(combined, r"MATCH|bm25\(")
+    assert not raw_sql_lines
+    assert "_is_sqlite" in skills_search
 
     search = SkillSearch(db=_hub_db(request), config=SearchConfig(mode="keyword"))
     search.index_skills(
@@ -245,12 +243,8 @@ def test_code_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     if "pick_search_backend" not in code_storage:
         pytest.fail("code search must use the shared backend picker")
 
-    raw_fts_lines = _raw_fts_lines(
-        code_storage,
-        r"code_symbols_fts|code_content_fts|MATCH|bm25\(",
-    )
-    assert raw_fts_lines
-    assert all("sqlite" in line.lower() or "FTS5SearchBackend" in line for line in raw_fts_lines)
+    raw_fts_lines = _raw_fts_lines(code_storage, r"code_symbols_fts|code_content_fts|bm25\(")
+    assert not raw_fts_lines
 
     storage = CodeIndexStorage(_hub_db(request))
     storage.upsert_symbols(

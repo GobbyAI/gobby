@@ -16,8 +16,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.search import SearchConfig, UnifiedSearcher
+from gobby.search.keyword import pick_search_backend
 
 if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.skills import Skill
 
 logger = logging.getLogger(__name__)
@@ -103,7 +106,7 @@ class SkillSearch:
     def __init__(
         self,
         *,
-        db: Any,
+        db: DatabaseProtocol | HubDatabase,
         config: SearchConfig | None = None,
         refit_threshold: int = 10,
         embedding_model: str = "nomic-embed-text",
@@ -114,7 +117,7 @@ class SkillSearch:
         """Initialize skill search.
 
         Args:
-            db: LocalDatabase instance for FTS5 backend (required)
+            db: HubDatabase or legacy LocalDatabase instance for keyword search.
             config: Search configuration (defaults to auto mode).
             refit_threshold: Number of updates before automatic refit
             embedding_model: Embedding model name (from EmbeddingsConfig)
@@ -127,9 +130,11 @@ class SkillSearch:
 
         self._config = config
         self._refit_threshold = refit_threshold
-        self._db = db
+        self._db: Any = db
+        self._is_sqlite = getattr(db, "dialect", "sqlite") == "sqlite"
+        self._keyword_backend = pick_search_backend(db, "skills")
 
-        # Initialize unified searcher with FTS5 keyword backend
+        # Initialize unified searcher with dialect-aware keyword backend
         # bm25 weights: name(10), description(5), tags_text(2), category(2)
         # skills_fts is contentless — we maintain a rowid→skill_id mapping
         # in _rowid_to_id so the FTS5 backend can return skill IDs.
@@ -225,6 +230,8 @@ class SkillSearch:
         Args:
             skills: Skills to index in FTS5
         """
+        if not self._is_sqlite:
+            return
         try:
             self._db.execute("INSERT INTO skills_fts(skills_fts) VALUES ('delete-all')")
             self._rowid_to_id.clear()
@@ -287,10 +294,11 @@ class SkillSearch:
             self._indexed = False
             self._pending_updates = 0
             self._searcher.clear()
-            try:
-                self._db.execute("INSERT INTO skills_fts(skills_fts) VALUES ('delete-all')")
-            except Exception as e:
-                logger.debug(f"Failed to clear skills_fts: {e}")
+            if self._is_sqlite:
+                try:
+                    self._db.execute("INSERT INTO skills_fts(skills_fts) VALUES ('delete-all')")
+                except Exception as e:
+                    logger.debug(f"Failed to clear skills_fts: {e}")
             logger.debug("Skill search index cleared (no skills)")
             return
 
@@ -345,7 +353,12 @@ class SkillSearch:
 
         # Get more results than top_k if filtering
         search_limit = top_k * 3 if filters else top_k
-        raw_results = await self._searcher.search_async(query, top_k=search_limit)
+        if self._config.mode == "keyword":
+            raw_results = [
+                (hit.id, hit.score) for hit in self._keyword_backend.search(query, search_limit)
+            ]
+        else:
+            raw_results = await self._searcher.search_async(query, top_k=search_limit)
 
         # Pre-compute allowed_names set to avoid rebuilding per result
         allowed_set: set[str] | None = None
