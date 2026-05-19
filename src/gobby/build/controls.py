@@ -69,6 +69,7 @@ class BuildArtifactSummary:
     orphan: bool = False
     exists: bool = False
     deleted: bool = False
+    deferred: bool = False
     error: str | None = None
 
 
@@ -256,12 +257,19 @@ def cleanup_successful_merge_artifacts(
     if not artifacts:
         return []
 
-    _delete_artifacts(db, cleanup_project_id, artifacts, force=False)
-    _branches_deleted, branch_errors = delete_orphan_build_branches(
-        db,
-        cleanup_project_id,
-        tasks,
-    )
+    active_agents = _active_agents(db, [task.id for task in tasks])
+    artifacts_to_delete = _defer_active_agent_artifacts(artifacts, active_agents)
+
+    _delete_artifacts(db, cleanup_project_id, artifacts_to_delete, force=False)
+    if any(artifact.deferred for artifact in artifacts):
+        _branches_deleted = 0
+        branch_errors: list[str] = []
+    else:
+        _branches_deleted, branch_errors = delete_orphan_build_branches(
+            db,
+            cleanup_project_id,
+            tasks,
+        )
     errors = [artifact.error for artifact in artifacts if artifact.error] + branch_errors
     if errors:
         logger.warning(
@@ -279,6 +287,9 @@ def cleanup_successful_merge_artifacts(
                 "task_id": task_id,
                 "project_id": cleanup_project_id,
                 "artifacts_deleted": len([artifact for artifact in artifacts if artifact.deleted]),
+                "artifacts_deferred": len(
+                    [artifact for artifact in artifacts if artifact.deferred]
+                ),
             },
         )
     return artifacts
@@ -422,6 +433,26 @@ def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
         )
         for run in agents
     ]
+
+
+def _defer_active_agent_artifacts(
+    artifacts: list[BuildArtifactSummary],
+    agents: list[AgentRun],
+) -> list[BuildArtifactSummary]:
+    active_worktree_ids = {run.worktree_id for run in agents if run.worktree_id}
+    active_clone_ids = {run.clone_id for run in agents if run.clone_id}
+    artifacts_to_delete: list[BuildArtifactSummary] = []
+
+    for artifact in artifacts:
+        if artifact.family == "worktree" and artifact.artifact_id in active_worktree_ids:
+            artifact.deferred = True
+            continue
+        if artifact.family == "clone" and artifact.artifact_id in active_clone_ids:
+            artifact.deferred = True
+            continue
+        artifacts_to_delete.append(artifact)
+
+    return artifacts_to_delete
 
 
 async def _cancel_active_agents(
