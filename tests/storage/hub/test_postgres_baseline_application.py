@@ -73,8 +73,9 @@ class _ConnectionContext:
 
 
 class _ApplyConnection:
-    def __init__(self, state: str) -> None:
+    def __init__(self, state: str, *, pg_search_present: bool = True) -> None:
         self.state = state
+        self.pg_search_present = pg_search_present
         self.statements: list[str] = []
         self.transaction_entered = False
         self.transaction_exited = False
@@ -89,6 +90,8 @@ class _ApplyConnection:
 
     def execute(self, sql: str, params=()):
         self.statements.append(sql)
+        if "pg_extension" in sql and "pg_search" in sql:
+            return _Result([(1,)] if self.pg_search_present else [])
         return _Result()
 
 
@@ -101,6 +104,9 @@ class _Pool:
 
 
 class _Resources:
+    def __init__(self) -> None:
+        self.read_count = 0
+
     def files(self, package: str):
         assert package == "gobby.storage"
         return self
@@ -110,6 +116,7 @@ class _Resources:
         return self
 
     def read_text(self) -> str:
+        self.read_count += 1
         return "CREATE TABLE tasks(id INTEGER);\nCREATE TABLE gobby_migration_state(key TEXT);"
 
 
@@ -123,9 +130,10 @@ def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypat
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
     locked = _ApplyConnection("fresh")
+    resources = _Resources()
 
     monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
-    monkeypatch.setattr(module.importlib, "resources", _Resources())
+    monkeypatch.setattr(module.importlib, "resources", resources)
     db = _new_db(module, _Pool(fast, locked))
 
     db._apply_postgres_baseline()
@@ -133,9 +141,13 @@ def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypat
     assert locked.transaction_entered is True
     assert locked.transaction_exited is True
     assert any("pg_advisory_xact_lock" in statement for statement in locked.statements)
+    assert any(
+        "pg_extension" in statement and "pg_search" in statement for statement in locked.statements
+    )
     assert not any("pg_advisory_lock(" in statement for statement in locked.statements)
     assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
+    assert resources.read_count == 1
 
 
 def test_apply_postgres_baseline_reclassifies_under_lock_and_skips_racing_apply(
@@ -152,6 +164,9 @@ def test_apply_postgres_baseline_reclassifies_under_lock_and_skips_racing_apply(
     db._apply_postgres_baseline()
 
     assert any("pg_advisory_xact_lock" in statement for statement in locked.statements)
+    assert not any(
+        "pg_extension" in statement and "pg_search" in statement for statement in locked.statements
+    )
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
     assert not any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
 
@@ -169,6 +184,77 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
         db._apply_postgres_baseline()
 
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
+
+
+def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl(
+    monkeypatch,
+) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("fresh")
+    locked = _ApplyConnection("fresh", pg_search_present=False)
+    resources = _Resources()
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", resources)
+    db = _new_db(module, _Pool(fast, locked))
+
+    with pytest.raises(MigrationUnsupportedError) as exc_info:
+        db._apply_postgres_baseline()
+
+    assert str(exc_info.value) == module._PG_SEARCH_MISSING_MESSAGE
+    upper_statements = [statement.upper() for statement in locked.statements]
+    assert any(
+        "PG_EXTENSION" in statement and "PG_SEARCH" in statement for statement in upper_statements
+    )
+    assert all("CREATE EXTENSION" not in statement for statement in upper_statements)
+    assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
+    assert resources.read_count == 0
+
+
+def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
+    module = _postgres_module()
+    calls: list[str] = []
+    initial = _ApplyConnection("fresh")
+    fast = _ApplyConnection("fresh")
+    locked = _ApplyConnection("fresh")
+
+    class FakeRunner:
+        def __init__(self, hub) -> None:
+            self.hub = hub
+
+        def apply_pending(self) -> None:
+            calls.append("file_migrations")
+
+    monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", _Resources())
+    db = _new_db(module, _Pool(initial, fast, locked))
+
+    db.apply_migrations()
+
+    assert calls == ["file_migrations"]
+    assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
+    assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
+
+
+def test_apply_postgres_baseline_probe_only_when_pg_search_preinstalled(monkeypatch) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("fresh")
+    locked = _ApplyConnection("fresh", pg_search_present=True)
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", _Resources())
+    db = _new_db(module, _Pool(fast, locked))
+
+    db._apply_postgres_baseline()
+
+    probe_statements = [
+        statement
+        for statement in locked.statements
+        if "pg_extension" in statement and "pg_search" in statement
+    ]
+    assert probe_statements == ["SELECT 1 FROM pg_extension WHERE extname = 'pg_search'"]
+    assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 
 
 def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypatch) -> None:
