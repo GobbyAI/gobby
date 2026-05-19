@@ -36,7 +36,7 @@ def test_postgres_service_uses_local_build_context_and_tag(
     assert postgres["image"] == "gobby-postgres-local:17-pgsearch"
     assert postgres["container_name"] == "gobby-postgres"
     assert postgres["build"]["context"] == "./postgres-pgsearch"
-    assert postgres["build"]["args"]["PG_SEARCH_VERSION"] == ("${GOBBY_PG_SEARCH_VERSION:-0.17.0}")
+    assert postgres["build"]["args"]["PG_SEARCH_VERSION"] == ("${GOBBY_PG_SEARCH_VERSION:-0.23.4}")
     assert postgres["build"]["args"]["PG_SEARCH_SHA256"] == "${GOBBY_PG_SEARCH_SHA256}"
 
 

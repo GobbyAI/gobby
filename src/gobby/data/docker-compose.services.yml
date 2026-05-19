@@ -50,7 +50,7 @@ services:
     build:
       context: ./postgres-pgsearch
       args:
-        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.17.0}
+        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.23.4}
         PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256}
     image: gobby-postgres-local:17-pgsearch
     container_name: gobby-postgres

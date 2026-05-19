@@ -1,0 +1,94 @@
+name: Postgres pg_search Smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-pgsearch-smoke.yml"
+      - "src/gobby/data/postgres-pgsearch/**"
+      - "src/gobby/data/docker-compose.services.yml"
+      - "pyproject.toml"
+  push:
+    paths:
+      - ".github/workflows/postgres-pgsearch-smoke.yml"
+      - "src/gobby/data/postgres-pgsearch/**"
+      - "src/gobby/data/docker-compose.services.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: gobby-postgres-local:17-pgsearch
+      POSTGRES_DB: gobby_smoke
+      POSTGRES_USER: gobby_smoke
+      POSTGRES_PASSWORD: gobby_smoke
+      SMOKE_CONTAINER: gobby-postgres-pgsearch-smoke
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Load pg_search manifest
+        run: |
+          echo "PG_SEARCH_VERSION=$(jq -r '.pg_search_version' src/gobby/data/postgres-pgsearch/version.json)" >> "$GITHUB_ENV"
+          echo "PG_SEARCH_SHA256=$(jq -r '.pg_search_sha256' src/gobby/data/postgres-pgsearch/version.json)" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: |
+          docker build --pull \
+            --build-arg PG_SEARCH_VERSION="${PG_SEARCH_VERSION}" \
+            --build-arg PG_SEARCH_SHA256="${PG_SEARCH_SHA256}" \
+            -t "${IMAGE_TAG}" \
+            src/gobby/data/postgres-pgsearch
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name "${SMOKE_CONTAINER}" \
+            -e POSTGRES_DB="${POSTGRES_DB}" \
+            -e POSTGRES_USER="${POSTGRES_USER}" \
+            -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+            "${IMAGE_TAG}" \
+            postgres -c shared_preload_libraries=pg_search,pgaudit -c pgaudit.log=write
+
+          for _ in {1..30}; do
+            if docker exec "${SMOKE_CONTAINER}" pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs "${SMOKE_CONTAINER}"
+          exit 1
+
+      - name: Smoke extensions
+        run: |
+          PG_SEARCH_COUNT="$(docker exec "${SMOKE_CONTAINER}" psql \
+            -U "${POSTGRES_USER}" \
+            -d "${POSTGRES_DB}" \
+            -tAc "SELECT count(*) FROM pg_extension WHERE extname = 'pg_search';")"
+          test "${PG_SEARCH_COUNT}" = "1"
+
+          docker exec "${SMOKE_CONTAINER}" psql \
+            -U "${POSTGRES_USER}" \
+            -d "${POSTGRES_DB}" \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE EXTENSION IF NOT EXISTS pg_search;" \
+            -c "CREATE EXTENSION IF NOT EXISTS pgaudit;"
+
+          PRELOADS="$(docker exec "${SMOKE_CONTAINER}" psql \
+            -U "${POSTGRES_USER}" \
+            -d "${POSTGRES_DB}" \
+            -tAc "SHOW shared_preload_libraries;")"
+          case "${PRELOADS}" in
+            *pg_search*pgaudit*|*pgaudit*pg_search*) ;;
+            *) echo "shared_preload_libraries missing pg_search,pgaudit: ${PRELOADS}" >&2; exit 1 ;;
+          esac
+
+      - name: Clean up container
+        if: always()
+        run: docker rm -f "${SMOKE_CONTAINER}" || true

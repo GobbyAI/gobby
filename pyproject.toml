@@ -133,6 +133,7 @@ gobby = [
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",
+    "data/**/*",
     "ui/web/dist/**/*",
 ]
 
