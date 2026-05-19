@@ -84,6 +84,17 @@ def test_sweep_keeps_task_claimed_by_active_session(temp_db, sample_project) -> 
     assert task.id not in candidate_ids
 
 
+def test_sweep_keeps_task_claimed_by_paused_session(temp_db, sample_project) -> None:
+    # A paused session is idle but alive (e.g. an interactive session
+    # between turns); its claim must not be reclaimed.
+    _make_session(temp_db, sample_project, "sess-paused", "paused")
+    task = _claimed_task(temp_db, sample_project, claimed_by="sess-paused")
+
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert _claim(temp_db, task.id) == "sess-paused"
+
+
 def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None:
     _make_session(temp_db, sample_project, "sess-dead", "expired")
     closed = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")

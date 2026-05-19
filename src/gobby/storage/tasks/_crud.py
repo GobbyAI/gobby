@@ -328,9 +328,11 @@ def sweep_stale_claims(
     A daemon restart kills agent sessions without releasing their task
     claims. ``list_automation_candidates`` requires
     ``claimed_by_session_id IS NULL``, so a claim held by a dead session
-    would otherwise wedge that task out of dispatch forever. Mirrors
-    ``sweep_expired_leases`` for the dispatch mutex: a claim is stale when
-    no ``sessions`` row with that id is still ``active``.
+    would otherwise wedge that task out of dispatch forever. A claim is
+    stale when no ``sessions`` row with that id is still alive; alive means
+    ``status IN ('active', 'paused')`` (a paused session is idle but live,
+    e.g. an interactive session between turns), matching the liveness set
+    used by the session liveness monitor and mailbox delivery.
     """
     now = datetime.now(UTC).isoformat()
     params: list[Any] = [now]
@@ -354,7 +356,7 @@ def sweep_stale_claims(
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
-                      AND s.status = 'active'
+                      AND s.status IN ('active', 'paused')
                )
                {project_filter}
             """,  # nosec B608 # project_filter is static SQL selected above.

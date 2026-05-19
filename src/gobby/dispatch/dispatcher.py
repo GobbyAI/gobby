@@ -138,9 +138,9 @@ async def run_heartbeat(
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         sweep_expired_leases(mutex_storage)
-        reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
-        if reclaimed:
-            logger.info("Dispatcher startup reclaimed %d task(s) from dead sessions", reclaimed)
+    reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
+    if reclaimed:
+        logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = list_automation_candidates(resolved_db, project_id=project_id)
