@@ -155,9 +155,6 @@ class TokenEventStore:
         rowcount = getattr(cursor, "rowcount", None)
         if isinstance(rowcount, int):
             return rowcount > 0
-        lastrowid = getattr(cursor, "lastrowid", None)
-        if isinstance(lastrowid, int):
-            return lastrowid > 0
         return True
 
     def delete_session_events(self, session_id: str, *, origin: str | None = None) -> int:

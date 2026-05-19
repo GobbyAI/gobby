@@ -69,16 +69,15 @@ class TaskAffectedFileManager:
             results = []
             for file_path in files:
                 try:
-                    cursor = conn.execute(
-                        "INSERT INTO task_affected_files (task_id, file_path, annotation_source) "
-                        "VALUES (?, ?, ?)",
-                        (task_id, file_path, source),
-                    )
                     row = conn.execute(
-                        "SELECT * FROM task_affected_files WHERE id = ?",
-                        (cursor.lastrowid,),
+                        """
+                        INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                        VALUES (?, ?, ?)
+                        RETURNING id, task_id, file_path, annotation_source, created_at
+                        """,
+                        (task_id, file_path, source),
                     ).fetchone()
-                    if row:
+                    if row is not None:
                         results.append(TaskAffectedFile.from_row(row))
                 except sqlite3.IntegrityError:
                     # UNIQUE constraint — file already exists from another source
@@ -105,16 +104,15 @@ class TaskAffectedFileManager:
         """
         try:
             with self.db.transaction() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO task_affected_files (task_id, file_path, annotation_source) "
-                    "VALUES (?, ?, ?)",
-                    (task_id, file_path, source),
-                )
                 row = conn.execute(
-                    "SELECT * FROM task_affected_files WHERE id = ?",
-                    (cursor.lastrowid,),
+                    """
+                    INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                    VALUES (?, ?, ?)
+                    RETURNING id, task_id, file_path, annotation_source, created_at
+                    """,
+                    (task_id, file_path, source),
                 ).fetchone()
-                return TaskAffectedFile.from_row(row) if row else None
+                return TaskAffectedFile.from_row(row) if row is not None else None
         except sqlite3.IntegrityError:
             logger.debug(f"File {file_path} already tracked for task {task_id}")
             return None

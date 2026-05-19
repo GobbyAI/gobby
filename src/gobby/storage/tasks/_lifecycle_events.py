@@ -84,18 +84,19 @@ class TaskLifecycleEventManager:
             raise ValueError("by_actor is required")
 
         with self.db.transaction() as conn:
-            cursor = conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO task_lifecycle_events (
                     task_id, from_state, to_state, reason, by_actor
                 )
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (task_id, from_state, to_state, reason, actor),
-            )
-            event_id = cursor.lastrowid
-            if event_id is None:
+            ).fetchone()
+            if row is None:
                 raise RuntimeError("SQLite did not return a lifecycle event id")
+            event_id = int(row["id"])
 
         row = self.db.fetchone("SELECT * FROM task_lifecycle_events WHERE id = ?", (event_id,))
         if row is None:

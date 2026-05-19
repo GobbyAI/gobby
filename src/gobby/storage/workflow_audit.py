@@ -80,11 +80,12 @@ class WorkflowAuditManager:
             timestamp = datetime.now(UTC).isoformat()
             context_json = json.dumps(context) if context else None
 
-            cursor = self.db.execute(
+            row = self.db.execute(
                 """
                 INSERT INTO workflow_audit_log
                 (session_id, timestamp, step, event_type, tool_name, rule_id, condition, result, reason, context)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     session_id,
@@ -98,8 +99,8 @@ class WorkflowAuditManager:
                     reason,
                     context_json,
                 ),
-            )
-            return cursor.lastrowid
+            ).fetchone()
+            return int(row["id"]) if row is not None else None
         except Exception as e:
             logger.error(f"Failed to log audit entry: {e}")
             return None
