@@ -839,7 +839,7 @@ class TestGetInterSessionMessages:
 
     @pytest.mark.asyncio
     async def test_passes_direction(self, messaging_registry, mock_message_manager) -> None:
-        """Direction parameter is forwarded to list_messages."""
+        """direction='inbox' is forwarded to list_messages."""
         mock_message_manager.list_messages.return_value = []
 
         await messaging_registry.call(
@@ -851,6 +851,40 @@ class TestGetInterSessionMessages:
         assert call_kwargs[1].get("direction") == "inbox" or (
             len(call_kwargs[0]) > 1 and call_kwargs[0][1] == "inbox"
         )
+
+    @pytest.mark.asyncio
+    async def test_received_direction_aliases_inbox(
+        self,
+        messaging_registry,
+        mock_message_manager,
+    ) -> None:
+        """direction='received' is normalized before storage query."""
+        mock_message_manager.list_messages.return_value = []
+
+        await messaging_registry.call(
+            "get_inter_session_messages",
+            {"target_session_id": "s-child", "direction": "received"},
+        )
+
+        kwargs = mock_message_manager.list_messages.call_args.kwargs
+        assert kwargs["direction"] == "inbox"
+
+    @pytest.mark.asyncio
+    async def test_invalid_direction_is_rejected(
+        self,
+        messaging_registry,
+        mock_message_manager,
+    ) -> None:
+        """Invalid direction returns a clear error without querying storage."""
+        result = await messaging_registry.call(
+            "get_inter_session_messages",
+            {"target_session_id": "s-child", "direction": "bogus"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_direction"
+        assert "Invalid direction 'bogus'" in result["error"]
+        mock_message_manager.list_messages.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_side_effects(self, messaging_registry, mock_message_manager) -> None:

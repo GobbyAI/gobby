@@ -20,6 +20,8 @@ from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.storage.inter_session_messages import normalize_message_direction
+
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.sessions.mailbox import WakeDispatcherProtocol
@@ -429,10 +431,18 @@ def add_messaging_tools(
         offset: int = 0,
     ) -> dict[str, Any]:
         try:
+            try:
+                normalized_direction = normalize_message_direction(direction)
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "invalid_direction",
+                }
             resolved_id = _resolve(target_session_id)
             messages = message_manager.list_messages(
                 session_id=resolved_id,
-                direction=direction,
+                direction=normalized_direction,
                 unread_only=unread_only,
                 undelivered_only=undelivered_only,
                 message_type=message_type,

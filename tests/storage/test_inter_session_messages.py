@@ -586,6 +586,12 @@ class TestInterSessionMessageManagerListMessages:
         assert len(msgs) == 2
         assert all(m.to_session == setup.beta.id for m in msgs)
 
+    def test_direction_received_aliases_inbox(self, setup) -> None:
+        """direction='received' returns only received messages."""
+        msgs = setup.manager.list_messages(setup.beta.id, direction="received")
+        assert len(msgs) == 2
+        assert all(m.to_session == setup.beta.id for m in msgs)
+
     def test_direction_sent(self, setup) -> None:
         """direction='sent' returns only sent messages."""
         msgs = setup.manager.list_messages(setup.beta.id, direction="sent")
@@ -645,6 +651,11 @@ class TestInterSessionMessageManagerListMessages:
         mgr = InterSessionMessageManager(temp_db)
         msgs = mgr.list_messages("nonexistent-session", direction="all")
         assert msgs == []
+
+    def test_invalid_direction_raises_clear_error(self, setup) -> None:
+        """Invalid directions are rejected instead of silently returning all messages."""
+        with pytest.raises(ValueError, match="Invalid direction 'bogus'"):
+            setup.manager.list_messages(setup.beta.id, direction="bogus")
 
 
 class TestInterSessionMessageManagerExport:

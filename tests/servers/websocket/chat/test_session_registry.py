@@ -11,7 +11,10 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
-from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.servers.websocket.chat.session_registry import (
+    WEB_CHAT_WAKE_PROMPT,
+    WebChatSessionRegistry,
+)
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -61,6 +64,36 @@ class TestWebChatSessionRegistry:
         ]
 
     @pytest.mark.asyncio
+    async def test_wake_session_drains_hidden_turn(self) -> None:
+        registry = WebChatSessionRegistry()
+        session = MagicMock()
+        session.db_session_id = "db-id"
+        session.send_message.side_effect = lambda message: _done_stream()
+        registry.register("conv-1", session)
+
+        result = await registry.wake_session("db-id")
+
+        assert result == {
+            "session_id": "db-id",
+            "conversation_id": "conv-1",
+            "delivered": True,
+            "method": "web_chat",
+            "queued": False,
+        }
+        session.send_message.assert_called_once_with(WEB_CHAT_WAKE_PROMPT)
+
+    @pytest.mark.asyncio
+    async def test_wake_session_missing_live_session_returns_explicit_failure(self) -> None:
+        registry = WebChatSessionRegistry()
+
+        result = await registry.wake_session("db-id")
+
+        assert result["session_id"] == "db-id"
+        assert result["delivered"] is False
+        assert result["method"] == "web_chat"
+        assert result["error_code"] == "no_live_web_chat_session"
+
+    @pytest.mark.asyncio
     async def test_active_session_queues_compaction_until_turn_completes(self) -> None:
         registry = WebChatSessionRegistry()
         session = MagicMock()
@@ -91,6 +124,79 @@ class TestWebChatSessionRegistry:
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
             "Continue where you last left off.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_active_session_queues_wake_until_turn_completes(self) -> None:
+        registry = WebChatSessionRegistry()
+        session = MagicMock()
+        session.db_session_id = "db-id"
+        session.send_message.side_effect = lambda message: _done_stream()
+        registry.register("conv-1", session)
+
+        release = asyncio.Event()
+
+        async def active_turn() -> None:
+            await release.wait()
+
+        active_task = asyncio.create_task(active_turn())
+        registry.track_active_task("conv-1", active_task)
+
+        result = await registry.wake_session("db-id")
+
+        assert result == {
+            "session_id": "db-id",
+            "delivered": True,
+            "method": "web_chat",
+            "queued": True,
+        }
+        session.send_message.assert_not_called()
+
+        release.set()
+        await active_task
+        await drain_asyncio_tasks()
+        queued_task = registry._queued_wake_tasks.get("conv-1")
+        if queued_task is not None:
+            await queued_task
+        assert [call.args[0] for call in session.send_message.call_args_list] == [
+            WEB_CHAT_WAKE_PROMPT
+        ]
+
+    @pytest.mark.asyncio
+    async def test_queued_compaction_runs_before_queued_wake(self) -> None:
+        registry = WebChatSessionRegistry()
+        session = MagicMock()
+        session.db_session_id = "db-id"
+        session.send_message.side_effect = lambda message: _done_stream()
+        registry.register("conv-1", session)
+
+        release = asyncio.Event()
+
+        async def active_turn() -> None:
+            await release.wait()
+
+        active_task = asyncio.create_task(active_turn())
+        registry.track_active_task("conv-1", active_task)
+
+        compact_result = await registry.compact_session("db-id")
+        wake_result = await registry.wake_session("db-id")
+
+        assert compact_result["queued"] is True
+        assert wake_result["queued"] is True
+        session.send_message.assert_not_called()
+
+        release.set()
+        await active_task
+        await drain_asyncio_tasks()
+        queued_task = registry._queued_compaction_tasks.get(
+            "conv-1"
+        ) or registry._queued_wake_tasks.get("conv-1")
+        if queued_task is not None:
+            await queued_task
+        assert [call.args[0] for call in session.send_message.call_args_list] == [
+            "/compact",
+            "Continue where you last left off.",
+            WEB_CHAT_WAKE_PROMPT,
         ]
 
     @pytest.mark.asyncio

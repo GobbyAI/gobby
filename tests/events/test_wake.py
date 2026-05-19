@@ -18,6 +18,7 @@ class FakeSession:
     parent_session_id: str | None = None
     status: str = "active"
     turn_count: int = 0
+    session_type: str = "terminal"
 
 
 @pytest.fixture
@@ -453,3 +454,61 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
 
         assert tmux_pane_sender.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_web_chat_session_routes_live_wake_through_registry(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """web_chat sessions use the live web-chat registry wake path."""
+        session_manager.get.return_value = FakeSession(
+            id="web-1",
+            session_type="web_chat",
+        )
+        registry = MagicMock()
+        registry.wake_session = AsyncMock(
+            return_value={
+                "session_id": "web-1",
+                "delivered": True,
+                "method": "web_chat",
+                "queued": False,
+            }
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            web_chat_session_registry=registry,
+        )
+
+        result = await dispatcher.dispatch_live_wake("web-1")
+
+        assert result == {
+            "session_id": "web-1",
+            "delivered": True,
+            "method": "web_chat",
+            "queued": False,
+        }
+        registry.wake_session.assert_awaited_once_with("web-1")
+
+    @pytest.mark.asyncio
+    async def test_web_chat_session_without_live_registry_returns_explicit_failure(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """web_chat wake failures identify the missing live session case."""
+        session_manager.get.return_value = FakeSession(
+            id="web-1",
+            session_type="web_chat",
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+
+        result = await dispatcher.dispatch_live_wake("web-1")
+
+        assert result["delivered"] is False
+        assert result["method"] == "web_chat"
+        assert result["error_code"] == "no_live_web_chat_session"

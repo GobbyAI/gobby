@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
@@ -41,6 +41,10 @@ TmuxPaneSender = Callable[[str, str, str | None], Coroutine[Any, Any, None]]
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
 
 
+class WebChatSessionRegistryProtocol(Protocol):
+    async def wake_session(self, session_id: str) -> dict[str, Any]: ...
+
+
 class WakeDispatcher:
     """Dispatches wake messages to sessions based on their type.
 
@@ -60,6 +64,7 @@ class WakeDispatcher:
         tmux_pane_sender: TmuxPaneSender | None = None,
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
+        web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -67,8 +72,16 @@ class WakeDispatcher:
         self._tmux_pane_sender = tmux_pane_sender
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
+        self._web_chat_session_registry = web_chat_session_registry
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_pane_wake: dict[str, tuple[int, float]] = {}
+
+    def set_web_chat_session_registry(
+        self,
+        registry: WebChatSessionRegistryProtocol | None,
+    ) -> None:
+        """Wire the live web-chat registry after server initialization."""
+        self._web_chat_session_registry = registry
 
     async def wake(
         self,
@@ -112,6 +125,10 @@ class WakeDispatcher:
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
         terminal_context = getattr(session, "terminal_context", None)
+        session_type = getattr(session, "session_type", None)
+
+        if session_type == "web_chat":
+            return await self._dispatch_web_chat_wake(session_id)
 
         # Interactive session → try tmux pane wake after durable message storage.
         if agent_depth == 0:
@@ -185,6 +202,50 @@ class WakeDispatcher:
                     }
 
         return {"session_id": session_id, "delivered": False, "method": None}
+
+    async def _dispatch_web_chat_wake(self, session_id: str) -> dict[str, Any]:
+        if self._web_chat_session_registry is None:
+            return self._web_chat_no_live_result(session_id)
+
+        try:
+            result = await self._web_chat_session_registry.wake_session(session_id)
+        except Exception as exc:
+            logger.warning(
+                "web_chat wake failed for session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "web_chat",
+                "error": str(exc),
+                "error_code": "web_chat_wake_failed",
+                "error_message": str(exc),
+            }
+
+        if not isinstance(result, dict):
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "web_chat",
+                "error_code": "web_chat_wake_failed",
+            }
+        result.setdefault("session_id", session_id)
+        result.setdefault("method", "web_chat")
+        return result
+
+    @staticmethod
+    def _web_chat_no_live_result(session_id: str) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": "web_chat",
+            "error": "no_live_web_chat_session",
+            "error_code": "no_live_web_chat_session",
+            "error_message": f"No live web_chat session found for {session_id}",
+        }
 
     def _should_send_pane_wake(self, session_id: str, session: Any) -> bool:
         """Decide whether to send a live tmux pane wake to an interactive session.

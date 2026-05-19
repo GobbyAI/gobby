@@ -15,6 +15,29 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol, LocalDatabase
 
+MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
+    "all": "all",
+    "inbox": "inbox",
+    "received": "inbox",
+    "sent": "sent",
+}
+MESSAGE_DIRECTION_OPTIONS = tuple(MESSAGE_DIRECTION_ALIASES)
+
+
+def normalize_message_direction(direction: str) -> str:
+    """Normalize public message history direction values."""
+    if not isinstance(direction, str):
+        raise ValueError(
+            f"Invalid direction. Expected one of: {', '.join(MESSAGE_DIRECTION_OPTIONS)}"
+        )
+    normalized = MESSAGE_DIRECTION_ALIASES.get(direction.strip().lower())
+    if normalized is None:
+        raise ValueError(
+            f"Invalid direction '{direction}'. Expected one of: "
+            f"{', '.join(MESSAGE_DIRECTION_OPTIONS)}"
+        )
+    return normalized
+
 
 @dataclass
 class InterSessionMessage:
@@ -289,7 +312,7 @@ class InterSessionMessageManager:
 
         Args:
             session_id: Session to query messages for
-            direction: "inbox" (received), "sent", or "all"
+            direction: "inbox"/"received", "sent", or "all"
             unread_only: If True, only return messages with read_at IS NULL
             undelivered_only: If True, only return messages with delivered_at IS NULL
             message_type: Filter by message_type (e.g. "message", "command_result")
@@ -299,6 +322,8 @@ class InterSessionMessageManager:
         Returns:
             List of InterSessionMessage instances ordered by sent_at DESC
         """
+        direction = normalize_message_direction(direction)
+
         conditions: list[str] = []
         params: list[Any] = []
 
