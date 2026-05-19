@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, Literal, cast
 
 from gobby.storage import migrations as _migrations
 from gobby.storage.database import LocalDatabase
+from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     Cursor,
     LockAcquisitionOrderError,
@@ -156,6 +157,8 @@ def _prepare_params(
 ) -> tuple[str, Sequence[Any] | Mapping[str, Any]]:
     if isinstance(params, Mapping):
         return sql, params
+    if "?" in sql:
+        return sql, params
     return _remap_placeholders(sql, params)
 
 
@@ -172,7 +175,7 @@ def _sqlite_row_to_dict(row: sqlite3.Row) -> Row:
 class SqliteHubDatabase:
     """Hub database adapter backed by the existing local SQLite stack."""
 
-    dialect: Literal["sqlite"] = "sqlite"
+    dialect: Literal["sqlite", "postgres"] = "sqlite"
 
     def __init__(self, path: str) -> None:
         self._local = LocalDatabase(path)
@@ -180,6 +183,28 @@ class SqliteHubDatabase:
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
+        with enter_transaction(self, self._native_transaction) as txn:
+            yield txn
+
+    @contextmanager
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
+        with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
+            yield txn
+
+    @contextmanager
+    def _native_transaction(
+        self,
+        *,
+        immediate: bool,
+        lock: LockTarget | None,
+    ) -> Iterator[Transaction]:
+        if immediate:
+            if lock is None:
+                raise TypeError("transaction_immediate() requires a LockTarget")
+            with self._native_immediate_transaction(lock) as txn:
+                yield txn
+            return
+
         with self._local.transaction() as conn:
             yield _SqliteTransaction(
                 self._local,
@@ -189,7 +214,7 @@ class SqliteHubDatabase:
             )
 
     @contextmanager
-    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
+    def _native_immediate_transaction(self, lock: LockTarget) -> Iterator[Transaction]:
         start_len = _lock_stack_len(self._lock_state)
         _acquire_lock(self._lock_state, lock)
         try:
@@ -202,6 +227,53 @@ class SqliteHubDatabase:
                 )
         finally:
             _truncate_lock_stack(self._lock_state, start_len)
+
+    def execute(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Cursor:
+        ambient = ambient_transaction(self)
+        if ambient is not None:
+            return ambient.execute(sql, params)
+        with self.transaction() as txn:
+            return txn.execute(sql, params)
+
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
+        ambient = ambient_transaction(self)
+        if ambient is not None:
+            return ambient.executemany(sql, rows)
+        with self.transaction() as txn:
+            return txn.executemany(sql, rows)
+
+    def fetchone(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Row | None:
+        with self.transaction() as txn:
+            return txn.execute(sql, params).fetchone()
+
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> list[Row]:
+        with self.transaction() as txn:
+            return txn.execute(sql, params).fetchall()
+
+    def safe_update(
+        self,
+        table: str,
+        values: Mapping[str, Any],
+        where: str,
+        where_params: Sequence[Any] = (),
+    ) -> Cursor:
+        built = _build_safe_update(table, values, where, where_params)
+        if built is None:
+            return _NoOpCursor()
+        sql, params = built
+        return self.execute(sql, params)
 
     def apply_migrations(self) -> None:
         if MigrationRunner is not None:
@@ -237,12 +309,17 @@ class _SqliteTransaction:
         cursor = self._conn.execute(new_sql, new_params)
         return _SqliteCursor(cursor)
 
-    def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> None:
-        if not rows:
-            return
-        new_sql, indexes = _scan_placeholder_indexes(sql, len(rows[0]))
-        remapped_rows = [_params_from_indexes(row, indexes) for row in rows]
-        self._conn.executemany(new_sql, remapped_rows)
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
+        materialized = [tuple(row) for row in rows]
+        if not materialized:
+            return _NoOpCursor()
+        if "?" in sql:
+            cursor = self._conn.executemany(sql, materialized)
+            return _SqliteCursor(cursor)
+        new_sql, indexes = _scan_placeholder_indexes(sql, len(materialized[0]))
+        remapped_rows = [_params_from_indexes(row, indexes) for row in materialized]
+        cursor = self._conn.executemany(new_sql, remapped_rows)
+        return _SqliteCursor(cursor)
 
     def savepoint(self, name: str) -> Savepoint:
         quoted_name = _quote_identifier(name)
@@ -266,13 +343,34 @@ class _SqliteCursor:
         row = cast(sqlite3.Row | None, self._cursor.fetchone())
         return _row_to_dict(row)
 
-    def fetchall(self) -> Sequence[Row]:
+    def fetchall(self) -> list[Row]:
         rows = cast(Sequence[sqlite3.Row], self._cursor.fetchall())
         return [_sqlite_row_to_dict(row) for row in rows]
 
     @property
     def rowcount(self) -> int:
         return self._cursor.rowcount
+
+    @property
+    def lastrowid(self) -> int | None:
+        value = self._cursor.lastrowid
+        return int(value) if isinstance(value, int) else None
+
+
+class _NoOpCursor:
+    def fetchone(self) -> Row | None:
+        return None
+
+    def fetchall(self) -> list[Row]:
+        return []
+
+    @property
+    def rowcount(self) -> int:
+        return 0
+
+    @property
+    def lastrowid(self) -> int | None:
+        return None
 
 
 class _SqliteSavepoint:
@@ -291,6 +389,45 @@ def _quote_identifier(identifier: str) -> str:
     if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
     return f'"{identifier}"'
+
+
+def _build_safe_update(
+    table: str,
+    values: Mapping[str, Any],
+    where: str,
+    where_params: Sequence[Any],
+) -> tuple[str, tuple[Any, ...]] | None:
+    if not values:
+        return None
+    _validate_identifier(table)
+
+    update_params: list[Any] = []
+    set_clauses: list[str] = []
+    if "?" in where:
+        placeholder = "?"
+        for column, value in values.items():
+            _validate_identifier(column)
+            set_clauses.append(f"{column} = {placeholder}")
+            update_params.append(value)
+        final_where = where
+    else:
+        for index, (column, value) in enumerate(values.items(), start=1):
+            _validate_identifier(column)
+            set_clauses.append(f"{column} = ${index}")
+            update_params.append(value)
+        final_where = _shift_dollar_placeholders(where, len(update_params))
+
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {final_where}"  # nosec B608
+    return sql, (*update_params, *where_params)
+
+
+def _validate_identifier(identifier: str) -> None:
+    if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
+        raise ValueError(f"invalid SQL identifier: {identifier!r}")
+
+
+def _shift_dollar_placeholders(sql: str, offset: int) -> str:
+    return re.sub(r"\$(\d+)", lambda match: f"${int(match.group(1)) + offset}", sql)
 
 
 def _lock_stack(lock_state: threading.local) -> list[LockTarget]:

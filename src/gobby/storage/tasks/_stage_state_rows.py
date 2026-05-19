@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_types import StageManifestSpec, StageState, _coerce_artifact_refs
 
@@ -62,7 +62,7 @@ def validate_state_value(value: str) -> None:
 
 
 class StageStateRows:
-    def __init__(self, db: DatabaseProtocol, registry: StageRegistryManager) -> None:
+    def __init__(self, db: HubDatabase, registry: StageRegistryManager) -> None:
         self.db = db
         self.registry = registry
 

@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._constants import ACTIVE_AGENT_RUN_STATUS_SQL
 from ._models import AgentRun
 
 
 class _AgentRunSelectorHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _select_runs_with_live_stats_sql(
         self,

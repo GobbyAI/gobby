@@ -1,6 +1,5 @@
 import json
 import logging
-import sqlite3
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -32,7 +31,7 @@ class MemoryCrossRef:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MemoryCrossRef":
+    def from_row(cls, row: Row) -> "MemoryCrossRef":
         return cls(
             source_id=row["source_id"],
             target_id=row["target_id"],
@@ -71,7 +70,7 @@ class Memory:
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Memory":
+    def from_row(cls, row: Row) -> "Memory":
         tags_json = row["tags"]
         tags = json.loads(tags_json) if tags_json else []
 
@@ -129,7 +128,7 @@ class Memory:
 
 
 class LocalMemoryManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 

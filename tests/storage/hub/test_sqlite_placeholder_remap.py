@@ -139,7 +139,17 @@ def test_sqlite_hub_database_exposes_backend_neutral_surface(tmp_path) -> None:
 
     try:
         assert db.dialect == "sqlite"
-        for method in ("transaction", "transaction_immediate", "apply_migrations", "close"):
+        for method in (
+            "transaction",
+            "transaction_immediate",
+            "execute",
+            "executemany",
+            "fetchone",
+            "fetchall",
+            "safe_update",
+            "apply_migrations",
+            "close",
+        ):
             assert hasattr(db, method), method
 
         with db.transaction() as tx:
@@ -172,7 +182,7 @@ def test_sqlite_transaction_immediate_enforces_nested_lock_priority(tmp_path) ->
         db.close()
 
     message = str(exc_info.value)
-    assert "100" in message
+    assert "200" in message
     assert "50" in message
-    assert "outer-lock" in message
+    assert "inner-lock" in message
     assert "out-of-order-lock" in message

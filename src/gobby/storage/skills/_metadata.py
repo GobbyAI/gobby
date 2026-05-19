@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -12,7 +11,7 @@ from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase, Row
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ _UNSET: Any = object()
 
 
 class _SkillMetadataHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _notify_change(
         self,
@@ -38,33 +37,31 @@ class _SkillMetadataHost(Protocol):
 class SkillMetadataMixin:
     """Mixin providing skill metadata CRUD operations.
 
-    Requires ``self.db`` (DatabaseProtocol) and ``self._notify_change()``.
+    Requires ``self.db`` (HubDatabase) and ``self._notify_change()``.
     """
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
 
-    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            row = conn.execute(query, params).fetchone()
-            return cast(sqlite3.Row | None, row)
+            return conn.execute(query, params).fetchone()
 
-    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Row]:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            rows = conn.execute(query, params).fetchall()
-            return cast(list[sqlite3.Row], rows)
+            return conn.execute(query, params).fetchall()
 
     def create_skill(
         self,

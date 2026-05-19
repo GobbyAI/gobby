@@ -16,7 +16,7 @@ from gobby.mcp_proxy.bundled import (
     is_bundled_external_mcp_server,
     normalize_bundled_managed_args,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
@@ -142,7 +142,7 @@ class Tool:
 class LocalMCPManager:
     """Manager for local MCP server and tool storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db
 

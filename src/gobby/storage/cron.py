@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 
 from gobby.storage.cron_models import CronJob, CronRun
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def compute_next_run(job: CronJob) -> datetime | None:
 class CronJobStorage:
     """Manager for cron job storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create_job(

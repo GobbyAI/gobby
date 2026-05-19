@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -44,7 +43,7 @@ class StageRegistryEntry:
 
 
 class StageRegistryManager:
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
         self._ensure_phase2_columns()
 
@@ -259,7 +258,7 @@ class StageRegistryManager:
             raise ValueError(f"Stage '{name}' could not be deleted")
         return deleted
 
-    def _entry_from_row(self, row: sqlite3.Row) -> StageRegistryEntry:
+    def _entry_from_row(self, row: Row) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
         if review_policy not in {"none", "required", "optional"}:
             review_policy = "none"
@@ -321,26 +320,26 @@ class StageRegistryManager:
         return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
 
     @staticmethod
-    def _row_value(row: sqlite3.Row, column: str) -> Any:
+    def _row_value(row: Row, column: str) -> Any:
         try:
             return row[column]
         except (IndexError, KeyError):
             return None
 
     @classmethod
-    def _dispatch_type_from_row(cls, row: sqlite3.Row) -> DispatchType | None:
+    def _dispatch_type_from_row(cls, row: Row) -> DispatchType | None:
         value = cls._row_value(row, "dispatch_type")
         return value if value in {"agent", "pipeline"} else None
 
     @classmethod
-    def _is_row_edited(cls, row: sqlite3.Row) -> bool:
+    def _is_row_edited(cls, row: Row) -> bool:
         bundled_hash = cls._row_value(row, "bundled_hash")
         if not bundled_hash:
             return False
         return cls.row_hash(row) != str(bundled_hash)
 
     @classmethod
-    def row_hash(cls, row: sqlite3.Row | dict[str, Any]) -> str:
+    def row_hash(cls, row: Row | dict[str, Any]) -> str:
         import hashlib
 
         body = json.dumps(
@@ -351,7 +350,7 @@ class StageRegistryManager:
         return hashlib.sha256(body).hexdigest()
 
     @classmethod
-    def _row_canonical_payload(cls, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _row_canonical_payload(cls, row: Row | dict[str, Any]) -> dict[str, Any]:
         def value(key: str) -> Any:
             if isinstance(row, dict):
                 return row.get(key)

@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 import yaml
 
 from gobby.paths import get_install_dir
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_registry import (
     StageRegistryEntry as StorageStageRegistryEntry,
 )
@@ -126,7 +126,7 @@ class StageRegistryLoader:
         entries, _digest = self.load_with_hash()
         return entries
 
-    def sync(self, db: DatabaseProtocol) -> StageRegistrySyncResult:
+    def sync(self, db: HubDatabase) -> StageRegistrySyncResult:
         payload, bundled_hash = self._read_payload()
         entries = self._parse_entries(payload)
         upserted = 0

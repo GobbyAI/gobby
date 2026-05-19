@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_utils import _now
 
@@ -12,7 +12,7 @@ _SQLITE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class StageStateSchema:
-    def __init__(self, db: DatabaseProtocol, rows: StageStateRows) -> None:
+    def __init__(self, db: HubDatabase, rows: StageStateRows) -> None:
         self.db = db
         self.rows = rows
 

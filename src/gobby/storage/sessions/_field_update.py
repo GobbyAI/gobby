@@ -11,11 +11,11 @@ from ._bootstrap import TitleChangeCallback
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     _title_listeners: list[TitleChangeCallback]
     _VALID_CHAT_MODES: ClassVar[set[str]]
     _VALID_TITLE_SOURCES: ClassVar[set[str]]

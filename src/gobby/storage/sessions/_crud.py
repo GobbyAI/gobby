@@ -8,7 +8,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    SessionRecoveryByProject,
+    SessionRegistration,
+    WebChatSessionBootstrap,
+)
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
@@ -71,7 +76,7 @@ def _update_existing_session(
 
 
 class _SessionCRUDHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     _VALID_CHAT_MODES: ClassVar[set[str]]
 
     def find_by_external_id(
@@ -164,8 +169,16 @@ class _SessionCRUDMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
+        registration_lock = SessionRegistration(
+            external_id=external_id,
+            machine_id=machine_id,
+            source=source,
+            project_id=project_id,
+            session_type=session_type,
+        )
+
         change_event = "session_created"
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(registration_lock) as conn:
             existing = self.find_by_external_id(
                 external_id,
                 machine_id,
@@ -174,24 +187,25 @@ class _SessionCRUDMixin:
                 session_type=session_type,
             )
             if existing is None and project_id:
-                existing = self.find_by_external_id_any_project(
-                    external_id,
-                    machine_id,
-                    source,
-                    session_type=session_type,
-                )
-                if existing and existing.project_id != project_id:
-                    conn.execute(
-                        "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
-                        (project_id, now, existing.id),
+                with self.db.transaction_immediate(SessionRecoveryByProject(project_id=project_id)):
+                    existing = self.find_by_external_id_any_project(
+                        external_id,
+                        machine_id,
+                        source,
+                        session_type=session_type,
                     )
-                    get_logger().info(
-                        "Recovered session %s: project_id %s -> %s",
-                        existing.id,
-                        existing.project_id,
-                        project_id,
-                    )
-                    existing = self.get(existing.id)
+                    if existing and existing.project_id != project_id:
+                        conn.execute(
+                            "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                            (project_id, now, existing.id),
+                        )
+                        get_logger().info(
+                            "Recovered session %s: project_id %s -> %s",
+                            existing.id,
+                            existing.project_id,
+                            project_id,
+                        )
+                        existing = self.get(existing.id)
 
             if existing:
                 session = _update_existing_session(
@@ -336,7 +350,15 @@ class _SessionCRUDMixin:
             )
 
         bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
-        with self.db.transaction_immediate():
+        with self.db.transaction_immediate(
+            WebChatSessionBootstrap(
+                external_id=bootstrap_external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                session_type="web_chat",
+            )
+        ):
             session = self.register(
                 external_id=bootstrap_external_id,
                 machine_id=machine_id,

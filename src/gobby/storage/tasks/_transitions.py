@@ -7,7 +7,7 @@ from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -27,7 +27,7 @@ from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.tasks.state_semantics import is_task_closed
 
 
-def _stage_states(db: DatabaseProtocol) -> StageStatesManager:
+def _stage_states(db: HubDatabase) -> StageStatesManager:
     return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
@@ -47,7 +47,7 @@ def _parse_time(value: str | None) -> datetime | None:
     return parsed
 
 
-def _has_active_dispatch_mutex(db: DatabaseProtocol, task_id: str) -> bool:
+def _has_active_dispatch_mutex(db: HubDatabase, task_id: str) -> bool:
     mutex = TaskDispatchMutexManager(db).get_mutex(task_id)
     if mutex is None:
         return False
@@ -55,7 +55,7 @@ def _has_active_dispatch_mutex(db: DatabaseProtocol, task_id: str) -> bool:
     return lease_until is None or lease_until >= datetime.now(UTC)
 
 
-def _has_active_agent_run(db: DatabaseProtocol, task_id: str) -> bool:
+def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:
     return bool(LocalAgentRunManager(db).list_active(task_ids=[task_id], limit=1))
 
 
@@ -67,7 +67,7 @@ def _active_build_automation_message(task: Task, task_id: str) -> str:
     )
 
 
-def _current_stage_row(db: DatabaseProtocol, task_id: str) -> Any | None:
+def _current_stage_row(db: HubDatabase, task_id: str) -> Any | None:
     return db.fetchone(
         """
         SELECT *
@@ -81,7 +81,7 @@ def _current_stage_row(db: DatabaseProtocol, task_id: str) -> Any | None:
 
 
 def reset_current_non_ready_stage(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     reason: str,
@@ -122,7 +122,7 @@ def reset_current_non_ready_stage(
     return True
 
 
-def get_effective_claim_owner(task: Task, db: DatabaseProtocol) -> str | None:
+def get_effective_claim_owner(task: Task, db: HubDatabase) -> str | None:
     """Return the canonical owning session for a task during the migration."""
     if task.claimed_by_session_id:
         return task.claimed_by_session_id
@@ -132,7 +132,7 @@ def get_effective_claim_owner(task: Task, db: DatabaseProtocol) -> str | None:
 
 
 def claim_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     session_id: str,
     *,
@@ -157,7 +157,7 @@ def claim_task(
 
 
 def release_task_claim(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     description: MaybeUnset[str | None] = UNSET,
@@ -186,7 +186,7 @@ def release_task_claim(
 
 
 def reopen_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     reason: str | None = None,
@@ -241,7 +241,7 @@ def reopen_task(
 
 
 def escalate_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     reason: str,
@@ -271,7 +271,7 @@ def escalate_task(
 
 
 def de_escalate_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     reason: str,
@@ -300,7 +300,7 @@ def de_escalate_task(
 
 
 def submit_for_review(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     stage_name: str | None = None,
     *,
@@ -340,7 +340,7 @@ def submit_for_review(
 
 
 def approve_review(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     stage_name: str | None = None,
     *,
@@ -376,7 +376,7 @@ def approve_review(
 
 
 def reject_review(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     stage_name: str | None = None,
     *,
@@ -449,7 +449,7 @@ def reject_review(
 
 
 def close_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     reason: str | None = None,
@@ -475,7 +475,7 @@ def close_task(
 
 
 def reconcile_task_state(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     title: MaybeUnset[str | None] = UNSET,

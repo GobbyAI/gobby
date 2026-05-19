@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -77,7 +77,7 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 
 
 def count_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     current_stage_state: str | None = None,
 ) -> int:
@@ -114,7 +114,7 @@ def count_tasks(
 
 
 def count_by_state(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> dict[str, int]:
     """Count tasks grouped by canonical state bucket.
@@ -143,7 +143,7 @@ def count_by_state(
 
 
 def count_ready_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> int:
     """Count tasks that are ready (open and not blocked).
@@ -185,7 +185,7 @@ def count_ready_tasks(
 
 
 def count_closed_since(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     hours: int = 24,
     project_id: str | None = None,
 ) -> int:
@@ -215,7 +215,7 @@ def count_closed_since(
 
 
 def count_blocked_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> int:
     """Count tasks that are blocked by at least one external blocking dependency.

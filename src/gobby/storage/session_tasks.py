@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class SessionTaskManager:
         "review_approved",
     }
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def link_task(

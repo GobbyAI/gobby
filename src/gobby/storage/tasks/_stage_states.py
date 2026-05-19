@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._runtime_mutex import RuntimeStageSnapshotState
@@ -49,7 +49,7 @@ __all__ = [
 
 
 class StageStatesManager:
-    def __init__(self, db: DatabaseProtocol, events: TaskLifecycleEventManager) -> None:
+    def __init__(self, db: HubDatabase, events: TaskLifecycleEventManager) -> None:
         self.db = db
         self.events = events
         self.registry = StageRegistryManager(db)

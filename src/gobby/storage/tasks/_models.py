@@ -8,11 +8,11 @@ This module contains:
 """
 
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from gobby.storage.hub.protocol import Row
 from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES as TDD_ELIGIBLE_CATEGORIES
 from gobby.tasks.state_semantics import serialize_task_state
 
@@ -251,7 +251,7 @@ class Task:
             self.is_escalated = True
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Task":
+    def from_row(cls, row: Row) -> "Task":
         """Convert database row to Task object."""
         labels_json = row["labels"]
         labels = json.loads(labels_json) if labels_json else []

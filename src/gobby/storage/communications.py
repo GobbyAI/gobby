@@ -14,7 +14,7 @@ from gobby.communications.models import (
     CommsMessage,
     CommsRoutingRule,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class LocalCommunicationsStore:
     """Storage manager for communications data."""
 
-    def __init__(self, db: DatabaseProtocol, project_id: str = ""):
+    def __init__(self, db: HubDatabase, project_id: str = ""):
         """Initialize with database connection and optional project ID."""
         self.db = db
         self.project_id = project_id

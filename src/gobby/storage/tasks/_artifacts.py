@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 _ARTIFACT_FIELDS = frozenset(
     {
@@ -67,7 +66,7 @@ class TaskArtifacts:
     updated_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> TaskArtifacts:
+    def from_row(cls, row: Row) -> TaskArtifacts:
         return cls(
             task_id=row["task_id"],
             plan_file_path=row["plan_file_path"],
@@ -171,7 +170,7 @@ def _enforce_isolation_base(
 class TaskArtifactManager:
     """CRUD wrapper for sparse task artifact pointers."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def get_artifacts(self, task_id: str) -> TaskArtifacts:
@@ -250,12 +249,12 @@ class TaskArtifactManager:
         return next_attempts
 
 
-def get_artifacts(db: DatabaseProtocol, task_id: str) -> TaskArtifacts:
+def get_artifacts(db: HubDatabase, task_id: str) -> TaskArtifacts:
     return TaskArtifactManager(db).get_artifacts(task_id)
 
 
 def set_artifact(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     field: str,
     value: str | int | None,
@@ -264,24 +263,24 @@ def set_artifact(
 
 
 def set_artifacts_atomic(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     **fields: str | int | None,
 ) -> TaskArtifacts:
     return TaskArtifactManager(db).set_artifacts_atomic(task_id, **fields)
 
 
-def clear_artifact(db: DatabaseProtocol, task_id: str, field: str) -> TaskArtifacts:
+def clear_artifact(db: HubDatabase, task_id: str, field: str) -> TaskArtifacts:
     return TaskArtifactManager(db).clear_artifact(task_id, field)
 
 
-def clear_artifacts(db: DatabaseProtocol, task_id: str) -> bool:
+def clear_artifacts(db: HubDatabase, task_id: str) -> bool:
     return TaskArtifactManager(db).clear_artifacts(task_id)
 
 
-def clear_isolation_pair(db: DatabaseProtocol, task_id: str, family: str) -> TaskArtifacts:
+def clear_isolation_pair(db: HubDatabase, task_id: str, family: str) -> TaskArtifacts:
     return TaskArtifactManager(db).clear_isolation_pair(task_id, family)
 
 
-def increment_expansion_attempts(db: DatabaseProtocol, task_id: str) -> int:
+def increment_expansion_attempts(db: HubDatabase, task_id: str) -> int:
     return TaskArtifactManager(db).increment_expansion_attempts(task_id)

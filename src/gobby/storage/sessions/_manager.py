@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._bootstrap import SessionChangeCallback, TitleChangeCallback, _SessionBootstrapMixin
 from ._bulk_update import _BulkUpdateMixin
@@ -43,7 +43,7 @@ class SessionManager(
 ):
     """Manager for local session storage."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
     _storage: SessionManager
     logger: logging.Logger
     _config: DaemonConfig | None
@@ -58,7 +58,7 @@ class SessionManager(
 
     def __init__(
         self,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
         *,
         session_storage: SessionManager | None = None,
         logger_instance: logging.Logger | None = None,

@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class MetricSnapshotStorage:
     """Storage manager for periodic metric snapshots."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def save_snapshot(self, metrics: dict[str, Any]) -> None:

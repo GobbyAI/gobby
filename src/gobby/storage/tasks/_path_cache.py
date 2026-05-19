@@ -7,12 +7,12 @@ which represent the hierarchical position of a task as a dotted seq_num path.
 import logging
 from datetime import UTC, datetime
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-def compute_path_cache(db: DatabaseProtocol, task_id: str) -> str | None:
+def compute_path_cache(db: HubDatabase, task_id: str) -> str | None:
     """Compute the hierarchical path for a task.
 
     Traverses up the parent chain to build a dotted path from seq_nums.
@@ -61,7 +61,7 @@ def compute_path_cache(db: DatabaseProtocol, task_id: str) -> str | None:
     return ".".join(path_parts)
 
 
-def update_path_cache(db: DatabaseProtocol, task_id: str) -> str | None:
+def update_path_cache(db: HubDatabase, task_id: str) -> str | None:
     """Compute and store the path_cache for a task.
 
     Args:
@@ -81,7 +81,7 @@ def update_path_cache(db: DatabaseProtocol, task_id: str) -> str | None:
     return path
 
 
-def update_descendant_paths(db: DatabaseProtocol, task_id: str) -> int:
+def update_descendant_paths(db: HubDatabase, task_id: str) -> int:
     """Update path_cache for a task and all its descendants.
 
     Use this after reparenting a task to cascade path updates.

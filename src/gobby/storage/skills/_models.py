@@ -1,11 +1,12 @@
 """Skill data models."""
 
 import json
-import sqlite3
 from collections.abc import KeysView
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
+
+from gobby.storage.hub.protocol import Row
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
@@ -276,7 +277,7 @@ class SkillFile:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "SkillFile":
+    def from_row(cls, row: Row) -> "SkillFile":
         """Create a SkillFile from a database row."""
         return cls(
             id=row["id"],

@@ -1,10 +1,9 @@
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ class TaskDependency:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskDependency":
+    def from_row(cls, row: Row) -> "TaskDependency":
         return cls(
             id=row["id"],
             task_id=row["task_id"],
@@ -47,7 +46,7 @@ class DependencyCycleError(Exception):
 
 
 class TaskDependencyManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def add_dependency(

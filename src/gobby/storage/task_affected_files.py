@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class TaskAffectedFile:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskAffectedFile":
+    def from_row(cls, row: Row) -> "TaskAffectedFile":
         return cls(
             id=row["id"],
             task_id=row["task_id"],
@@ -46,7 +46,7 @@ class TaskAffectedFile:
 
 
 class TaskAffectedFileManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def set_files(

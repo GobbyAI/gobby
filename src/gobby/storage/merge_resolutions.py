@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class MergeResolution:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeResolution":
+    def from_row(cls, row: Row) -> "MergeResolution":
         """Create a MergeResolution from a database row."""
         return cls(
             id=row["id"],
@@ -83,7 +83,7 @@ class MergeConflict:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeConflict":
+    def from_row(cls, row: Row) -> "MergeConflict":
         """Create a MergeConflict from a database row."""
         return cls(
             id=row["id"],
@@ -115,7 +115,7 @@ class MergeConflict:
 class MergeResolutionManager:
     """Manages merge resolutions and conflicts in local SQLite database."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 

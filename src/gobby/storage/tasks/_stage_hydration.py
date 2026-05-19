@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_state_rows import state_from_row
 from gobby.storage.tasks._stage_types import StageState
 
 
-def hydrate_task_stage_state(db: DatabaseProtocol, tasks: Sequence[Task]) -> None:
+def hydrate_task_stage_state(db: HubDatabase, tasks: Sequence[Task]) -> None:
     """Populate denormalized stage rows on task objects."""
     if not tasks:
         return

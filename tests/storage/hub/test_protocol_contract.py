@@ -77,7 +77,8 @@ def test_cursor_and_savepoint_protocols_are_driver_neutral() -> None:
     fetchone_hints = get_type_hints(module.Cursor.fetchone)
     fetchall_hints = get_type_hints(module.Cursor.fetchall)
     assert fetchone_hints["return"] == module.Row | None
-    assert get_origin(fetchall_hints["return"]) is Sequence
+    assert get_origin(fetchall_hints["return"]) is list
+    assert get_type_hints(module.Cursor.lastrowid.fget)["return"] == int | None
 
     row_origin = get_origin(module.Row)
     row_args = get_args(module.Row)
@@ -100,7 +101,15 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
     immediate_hints = get_type_hints(module.HubDatabase.transaction_immediate)
     assert immediate_hints["lock"] is module.LockTarget
 
-    for method in ("apply_migrations", "close"):
+    for method in (
+        "execute",
+        "executemany",
+        "fetchone",
+        "fetchall",
+        "safe_update",
+        "apply_migrations",
+        "close",
+    ):
         assert hasattr(module.HubDatabase, method), method
 
 

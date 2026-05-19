@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from gobby.storage.hub.protocol import Row
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class CronJob:
     consecutive_failures: int = 0
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> CronJob:
+    def from_row(cls, row: Row) -> CronJob:
         """Convert database row to CronJob object."""
         keys = set(row.keys())
         action_config_raw = row["action_config"]
@@ -128,7 +129,7 @@ class CronRun:
     pipeline_execution_id: str | None = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> CronRun:
+    def from_row(cls, row: Row) -> CronRun:
         """Convert database row to CronRun object."""
         keys = set(row.keys())
         return cls(

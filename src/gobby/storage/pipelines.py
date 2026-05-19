@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class LocalPipelineExecutionManager:
     """Manager for local pipeline execution storage."""
 
-    def __init__(self, db: DatabaseProtocol, project_id: str):
+    def __init__(self, db: HubDatabase, project_id: str):
         """Initialize with database connection and project context.
 
         Args:

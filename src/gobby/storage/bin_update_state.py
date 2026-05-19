@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 BinUpdateStatus = Literal[
     "updated",
@@ -64,7 +63,7 @@ _RECORD_COLUMNS = """
             floor_drift"""
 
 
-def _row_to_record(row: sqlite3.Row) -> BinUpdateRecord:
+def _row_to_record(row: Row) -> BinUpdateRecord:
     return BinUpdateRecord(
         tool_name=row["tool_name"],
         installed_version=row["installed_version"],
@@ -104,7 +103,7 @@ class BinUpdateRecord:
 class BinUpdateStateStore:
     """Read and write rows in ``bin_update_state``."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def upsert(

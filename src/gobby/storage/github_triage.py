@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 DeliveryStatus = Literal["pending", "processing", "processed", "ignored", "duplicate", "error"]
 TriageVerdict = Literal["implement", "skip", "escalate", "dedup"]
@@ -165,7 +165,7 @@ class GitHubIssueTriageRecord:
 class GitHubTriageStore:
     """CRUD wrapper for GitHub triage audit/config tables."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def get_config(self, project_id: str, fallback_repo: str | None = None) -> GitHubTriageConfig:

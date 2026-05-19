@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._helpers import _positive_rowcount, utc_now_iso
 from ._models import AgentRun
 
 
 class _AgentRunRuntimeHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def get(self, run_id: str) -> AgentRun | None: ...
 

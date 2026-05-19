@@ -9,11 +9,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.hub.protocol import Row
+
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol, LocalDatabase
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
     "all": "all",
@@ -127,7 +129,7 @@ class InterSessionMessageManager:
     enabling agent coordination and parent-child communication.
     """
 
-    def __init__(self, db: LocalDatabase | DatabaseProtocol) -> None:
+    def __init__(self, db: LocalDatabase | HubDatabase) -> None:
         """Initialize the message manager.
 
         Args:

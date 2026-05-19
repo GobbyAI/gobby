@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
 
 class _DiscoveryMixin:

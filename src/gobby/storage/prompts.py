@@ -7,13 +7,12 @@ storing and retrieving prompts from SQLite, with three-tier scope precedence
 
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.utils.id import generate_prefixed_id
 
 __all__ = [
@@ -65,7 +64,7 @@ class PromptRecord:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "PromptRecord":
+    def from_row(cls, row: Row) -> "PromptRecord":
         """Create a PromptRecord from a database row."""
         variables_json = row["variables"]
         variables = json.loads(variables_json) if variables_json else None
@@ -217,7 +216,7 @@ class LocalPromptManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         dev_mode: bool = False,
         notifier: PromptChangeNotifier | None = None,
     ) -> None:
