@@ -215,7 +215,7 @@ steps:
       - "gobby-tasks:list_tasks"
     transitions:
       - to: execute
-        when: "vars.merge_plan"
+        when: "vars.get('merge_plan')"
 
   - name: execute
     description: "Execute PR gating or direct merge steps"

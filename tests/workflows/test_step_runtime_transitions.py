@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -103,7 +104,7 @@ def _set_variable_workflow(step_variables: dict[str, Any] | None = None) -> dict
                     "mcp__gobby__set_variable",
                     "mcp__gobby__get_variable",
                 ],
-                "transitions": [{"to": "execute", "when": "vars.merge_plan"}],
+                "transitions": [{"to": "execute", "when": "vars.get('merge_plan')"}],
             },
             {"name": "execute", "allowed_tools": "all"},
         ],
@@ -325,6 +326,30 @@ async def test_non_reserved_set_variable_remains_allowed(db: LocalDatabase) -> N
     )
 
     assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_missing_session_scoped_transition_variable_waits_without_error(
+    db: LocalDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workflow = _set_variable_workflow()
+    instance_manager = _setup_workflow(db, current_step="plan", workflow=workflow)
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+    caplog.set_level(logging.ERROR, logger="gobby.workflows.engine.templating")
+
+    response = await engine.evaluate(
+        _before_set_variable("errors_resolved", True),
+        session_id="test-session",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    assert instance is not None
+    assert instance.current_step == "plan"
+    assert response.decision == "allow"
+    assert "Failed to evaluate condition" not in caplog.text
 
 
 @pytest.mark.asyncio
