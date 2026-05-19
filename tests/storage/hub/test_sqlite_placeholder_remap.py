@@ -126,7 +126,8 @@ def test_sqlite_hub_database_executemany_uses_remapped_rows(tmp_path) -> None:
     finally:
         db.close()
 
-    assert [dict(row) for row in rows] == [
+    assert all(isinstance(row, dict) for row in rows)
+    assert rows == [
         {"a": "right", "b": "left"},
         {"a": "second", "b": "first"},
     ]
@@ -149,7 +150,8 @@ def test_sqlite_hub_database_exposes_backend_neutral_surface(tmp_path) -> None:
     finally:
         db.close()
 
-    assert dict(row) == {"id": 1, "name": "one"}
+    assert isinstance(row, dict)
+    assert row == {"id": 1, "name": "one"}
 
 
 def test_sqlite_transaction_immediate_enforces_nested_lock_priority(tmp_path) -> None:
