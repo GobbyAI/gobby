@@ -25,6 +25,7 @@ import {
   getLanguageFromPath,
   getToolSummary,
   groupToolCalls,
+  hasVisibleToolCall,
   parseGrepOutput,
   parseGsqzWrapper,
   parseReadOutput,
@@ -338,7 +339,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     return <ToolApprovalCard call={call} onRespondToApproval={onRespondToApproval} />
   }
 
-  const hasDetails = call.arguments || call.result || call.error
+  const hasDetails = call.arguments || call.result != null || call.error
 
   return (
     <div className={cn(
@@ -384,7 +385,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} />
           )}
-          {call.status === 'completed' && call.result !== undefined && toolType !== 'edit' && (
+          {call.status === 'completed' && call.result != null && toolType !== 'edit' && (
             <div className="min-w-0 max-w-full overflow-hidden">
               <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Result</div>
               <ToolResultContent call={call} />
@@ -804,7 +805,11 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
 }
 
 export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
-  const segments = useMemo(() => groupToolCalls(toolCalls), [toolCalls])
+  const visibleToolCalls = useMemo(
+    () => toolCalls.filter(hasVisibleToolCall),
+    [toolCalls],
+  )
+  const segments = useMemo(() => groupToolCalls(visibleToolCalls), [visibleToolCalls])
   const [groupExpansionOverrides, setGroupExpansionOverrides] = useState<Record<string, boolean>>({})
 
   const toggleGroup = useCallback((key: string, defaultExpanded: boolean) => {
@@ -816,7 +821,7 @@ export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond,
     })
   }, [])
 
-  if (!toolCalls.length) return null
+  if (!visibleToolCalls.length) return null
 
   return (
     <div className="my-1">

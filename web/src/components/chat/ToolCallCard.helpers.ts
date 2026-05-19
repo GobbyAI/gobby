@@ -306,6 +306,19 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
   return segments
 }
 
+export function hasVisibleToolCall(call: ToolCall): boolean {
+  if (call.status === 'calling' || call.status === 'pending_approval' || call.status === 'error') {
+    return true
+  }
+  if (call.tool_name === 'render_surface' || call.tool_name === 'AskUserQuestion') {
+    return true
+  }
+  if (call.arguments && Object.keys(call.arguments).length > 0) {
+    return true
+  }
+  return call.result != null
+}
+
 export function parseReadOutput(
   result: string,
 ): { content: string; startLine: number } | null {

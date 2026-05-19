@@ -89,6 +89,7 @@ export default function App() {
     transportError,
     contextUsage,
     sendMessage,
+    ensureMainSession,
     sendMode,
     sendAttachedSessionMode,
     sendProjectChange,
@@ -154,6 +155,23 @@ export default function App() {
     attachedSessionId && sessionInteractionMode === "proxy"
       ? attachedSessionId
       : conversationId;
+  const ensureVoiceConversationId = useCallback(async () => {
+    if (attachedSessionId && sessionInteractionMode === "proxy") {
+      return attachedSessionId;
+    }
+    return ensureMainSession({
+      projectId: projectIdRef.current,
+      provider: selectedProvider,
+      model: settings.model,
+    });
+  }, [
+    attachedSessionId,
+    ensureMainSession,
+    projectIdRef,
+    selectedProvider,
+    sessionInteractionMode,
+    settings.model,
+  ]);
   const voice = useVoice(
     wsRef,
     voiceConversationId,
@@ -165,6 +183,7 @@ export default function App() {
       voiceInputMode: settings.voiceInputMode,
     },
     isConnected,
+    ensureVoiceConversationId,
   );
   const mcp = useMcp();
   const skillsHook = useSkills();

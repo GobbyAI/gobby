@@ -32,6 +32,15 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
     return {row["name"] for row in db.fetchall(f"PRAGMA index_list({table})")}
 
 
+def _index_columns(db: LocalDatabase, index_name: str) -> tuple[str, ...]:
+    return tuple(
+        row["name"]
+        for row in db.fetchall(
+            "SELECT name FROM pragma_index_info(?) ORDER BY seqno", (index_name,)
+        )
+    )
+
+
 def _trigger_names(db: LocalDatabase, table: str) -> set[str]:
     return {
         row["name"]
@@ -139,6 +148,38 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     assert repaired["external_id"] == "system"
     assert repaired["source"] == "system"
     assert repaired["title"] == "_system"
+
+
+def test_migrations_repair_legacy_sessions_unique_index(tmp_path) -> None:
+    """Existing baseline DBs self-heal the sessions unique index after session_type rollout."""
+    db_path = tmp_path / "sessions_unique_index_repair.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+    db.execute("DROP INDEX idx_sessions_unique")
+    db.execute(
+        """
+        CREATE UNIQUE INDEX idx_sessions_unique
+        ON sessions(external_id, machine_id, source, project_id)
+        """
+    )
+    assert _index_columns(db, "idx_sessions_unique") == (
+        "external_id",
+        "machine_id",
+        "source",
+        "project_id",
+    )
+
+    applied = run_migrations(db)
+
+    assert applied == 0
+    assert _index_columns(db, "idx_sessions_unique") == (
+        "external_id",
+        "machine_id",
+        "source",
+        "project_id",
+        "session_type",
+    )
 
 
 @pytest.mark.parametrize("legacy_version", [1, 218, 219, 238, 239, 257, 258, 259])

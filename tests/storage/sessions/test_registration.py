@@ -181,6 +181,40 @@ class TestSessionManagerRegistration:
         assert session2.id == session1.id
         assert session2.title == "Updated"
 
+    def test_register_recovers_legacy_unique_conflict_across_session_types(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Older DBs had uniqueness without session_type; reuse that row on conflict."""
+        created = session_manager.register(
+            external_id="runtime-key",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Web chat",
+            session_type="web_chat",
+        )
+        session_manager.db.execute(
+            """
+            CREATE UNIQUE INDEX idx_sessions_unique_legacy_test
+            ON sessions(external_id, machine_id, source, project_id)
+            """
+        )
+
+        recovered = session_manager.register(
+            external_id="runtime-key",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Recovered",
+            session_type="terminal",
+        )
+
+        assert recovered.id == created.id
+        assert recovered.session_type == "web_chat"
+        assert recovered.title == "Recovered"
+
     def test_get_session(
         self,
         session_manager: SessionManager,

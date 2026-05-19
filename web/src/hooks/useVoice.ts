@@ -41,6 +41,7 @@ export function useVoice(
   projectIdRef: RefObject<string | null>,
   opts: VoiceOptions,
   socketConnected: boolean,
+  ensureConversationId?: () => Promise<string | null>,
 ): UseVoiceReturn {
   const { sttEnabled, ttsEnabled, voiceInputMode } = opts
 
@@ -86,6 +87,7 @@ export function useVoice(
     voiceInputMode,
     voiceReady: status.voiceReady,
     sttAvailable: status.sttAvailable,
+    ensureConversationId,
     setTransientError,
     clearTransientError,
     onBargeIn: playback.stopTTS,

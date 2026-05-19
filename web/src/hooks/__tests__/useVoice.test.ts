@@ -968,11 +968,11 @@ describe('useVoice', () => {
       expect(result.current.isListening).toBe(true)
     })
     expect(lastVADConfig).toEqual(expect.objectContaining({
-      positiveSpeechThreshold: 0.5,
-      negativeSpeechThreshold: 0.35,
-      minSpeechFrames: 3,
-      redemptionFrames: 8,
-      preSpeechPadFrames: 1,
+      positiveSpeechThreshold: 0.65,
+      negativeSpeechThreshold: 0.45,
+      minSpeechFrames: 6,
+      redemptionFrames: 12,
+      preSpeechPadFrames: 2,
       submitUserSpeechOnPause: false,
     }))
     expectVoiceLog('vad_start')
@@ -982,7 +982,7 @@ describe('useVoice', () => {
       lastVADConfig?.onSpeechStart?.()
       lastVADConfig?.onVADMisfire?.()
       lastVADConfig?.onSpeechStart?.()
-      lastVADConfig?.onSpeechEnd?.(new Float32Array([0.3, -0.2]))
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.2))
     })
 
     expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 16_000, 1, 16)
@@ -998,13 +998,70 @@ describe('useVoice', () => {
     expectVoiceLog('vad_speech_start')
     expectVoiceLog('vad_misfire')
     expectVoiceLog('vad_speech_end', {
-      audioSamples: 2,
+      audioSamples: 8_000,
       sampleRate: 16_000,
     })
     expectVoiceLog('send_ok', {
       conversationPrefix: 'conv-vad',
       sampleRate: 16_000,
     })
+  })
+
+  it('creates a chat session before VAD auto-submit from a fresh chat', async () => {
+    const ensureConversationId = vi.fn(async () => 'fresh-session-id')
+    renderHook(() => useVoice(
+      wsRef as any,
+      '',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
+      true,
+      ensureConversationId,
+    ))
+
+    await waitFor(() => {
+      expect(voiceMocks.mockMicVADNew).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.2))
+    })
+
+    await waitFor(() => {
+      expect(ensureConversationId).toHaveBeenCalledTimes(1)
+      expect(voiceAudioPayloads()).toEqual([
+        expect.objectContaining({
+          type: 'voice_audio',
+          conversation_id: 'fresh-session-id',
+        }),
+      ])
+    })
+    expectVoiceLog('send_ok', {
+      conversationPrefix: 'fresh-se',
+      sampleRate: 16_000,
+    })
+  })
+
+  it('rejects low-energy VAD segments before STT submission', async () => {
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-vad-quiet',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(voiceMocks.mockMicVADNew).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.002))
+    })
+
+    expect(voiceAudioPayloads()).toHaveLength(0)
+    expectVoiceLog('vad_reject', { reason: 'low_energy_or_too_short' })
   })
 
   it('logs VAD startup failures', async () => {
