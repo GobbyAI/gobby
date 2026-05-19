@@ -497,6 +497,59 @@ async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     assert "agent_did_not_register" in updated.description
 
 
+async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks._stage_types import IllegalStageTransitionError
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+
+    async def fake_spawn_agent_impl(**_kwargs):
+        return {"success": False, "error": "code_index_preflight_failed"}
+
+    def racing_fail_stage(*_args, **_kwargs):
+        set_stage_state(temp_db, task.id, "development", "ready")
+        raise IllegalStageTransitionError("development", "ready", "fail_stage", "required")
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(task_manager.stage_states, "fail_stage", racing_fail_stage)
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await dispatcher.run_heartbeat(
+            db=temp_db,
+            project_id=sample_project["id"],
+            services=services,
+        )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert updated.dispatch_failure_count == 1
+    assert "### Dispatch spawn failed" in updated.description
+    assert "Failed to roll back stage after dispatch spawn failure" not in caplog.text
+
+
 async def test_third_spawn_failure_escalates(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

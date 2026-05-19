@@ -14,6 +14,13 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
+from gobby.storage.hub.placeholders import (
+    params_from_indexes as _params_from_indexes,
+)
+from gobby.storage.hub.placeholders import (
+    remap_dollar_placeholders,
+    scan_dollar_placeholder_indexes,
+)
 from gobby.storage.hub.protocol import (
     Cursor,
     LockAcquisitionOrderError,
@@ -60,9 +67,9 @@ def _remap_placeholders_to_psycopg(
     params: Sequence[Any],
 ) -> tuple[str, tuple[Any, ...]]:
     """Translate top-level ``$N`` placeholders to psycopg ``%s`` placeholders."""
-    new_sql, indexes = _scan_placeholder_indexes(sql, len(params))
+    new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
     _cache_param_permutation(sql, len(params), indexes)
-    return new_sql, _params_from_indexes(params, indexes)
+    return new_sql, new_params
 
 
 def _build_param_permutation(sql: str, param_count: int) -> list[int]:
@@ -104,156 +111,7 @@ def _cached_param_permutation(sql: str, param_count: int) -> tuple[int, ...] | N
 
 
 def _scan_placeholder_indexes(sql: str, param_count: int) -> tuple[str, tuple[int, ...]]:
-    out: list[str] = []
-    indexes: list[int] = []
-    i = 0
-    n = len(sql)
-
-    while i < n:
-        char = sql[i]
-
-        if char == "-" and i + 1 < n and sql[i + 1] == "-":
-            end = sql.find("\n", i)
-            end = n if end < 0 else end
-            out.append(sql[i:end])
-            i = end
-            continue
-
-        if char == "/" and i + 1 < n and sql[i + 1] == "*":
-            i = _copy_block_comment(sql, i, out)
-            continue
-
-        if char == "'":
-            i = _copy_single_quoted_string(sql, i, out)
-            continue
-
-        if char == '"':
-            i = _copy_double_quoted_identifier(sql, i, out)
-            continue
-
-        if char == "$":
-            remapped = _try_remap_dollar_token(sql, i, param_count, out, indexes)
-            if remapped is not None:
-                i = remapped
-                continue
-
-        out.append(char)
-        i += 1
-
-    return "".join(out), tuple(indexes)
-
-
-def _copy_block_comment(sql: str, start: int, out: list[str]) -> int:
-    i = start + 2
-    depth = 1
-    n = len(sql)
-    while i < n and depth:
-        if i + 1 < n and sql[i] == "/" and sql[i + 1] == "*":
-            depth += 1
-            i += 2
-            continue
-        if i + 1 < n and sql[i] == "*" and sql[i + 1] == "/":
-            depth -= 1
-            i += 2
-            continue
-        i += 1
-    out.append(sql[start:i])
-    return i
-
-
-def _copy_single_quoted_string(sql: str, start: int, out: list[str]) -> int:
-    i = start
-    n = len(sql)
-    out.append(sql[i])
-    i += 1
-
-    while i < n:
-        if sql[i] == "'":
-            if i + 1 < n and sql[i + 1] == "'":
-                out.append("''")
-                i += 2
-                continue
-            out.append("'")
-            return i + 1
-        out.append(sql[i])
-        i += 1
-
-    return i
-
-
-def _copy_double_quoted_identifier(sql: str, start: int, out: list[str]) -> int:
-    i = start
-    n = len(sql)
-    out.append(sql[i])
-    i += 1
-
-    while i < n:
-        if sql[i] == '"':
-            if i + 1 < n and sql[i + 1] == '"':
-                out.append('""')
-                i += 2
-                continue
-            out.append('"')
-            return i + 1
-        out.append(sql[i])
-        i += 1
-
-    return i
-
-
-def _try_remap_dollar_token(
-    sql: str,
-    start: int,
-    param_count: int,
-    out: list[str],
-    indexes: list[int],
-) -> int | None:
-    if start > 0 and _is_identifier_continuation(sql[start - 1]):
-        return None
-
-    tag_end = start + 1
-    n = len(sql)
-    while tag_end < n and _is_identifier_continuation(sql[tag_end]):
-        tag_end += 1
-
-    if tag_end < n and sql[tag_end] == "$":
-        tag = sql[start : tag_end + 1]
-        close = sql.find(tag, tag_end + 1)
-        if close < 0:
-            raise ValueError(f"unterminated dollar-quote tag {tag!r}")
-        end = close + len(tag)
-        out.append(sql[start:end])
-        return end
-
-    digits = sql[start + 1 : tag_end]
-    if digits and digits.isdigit():
-        index = int(digits)
-        if index < 1 or index > param_count:
-            raise ValueError(
-                f"placeholder ${index} has no matching param "
-                f"(query references {param_count} params total)"
-            )
-        out.append("%s")
-        indexes.append(index - 1)
-        return tag_end
-
-    return None
-
-
-def _is_identifier_continuation(char: str) -> bool:
-    return char.isalnum() or char == "_"
-
-
-def _params_from_indexes(params: Sequence[Any], indexes: Sequence[int]) -> tuple[Any, ...]:
-    remapped: list[Any] = []
-    for index in indexes:
-        if index >= len(params):
-            raise ValueError(
-                f"placeholder ${index + 1} has no matching param "
-                f"(query references {len(params)} params total)"
-            )
-        remapped.append(params[index])
-    return tuple(remapped)
+    return scan_dollar_placeholder_indexes(sql, param_count, "%s")
 
 
 def _prepare_params(

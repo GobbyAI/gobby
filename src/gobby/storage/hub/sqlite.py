@@ -11,6 +11,13 @@ from typing import Any, Literal, cast
 
 from gobby.storage import migrations as _migrations
 from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.placeholders import (
+    params_from_indexes as _params_from_indexes,
+)
+from gobby.storage.hub.placeholders import (
+    remap_dollar_placeholders,
+    scan_dollar_placeholder_indexes,
+)
 from gobby.storage.hub.protocol import (
     Cursor,
     LockAcquisitionOrderError,
@@ -32,122 +39,12 @@ def _remap_placeholders(sql: str, params: Sequence[Any]) -> tuple[str, tuple[Any
     verbatim. Only top-level ``$N`` placeholders are rewritten, with params
     reordered or repeated according to the ordinal used in SQL.
     """
-    new_sql, indexes = _scan_placeholder_indexes(sql, len(params))
-    return new_sql, _params_from_indexes(params, indexes)
+    new_sql, new_params, _indexes = remap_dollar_placeholders(sql, params, "?")
+    return new_sql, new_params
 
 
 def _scan_placeholder_indexes(sql: str, param_count: int) -> tuple[str, tuple[int, ...]]:
-    out: list[str] = []
-    indexes: list[int] = []
-    i = 0
-    n = len(sql)
-
-    while i < n:
-        char = sql[i]
-
-        if char == "-" and i + 1 < n and sql[i + 1] == "-":
-            end = sql.find("\n", i)
-            end = n if end < 0 else end
-            out.append(sql[i:end])
-            i = end
-            continue
-
-        if char == "/" and i + 1 < n and sql[i + 1] == "*":
-            end = sql.find("*/", i + 2)
-            end = n if end < 0 else end + 2
-            out.append(sql[i:end])
-            i = end
-            continue
-
-        if char == "'":
-            i = _copy_single_quoted_string(sql, i, out)
-            continue
-
-        if char == "$":
-            remapped = _try_remap_dollar_token(sql, i, param_count, out, indexes)
-            if remapped is not None:
-                i = remapped
-                continue
-
-        out.append(char)
-        i += 1
-
-    return "".join(out), tuple(indexes)
-
-
-def _copy_single_quoted_string(sql: str, start: int, out: list[str]) -> int:
-    i = start
-    n = len(sql)
-    out.append(sql[i])
-    i += 1
-
-    while i < n:
-        if sql[i] == "'":
-            if i + 1 < n and sql[i + 1] == "'":
-                out.append("''")
-                i += 2
-                continue
-            out.append("'")
-            return i + 1
-        out.append(sql[i])
-        i += 1
-
-    return i
-
-
-def _try_remap_dollar_token(
-    sql: str,
-    start: int,
-    param_count: int,
-    out: list[str],
-    indexes: list[int],
-) -> int | None:
-    if start > 0 and _is_identifier_continuation(sql[start - 1]):
-        return None
-
-    tag_end = start + 1
-    n = len(sql)
-    while tag_end < n and _is_identifier_continuation(sql[tag_end]):
-        tag_end += 1
-
-    if tag_end < n and sql[tag_end] == "$":
-        tag = sql[start : tag_end + 1]
-        close = sql.find(tag, tag_end + 1)
-        if close < 0:
-            raise ValueError(f"unterminated dollar-quote tag {tag!r}")
-        end = close + len(tag)
-        out.append(sql[start:end])
-        return end
-
-    digits = sql[start + 1 : tag_end]
-    if digits and digits.isdigit():
-        index = int(digits)
-        if index < 1 or index > param_count:
-            raise ValueError(
-                f"placeholder ${index} has no matching param "
-                f"(query references {param_count} params total)"
-            )
-        out.append("?")
-        indexes.append(index - 1)
-        return tag_end
-
-    return None
-
-
-def _is_identifier_continuation(char: str) -> bool:
-    return char.isalnum() or char == "_"
-
-
-def _params_from_indexes(params: Sequence[Any], indexes: Sequence[int]) -> tuple[Any, ...]:
-    remapped: list[Any] = []
-    for index in indexes:
-        if index >= len(params):
-            raise ValueError(
-                f"placeholder ${index + 1} has no matching param "
-                f"(query references {len(params)} params total)"
-            )
-        remapped.append(params[index])
-    return tuple(remapped)
+    return scan_dollar_placeholder_indexes(sql, param_count, "?")
 
 
 def _prepare_params(
