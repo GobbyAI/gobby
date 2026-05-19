@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +36,7 @@ class PlanRecord:
     archived_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> PlanRecord:
+    def from_row(cls, row: Mapping[str, Any]) -> PlanRecord:
         return cls(
             id=row["id"],
             project_id=row["project_id"],

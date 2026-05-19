@@ -173,7 +173,7 @@ class TestGetSessionStats:
         # tasks_closed = 3
         # memories_created = 5
         # skills_used = 2
-        db.fetchone.side_effect = [(3,), (5,), (2,)]
+        db.fetchone.side_effect = [{"count": 3}, {"count": 5}, {"count": 2}]
 
         with patch("gobby.servers.routes.sessions.core._get_commit_count", return_value=7):
             stats = _get_session_stats(db, session)

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 
@@ -19,7 +20,7 @@ class DispatchMutex:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> DispatchMutex:
+    def from_row(cls, row: Mapping[str, Any]) -> DispatchMutex:
         return cls(
             task_id=row["task_id"],
             lease_until=row["lease_until"],

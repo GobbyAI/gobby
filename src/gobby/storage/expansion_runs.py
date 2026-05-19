@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -52,7 +53,7 @@ class ExpansionRun:
     completed_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> ExpansionRun:
+    def from_row(cls, row: Mapping[str, Any]) -> ExpansionRun:
         """Create an ExpansionRun from a database row."""
         run_id = row["id"]
 

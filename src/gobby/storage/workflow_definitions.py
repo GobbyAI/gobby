@@ -3,9 +3,9 @@
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
@@ -66,7 +66,7 @@ class WorkflowDefinitionRow:
     deleted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> "WorkflowDefinitionRow":
+    def from_row(cls, row: Mapping[str, Any]) -> "WorkflowDefinitionRow":
         def _parse_json_list(val: str | None) -> list[str] | None:
             if val is None:
                 return None

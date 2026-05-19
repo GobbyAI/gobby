@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 
@@ -26,7 +26,7 @@ class TaskLifecycleEvent:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> TaskLifecycleEvent:
+    def from_row(cls, row: Mapping[str, Any]) -> TaskLifecycleEvent:
         return cls(
             id=int(row["id"]),
             task_id=row["task_id"],

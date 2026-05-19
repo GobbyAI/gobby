@@ -89,8 +89,8 @@ class MemoryFTS5Searcher:
             return []
 
         # Normalize scores: bm25 returns negative (more negative = better)
-        ids = [str(row[0]) for row in rows]
-        raw_scores = [float(row[1]) for row in rows]
+        ids = [str(row["id"]) for row in rows]
+        raw_scores = [float(row["rank"]) for row in rows]
         positive = [-s for s in raw_scores]
         max_score = max(positive) if positive else 1.0
         if max_score == 0:
@@ -118,8 +118,8 @@ class MemoryFTS5Searcher:
                            memory_type, COALESCE(source_type, '')
                     FROM memories
                 """)
-                row = conn.execute("SELECT count(*) FROM memories_fts").fetchone()
-            count = row[0] if row else 0
+                row = conn.execute("SELECT count(*) AS count FROM memories_fts").fetchone()
+            count = row["count"] if row else 0
         except Exception as e:
             logger.error(f"Failed to reindex memories_fts: {e}")
             return {"success": False, "error": str(e)}

@@ -6,7 +6,7 @@ Stores merge resolutions and conflicts for worktree merge operations.
 
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -41,7 +41,7 @@ class MergeResolution:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeResolution":
+    def from_row(cls, row: Mapping[str, Any]) -> "MergeResolution":
         """Create a MergeResolution from a database row."""
         return cls(
             id=row["id"],
@@ -83,7 +83,7 @@ class MergeConflict:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeConflict":
+    def from_row(cls, row: Mapping[str, Any]) -> "MergeConflict":
         """Create a MergeConflict from a database row."""
         return cls(
             id=row["id"],

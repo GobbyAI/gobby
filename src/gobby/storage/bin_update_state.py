@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from gobby.storage.database import DatabaseProtocol
 
@@ -64,7 +64,7 @@ _RECORD_COLUMNS = """
             floor_drift"""
 
 
-def _row_to_record(row: sqlite3.Row) -> BinUpdateRecord:
+def _row_to_record(row: Mapping[str, Any]) -> BinUpdateRecord:
     return BinUpdateRecord(
         tool_name=row["tool_name"],
         installed_version=row["installed_version"],

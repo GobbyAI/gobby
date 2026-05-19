@@ -7,6 +7,7 @@ dependency analysis and contention detection between concurrent tasks.
 import logging
 import sqlite3
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -26,7 +27,7 @@ class TaskAffectedFile:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskAffectedFile":
+    def from_row(cls, row: Mapping[str, Any]) -> "TaskAffectedFile":
         return cls(
             id=row["id"],
             task_id=row["task_id"],

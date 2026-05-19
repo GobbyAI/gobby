@@ -1,20 +1,13 @@
 """Skill data models."""
 
 import json
-import sqlite3
-from collections.abc import KeysView
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
-
-
-class RowLike(Protocol):
-    def __getitem__(self, key: str) -> Any: ...
-
-    def keys(self) -> KeysView[str] | list[str]: ...
 
 
 @dataclass
@@ -97,7 +90,7 @@ class Skill:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: RowLike) -> "Skill":
+    def from_row(cls, row: Mapping[str, Any]) -> "Skill":
         """Create a Skill from a database row.
 
         Args:
@@ -276,7 +269,7 @@ class SkillFile:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "SkillFile":
+    def from_row(cls, row: Mapping[str, Any]) -> "SkillFile":
         """Create a SkillFile from a database row."""
         return cls(
             id=row["id"],
