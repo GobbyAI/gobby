@@ -92,6 +92,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(dispatcher, "RuntimeDispatchMutex", SpyMutex)
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *a, **k: [candidate])
+    monkeypatch.setattr(dispatcher, "sweep_stale_claims", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "count_active_agents", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "reload_candidate", lambda *a, **k: candidate)
     monkeypatch.setattr(dispatcher, "build_context", lambda *a, **k: SimpleNamespace())

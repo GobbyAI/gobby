@@ -2,6 +2,7 @@
 Tests for SpawnExecutor unified spawn dispatch.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -778,7 +779,11 @@ class TestExecuteSpawnSandbox:
     @pytest.mark.asyncio
     async def test_gemini_terminal_spawn_with_sandbox_config(self) -> None:
         """Test that Gemini terminal spawn applies sandbox config correctly."""
-        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
+        sandbox_config = SandboxConfig(
+            enabled=True,
+            mode="permissive",
+            extra_write_paths=["/tmp/gobby-gemini-git"],
+        )
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test with sandbox",
@@ -812,10 +817,6 @@ class TestExecuteSpawnSandbox:
                 mock_prepare,
             ),
             patch(
-                "gobby.agents.spawn_executor.build_cli_command",
-                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
-            ),
-            patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
@@ -835,7 +836,68 @@ class TestExecuteSpawnSandbox:
             assert "--approval-mode" in command
             assert "yolo" in command
             assert "-s" in command
+            assert "--include-directories" in command
+            assert command[command.index("--include-directories") + 1] == str(
+                Path("/tmp/gobby-gemini-git").resolve(strict=False)
+            )
+            assert command[-1] == request.prompt
+            assert command.index("-s") < len(command) - 1
+            assert command.index("--include-directories") < len(command) - 1
             assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_qwen_terminal_spawn_uses_qwen_resolver_for_sandbox_config(self) -> None:
+        """Qwen uses its own resolver and passes sandbox args before the prompt."""
+        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test with sandbox",
+            cwd="/path",
+            provider="qwen",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            sandbox_config=sandbox_config,
+        )
+
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-abc123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = (
+            ["-s", "--include-directories", "/tmp/qwen-git"],
+            {"SEATBELT_PROFILE": "permissive-open"},
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch(
+                "gobby.agents.spawn_executor.QwenSandboxResolver", return_value=mock_resolver
+            ) as mock_resolver_class,
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        mock_resolver_class.assert_called_once()
+        mock_resolver.resolve.assert_called_once()
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert command[0] == "qwen"
+        assert command[-1] == request.prompt
+        assert command.index("-s") < len(command) - 1
+        assert command.index("--include-directories") < len(command) - 1
+        assert mock_spawner.spawn.call_args.kwargs["env"]["SEATBELT_PROFILE"] == "permissive-open"
+        assert result.success is True
 
 
 class TestExecuteSpawnErrorPaths:

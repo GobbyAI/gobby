@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,6 +90,60 @@ class TestSpawnAgentDefaults:
 class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
 
+    async def _spawn_request_for(
+        self,
+        mock_runner,
+        agent_body: AgentDefinitionBody,
+        call_params: dict[str, object],
+    ) -> Any:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(
+                return_value=IsolationContext(cwd="/path/to/project")
+            )
+            mock_handler.build_context_prompt.return_value = "Test prompt"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = MagicMock(
+                success=True,
+                run_id="run-123",
+                child_session_id="child-456",
+                status="pending",
+            )
+
+            params: dict[str, object] = {
+                "prompt": "Test prompt",
+                "parent_session_id": "parent-789",
+            }
+            params.update(call_params)
+            result = await registry.call("spawn_agent", params)
+
+            assert result["success"] is True
+            return mock_execute.call_args[0][0]
+
     @pytest.mark.asyncio
     async def test_tool_params_override_agent_definition(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -143,6 +198,87 @@ class TestSpawnAgentParamOverrides:
 
             assert result["success"] is True
             assert mock_execute.call_args[0][0].provider == "claude"
+
+    @pytest.mark.asyncio
+    async def test_provider_override_omits_agent_definition_model(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "provider": "claude",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model is None
+
+    @pytest.mark.asyncio
+    async def test_provider_override_preserves_explicit_model(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "provider": "claude",
+                "model": "opus",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "opus"
+
+    @pytest.mark.asyncio
+    async def test_provider_override_blank_model_uses_provider_default(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "provider": "claude",
+                "model": "   ",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model is None
+
+    @pytest.mark.asyncio
+    async def test_no_provider_override_keeps_agent_definition_model(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+            },
+        )
+
+        assert spawn_request.provider == "gemini"
+        assert spawn_request.model == "gemini-3.1-pro-preview"
 
 
 class TestSpawnAgentTaskResolution:
