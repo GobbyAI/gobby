@@ -27,6 +27,7 @@ from .pack import pack, unpack
 from .pipelines import pipelines
 from .plan import plan
 from .plans import plans
+from .postgres import postgres_cli
 from .profiles import profiles
 from .projects import projects
 from .qdrant import qdrant
@@ -117,6 +118,7 @@ cli.add_command(export_cmd)
 cli.add_command(import_cmd)
 
 cli.add_command(qdrant)
+cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(comms)
