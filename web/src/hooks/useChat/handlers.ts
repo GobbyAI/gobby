@@ -207,6 +207,7 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
   }
 
   setMessages((prev) => {
+    const result = status.result ?? undefined;
     const idx = prev.findIndex((m) => m.id === status.message_id);
     if (idx < 0) {
       // Tool status arrived before any text/thinking — create the message
@@ -218,7 +219,7 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
         tool_type: classifyTool(toolName),
         status: status.status,
         arguments: status.arguments,
-        result: status.result,
+        result,
         error: status.error,
       };
       return [
@@ -249,7 +250,7 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
       callRef = {
         ...existing,
         status: status.status,
-        result: status.result,
+        result,
         error: status.error,
       };
       toolCalls[existingIdx] = callRef;
@@ -262,7 +263,7 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
         tool_type: classifyTool(toolName),
         status: status.status,
         arguments: status.arguments,
-        result: status.result,
+        result,
         error: status.error,
       };
       toolCalls.push(callRef);

@@ -12,12 +12,15 @@ const VOICE_CAPTURE_WORKLET_URL = '/audio-worklets/voice-capture-processor.js'
 const DEFAULT_ONNX_WASM_BASE_PATH = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/'
 const ONNX_WASM_BASE_PATH =
   import.meta.env.VITE_VAD_ONNX_WASM_BASE_PATH || DEFAULT_ONNX_WASM_BASE_PATH
+const MIN_VAD_DURATION_MS = 350
+const MIN_VAD_RMS = 0.012
+const MIN_VAD_PEAK = 0.06
 const VAD_FRAME_OPTIONS = {
-  positiveSpeechThreshold: 0.5,
-  negativeSpeechThreshold: 0.35,
-  minSpeechFrames: 3,
-  redemptionFrames: 8,
-  preSpeechPadFrames: 1,
+  positiveSpeechThreshold: 0.65,
+  negativeSpeechThreshold: 0.45,
+  minSpeechFrames: 6,
+  redemptionFrames: 12,
+  preSpeechPadFrames: 2,
   submitUserSpeechOnPause: false,
 } as const
 const VOICE_CONVERSATION_LOG_PREFIX_LENGTH = 8
@@ -38,6 +41,7 @@ interface VoiceCaptureOptions {
   voiceInputMode: VoiceInputMode
   voiceReady: boolean
   sttAvailable: boolean
+  ensureConversationId?: () => Promise<string | null>
   setTransientError: (msg: string, ms?: number) => void
   clearTransientError: () => void
   onBargeIn: () => void
@@ -134,6 +138,30 @@ function normalizePttAudio(
   }
 }
 
+function getAudioStats(audio: Float32Array, sampleRate: number) {
+  let peak = 0
+  let sumSquares = 0
+  for (const sample of audio) {
+    const abs = Math.abs(sample)
+    if (abs > peak) peak = abs
+    sumSquares += sample * sample
+  }
+  const rms = audio.length > 0 ? Math.sqrt(sumSquares / audio.length) : 0
+  const durationMs = sampleRate > 0 ? (audio.length / sampleRate) * 1000 : 0
+  return { durationMs, peak, rms }
+}
+
+function isLikelyVadSpeech(audio: Float32Array, sampleRate: number) {
+  const stats = getAudioStats(audio, sampleRate)
+  return {
+    accepted:
+      stats.durationMs >= MIN_VAD_DURATION_MS &&
+      stats.rms >= MIN_VAD_RMS &&
+      stats.peak >= MIN_VAD_PEAK,
+    stats,
+  }
+}
+
 export function useVoiceCapture({
   wsRef,
   conversationIdRef,
@@ -142,6 +170,7 @@ export function useVoiceCapture({
   voiceInputMode,
   voiceReady,
   sttAvailable,
+  ensureConversationId,
   setTransientError,
   clearTransientError,
   onBargeIn,
@@ -253,7 +282,7 @@ export function useVoiceCapture({
     if (mountedRef.current) setIsRecording(false)
   }, [tearDownRecording])
 
-  const sendVoiceAudio = useCallback((audio: Float32Array, sampleRate: number) => {
+  const sendVoiceAudio = useCallback(async (audio: Float32Array, sampleRate: number) => {
     const requestId = createVoiceRequestId()
     const ws = wsRef.current
     const wsState = ws?.readyState ?? 'missing'
@@ -280,7 +309,23 @@ export function useVoiceCapture({
       return false
     }
 
-    const conversationId = conversationIdRef.current
+    let conversationId = conversationIdRef.current
+    if (!conversationId && ensureConversationId) {
+      try {
+        conversationId = await ensureConversationId() ?? conversationIdRef.current
+      } catch (err) {
+        logVoice('send_failed', {
+          requestId,
+          reason: 'session_create_failed',
+          sampleRate,
+          wsState,
+        })
+        console.error('Voice: Failed to create chat session before audio send:', err)
+        resetTranscriptionRequest()
+        setTransientError('Failed to create chat session')
+        return false
+      }
+    }
     if (!conversationId) {
       logVoice('send_failed', { requestId, reason: 'missing_conversation', sampleRate, wsState })
       resetTranscriptionRequest()
@@ -383,6 +428,7 @@ export function useVoiceCapture({
     }
   }, [
     conversationIdRef,
+    ensureConversationId,
     projectIdRef,
     resetTranscriptionRequest,
     setTransientError,
@@ -404,7 +450,7 @@ export function useVoiceCapture({
     const totalLength = buffers.reduce((sum, chunk) => sum + chunk.length, 0)
     if (totalLength === 0) {
       logVoice('ptt_stop', { sampleRate: rec.sampleRate, inputSamples: 0 })
-      sendVoiceAudio(new Float32Array(), rec.sampleRate)
+      await sendVoiceAudio(new Float32Array(), rec.sampleRate)
       return
     }
 
@@ -439,7 +485,7 @@ export function useVoiceCapture({
       durationMs: Math.round(durationMs),
       resampled: normalized.resampled,
     })
-    sendVoiceAudio(normalized.audio, normalized.sampleRate)
+    await sendVoiceAudio(normalized.audio, normalized.sampleRate)
   }, [sendVoiceAudio, setTransientError, tearDownRecording])
 
   useEffect(() => {
@@ -471,12 +517,25 @@ export function useVoiceCapture({
             onBargeIn()
           },
           onSpeechEnd: (audio: Float32Array) => {
+            const speechGate = isLikelyVadSpeech(audio, VOICE_AUDIO_TARGET_SAMPLE_RATE)
             logVoice('vad_speech_end', {
               audioSamples: audio.length,
               sampleRate: VOICE_AUDIO_TARGET_SAMPLE_RATE,
+              durationMs: Math.round(speechGate.stats.durationMs),
+              rms: Number(speechGate.stats.rms.toFixed(4)),
+              peak: Number(speechGate.stats.peak.toFixed(4)),
             })
             if (mountedRef.current) setIsSpeechDetected(false)
-            sendVoiceAudio(audio, VOICE_AUDIO_TARGET_SAMPLE_RATE)
+            if (!speechGate.accepted) {
+              logVoice('vad_reject', {
+                reason: 'low_energy_or_too_short',
+                durationMs: Math.round(speechGate.stats.durationMs),
+                rms: Number(speechGate.stats.rms.toFixed(4)),
+                peak: Number(speechGate.stats.peak.toFixed(4)),
+              })
+              return
+            }
+            void sendVoiceAudio(audio, VOICE_AUDIO_TARGET_SAMPLE_RATE)
           },
           onVADMisfire: () => {
             logVoice('vad_misfire', {})

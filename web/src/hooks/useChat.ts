@@ -673,6 +673,7 @@ export function useChat() {
     contextUsage,
     contextUsageUpdatedAt,
     sendMessage,
+    ensureMainSession,
     sendMode,
     sendProjectChange,
     projectIdRef,

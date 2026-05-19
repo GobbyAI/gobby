@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
@@ -11,6 +12,62 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+
+
+def _is_session_unique_conflict(exc: sqlite3.IntegrityError) -> bool:
+    return "UNIQUE constraint failed: sessions.external_id" in str(exc)
+
+
+def _update_existing_session(
+    manager: _SessionCRUDHost,
+    conn: Any,
+    existing: Session,
+    *,
+    title: str | None,
+    transcript_path: str | None,
+    git_branch: str | None,
+    parent_session_id: str | None,
+    terminal_context_json: str | None,
+    workflow_name: str | None,
+    is_local: bool,
+    sandbox_enabled: bool | None,
+    sandbox_policy_hash: str | None,
+    now: str,
+) -> Session:
+    conn.execute(
+        """
+        UPDATE sessions SET
+            title = COALESCE(?, title),
+            transcript_path = COALESCE(?, transcript_path),
+            git_branch = COALESCE(?, git_branch),
+            parent_session_id = COALESCE(?, parent_session_id),
+            terminal_context = COALESCE(?, terminal_context),
+            workflow_name = COALESCE(?, workflow_name),
+            is_local = CASE WHEN ? THEN 1 ELSE is_local END,
+            sandbox_enabled = COALESCE(?, sandbox_enabled),
+            sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
+            status = 'active',
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            title,
+            transcript_path,
+            git_branch,
+            parent_session_id,
+            terminal_context_json,
+            workflow_name,
+            int(is_local),
+            sandbox_enabled,
+            sandbox_policy_hash,
+            now,
+            existing.id,
+        ),
+    )
+    updated = manager.get(existing.id)
+    if updated is None:
+        raise RuntimeError(f"Session {existing.id} disappeared during update")
+    return updated
 
 
 class _SessionCRUDHost(Protocol):
@@ -137,44 +194,25 @@ class _SessionCRUDMixin:
                     existing = self.get(existing.id)
 
             if existing:
-                conn.execute(
-                    """
-                    UPDATE sessions SET
-                        title = COALESCE(?, title),
-                        transcript_path = COALESCE(?, transcript_path),
-                        git_branch = COALESCE(?, git_branch),
-                        parent_session_id = COALESCE(?, parent_session_id),
-                        terminal_context = COALESCE(?, terminal_context),
-                        workflow_name = COALESCE(?, workflow_name),
-                        is_local = CASE WHEN ? THEN 1 ELSE is_local END,
-                        sandbox_enabled = COALESCE(?, sandbox_enabled),
-                        sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
-                        status = 'active',
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        title,
-                        transcript_path,
-                        git_branch,
-                        parent_session_id,
-                        terminal_context_json,
-                        workflow_name,
-                        int(is_local),
-                        sandbox_enabled,
-                        sandbox_policy_hash,
-                        now,
-                        existing.id,
-                    ),
+                session = _update_existing_session(
+                    self,
+                    conn,
+                    existing,
+                    title=title,
+                    transcript_path=transcript_path,
+                    git_branch=git_branch,
+                    parent_session_id=parent_session_id,
+                    terminal_context_json=terminal_context_json,
+                    workflow_name=workflow_name,
+                    is_local=is_local,
+                    sandbox_enabled=sandbox_enabled,
+                    sandbox_policy_hash=sandbox_policy_hash,
+                    now=now,
                 )
                 get_logger().debug(
                     "Reusing existing session %s for external_id=%s", existing.id, external_id
                 )
-                updated = self.get(existing.id)
-                if updated is None:
-                    raise RuntimeError(f"Session {existing.id} disappeared during update")
                 change_event = "session_updated"
-                session = updated
             else:
                 session_id = str(uuid.uuid4())
                 max_seq_row = conn.execute(
@@ -183,50 +221,92 @@ class _SessionCRUDMixin:
                 ).fetchone()
                 next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
 
-                conn.execute(
-                    """
-                    INSERT INTO sessions (
-                        id, external_id, machine_id, source, project_id, title, title_source,
-                        transcript_path, git_branch, parent_session_id,
-                        agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
-                        status, created_at, updated_at, seq_num,
-                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO sessions (
+                            id, external_id, machine_id, source, project_id, title, title_source,
+                            transcript_path, git_branch, parent_session_id,
+                            agent_depth, spawned_by_agent_id, terminal_context,
+                            workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
+                            status, created_at, updated_at, seq_num,
+                            had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                        """,
+                        (
+                            session_id,
+                            external_id,
+                            machine_id,
+                            source,
+                            project_id,
+                            title,
+                            transcript_path,
+                            git_branch,
+                            parent_session_id,
+                            agent_depth,
+                            spawned_by_agent_id,
+                            terminal_context_json,
+                            workflow_name,
+                            session_type,
+                            int(is_local),
+                            None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                            sandbox_policy_hash,
+                            now,
+                            now,
+                            next_seq_num,
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
-                    """,
-                    (
-                        session_id,
+                except sqlite3.IntegrityError as exc:
+                    if not _is_session_unique_conflict(exc):
+                        raise
+                    conflicting = self.find_by_external_id(
                         external_id,
                         machine_id,
-                        source,
                         project_id,
-                        title,
-                        transcript_path,
-                        git_branch,
-                        parent_session_id,
-                        agent_depth,
-                        spawned_by_agent_id,
-                        terminal_context_json,
-                        workflow_name,
-                        session_type,
-                        int(is_local),
-                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
-                        sandbox_policy_hash,
-                        now,
-                        now,
-                        next_seq_num,
-                    ),
-                )
+                        source,
+                        session_type=session_type,
+                    )
+                    if conflicting is None:
+                        conflicting = self.find_by_external_id(
+                            external_id,
+                            machine_id,
+                            project_id,
+                            source,
+                            session_type=None,
+                        )
+                    if conflicting is None:
+                        raise
+                    get_logger().info(
+                        "Recovered existing session %s after unique conflict for external_id=%s",
+                        conflicting.id,
+                        external_id,
+                    )
+                    session = _update_existing_session(
+                        self,
+                        conn,
+                        conflicting,
+                        title=title,
+                        transcript_path=transcript_path,
+                        git_branch=git_branch,
+                        parent_session_id=parent_session_id,
+                        terminal_context_json=terminal_context_json,
+                        workflow_name=workflow_name,
+                        is_local=is_local,
+                        sandbox_enabled=sandbox_enabled,
+                        sandbox_policy_hash=sandbox_policy_hash,
+                        now=now,
+                    )
+                    change_event = "session_updated"
+                else:
+                    get_logger().debug(
+                        "Created new session %s for external_id=%s", session_id, external_id
+                    )
 
-                get_logger().debug(
-                    "Created new session %s for external_id=%s", session_id, external_id
-                )
-
-                created = self.get(session_id)
-                if created is None:
-                    raise RuntimeError(f"Session {session_id} not found after creation")
-                session = created
+                    created = self.get(session_id)
+                    if created is None:
+                        raise RuntimeError(f"Session {session_id} not found after creation")
+                    session = created
 
         self._notify_session_change(change_event, session.id)
         return session

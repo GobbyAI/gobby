@@ -67,6 +67,59 @@ BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 # Keep the generic runner helpers below for future migrations.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
 
+_LEGACY_SESSIONS_UNIQUE_COLUMNS = ("external_id", "machine_id", "source", "project_id")
+_CURRENT_SESSIONS_UNIQUE_COLUMNS = (*_LEGACY_SESSIONS_UNIQUE_COLUMNS, "session_type")
+
+
+def _sqlite_index_columns(db: LocalDatabase, index_name: str) -> tuple[str, ...]:
+    rows = db.fetchall("SELECT name FROM pragma_index_info(?) ORDER BY seqno", (index_name,))
+    return tuple(row["name"] for row in rows)
+
+
+def _quote_sqlite_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _repair_sessions_unique_index(db: LocalDatabase) -> None:
+    """Drop the pre-session_type uniqueness constraint if an older DB still has it."""
+    indexes = db.fetchall("PRAGMA index_list(sessions)")
+    legacy_index_names: list[str] = []
+    has_current_unique = False
+
+    for row in indexes:
+        if not row["unique"]:
+            continue
+        index_name = row["name"]
+        columns = _sqlite_index_columns(db, index_name)
+        if columns == _CURRENT_SESSIONS_UNIQUE_COLUMNS:
+            has_current_unique = True
+        elif columns == _LEGACY_SESSIONS_UNIQUE_COLUMNS:
+            origin = row["origin"] if "origin" in row.keys() else "c"
+            if origin == "c":
+                legacy_index_names.append(index_name)
+            else:
+                logger.warning(
+                    "Legacy sessions uniqueness is backed by non-droppable SQLite index %s",
+                    index_name,
+                )
+
+    if not legacy_index_names and has_current_unique:
+        return
+
+    with db.transaction():
+        for index_name in legacy_index_names:
+            db.execute(f"DROP INDEX IF EXISTS {_quote_sqlite_identifier(index_name)}")
+            logger.info("Dropped legacy sessions unique index %s", index_name)
+
+        if not has_current_unique:
+            db.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique
+                ON sessions(external_id, machine_id, source, project_id, session_type)
+                """
+            )
+            logger.info("Ensured sessions unique index includes session_type")
+
 
 def get_current_version(db: LocalDatabase) -> int:
     """Get current schema version from database."""
@@ -217,6 +270,8 @@ def run_migrations(db: LocalDatabase) -> int:
 
     if MIGRATIONS:
         total_applied += _run_migration_list(db, current_version, MIGRATIONS)
+
+    _repair_sessions_unique_index(db)
 
     from gobby.storage.sessions import ensure_system_session
     from gobby.storage.tasks import TaskDispatchMutexManager
