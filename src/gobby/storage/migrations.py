@@ -58,6 +58,29 @@ BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 # Keep the generic runner helpers below for future migrations.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
 
+
+def _describe_legacy_migration_entry(entry: object) -> str:
+    if not isinstance(entry, tuple) or len(entry) != 3:
+        return repr(entry)
+
+    version, description, action = entry
+    action_kind = "callable" if callable(action) else type(action).__name__
+    return f"v{version} {description!r} action={action_kind}"
+
+
+def _ensure_no_legacy_migration_entries() -> None:
+    """Fail fast if Python or SQL-string migration entries are reintroduced."""
+    if not MIGRATIONS:
+        return
+
+    entries = "; ".join(_describe_legacy_migration_entry(entry) for entry in MIGRATIONS)
+    raise MigrationUnsupportedError(
+        "MIGRATIONS must remain empty after the file-based migration cutover. "
+        "Add declarative SQL files under src/gobby/storage/migrations/NNN_name.sql "
+        f"instead of legacy Python or SQL-string migration entries. Found: {entries}"
+    )
+
+
 _LEGACY_SESSIONS_UNIQUE_COLUMNS = ("external_id", "machine_id", "source", "project_id")
 _CURRENT_SESSIONS_UNIQUE_COLUMNS = (*_LEGACY_SESSIONS_UNIQUE_COLUMNS, "session_type")
 _MIGRATION_FILE_RE = re.compile(
@@ -254,6 +277,7 @@ class MigrationRunner:
         self._hub = hub
 
     def apply_pending(self) -> None:
+        _ensure_no_legacy_migration_entries()
         _migrate_bookkeeping_table(self._hub)
         if self._hub.dialect == "sqlite":
             self._apply_sqlite_baseline_if_needed()
@@ -660,10 +684,8 @@ def get_current_version(db: LocalDatabase) -> int:
 
 def latest_known_version() -> int:
     """Return the newest schema version known to this build."""
-    return max(
-        BASELINE_VERSION,
-        max((version for version, _description, _action in MIGRATIONS), default=BASELINE_VERSION),
-    )
+    _ensure_no_legacy_migration_entries()
+    return BASELINE_VERSION
 
 
 def migrations_needed(db: LocalDatabase) -> bool:
@@ -769,6 +791,7 @@ def run_migrations(db: LocalDatabase) -> int:
     Returns:
         Number of migrations applied
     """
+    _ensure_no_legacy_migration_entries()
     current_version = get_current_version(db)
     total_applied = 0
 
