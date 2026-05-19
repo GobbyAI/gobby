@@ -206,6 +206,7 @@ class SqliteHubDatabase:
     def apply_migrations(self) -> None:
         if MigrationRunner is not None:
             MigrationRunner(self).apply_pending()
+            _migrations._run_sqlite_startup_repairs(self._local)
             return
         _migrations.run_migrations(self._local)
 

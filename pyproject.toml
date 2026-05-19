@@ -133,6 +133,7 @@ gobby = [
     "install/bundled_content_manifest.json",
     "install/shared/**/*",
     "storage/*.sql",
+    "storage/migrations/*",
     "data/*",
     "data/**/*",
     "ui/web/dist/**/*",
