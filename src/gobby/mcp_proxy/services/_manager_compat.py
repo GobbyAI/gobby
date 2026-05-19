@@ -41,10 +41,6 @@ def manager_server_configs(mcp_manager: Any) -> list[tuple[str, Any]]:
 
     legacy_configs = getattr(mcp_manager, "_configs", None)
     if isinstance(legacy_configs, Mapping):
-        return [
-            (name, config)
-            for name, config in legacy_configs.items()
-            if isinstance(name, str)
-        ]
+        return [(name, config) for name, config in legacy_configs.items() if isinstance(name, str)]
 
     return []
