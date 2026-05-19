@@ -38,6 +38,15 @@ def _create_feature_worktree(repo: Path, tmp_path: Path, branch: str) -> tuple[P
     return worktree_path, _git(worktree_path, "rev-parse", "HEAD")
 
 
+def _commit_on_main(repo: Path, filename: str, content: str) -> str:
+    _git(repo, "checkout", "main")
+    (repo / filename).write_text(content, encoding="utf-8")
+    _git(repo, "add", filename)
+    _git(repo, "commit", "-m", f"main update {filename}")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    return _git(repo, "rev-parse", "HEAD")
+
+
 def _create_registry(temp_db, repo: Path, worktree_path: Path, branch: str):
     from gobby.mcp_proxy.tools.merge import create_merge_registry
     from gobby.storage.merge_resolutions import MergeResolutionManager
@@ -62,6 +71,57 @@ def _create_registry(temp_db, repo: Path, worktree_path: Path, branch: str):
         worktree_manager=worktree_manager,
     )
     return registry, merge_storage, worktree
+
+
+@pytest.mark.asyncio
+async def test_merge_start_rejects_target_branch_as_source(temp_db, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/reject-target-source"
+    _init_repo(repo)
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    registry, _merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+
+    result = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": "main", "target_branch": "main"},
+    )
+
+    assert result["success"] is False
+    assert "source_branch and target_branch must differ" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_merge_start_refreshes_stale_resolved_resolution(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/stale-resolved"
+    _init_repo(repo)
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    main_sha = _commit_on_main(repo, "target.txt", "target\n")
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    merge_storage.create_resolution(
+        worktree_id=worktree.id,
+        source_branch=branch,
+        target_branch="main",
+        status="resolved",
+        tier_used="git_auto",
+    )
+
+    refreshed = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
+    )
+
+    assert refreshed["success"] is True
+    assert "reused_resolution" not in refreshed
+    result = await registry.call("merge_apply", {"resolution_id": refreshed["resolution_id"]})
+    assert result["success"] is True
+    assert result["direct_merge"] is False
+    assert _git(worktree_path, "merge-base", "--is-ancestor", main_sha, "HEAD") == ""
 
 
 @pytest.mark.asyncio
