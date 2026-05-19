@@ -46,6 +46,9 @@ are implementation details produced from the daemon model.
   isolation.
 - Repo, worktree, and clone sessions inherit the same path rule: the launched
   workspace root is writable; extra paths must be explicitly added.
+- Spawned Gemini/Qwen agents pass writable paths outside the workspace as
+  repeated `--include-directories` arguments alongside `-s` and
+  `SEATBELT_PROFILE`.
 - Agent process termination is separate from sandbox compatibility. Spawned
   automation must still call `end_agent_run` to release agent-run resources.
 
@@ -90,8 +93,8 @@ These tests cover the local hook binary contract:
 | Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
 | Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
 | Spawned agents | Codex | `--sandbox <mode>` plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root |
-| Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE` | Workspace boundary follows repo/worktree/clone root |
-| Spawned agents | Qwen | `-s` plus `SEATBELT_PROFILE` | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Qwen | Same Gemini-compatible `-s`, `SEATBELT_PROFILE`, and `--include-directories` contract | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
 
 Claude's sandbox payload is intentionally conservative: Gobby enables the
@@ -102,7 +105,9 @@ Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
 `permissive-open`, `permissive-proxied`, `restrictive-open`, or
 `restrictive-proxied`. That Seatbelt contract applies to spawned Gemini/Qwen
 agents and hook-binary diagnostics; daemon-owned Gemini/Qwen web chat does not
-launch ACP under full-process Seatbelt.
+launch ACP under full-process Seatbelt. Spawned Gemini/Qwen agents also pass
+the external subset of resolved write paths through `--include-directories`;
+the built-in Seatbelt profiles support up to five include directories.
 
 ## Running The Local Compatibility Suite
 
@@ -174,4 +179,4 @@ If the Rust-side diagnose schema changes:
 2. Update the runner expectations in `tests/integration/sandbox/runner.py`.
 3. Re-run `uv run pytest tests/integration/sandbox/ -v --run-sandbox`.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-19_

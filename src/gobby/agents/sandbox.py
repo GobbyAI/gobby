@@ -53,6 +53,7 @@ _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
 )
 logger = logging.getLogger(__name__)
+_GEMINI_INCLUDE_DIRECTORY_LIMIT = 5
 
 
 def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
@@ -230,21 +231,31 @@ class ClaudeSandboxResolver(SandboxResolver):
         if not config.enabled:
             return {}
 
+        sandbox: dict[str, Any] = {
+            "enabled": True,
+            "autoAllowBashIfSandboxed": False,
+            "allowUnsandboxedCommands": False,
+            "excludedCommands": [],
+            "network": {
+                "allowUnixSockets": [],
+                "allowAllUnixSockets": False,
+                "allowLocalBinding": False,
+                "allowedDomains": [],
+            },
+            "enableWeakerNestedSandbox": False,
+        }
+
+        # Grant OS-level write access to writable paths outside the
+        # workspace (notably a worktree's Git metadata dirs in the main
+        # repo's .git/worktrees/<name> and .git), so sandboxed commits
+        # don't fail with EPERM creating index.lock.
+        allow_write = _external_write_paths(paths)
+        if allow_write:
+            sandbox["filesystem"] = {"allowWrite": allow_write}
+
         return {
             "allowManagedPermissionRulesOnly": True,
-            "sandbox": {
-                "enabled": True,
-                "autoAllowBashIfSandboxed": False,
-                "allowUnsandboxedCommands": False,
-                "excludedCommands": [],
-                "network": {
-                    "allowUnixSockets": [],
-                    "allowAllUnixSockets": False,
-                    "allowLocalBinding": False,
-                    "allowedDomains": [],
-                },
-                "enableWeakerNestedSandbox": False,
-            },
+            "sandbox": sandbox,
         }
 
     def resolve(
@@ -325,6 +336,16 @@ class GeminiSandboxResolver(SandboxResolver):
             return ([], {})
 
         args = ["-s"]
+        include_dirs = _external_write_paths(paths)
+        if len(include_dirs) > _GEMINI_INCLUDE_DIRECTORY_LIMIT:
+            raise ValueError(
+                "Gemini/Qwen sandbox supports at most "
+                f"{_GEMINI_INCLUDE_DIRECTORY_LIMIT} external "
+                f"--include-directories paths; got {len(include_dirs)}"
+            )
+        for path in include_dirs:
+            args.extend(["--include-directories", path])
+
         env = {"SEATBELT_PROFILE": self.seatbelt_profile(config, paths)}
 
         return (args, env)
@@ -544,3 +565,39 @@ def _resolve_git_metadata_path(workspace: Path, raw_path: str) -> str | None:
         return str(path.resolve(strict=False))
     except OSError:
         return str(path)
+
+
+def _normalize_sandbox_path(raw_path: str, *, base: Path | None = None) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() and base is not None:
+        path = base / path
+    try:
+        return path.resolve(strict=False)
+    except OSError:
+        return path
+
+
+def _external_write_paths(paths: ResolvedSandboxPaths) -> list[str]:
+    """Return deduped writable paths that sit outside the workspace root.
+
+    These are the paths a CLI sandbox must be told about explicitly (the
+    workspace itself is implicitly writable). Notably includes the Git
+    metadata dirs of a worktree, whose real location is the main repo's
+    ``.git/worktrees/<name>`` and ``.git`` — outside the worktree, so
+    commits fail without granting write access here.
+    """
+    workspace = _normalize_sandbox_path(paths.workspace_path)
+    external_paths: list[str] = []
+    seen: set[str] = set()
+
+    for raw_path in paths.write_paths:
+        resolved_path = _normalize_sandbox_path(raw_path, base=workspace)
+        if resolved_path == workspace or resolved_path.is_relative_to(workspace):
+            continue
+        path_text = str(resolved_path)
+        if path_text in seen:
+            continue
+        seen.add(path_text)
+        external_paths.append(path_text)
+
+    return external_paths

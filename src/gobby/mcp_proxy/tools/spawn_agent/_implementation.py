@@ -45,6 +45,19 @@ def _normalize_string_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _normalize_optional_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _defaulted_provider(value: str | None) -> str:
+    if value is None or value == "inherit":
+        return "claude"
+    return value
+
+
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
     if not condition:
         return True
@@ -260,17 +273,19 @@ async def spawn_agent_impl(
         _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none",
     )
 
+    provider_was_overridden = provider is not None
     _raw_provider: str | None = provider
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
-    if _raw_provider in (None, "inherit"):
-        _raw_provider = "claude"
-    assert _raw_provider is not None  # guaranteed by fallback above
-    effective_provider: str = _raw_provider
+    effective_provider = _defaulted_provider(_raw_provider)
 
-    effective_model = model
-    if effective_model is None and agent_body:
-        effective_model = agent_body.model
+    provider_differs_from_agent = False
+    if provider_was_overridden and agent_body:
+        provider_differs_from_agent = effective_provider != _defaulted_provider(agent_body.provider)
+
+    effective_model = _normalize_optional_model(model)
+    if effective_model is None and agent_body and not provider_differs_from_agent:
+        effective_model = _normalize_optional_model(agent_body.model)
     from gobby.llm.local_detection import is_local_agent_definition
 
     is_local_run = is_local_agent_definition(effective_provider, effective_model)

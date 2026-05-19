@@ -265,7 +265,7 @@ class TestMarkTaskReviewRejected:
             ),
             patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
             patch(
-                "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+                "gobby.mcp_proxy.tools.tasks._dispatch_mutex_release.TaskDispatchMutexManager",
                 return_value=mutexes,
             ),
         ):

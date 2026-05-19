@@ -117,9 +117,13 @@ class TestMergeStartTool:
         """Create mock merge resolution storage."""
         storage = MagicMock()
         storage.create_resolution = MagicMock()
+        storage.get_resolution_for_merge = MagicMock(return_value=None)
+        storage.get_or_create_resolution = MagicMock()
+        storage.get_active_resolution = MagicMock(return_value=None)
         storage.get_resolution = MagicMock()
         storage.update_resolution = MagicMock()
         storage.create_conflict = MagicMock()
+        storage.list_conflicts = MagicMock(return_value=[])
         storage.list_resolutions = MagicMock(return_value=[])
         return storage
 
@@ -143,6 +147,7 @@ class TestMergeStartTool:
         worktree_manager = MagicMock()
         mock_worktree = MagicMock()
         mock_worktree.worktree_path = "/test/repo/worktrees/wt-abc"
+        worktree_manager.get.return_value = mock_worktree
         worktree_manager.get_worktree.return_value = mock_worktree
         return worktree_manager
 
@@ -186,7 +191,7 @@ class TestMergeStartTool:
             created_at="2025-01-01T00:00:00+00:00",
             updated_at="2025-01-01T00:00:00+00:00",
         )
-        mock_storage.create_resolution.return_value = mock_resolution
+        mock_storage.get_or_create_resolution.return_value = (mock_resolution, True)
 
         result = await merge_registry.call(
             "merge_start",
@@ -199,7 +204,7 @@ class TestMergeStartTool:
 
         assert result["success"] is True
         assert "resolution_id" in result
-        mock_storage.create_resolution.assert_called_once()
+        mock_storage.get_or_create_resolution.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_merge_start_with_conflicts(self, merge_registry, mock_storage, mock_resolver):
@@ -227,7 +232,7 @@ class TestMergeStartTool:
             created_at="2025-01-01T00:00:00+00:00",
             updated_at="2025-01-01T00:00:00+00:00",
         )
-        mock_storage.create_resolution.return_value = mock_resolution
+        mock_storage.get_or_create_resolution.return_value = (mock_resolution, True)
 
         result = await merge_registry.call(
             "merge_start",
@@ -241,6 +246,164 @@ class TestMergeStartTool:
         assert result["success"] is False
         assert result["needs_human_review"] is True
         assert len(result["conflicts"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_merge_start_reuses_resolved_resolution(
+        self, merge_registry, mock_storage, mock_resolver
+    ):
+        """merge_start reuses an exact resolved resolution."""
+        from gobby.storage.merge_resolutions import MergeResolution
+
+        existing = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="resolved",
+            tier_used="git_auto",
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution_for_merge.return_value = existing
+
+        result = await merge_registry.call(
+            "merge_start",
+            {
+                "worktree_id": "wt-abc",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["resolution_id"] == "mr-test123"
+        assert result["reused_resolution"] is True
+        mock_storage.get_or_create_resolution.assert_not_called()
+        mock_resolver.resolve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_merge_start_reuses_pending_conflicts(
+        self, merge_registry, mock_storage, mock_resolver
+    ):
+        """merge_start returns existing conflicts for an exact pending resolution."""
+        from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+        existing = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        conflict = MergeConflict(
+            id="mc-test123",
+            resolution_id="mr-test123",
+            file_path="src/test.py",
+            status="pending",
+            ours_content="ours",
+            theirs_content="theirs",
+            resolved_content=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution_for_merge.return_value = existing
+        mock_storage.list_conflicts.return_value = [conflict]
+
+        result = await merge_registry.call(
+            "merge_start",
+            {
+                "worktree_id": "wt-abc",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["resolution_id"] == "mr-test123"
+        assert result["conflicts"] == [{"file": "src/test.py"}]
+        assert result["reused_resolution"] is True
+        mock_storage.get_or_create_resolution.assert_not_called()
+        mock_storage.create_conflict.assert_not_called()
+        mock_resolver.resolve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_merge_start_refreshes_empty_pending_resolution(
+        self, merge_registry, mock_storage, mock_resolver
+    ):
+        """merge_start reruns resolution for exact pending rows without conflicts."""
+        from gobby.storage.merge_resolutions import MergeResolution
+        from gobby.worktrees.merge import MergeResult, ResolutionTier
+
+        existing = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution_for_merge.return_value = existing
+        mock_resolver.resolve.return_value = MergeResult(
+            success=True,
+            tier=ResolutionTier.GIT_AUTO,
+            conflicts=[],
+            resolved_files=[],
+            unresolved_conflicts=[],
+            needs_human_review=False,
+        )
+
+        result = await merge_registry.call(
+            "merge_start",
+            {
+                "worktree_id": "wt-abc",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["resolution_id"] == "mr-test123"
+        mock_storage.get_or_create_resolution.assert_not_called()
+        mock_resolver.resolve.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_merge_start_rejects_different_active_pending_resolution(
+        self, merge_registry, mock_storage, mock_resolver
+    ):
+        """merge_start returns a clean error when another merge is pending."""
+        from gobby.storage.merge_resolutions import MergeResolution
+
+        active = MergeResolution(
+            id="mr-active",
+            worktree_id="wt-abc",
+            source_branch="feature/other",
+            target_branch="develop",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_active_resolution.return_value = active
+
+        result = await merge_registry.call(
+            "merge_start",
+            {
+                "worktree_id": "wt-abc",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["resolution_id"] == "mr-active"
+        assert "active merge resolution" in result["error"].lower()
+        mock_storage.get_or_create_resolution.assert_not_called()
+        mock_resolver.resolve.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_merge_start_requires_worktree_id(self, merge_registry):
@@ -876,6 +1039,9 @@ class TestMergeToolErrors:
     def mock_storage(self):
         """Create mock merge resolution storage that raises errors."""
         storage = MagicMock()
+        storage.get_resolution_for_merge = MagicMock(return_value=None)
+        storage.get_active_resolution = MagicMock(return_value=None)
+        storage.get_or_create_resolution = MagicMock()
         return storage
 
     @pytest.fixture
@@ -906,7 +1072,7 @@ class TestMergeToolErrors:
         self, merge_registry, mock_storage, mock_resolver
     ):
         """merge_start handles storage errors gracefully."""
-        mock_storage.create_resolution.side_effect = Exception("Database error")
+        mock_storage.get_or_create_resolution.side_effect = Exception("Database error")
 
         result = await merge_registry.call(
             "merge_start",

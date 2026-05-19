@@ -122,7 +122,7 @@ class TestMergeStartCommand:
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_worktree_ctx.return_value = None  # Not in a worktree
         mock_manager = MagicMock()
-        mock_manager.create_resolution.return_value = mock_resolution
+        mock_manager.get_or_create_resolution.return_value = (mock_resolution, True)
         mock_get_manager.return_value = mock_manager
 
         mock_resolver = MagicMock()
@@ -152,7 +152,7 @@ class TestMergeStartCommand:
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_worktree_ctx.return_value = None  # Not in a worktree
         mock_manager = MagicMock()
-        mock_manager.create_resolution.return_value = mock_resolution
+        mock_manager.get_or_create_resolution.return_value = (mock_resolution, True)
         mock_get_manager.return_value = mock_manager
 
         mock_resolver = MagicMock()
@@ -186,6 +186,37 @@ class TestMergeStartCommand:
 
         # Should fail without branch argument
         assert result.exit_code != 0
+
+    @patch("gobby.cli.merge.get_worktree_context")
+    @patch("gobby.cli.merge.get_merge_manager")
+    @patch("gobby.cli.merge.get_merge_resolver")
+    @patch("gobby.cli.merge.get_project_context")
+    def test_merge_start_reuses_existing_resolution(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_resolver: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_worktree_ctx: MagicMock,
+        runner: CliRunner,
+        mock_resolution: MagicMock,
+    ) -> None:
+        """Test merge start reuses an existing compatible resolution."""
+        from gobby.cli import cli
+
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_worktree_ctx.return_value = None
+        mock_manager = MagicMock()
+        mock_manager.get_or_create_resolution.return_value = (mock_resolution, False)
+        mock_manager.create_resolution.side_effect = AssertionError("should not insert")
+        mock_get_manager.return_value = mock_manager
+        mock_get_resolver.return_value = MagicMock()
+
+        result = runner.invoke(cli, ["merge", "start", "feature/test"])
+
+        assert result.exit_code == 0
+        assert "mr-abc123" in result.output
+        mock_manager.get_or_create_resolution.assert_called_once()
+        mock_manager.create_resolution.assert_not_called()
 
 
 # ==============================================================================
@@ -645,7 +676,7 @@ class TestMergeWorktreeIntegration:
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_worktree_ctx.return_value = {"id": "wt-xyz", "branch_name": "main"}
         mock_manager = MagicMock()
-        mock_manager.create_resolution.return_value = mock_resolution
+        mock_manager.get_or_create_resolution.return_value = (mock_resolution, True)
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["merge", "start", "feature/test"])

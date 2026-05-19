@@ -56,6 +56,10 @@ def _resolve_from(workspace: Path, raw_path: str) -> str:
     return str(path.resolve(strict=False))
 
 
+def _include_dirs(args: list[str]) -> list[str]:
+    return [args[index + 1] for index, arg in enumerate(args) if arg == "--include-directories"]
+
+
 @pytest.mark.unit
 class TestSandboxConfig:
     """Tests for SandboxConfig Pydantic model."""
@@ -449,6 +453,45 @@ class TestClaudeSandboxResolver:
         assert "httpProxyPort" not in settings["sandbox"]["network"]
         assert "socksProxyPort" not in settings["sandbox"]["network"]
 
+    def test_external_write_paths_grant_filesystem_allow_write(self, tmp_path: Path) -> None:
+        """Worktree git-metadata dirs (outside the workspace) must be granted
+        sandbox.filesystem.allowWrite so sandboxed commits don't EPERM."""
+        import json
+
+        workspace = tmp_path / "worktree"
+        workspace.mkdir()
+        git_meta = tmp_path / "repo" / ".git" / "worktrees" / "wt"
+
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), str(git_meta)],
+            allow_external_network=True,
+        )
+
+        args, _env = ClaudeSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+        settings = json.loads(args[1])
+
+        assert settings["sandbox"]["filesystem"]["allowWrite"] == [
+            str(git_meta.resolve(strict=False))
+        ]
+
+    def test_no_external_paths_omits_filesystem_key(self) -> None:
+        """Workspace-only write paths should not emit a filesystem block."""
+        import json
+
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=True,
+        )
+
+        args, _env = ClaudeSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+        settings = json.loads(args[1])
+
+        assert "filesystem" not in settings["sandbox"]
+
     def test_returns_empty_env(self) -> None:
         """Test that Claude resolver always returns empty env dict."""
         resolver = ClaudeSandboxResolver()
@@ -715,6 +758,99 @@ class TestGeminiSandboxResolver:
         assert "SEATBELT_PROFILE" in env
         assert len(env) == 1  # Only SEATBELT_PROFILE
 
+    def test_external_worktree_git_metadata_paths_emit_include_dirs(self, tmp_path: Path) -> None:
+        """Linked worktree Git metadata outside the workspace is included."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init")
+        _git(repo, "config", "user.name", "Gobby Test")
+        _git(repo, "config", "user.email", "test@gobby.local")
+        (repo / "README.md").write_text("root\n", encoding="utf-8")
+        _git(repo, "add", "README.md")
+        _git(repo, "commit", "-m", "initial")
+
+        worktree = tmp_path / "task-worktree"
+        _git(repo, "worktree", "add", "-b", "task-worktree", str(worktree))
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True),
+            workspace_path=str(worktree),
+        )
+
+        args, env = GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
+        git_dir = _resolve_from(worktree, _git_stdout(worktree, "rev-parse", "--git-dir"))
+        common_dir = _resolve_from(
+            worktree,
+            _git_stdout(worktree, "rev-parse", "--git-common-dir"),
+        )
+        assert args[0] == "-s"
+        assert _include_dirs(args) == [git_dir, common_dir]
+        assert env["SEATBELT_PROFILE"] == "permissive-open"
+
+    def test_workspace_and_workspace_internal_write_paths_are_not_include_dirs(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        internal = workspace / ".git"
+        nested = workspace / "nested" / "path"
+        workspace.mkdir()
+
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), str(internal), str(nested), str(workspace)],
+            allow_external_network=True,
+        )
+
+        args, _env = GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
+        assert args == ["-s"]
+
+    def test_in_place_repo_git_metadata_emits_no_include_dirs(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init")
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True),
+            workspace_path=str(repo),
+        )
+
+        args, _env = GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
+        assert args == ["-s"]
+
+    def test_external_write_paths_are_deduped(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "repo" / ".git"
+        workspace.mkdir()
+
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), str(external), str(external)],
+            allow_external_network=True,
+        )
+
+        args, _env = GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
+        assert _include_dirs(args) == [str(external.resolve(strict=False))]
+
+    def test_more_than_five_external_write_paths_raise_clear_error(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        external_paths = [tmp_path / f"external-{index}" for index in range(6)]
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), *[str(path) for path in external_paths]],
+            allow_external_network=True,
+        )
+
+        with pytest.raises(ValueError, match="at most 5 external --include-directories paths"):
+            GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
 
 @pytest.mark.unit
 class TestQwenSandboxResolver:
@@ -737,6 +873,27 @@ class TestQwenSandboxResolver:
         args, env = resolver.resolve(config, paths)
         assert args == ["-s"]
         assert env["SEATBELT_PROFILE"] == "restrictive-proxied"
+
+    def test_qwen_matches_gemini_include_dir_behavior(self, tmp_path: Path) -> None:
+        resolver = QwenSandboxResolver()
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "repo" / ".git" / "worktrees" / "task"
+        workspace.mkdir()
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), str(external)],
+            allow_external_network=True,
+        )
+
+        args, env = resolver.resolve(SandboxConfig(enabled=True), paths)
+
+        assert args == [
+            "-s",
+            "--include-directories",
+            str(external.resolve(strict=False)),
+        ]
+        assert env["SEATBELT_PROFILE"] == "permissive-open"
 
 
 @pytest.mark.unit
