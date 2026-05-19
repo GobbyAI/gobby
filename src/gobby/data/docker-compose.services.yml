@@ -46,6 +46,39 @@ services:
       - qdrant
       - all
 
+  postgres:
+    build:
+      context: ./postgres-pgsearch
+      args:
+        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.23.4}
+        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256}
+    image: gobby-postgres-local:17-pgsearch
+    container_name: gobby-postgres
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_search,pgaudit
+      - -c
+      - pgaudit.log=write
+    environment:
+      POSTGRES_DB: ${GOBBY_POSTGRES_DB:-gobby}
+      POSTGRES_USER: ${GOBBY_POSTGRES_USER:-gobby}
+      POSTGRES_PASSWORD: ${GOBBY_POSTGRES_PASSWORD:-gobby_dev}
+    ports:
+      - "${GOBBY_POSTGRES_PORT:-60891}:5432"
+    volumes:
+      - gobby_postgres_data:/var/lib/postgresql/data
+      - gobby_pgaudit_log:/var/log/pgaudit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GOBBY_POSTGRES_USER:-gobby}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    profiles:
+      - postgres
+      - all
+
 volumes:
   gobby_neo4j_data:
     name: gobby_neo4j_data
@@ -53,3 +86,7 @@ volumes:
     name: gobby_neo4j_logs
   gobby_qdrant_data:
     name: gobby_qdrant_data
+  gobby_postgres_data:
+    name: gobby_postgres_data
+  gobby_pgaudit_log:
+    name: gobby_pgaudit_log
