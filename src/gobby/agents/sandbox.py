@@ -231,21 +231,31 @@ class ClaudeSandboxResolver(SandboxResolver):
         if not config.enabled:
             return {}
 
+        sandbox: dict[str, Any] = {
+            "enabled": True,
+            "autoAllowBashIfSandboxed": False,
+            "allowUnsandboxedCommands": False,
+            "excludedCommands": [],
+            "network": {
+                "allowUnixSockets": [],
+                "allowAllUnixSockets": False,
+                "allowLocalBinding": False,
+                "allowedDomains": [],
+            },
+            "enableWeakerNestedSandbox": False,
+        }
+
+        # Grant OS-level write access to writable paths outside the
+        # workspace (notably a worktree's Git metadata dirs in the main
+        # repo's .git/worktrees/<name> and .git), so sandboxed commits
+        # don't fail with EPERM creating index.lock.
+        allow_write = _external_write_paths(paths)
+        if allow_write:
+            sandbox["filesystem"] = {"allowWrite": allow_write}
+
         return {
             "allowManagedPermissionRulesOnly": True,
-            "sandbox": {
-                "enabled": True,
-                "autoAllowBashIfSandboxed": False,
-                "allowUnsandboxedCommands": False,
-                "excludedCommands": [],
-                "network": {
-                    "allowUnixSockets": [],
-                    "allowAllUnixSockets": False,
-                    "allowLocalBinding": False,
-                    "allowedDomains": [],
-                },
-                "enableWeakerNestedSandbox": False,
-            },
+            "sandbox": sandbox,
         }
 
     def resolve(
@@ -319,25 +329,6 @@ class GeminiSandboxResolver(SandboxResolver):
         network_suffix = "open" if paths.allow_external_network else "proxied"
         return f"{mode_prefix}-{network_suffix}"
 
-    @staticmethod
-    def _external_write_paths(paths: ResolvedSandboxPaths) -> list[str]:
-        """Return deduped writable paths that sit outside the workspace root."""
-        workspace = _normalize_sandbox_path(paths.workspace_path)
-        external_paths: list[str] = []
-        seen: set[str] = set()
-
-        for raw_path in paths.write_paths:
-            resolved_path = _normalize_sandbox_path(raw_path, base=workspace)
-            if resolved_path == workspace or resolved_path.is_relative_to(workspace):
-                continue
-            path_text = str(resolved_path)
-            if path_text in seen:
-                continue
-            seen.add(path_text)
-            external_paths.append(path_text)
-
-        return external_paths
-
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths
     ) -> tuple[list[str], dict[str, str]]:
@@ -345,7 +336,7 @@ class GeminiSandboxResolver(SandboxResolver):
             return ([], {})
 
         args = ["-s"]
-        include_dirs = self._external_write_paths(paths)
+        include_dirs = _external_write_paths(paths)
         if len(include_dirs) > _GEMINI_INCLUDE_DIRECTORY_LIMIT:
             raise ValueError(
                 "Gemini/Qwen sandbox supports at most "
@@ -584,3 +575,29 @@ def _normalize_sandbox_path(raw_path: str, *, base: Path | None = None) -> Path:
         return path.resolve(strict=False)
     except OSError:
         return path
+
+
+def _external_write_paths(paths: ResolvedSandboxPaths) -> list[str]:
+    """Return deduped writable paths that sit outside the workspace root.
+
+    These are the paths a CLI sandbox must be told about explicitly (the
+    workspace itself is implicitly writable). Notably includes the Git
+    metadata dirs of a worktree, whose real location is the main repo's
+    ``.git/worktrees/<name>`` and ``.git`` — outside the worktree, so
+    commits fail without granting write access here.
+    """
+    workspace = _normalize_sandbox_path(paths.workspace_path)
+    external_paths: list[str] = []
+    seen: set[str] = set()
+
+    for raw_path in paths.write_paths:
+        resolved_path = _normalize_sandbox_path(raw_path, base=workspace)
+        if resolved_path == workspace or resolved_path.is_relative_to(workspace):
+            continue
+        path_text = str(resolved_path)
+        if path_text in seen:
+            continue
+        seen.add(path_text)
+        external_paths.append(path_text)
+
+    return external_paths

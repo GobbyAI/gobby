@@ -453,6 +453,45 @@ class TestClaudeSandboxResolver:
         assert "httpProxyPort" not in settings["sandbox"]["network"]
         assert "socksProxyPort" not in settings["sandbox"]["network"]
 
+    def test_external_write_paths_grant_filesystem_allow_write(self, tmp_path: Path) -> None:
+        """Worktree git-metadata dirs (outside the workspace) must be granted
+        sandbox.filesystem.allowWrite so sandboxed commits don't EPERM."""
+        import json
+
+        workspace = tmp_path / "worktree"
+        workspace.mkdir()
+        git_meta = tmp_path / "repo" / ".git" / "worktrees" / "wt"
+
+        paths = ResolvedSandboxPaths(
+            workspace_path=str(workspace),
+            read_paths=[],
+            write_paths=[str(workspace), str(git_meta)],
+            allow_external_network=True,
+        )
+
+        args, _env = ClaudeSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+        settings = json.loads(args[1])
+
+        assert settings["sandbox"]["filesystem"]["allowWrite"] == [
+            str(git_meta.resolve(strict=False))
+        ]
+
+    def test_no_external_paths_omits_filesystem_key(self) -> None:
+        """Workspace-only write paths should not emit a filesystem block."""
+        import json
+
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=True,
+        )
+
+        args, _env = ClaudeSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+        settings = json.loads(args[1])
+
+        assert "filesystem" not in settings["sandbox"]
+
     def test_returns_empty_env(self) -> None:
         """Test that Claude resolver always returns empty env dict."""
         resolver = ClaudeSandboxResolver()
