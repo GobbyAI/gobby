@@ -487,6 +487,111 @@ class TestMergeResolutionManagerGet:
         assert result is None
 
 
+class TestMergeResolutionManagerMergeLookup:
+    """Tests for exact merge lookup and idempotent creation helpers."""
+
+    def _manager_with_worktree(self, tmp_path, db_name: str):
+        from gobby.storage.merge_resolutions import MergeResolutionManager
+
+        db_path = tmp_path / db_name
+        db = LocalDatabase(db_path)
+        run_migrations(db)
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            ("proj-1", "Test Project"),
+        )
+        db.execute(
+            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+        )
+        return MergeResolutionManager(db), db
+
+    def test_get_resolution_for_merge_returns_newest_exact_match(self, tmp_path) -> None:
+        """Exact merge lookup returns the newest worktree/source/target row."""
+        manager, db = self._manager_with_worktree(tmp_path, "lookup_exact.db")
+        manager.create_resolution(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+        db.execute(
+            """INSERT INTO merge_resolutions
+               (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "mr-newer",
+                "wt-1",
+                "feature/test",
+                "main",
+                "resolved",
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+
+        result = manager.get_resolution_for_merge(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+
+        assert result is not None
+        assert result.id == "mr-newer"
+
+    def test_get_or_create_resolution_reuses_duplicate_retry(self, tmp_path, monkeypatch) -> None:
+        """Duplicate insert races are retried as exact-match reuse."""
+        manager, _db = self._manager_with_worktree(tmp_path, "get_or_create_retry.db")
+        existing = manager.create_resolution(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+        original_lookup = manager.get_resolution_for_merge
+        stale = True
+
+        def stale_once(worktree_id: str, source_branch: str, target_branch: str):
+            nonlocal stale
+            if stale:
+                stale = False
+                return None
+            return original_lookup(worktree_id, source_branch, target_branch)
+
+        monkeypatch.setattr(manager, "get_resolution_for_merge", stale_once)
+
+        result, created = manager.get_or_create_resolution(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+
+        assert created is False
+        assert result.id == existing.id
+
+    def test_different_source_or_target_is_not_compatible(self, tmp_path) -> None:
+        """Exact lookup does not reuse rows for different branches."""
+        manager, _db = self._manager_with_worktree(tmp_path, "lookup_incompatible.db")
+        manager.create_resolution(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+
+        different_target = manager.get_resolution_for_merge(
+            worktree_id="wt-1",
+            source_branch="feature/test",
+            target_branch="develop",
+        )
+        different_source = manager.get_resolution_for_merge(
+            worktree_id="wt-1",
+            source_branch="feature/other",
+            target_branch="main",
+        )
+
+        assert different_target is None
+        assert different_source is None
+
+
 class TestMergeResolutionManagerUpdate:
     """Tests for MergeResolutionManager.update_resolution()."""
 

@@ -186,6 +186,67 @@ class MergeResolutionManager:
             )
         return result
 
+    def get_resolution_for_merge(
+        self,
+        worktree_id: str,
+        source_branch: str,
+        target_branch: str,
+    ) -> MergeResolution | None:
+        """Get the newest resolution for an exact merge request."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM merge_resolutions
+            WHERE worktree_id = ? AND source_branch = ? AND target_branch = ?
+            ORDER BY created_at DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (worktree_id, source_branch, target_branch),
+        )
+        return MergeResolution.from_row(row) if row else None
+
+    def get_or_create_resolution(
+        self,
+        worktree_id: str,
+        source_branch: str,
+        target_branch: str,
+        status: str = "pending",
+        tier_used: str | None = None,
+    ) -> tuple[MergeResolution, bool]:
+        """Return an exact existing resolution or create a new one.
+
+        Returns:
+            A tuple of ``(resolution, created)``. Duplicate insert races are
+            treated as reuse only when the existing row is an exact merge match.
+        """
+        existing = self.get_resolution_for_merge(
+            worktree_id=worktree_id,
+            source_branch=source_branch,
+            target_branch=target_branch,
+        )
+        if existing:
+            return existing, False
+
+        try:
+            return (
+                self.create_resolution(
+                    worktree_id=worktree_id,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    status=status,
+                    tier_used=tier_used,
+                ),
+                True,
+            )
+        except sqlite3.IntegrityError:
+            existing = self.get_resolution_for_merge(
+                worktree_id=worktree_id,
+                source_branch=source_branch,
+                target_branch=target_branch,
+            )
+            if existing:
+                return existing, False
+            raise
+
     def get_resolution(self, resolution_id: str) -> MergeResolution | None:
         """Get a resolution by ID.
 
