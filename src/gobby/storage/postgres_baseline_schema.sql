@@ -604,6 +604,26 @@ CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph
 
 CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 
+ALTER TABLE memories
+ADD CONSTRAINT tags_is_array
+CHECK (tags IS NULL OR jsonb_typeof(tags) = 'array');
+
+CREATE OR REPLACE FUNCTION memories_tags_to_text(tags jsonb)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+RETURNS NULL ON NULL INPUT
+AS $$
+    -- ORDER BY ord is load-bearing: string_agg input order is undefined without it.
+    SELECT COALESCE(string_agg(value, ' ' ORDER BY ord), '')
+    FROM jsonb_array_elements_text(tags) WITH ORDINALITY AS t(value, ord);
+$$;
+
+ALTER TABLE memories
+ADD COLUMN tags_text TEXT
+GENERATED ALWAYS AS (memories_tags_to_text(tags)) STORED;
+
 CREATE TABLE session_memories (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
@@ -1902,27 +1922,30 @@ AFTER DELETE ON task_stage_states
 FOR EACH ROW
 EXECUTE FUNCTION refresh_task_state_bucket_from_stage();
 
--- Seed rows for projects
+-- pg_search extension is provisioned by install (Docker initdb / native installer),
+-- not by this schema. The runner probes for its presence and refuses to baseline
+-- without it. See docs/runbooks/postgres-pgsearch-install.md.
+CREATE INDEX tasks_search_bm25 ON tasks
+USING bm25 (id, title, description)
+WITH (key_field='id');
 
-CREATE INDEX idx_tasks_bm25 ON tasks
-USING bm25 (id, title, description, task_type, category)
-WITH (key_field = 'id');
+CREATE INDEX memories_search_bm25 ON memories
+USING bm25 (id, content, tags_text)
+WITH (key_field='id');
 
-CREATE INDEX idx_memories_bm25 ON memories
-USING bm25 (id, content, memory_type, source_type)
-WITH (key_field = 'id');
-
-CREATE INDEX idx_code_symbols_bm25 ON code_symbols
+CREATE INDEX code_symbols_search_bm25 ON code_symbols
 USING bm25 (id, name, qualified_name, signature, docstring, summary)
-WITH (key_field = 'id');
+WITH (key_field='id');
 
-CREATE INDEX idx_code_content_bm25 ON code_content_chunks
-USING bm25 (id, content, file_path, language)
-WITH (key_field = 'id');
+CREATE INDEX code_content_search_bm25 ON code_content_chunks
+USING bm25 (id, content)
+WITH (key_field='id');
 
-CREATE INDEX idx_skills_bm25 ON skills
-USING bm25 (id, name, description)
-WITH (key_field = 'id');
+CREATE INDEX skills_search_bm25 ON skills
+USING bm25 (id, name, description, content)
+WITH (key_field='id');
+
+-- Seed rows for projects
 
 INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW(), NOW());
 INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW(), NOW());

@@ -41,6 +41,11 @@ _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
         "gobby_migration_state",
     }
 )
+_PG_SEARCH_MISSING_MESSAGE = (
+    "pg_search extension is not present on this database. Docker mode: rebuild the image. "
+    "Native mode: rerun 'gobby postgres install --mode native'. External mode: install "
+    "pg_search per docs/runbooks/postgres-pgsearch-install.md."
+)
 _BaselineState = Literal[
     "fresh",
     "fresh_with_install_infra",
@@ -345,6 +350,7 @@ class PostgresHubDatabase:
                     "Postgres database has application tables but no schema_migrations; "
                     "dump-and-restore from a known-good baseline."
                 )
+            _require_pg_search_extension(conn)
 
             sql = (
                 importlib.resources.files("gobby.storage")
@@ -467,6 +473,12 @@ def _has_baseline_version(conn: Any, version: int) -> bool:
         (version,),
     ).fetchone()
     return row is not None
+
+
+def _require_pg_search_extension(conn: Any) -> None:
+    row = conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'").fetchone()
+    if row is None:
+        raise MigrationUnsupportedError(_PG_SEARCH_MISSING_MESSAGE)
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:
