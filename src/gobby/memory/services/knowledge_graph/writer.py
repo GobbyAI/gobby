@@ -73,10 +73,10 @@ class KnowledgeGraphWriter:
             rel_type=relationship.relationship,
         )
 
-    async def set_entity_vector(self, node_key: str, embedding: list[float]) -> None:
+    async def set_entity_vector(self, entity_key: str, embedding: list[float]) -> None:
         """Set an entity node embedding vector."""
         await self._neo4j.set_node_vector(
-            entity_key=node_key,
+            entity_key=entity_key,
             embedding=embedding,
         )
 

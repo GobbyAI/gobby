@@ -1,6 +1,8 @@
 const stylelint = require("stylelint");
+const path = require("node:path");
 
 const ruleName = "gobby/require-reduced-motion-reset";
+const baseCssPath = path.resolve(__dirname, "src/styles/base.css");
 
 const messages = stylelint.utils.ruleMessages(ruleName, {
   missing:
@@ -16,7 +18,7 @@ const rule = stylelint.createPlugin(ruleName, (enabled) => {
     if (!validOptions || !enabled) return;
 
     const filePath = root.source && root.source.input.file;
-    if (!filePath || !filePath.endsWith("src/styles/base.css")) return;
+    if (!filePath || path.resolve(filePath) !== baseCssPath) return;
 
     let hasRequiredReset = false;
     root.walkAtRules("media", (atRule) => {

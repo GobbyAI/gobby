@@ -6,8 +6,118 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const A2UI_COMPONENT_TYPES = new Set([
+  "Badge",
+  "Button",
+  "Card",
+  "CheckBox",
+  "Column",
+  "Icon",
+  "Image",
+  "List",
+  "Row",
+  "Text",
+  "TextField",
+]);
+
+const BOUND_VALUE_FIELDS = [
+  "alt",
+  "checked",
+  "label",
+  "placeholder",
+  "src",
+  "text",
+];
+
 function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isJsonValue(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): boolean {
+  if (value === null) return true;
+
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return true;
+    case "number":
+      return Number.isFinite(value);
+    case "object": {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        return value.every((item) => isJsonValue(item, seen));
+      }
+      if (!isRecord(value)) return false;
+      return Object.values(value).every((item) => isJsonValue(item, seen));
+    }
+    default:
+      return false;
+  }
+}
+
+function isBoundValue(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const hasLiteralString = Object.prototype.hasOwnProperty.call(
+    value,
+    "literalString",
+  );
+  const hasPath = Object.prototype.hasOwnProperty.call(value, "path");
+  return (
+    (hasLiteralString || hasPath) &&
+    (!hasLiteralString || typeof value.literalString === "string") &&
+    (!hasPath || typeof value.path === "string")
+  );
+}
+
+function isAction(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.name !== "string") return false;
+  if (value.context === undefined) return true;
+  if (!isRecord(value.context)) return false;
+  return Object.values(value.context).every(isBoundValue);
+}
+
+function isChildrenSpec(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.explicitList) &&
+    value.explicitList.every((item) => typeof item === "string")
+  );
+}
+
+function isA2UIComponentDef(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    typeof value.type !== "string" ||
+    !A2UI_COMPONENT_TYPES.has(value.type)
+  ) {
+    return false;
+  }
+  for (const field of BOUND_VALUE_FIELDS) {
+    if (value[field] !== undefined && !isBoundValue(value[field])) {
+      return false;
+    }
+  }
+  if (value.actions !== undefined) {
+    if (!Array.isArray(value.actions) || !value.actions.every(isAction)) {
+      return false;
+    }
+  }
+  if (value.children !== undefined && !isChildrenSpec(value.children)) {
+    return false;
+  }
+  return true;
+}
+
+function isA2UISurface(value: unknown): value is A2UISurfaceState["surface"] {
+  return isRecord(value) && Object.values(value).every(isA2UIComponentDef);
+}
+
+function isA2UIDataModel(value: unknown): value is A2UISurfaceState["dataModel"] {
+  return isRecord(value) && Object.values(value).every((item) => isJsonValue(item));
 }
 
 function toA2UISurfaceState(
@@ -17,8 +127,8 @@ function toA2UISurfaceState(
     typeof ev.canvas_id !== "string" ||
     typeof ev.conversation_id !== "string" ||
     typeof ev.mode !== "string" ||
-    !isRecord(ev.surface) ||
-    !isRecord(ev.data_model)
+    !isA2UISurface(ev.surface) ||
+    !isA2UIDataModel(ev.data_model)
   ) {
     return null;
   }
@@ -26,8 +136,8 @@ function toA2UISurfaceState(
     canvasId: ev.canvas_id,
     conversationId: ev.conversation_id,
     mode: ev.mode,
-    surface: ev.surface as A2UISurfaceState["surface"],
-    dataModel: ev.data_model as A2UISurfaceState["dataModel"],
+    surface: ev.surface,
+    dataModel: ev.data_model,
     rootComponentId:
       typeof ev.root_component_id === "string" ? ev.root_component_id : null,
     completed: ev.completed === true,
@@ -90,7 +200,7 @@ export function handleCanvasTransportEvent(
           if (surface) {
             next.set(surface.canvasId, surface);
           }
-        } else if (s.mode === "html" && !s.completed) {
+        } else if (s.mode === "html" && s.completed !== true) {
           const url = typeof s.url === "string" ? s.url : s.html_url;
           if (typeof s.canvas_id !== "string" || typeof url !== "string") {
             continue;

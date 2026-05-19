@@ -86,6 +86,7 @@ export default function App() {
     isStreaming,
     isThinking,
     isLoadingMessages,
+    transportError,
     contextUsage,
     sendMessage,
     sendMode,
@@ -123,6 +124,7 @@ export default function App() {
     attachedSessionMeta,
     sessionInteractionMode,
     proxyDeliveryNotice,
+    clearTransportError,
     wsRef,
     handleVoiceMessageRef,
     handleBinaryMessageRef,
@@ -671,6 +673,7 @@ export default function App() {
   }
 
   const navItems = createAppNavItems();
+  const visibleToastMessage = toastMessage ?? transportError?.message ?? null;
 
   return (
     <div className="app">
@@ -942,14 +945,17 @@ export default function App() {
         }}
       />
 
-      {toastMessage && (
+      {visibleToastMessage && (
         <button
           type="button"
           className="app-toast"
-          onClick={() => setToastMessage(null)}
-          aria-label={`Dismiss notification: ${toastMessage}`}
+          onClick={() => {
+            setToastMessage(null);
+            clearTransportError();
+          }}
+          aria-label={`Dismiss notification: ${visibleToastMessage}`}
         >
-          {toastMessage}
+          {visibleToastMessage}
         </button>
       )}
     </div>

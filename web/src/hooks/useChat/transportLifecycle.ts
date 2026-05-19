@@ -6,6 +6,33 @@ import type {
   UseChatTransportParams,
 } from "./transportTypes";
 
+const RECONNECT_DELAY_MS = 2000;
+
+function reconnectAfterCriticalRoutingError(
+  ctx: UseChatTransportParams,
+  connectRef: TransportConnectRef,
+  ws: WebSocket,
+) {
+  if (ctx.wsRef.current !== ws) return;
+
+  ctx.reportTransportError("Transport message handling failed; reconnecting");
+  ctx.wsRef.current = null;
+  ctx.setIsConnected(false);
+  ctx.setIsReconnecting(true);
+  if (ctx.reconnectTimeoutRef.current) {
+    window.clearTimeout(ctx.reconnectTimeoutRef.current);
+  }
+  try {
+    ws.close();
+  } catch (error) {
+    console.error("Failed to close WebSocket after routing error:", error);
+  }
+  ctx.reconnectTimeoutRef.current = window.setTimeout(() => {
+    ctx.reconnectTimeoutRef.current = null;
+    connectRef.current?.();
+  }, RECONNECT_DELAY_MS);
+}
+
 export function connectChatTransport(
   ctx: UseChatTransportParams,
   connectRef: TransportConnectRef,
@@ -128,7 +155,7 @@ export function connectChatTransport(
     ctx.reconnectTimeoutRef.current = window.setTimeout(() => {
       clearTimeout(disconnectTimer);
       connectRef.current?.();
-    }, 2000);
+    }, RECONNECT_DELAY_MS);
   };
 
   ws.onerror = (error) => {
@@ -145,6 +172,7 @@ export function connectChatTransport(
         payload: event.data,
         error,
       });
+      reconnectAfterCriticalRoutingError(ctx, connectRef, ws);
     }
   };
 }

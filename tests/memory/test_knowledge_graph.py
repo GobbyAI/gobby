@@ -271,6 +271,9 @@ class TestAddToGraph:
         mock_neo4j.set_node_vector.assert_called_once()
         assert mock_neo4j.set_node_vector.call_count == 1
         assert mock_neo4j.set_node_vector.call_args is not None
+        vector_call_kwargs = mock_neo4j.set_node_vector.call_args.kwargs
+        assert vector_call_kwargs["entity_key"] == entity_key(None, "Josh")
+        assert "node_key" not in vector_call_kwargs
 
     async def test_add_to_graph_deletes_outdated_relations(
         self,

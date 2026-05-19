@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 
 def manager_has_method(mcp_manager: Any, method_name: str) -> bool:
@@ -32,10 +32,19 @@ async def disconnect_manager_server(mcp_manager: Any, name: str) -> None:
 def manager_server_configs(mcp_manager: Any) -> list[tuple[str, Any]]:
     configs = getattr(mcp_manager, "server_configs", None)
     if isinstance(configs, list | tuple):
-        return [(cast("str", config.name), config) for config in configs]
+        server_configs: list[tuple[str, Any]] = []
+        for config in configs:
+            name = getattr(config, "name", None)
+            if isinstance(name, str):
+                server_configs.append((name, config))
+        return server_configs
 
     legacy_configs = getattr(mcp_manager, "_configs", None)
     if isinstance(legacy_configs, Mapping):
-        return [(cast("str", name), config) for name, config in legacy_configs.items()]
+        return [
+            (name, config)
+            for name, config in legacy_configs.items()
+            if isinstance(name, str)
+        ]
 
     return []

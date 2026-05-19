@@ -89,6 +89,7 @@ export interface UseChatTransportParams {
   planContentRef: MutableRefObject<string | null>;
   preAttachContextUsageRef: MutableRefObject<ContextUsage | null>;
   reconnectTimeoutRef: MutableRefObject<number | null>;
+  reportTransportError: (message: string) => void;
   resolveAgentName: (agentRunId: string) => Promise<string | null>;
   restoreContinuationState: (snapshot: ContinuationRollbackSnapshot) => void;
   sendMessageRef: MutableRefObject<SendMessage | null>;

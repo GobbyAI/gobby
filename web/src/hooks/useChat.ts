@@ -29,6 +29,11 @@ import { useChatSessionViewing } from "./useChat/sessionViewing";
 import { useChatTransport } from "./useChat/transport";
 import { useContinuationRestore } from "./useChat/useContinuationRestore";
 
+interface TransportErrorNotice {
+  id: number;
+  message: string;
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
@@ -37,6 +42,8 @@ export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [transportError, setTransportError] =
+    useState<TransportErrorNotice | null>(null);
 
   // Canvas state
   const [canvasSurfaces, setCanvasSurfaces] = useState<
@@ -53,6 +60,8 @@ export function useChat() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const lastServerModeTimestampRef = useRef<number>(0);
+  const transportErrorSeqRef = useRef(0);
+  const transportErrorTimerRef = useRef<number | null>(null);
 
   const {
     activeAgent,
@@ -347,6 +356,34 @@ export function useChat() {
   );
   const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(() => {});
 
+  const clearTransportError = useCallback(() => {
+    if (transportErrorTimerRef.current) {
+      window.clearTimeout(transportErrorTimerRef.current);
+      transportErrorTimerRef.current = null;
+    }
+    setTransportError(null);
+  }, []);
+
+  const reportTransportError = useCallback((message: string) => {
+    if (transportErrorTimerRef.current) {
+      window.clearTimeout(transportErrorTimerRef.current);
+    }
+    transportErrorSeqRef.current += 1;
+    setTransportError({ id: transportErrorSeqRef.current, message });
+    transportErrorTimerRef.current = window.setTimeout(() => {
+      transportErrorTimerRef.current = null;
+      setTransportError(null);
+    }, 5000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (transportErrorTimerRef.current) {
+        window.clearTimeout(transportErrorTimerRef.current);
+      }
+    };
+  }, []);
+
   const connect = useChatTransport({
     activeRequestIdRef,
     applyMainSessionMeta,
@@ -385,6 +422,7 @@ export function useChat() {
     planContentRef,
     preAttachContextUsageRef,
     reconnectTimeoutRef,
+    reportTransportError,
     resolveAgentName,
     restoreContinuationState,
     sendMessageRef,
@@ -631,6 +669,7 @@ export function useChat() {
     isStreaming,
     isThinking,
     isLoadingMessages,
+    transportError,
     contextUsage,
     contextUsageUpdatedAt,
     sendMessage,
@@ -680,6 +719,7 @@ export function useChat() {
     handleBinaryMessageRef,
     setOnChatDeleted,
     setOnChatCleared,
+    clearTransportError,
     selectedProvider,
     setSelectedProvider,
   };

@@ -101,101 +101,104 @@ export function routeTransportMessage(
     return;
   }
 
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(event.data);
-    if (!isRecord(parsed) || typeof parsed.type !== "string") {
-      return;
-    }
-    const data = parsed as WebSocketMessage;
-    if (import.meta.env.DEV) {
-      console.debug("WebSocket message:", data.type, data);
-    }
-
-    switch (data.type) {
-      case "chat_stream":
-        if (isChatStreamChunk(data)) ctx.handleChatStreamRef.current(data);
-        return;
-      case "chat_error":
-        if (isChatError(data)) ctx.handleChatErrorRef.current(data);
-        return;
-      case "tool_status":
-        if (isToolStatusMessage(data)) ctx.handleToolStatusRef.current(data);
-        return;
-      case "chat_thinking":
-        if (isChatThinkingMessage(data)) {
-          ctx.handleChatThinkingRef.current(data);
-        }
-        return;
-      case "model_switched":
-        if (isModelSwitchedMessage(data)) {
-          ctx.handleModelSwitchedRef.current(data);
-        }
-        return;
-      case "plan_pending_approval":
-        handlePlanPendingApproval(data, ctx);
-        return;
-      case "mode_changed":
-        handleModeChanged(data, ctx);
-        return;
-      case "session_info":
-        handleSessionInfo(data, ctx);
-        return;
-      case "worktree_switched":
-        handleWorktreeSwitched(data, ctx);
-        return;
-      case "agent_changed":
-        handleAgentChanged(data, ctx);
-        return;
-      case "session_continued":
-        handleSessionContinued(data, ctx);
-        return;
-      case "error":
-        handleTransportError(data, ctx);
-        return;
-      case "connection_established":
-        handleConnectionEstablished(data, ctx);
-        return;
-      case "canvas_event":
-        handleCanvasTransportEvent(data, ctx);
-        return;
-      case "artifact_event":
-        handleArtifactTransportEvent(data, ctx);
-        return;
-      case "attach_to_session_result":
-        handleAttachToSessionResult(data, ctx);
-        return;
-      case "detach_from_session_result":
-        handleDetachFromSessionResult(data, ctx);
-        return;
-      case "session_message":
-        if (data.session_id) {
-          handleObservedSessionMessage(data, ctx);
-        }
-        return;
-      case "send_to_cli_session_result":
-        handleCliSessionSendResult(data, ctx);
-        return;
-      case "session_usage_updated":
-        handleSessionUsageUpdated(data, ctx);
-        return;
-      case "token_event":
-        handleTokenEvent(data, ctx);
-        return;
-      case "subscribe_success":
-        handleSubscribeSuccess(data);
-        return;
-      case "chat_deleted":
-        handleChatDeleted(data, ctx);
-        return;
-      case "chat_cleared":
-        handleChatCleared(data, ctx);
-        return;
-      default:
-        if (isVoiceTransportEvent(data.type)) {
-          handleVoiceTransportEvent(data, ctx);
-        }
-    }
+    parsed = JSON.parse(event.data);
   } catch (e) {
     console.error("Failed to parse WebSocket message:", e);
+    return;
+  }
+
+  if (!isRecord(parsed) || typeof parsed.type !== "string") {
+    return;
+  }
+  const data = parsed as WebSocketMessage;
+  if (import.meta.env.DEV) {
+    console.debug("WebSocket message:", data.type, data);
+  }
+
+  switch (data.type) {
+    case "chat_stream":
+      if (isChatStreamChunk(data)) ctx.handleChatStreamRef.current(data);
+      return;
+    case "chat_error":
+      if (isChatError(data)) ctx.handleChatErrorRef.current(data);
+      return;
+    case "tool_status":
+      if (isToolStatusMessage(data)) ctx.handleToolStatusRef.current(data);
+      return;
+    case "chat_thinking":
+      if (isChatThinkingMessage(data)) {
+        ctx.handleChatThinkingRef.current(data);
+      }
+      return;
+    case "model_switched":
+      if (isModelSwitchedMessage(data)) {
+        ctx.handleModelSwitchedRef.current(data);
+      }
+      return;
+    case "plan_pending_approval":
+      handlePlanPendingApproval(data, ctx);
+      return;
+    case "mode_changed":
+      handleModeChanged(data, ctx);
+      return;
+    case "session_info":
+      handleSessionInfo(data, ctx);
+      return;
+    case "worktree_switched":
+      handleWorktreeSwitched(data, ctx);
+      return;
+    case "agent_changed":
+      handleAgentChanged(data, ctx);
+      return;
+    case "session_continued":
+      handleSessionContinued(data, ctx);
+      return;
+    case "error":
+      handleTransportError(data, ctx);
+      return;
+    case "connection_established":
+      handleConnectionEstablished(data, ctx);
+      return;
+    case "canvas_event":
+      handleCanvasTransportEvent(data, ctx);
+      return;
+    case "artifact_event":
+      handleArtifactTransportEvent(data, ctx);
+      return;
+    case "attach_to_session_result":
+      handleAttachToSessionResult(data, ctx);
+      return;
+    case "detach_from_session_result":
+      handleDetachFromSessionResult(data, ctx);
+      return;
+    case "session_message":
+      if (data.session_id) {
+        handleObservedSessionMessage(data, ctx);
+      }
+      return;
+    case "send_to_cli_session_result":
+      handleCliSessionSendResult(data, ctx);
+      return;
+    case "session_usage_updated":
+      handleSessionUsageUpdated(data, ctx);
+      return;
+    case "token_event":
+      handleTokenEvent(data, ctx);
+      return;
+    case "subscribe_success":
+      handleSubscribeSuccess(data);
+      return;
+    case "chat_deleted":
+      handleChatDeleted(data, ctx);
+      return;
+    case "chat_cleared":
+      handleChatCleared(data, ctx);
+      return;
+    default:
+      if (isVoiceTransportEvent(data.type)) {
+        handleVoiceTransportEvent(data, ctx);
+      }
   }
 }
