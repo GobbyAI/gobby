@@ -45,6 +45,7 @@ def _make_registry_context(
     wt.base_branch = base
     ctx.worktree_storage.get.return_value = wt
     ctx.git_manager = MagicMock()
+    ctx.git_manager.repo_path = "/tmp/repo"
     ctx.git_manager.run_git_command.side_effect = (
         lambda args, cwd=None, timeout=30, check=False: ctx.git_manager._run_git(
             args, cwd=cwd, timeout=timeout, check=check
@@ -62,6 +63,47 @@ def _make_registry_context(
     return ctx
 
 
+def _local_merge_side_effect(
+    *,
+    source: str = "feat",
+    target: str = "main",
+    merge_result: MagicMock | None = None,
+    unmerged_stdout: str = "",
+):
+    stash_list_calls = 0
+
+    def _run_git(args, cwd=None, timeout=30, check=False):
+        nonlocal stash_list_calls
+        if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{target}"]:
+            return _make_git_result(0)
+        if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{source}"]:
+            return _make_git_result(0)
+        if args == ["status", "--porcelain"]:
+            return _make_git_result(0, stdout="")
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _make_git_result(0, stdout=target)
+        if args == ["stash", "list"]:
+            stash_list_calls += 1
+            return _make_git_result(0, stdout="" if stash_list_calls == 1 else "stash@{0}")
+        if args[:2] == ["stash", "push"]:
+            return _make_git_result(0)
+        if args == ["stash", "pop"]:
+            return _make_git_result(0)
+        if args == ["merge", source, "--no-edit"]:
+            return merge_result or _make_git_result(0)
+        if args == ["diff", "--name-only", "--diff-filter=U"]:
+            return _make_git_result(0, stdout=unmerged_stdout)
+        if args == ["merge", "--abort"]:
+            return _make_git_result(0)
+        if args == ["commit", "--no-edit"]:
+            return _make_git_result(0)
+        if args == ["merge-base", "--is-ancestor", source, target]:
+            return _make_git_result(0)
+        return _make_git_result(0)
+
+    return _run_git
+
+
 @pytest.mark.asyncio
 async def test_merge_worktree_success_returns_worktree_path():
     """Successful merge returns worktree_path."""
@@ -69,14 +111,7 @@ async def test_merge_worktree_success_returns_worktree_path():
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(0),  # merge succeeds
-        *_MERGE_BASE_SUCCESS,
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect()
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -89,6 +124,7 @@ async def test_merge_worktree_success_returns_worktree_path():
 
     assert result["success"] is True
     assert result["worktree_path"] == "/tmp/wt"
+    assert result["project_path"] == "/tmp/repo"
     assert result["merged"] is True
 
 
@@ -99,14 +135,7 @@ async def test_merge_worktree_local_only_target_uses_local_branch():
 
     ctx = _make_registry_context(base="develop")
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(0),  # merge succeeds
-        *_MERGE_BASE_SUCCESS,
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(target="develop")
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -124,24 +153,18 @@ async def test_merge_worktree_local_only_target_uses_local_branch():
         if call[0][0][0] == "merge" and "--no-edit" in call[0][0]
     ]
     assert len(merge_calls) == 1
-    assert merge_calls[0][0][0] == ["merge", "develop", "--no-edit"]
+    assert merge_calls[0][0][0] == ["merge", "feat", "--no-edit"]
+    assert merge_calls[0].kwargs.get("cwd") == "/tmp/repo"
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_prefer_remote_uses_remote_ref():
-    """Remote target selection is explicit."""
+async def test_merge_worktree_prefer_remote_is_rejected():
+    """Remote target selection is rejected; worktree merges are local-only."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context(base="develop")
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_AND_REMOTE_TARGET_EXIST,
-        *_STASH_BEFORE,
-        _make_git_result(0),  # merge succeeds
-        *_MERGE_BASE_SUCCESS,
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(target="develop")
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -152,14 +175,9 @@ async def test_merge_worktree_prefer_remote_uses_remote_ref():
     ):
         result = await merge_tool("wt-123", prefer_remote=True)
 
-    assert result["success"] is True
-    merge_calls = [
-        call
-        for call in ctx.git_manager._run_git.call_args_list
-        if call[0][0][0] == "merge" and "--no-edit" in call[0][0]
-    ]
-    assert len(merge_calls) == 1
-    assert merge_calls[0][0][0] == ["merge", "origin/develop", "--no-edit"]
+    assert result["success"] is False
+    assert "local target branch" in result["error"]
+    ctx.git_manager._run_git.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -169,15 +187,10 @@ async def test_merge_worktree_conflict_returns_worktree_path():
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(1, stderr="CONFLICT"),  # merge fails
-        _make_git_result(0, stdout="src/main.py\n"),  # diff --name-only
-        _make_git_result(0),  # merge --abort
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        merge_result=_make_git_result(1, stderr="CONFLICT"),
+        unmerged_stdout="src/main.py\n",
+    )
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -208,16 +221,10 @@ async def test_merge_worktree_auto_resolves_trivial_conflicts():
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(1, stderr="CONFLICT"),  # merge fails
-        _make_git_result(0, stdout=".gobby/tasks.jsonl\n"),  # diff --name-only
-        _make_git_result(0),  # commit --no-edit
-        *_MERGE_BASE_SUCCESS,
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        merge_result=_make_git_result(1, stderr="CONFLICT"),
+        unmerged_stdout=".gobby/tasks.jsonl\n",
+    )
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -243,20 +250,13 @@ async def test_merge_worktree_auto_resolves_trivial_conflicts():
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_push_failure_returns_worktree_path():
-    """Push failure returns worktree_path."""
+async def test_merge_worktree_push_true_is_rejected_without_git_commands():
+    """push=True is rejected before any git command can run."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(0),  # merge succeeds
-        _make_git_result(1, stderr="rejected"),  # push fails
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect()
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -268,8 +268,8 @@ async def test_merge_worktree_push_failure_returns_worktree_path():
         result = await merge_tool("wt-123", push=True)
 
     assert result["success"] is False
-    assert result["worktree_path"] == "/tmp/wt"
-    assert result["merge_succeeded"] is True
+    assert "never pushes" in result["error"]
+    ctx.git_manager._run_git.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -279,14 +279,10 @@ async def test_merge_worktree_non_conflict_error_returns_worktree_path():
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(128, stdout="fatal: not a git repo", stderr=""),  # merge fails
-        _make_git_result(0, stdout=""),  # diff --name-only (no conflicts)
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        merge_result=_make_git_result(128, stdout="fatal: not a git repo", stderr=""),
+        unmerged_stdout="",
+    )
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -309,14 +305,7 @@ async def test_merge_worktree_stash_restores_on_success():
 
     ctx = _make_registry_context()
 
-    ctx.git_manager._run_git.side_effect = [
-        _make_git_result(0),  # fetch
-        *_LOCAL_TARGET_EXISTS,
-        *_STASH_BEFORE,
-        _make_git_result(0),  # merge succeeds
-        *_MERGE_BASE_SUCCESS,
-        *_STASH_POP,
-    ]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect()
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")

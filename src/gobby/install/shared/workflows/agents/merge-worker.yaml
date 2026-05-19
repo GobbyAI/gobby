@@ -26,7 +26,7 @@ instructions: |
 
   WORKTREE MERGE FLOW:
   MAX_RESOLVE_RETRIES: 3 per conflict set.
-  1. Call merge_worktree with worktree_id and push=true
+  1. Call merge_worktree with worktree_id and target_branch. Do not push.
   2. If SUCCESS: call end_agent_run — you're done
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
@@ -35,7 +35,7 @@ instructions: |
      c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
         by the exact unresolved conflict file/id set
      d. Call merge_apply to finalize the resolved merge
-     e. Call merge_worktree again with push=true (merge is applied, this just pushes)
+     e. Call merge_worktree again with target_branch to merge the resolved work locally
      f. Call end_agent_run
   4. If resolution fails, or the same conflict set reaches MAX_RESOLVE_RETRIES:
      call merge_abort, report the conflict ids/files and retry count, then end_agent_run.
@@ -62,6 +62,7 @@ instructions: |
   - Do NOT call close_task — the coordinator handles task lifecycle.
   - Do NOT spawn other agents.
   - Do NOT use Bash for git commands — the merge tools handle everything.
+  - Do NOT push. Remote publication is allowed only through explicit PR delivery.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
@@ -81,7 +82,7 @@ steps:
       FAST PATH (try first):
       1. Use progressive discovery to find the merge tools
       2. Check your session variables for worktree_id or clone_id
-      3. WORKTREE: call merge_worktree with worktree_id and push=true
+      3. WORKTREE: call merge_worktree with worktree_id and target_branch
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
       4. If merge succeeds with no conflicts, call end_agent_run
 
@@ -94,7 +95,7 @@ steps:
          by the exact unresolved conflict file/id set and stop after
          MAX_RESOLVE_RETRIES=3 for the same set.
       4. Call merge_apply with the resolution_id to finalize
-      5. Call merge_worktree again with push=true (merge is applied, this pushes)
+      5. Call merge_worktree again with target_branch to merge the resolved work locally
       6. Call end_agent_run
 
       CLONE CONFLICTS: call end_agent_run (no auto-resolution for clones)

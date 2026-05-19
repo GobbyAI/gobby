@@ -58,7 +58,7 @@ instructions: |
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task - dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task - lifecycle resets are human-driven.
-  - Do NOT call git push - the merge agent handles pushing.
+  - Do NOT call git push - remote publication is handled only by explicit PR delivery.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.

@@ -10,4 +10,4 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "git\\s+push"
-        reason: "Push is blocked. The merge agent handles pushing."
+        reason: "Push is blocked. Remote publication is handled only by explicit PR delivery."

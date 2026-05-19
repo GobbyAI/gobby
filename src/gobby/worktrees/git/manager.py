@@ -95,6 +95,6 @@ class WorktreeGitManager(GitRunner):
         self,
         source_branch: str,
         target_branch: str = "main",
-        push: bool = True,
+        push: bool = False,
     ) -> GitOperationResult:
         return _merge.merge_branch(self, source_branch, target_branch=target_branch, push=push)

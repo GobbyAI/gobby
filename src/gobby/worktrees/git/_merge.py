@@ -15,7 +15,7 @@ def merge_branch(
     runner: GitRunner,
     source_branch: str,
     target_branch: str = "main",
-    push: bool = True,
+    push: bool = False,
 ) -> GitOperationResult:
     """
     Merge source branch into target branch in the main repository.
@@ -25,18 +25,27 @@ def merge_branch(
     2. Checkout target branch
     3. Pull latest on target
     4. Attempt merge from source branch (--no-ff)
-    5. Optionally push to remote
 
     On conflict: aborts merge, restores original branch.
 
     Args:
         source_branch: Branch to merge from
         target_branch: Branch to merge into (default: main)
-        push: Whether to push after merge (default: True)
+        push: Unsupported. Merge automation never pushes to remote.
 
     Returns:
         GitOperationResult with success status and conflict info
     """
+    if push:
+        return GitOperationResult(
+            success=False,
+            message=(
+                "merge_branch is local-only and never pushes to remote. "
+                "Use the explicit PR delivery flow for remote publication."
+            ),
+            error="push_not_supported",
+        )
+
     # Save current branch for restoration
     original_branch: str | None = None
     branch_result = runner._run_git(
@@ -120,20 +129,6 @@ def merge_branch(
                 message=f"Merge failed: {merge_result.stderr}",
                 error=merge_result.stderr,
             )
-
-        # Optionally push
-        if push:
-            push_result = runner._run_git(
-                ["push", "origin", target_branch],
-                timeout=60,
-            )
-            if push_result.returncode != 0:
-                return GitOperationResult(
-                    success=True,
-                    message=f"Merged {source_branch} into {target_branch} but push failed: {push_result.stderr}",
-                    error=push_result.stderr,
-                    output=merge_result.stdout,
-                )
 
         return GitOperationResult(
             success=True,

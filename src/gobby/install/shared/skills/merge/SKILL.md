@@ -48,7 +48,7 @@ On confirmation, spawn the worker via `gobby-agents:spawn_agent`:
 ```python
 call_tool("gobby-agents", "spawn_agent", {
     "agent": "merge-worker",
-    "prompt": "Merge worktree <worktree_id> into <target_branch>. Call merge_worktree with push=true and target_branch=<target_branch>.",
+    "prompt": "Merge worktree <worktree_id> into local <target_branch>. Call merge_worktree with target_branch=<target_branch>. Do not push; remote publication is PR-only.",
     "worktree_id": "<worktree_id>",
     "target_branch": "<target_branch>",
     "isolation": "none",
