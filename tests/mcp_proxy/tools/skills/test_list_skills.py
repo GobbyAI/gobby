@@ -68,9 +68,7 @@ class TestListSkillsTool:
     """Tests for list_skills MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_list_skills_returns_all_skills(
-        self, populated_db: LocalDatabase
-    ) -> None:
+    async def test_list_skills_returns_all_skills(self, populated_db: LocalDatabase) -> None:
         """Test that list_skills returns all skills."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -298,9 +296,7 @@ class TestListSkillsInternalFilter:
         assert names == {"public-skill"}
 
     @pytest.mark.asyncio
-    async def test_include_internal_surfaces_them(
-        self, db_with_internal: LocalDatabase
-    ) -> None:
+    async def test_include_internal_surfaces_them(self, db_with_internal: LocalDatabase) -> None:
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         registry = create_skills_registry(db_with_internal)
@@ -313,9 +309,7 @@ class TestListSkillsInternalFilter:
         assert names == {"public-skill", "methodology-one", "methodology-two"}
 
     @pytest.mark.asyncio
-    async def test_nested_gobby_internal_is_hidden(
-        self, db_with_internal: LocalDatabase
-    ) -> None:
+    async def test_nested_gobby_internal_is_hidden(self, db_with_internal: LocalDatabase) -> None:
         """metadata.gobby.internal also counts as internal."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
