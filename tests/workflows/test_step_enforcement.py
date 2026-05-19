@@ -473,6 +473,34 @@ class TestStepTransitions:
         assert "terminate" in response.context
 
     @pytest.mark.asyncio
+    async def test_implement_to_terminate_transition_for_codex_call_tool_alias(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Codex's alternate call_tool alias should fire on_mcp_success handlers."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp_gobby_call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables.get("review_submitted") is True
+        assert response.context is not None
+        assert "implement" in response.context
+        assert "terminate" in response.context
+
+    @pytest.mark.asyncio
     async def test_no_transition_for_unmatched_tool(
         self, db, manager, engine, instance_mgr
     ) -> None:
