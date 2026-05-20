@@ -394,13 +394,12 @@ Expansion manifest category list:
 | `docs` | no | Documentation |
 | `refactor` | no | Code restructuring with no behavior change (includes updating existing tests) |
 | `test` | no | Standalone test infrastructure, parity, characterization, or regression suites with their own acceptance criteria |
-| `research` | no | Investigation, no code output expected |
-| `planning` | no | Design, architecture |
 
 Pick the most specific category that applies. A task that only moves code
 around without changing behavior is `refactor`, not `code`.
-`manual` remains valid for direct task creation outside expansion manifests; in
-plans that expand into tasks, live/manual verification belongs in `test`.
+`research`, `planning`, and `manual` remain valid for direct task creation
+outside expansion manifests. In plans that expand into tasks, discovery and
+design must already be resolved; live/manual verification belongs in `test`.
 
 ---
 

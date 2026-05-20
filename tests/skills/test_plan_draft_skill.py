@@ -51,11 +51,13 @@ class TestPlanDraftContent:
 
     # --- canonical category list -------------------------------------------
 
-    def test_lists_every_canonical_category(self, body: str) -> None:
-        """`required` covers core canonical categories; `manual` has special semantics."""
-        required = {"code", "config", "docs", "refactor", "test", "research", "planning"}
+    def test_lists_every_expansion_category(self, body: str) -> None:
+        """`required` covers categories that expansion may emit as leaves."""
+        required = {"code", "config", "docs", "refactor", "test"}
         for cat in required:
             assert f"`{cat}`" in body, f"Missing canonical category: {cat}"
+        assert "discovery and" in body
+        assert "design must already be resolved" in body
         assert "`manual`" in body
         assert "outside expansion manifests" in body
 
@@ -66,7 +68,7 @@ class TestPlanDraftContent:
 
     def test_code_and_config_marked_tdd(self, body: str) -> None:
         """Only code and config receive TDD sandwiches — the skill must tell
-        the drafter this so they don't scatter TDD across docs/research tasks."""
+        the drafter this so they don't scatter TDD across docs/test tasks."""
         # Category table must note 'yes' for TDD on code + config; permissive
         # check — look for the category names plus a yes marker near them.
         assert "code" in body and "config" in body

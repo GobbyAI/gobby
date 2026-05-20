@@ -232,7 +232,7 @@ def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
 
     message = str(excinfo.value)
     assert "unsupported category 'manual'" in message
-    assert "automated leaf categories" in message
+    assert "development-forward categories" in message
 
 
 def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:

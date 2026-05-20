@@ -20,7 +20,7 @@ from gobby.plans.parser import (
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.tasks import Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
 
 _TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
 _DEFAULT_AGENT = "backend-developer"
@@ -58,8 +58,6 @@ _DETERMINISTIC_AGENT_BY_CATEGORY = {
     "test": "backend-developer",
     "config": "backend-developer",
     "docs": "tech-writer",
-    "planning": "planner",
-    "research": "researcher",
 }
 _BACKEND_SIGNALS = frozenset(
     {
@@ -200,7 +198,7 @@ def _agent_selection_fields(
     """Normalize expansion agent-selection fields for an emitted leaf task."""
     category = str(task_item.get("category", "code"))
     description = str(task_item.get("description") or "")
-    if category not in AUTOMATED_LEAF_CATEGORIES:
+    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
         return None, None, description
 
     available = _available_agent_names(agent_definitions)
