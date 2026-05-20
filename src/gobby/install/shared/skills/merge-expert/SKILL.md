@@ -95,8 +95,11 @@ campaign task with `reason=already_implemented` instead.
 Produce an ordered merge plan. The ordering rubric, in priority order:
 
 1. **Recover orphans first.** Any worktree returned by `inspect_merge_state`
-   with `state != "clean"` and `can_resume=true` must be recovered or aborted
-   before scheduling fresh merges in the same worktree.
+   with `state != "clean"` and `can_resume=true` must be recovered before
+   scheduling fresh merges in the same worktree. If it exposes an
+   `active_resolution_id` with pending conflicts, continue that active
+   resolution with `merge_status` plus a `merge-worker`; do not abort solely
+   because a previous campaign recorded no progress.
 2. **Toposort by task dependencies.** If the campaign worktrees correspond to
    tasks with `blocked_by` relations, predecessors merge before dependents.
 3. **Fewest predicted conflicts against the target.** Worktrees with `clean:
@@ -118,8 +121,8 @@ For each step, decide an action:
 - `merge_subset` — when only specific paths from the worktree should land
   (the rest is exploratory or stale). Drives the `merge_subset` tool.
 - `abort` — when `inspect_merge_state` shows orphaned state that cannot be
-  resumed cleanly, or when the worktree is purely abandoned work. Drives
-  `merge_abort` then `delete_worktree`.
+  resumed cleanly, has no active resolution to continue, or when the worktree
+  is purely abandoned work. Drives `merge_abort` then `delete_worktree`.
 
 Emit the plan as a structured list into a session variable
 `merge_plan` so subsequent phases can iterate it:
@@ -177,8 +180,13 @@ Append a `task_lifecycle_event` per step (`merge_step_started`,
 Whenever `inspect_merge_state` shows orphaned state during pre-flight, treat
 it as a recovery action before any new dispatch:
 
-- `state == "merging"` with conflicts → call `merge_abort`, then re-survey
-  before scheduling a fresh `merge` step.
+- `state == "merging"` with conflicts and an `active_resolution_id` → call
+  `merge_status`, then dispatch a `merge-worker` to continue the pending
+  conflicts in that active resolution. The no-progress redispatch cap applies
+  only after a worker from the current orchestrator run completes and the next
+  `merge_status` is unchanged.
+- `state == "merging"` with conflicts but no resumable active resolution →
+  call `merge_abort`, then re-survey before scheduling a fresh `merge` step.
 - `state == "cherry-picking"` with conflicts → call
   `gobby-merge:merge_resolve` on each conflict, then **dispatch a
   `merge-worker` to run `git cherry-pick --continue`** in the worktree (no

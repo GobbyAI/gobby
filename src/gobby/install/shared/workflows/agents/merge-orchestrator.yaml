@@ -83,12 +83,19 @@ instructions: |
     resolved_count/pending_count signature is unchanged and pending_count is
     still non-zero, do not redispatch another worker. Record a failed merge
     result with the worker run ids, unchanged counts, and unresolved files.
+    This no-progress cap is scoped to workers this orchestrator run actually
+    waited for; historical delivery campaign failures and last_error text are
+    evidence for the report, but are not by themselves a redispatch blocker.
   - If a worker returns success but inspect_merge_state or merge_status still
     shows unresolved merge state, treat that as a failed execution, record a
     failed merge result with the stale worker run id and unresolved files, and
     do not mark the campaign clean.
-  - Recover orphaned merge state with merge_abort or merge_resolve before
-    scheduling fresh work in the same worktree.
+  - Recover orphaned merge state before scheduling fresh work in the same
+    worktree. If inspect_merge_state exposes an active_resolution_id with
+    pending conflicts and can_resume=true, continue the active resolution with
+    merge_status plus a merge-worker before considering merge_abort. Use
+    merge_abort only when there is no resumable active resolution or recovery
+    is explicitly unsafe.
   - Report: record the campaign result with
     gobby-tasks-ops:record_merge_result.
   - After a successful merge result is recorded, call
@@ -376,11 +383,13 @@ steps:
         when: "vars.get('no_progress_merge_status_count', 0) >= 1"
         reason: |
           NO_PROGRESS_MERGE_WORKER_REDISPATCH_CAP reached. The last completed
-          merge-worker did not change the active merge_status
-          resolved_count/pending_count signature, and conflicts remain pending.
-          Do not spawn another merge-worker for the same resolution. Call
-          gobby-tasks-ops:record_merge_result with failure_reason, including
-          last_worker_run_id, unchanged counts, and unresolved conflict ids/files.
+          merge-worker in this orchestrator run did not change the active
+          merge_status resolved_count/pending_count signature, and conflicts
+          remain pending. Historical failed campaign state alone does not trip
+          this cap. Do not spawn another merge-worker for the same resolution.
+          Call gobby-tasks-ops:record_merge_result with failure_reason,
+          including last_worker_run_id, unchanged counts, and unresolved
+          conflict ids/files.
     transitions:
       - to: report
         when: "vars.execution_complete"

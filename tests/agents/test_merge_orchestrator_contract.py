@@ -221,6 +221,10 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "worker returns success" in instructions
     assert "unresolved merge state" in instructions
     assert "resolved_count/pending_count signature is unchanged" in instructions
+    assert "scoped to workers this orchestrator run actually" in instructions
+    assert "waited for" in instructions
+    assert "historical delivery campaign failures" in instructions
+    assert "continue the active resolution" in instructions
     assert "no_progress_merge_status_count" in agent["step_variables"]
 
 
@@ -411,3 +415,45 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: LocalDatabase) -
         variables=variables,
     )
     assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="execute")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:merge_status",
+            arguments={"resolution_id": "mr-1"},
+            tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
+    assert instance.variables["no_progress_merge_status_count"] == 0
+    assert instance.variables["merge_worker_completed"] is False
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+
+def test_merge_expert_continues_active_resolution_before_abort() -> None:
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "active_resolution_id" in skill
+    assert "continue that active" in skill
+    assert "do not abort solely" in skill
+    assert "previous campaign recorded no progress" in skill
+    assert "no-progress redispatch cap applies" in skill
+    assert "current orchestrator run completes" in skill
