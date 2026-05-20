@@ -993,6 +993,7 @@ def create_merge_registry(
         registry,
         worktree_manager=worktree_manager,
         git_manager=git_manager,
+        merge_storage=merge_storage,
     )
 
     return registry
