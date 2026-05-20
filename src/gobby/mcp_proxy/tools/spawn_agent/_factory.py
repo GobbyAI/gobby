@@ -24,6 +24,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _non_empty_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _first_string(mapping: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _non_empty_string(mapping.get(key))
+        if value:
+            return value
+    return None
+
+
+def _coalesce_string(mapping: dict[str, Any], key: str, fallback: str | None) -> str | None:
+    return _non_empty_string(mapping.get(key)) or fallback
+
+
+def _coalesce_bool(mapping: dict[str, Any], key: str, fallback: bool | None) -> bool | None:
+    value = mapping.get(key)
+    if isinstance(value, bool):
+        return value
+    return fallback
+
+
+def _coalesce_number(mapping: dict[str, Any], key: str, fallback: float | None) -> float | None:
+    value = mapping.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return fallback
+
+
+def _suggestion_task_description(
+    task_manager: LocalTaskManager | None,
+    task_id: str | None,
+) -> str:
+    if not task_manager or not task_id:
+        return ""
+    try:
+        full_task = task_manager.get_task(task_id)
+    except Exception:
+        logger.debug("Failed to load dispatch suggestion task %s", task_id, exc_info=True)
+        return ""
+    description = getattr(full_task, "description", "") if full_task else ""
+    return description if isinstance(description, str) else ""
+
+
 def _load_agent_body(
     name: str,
     db: DatabaseProtocol | None,
@@ -389,37 +437,75 @@ def create_spawn_agent_registry(
             return {"dispatched": 0, "results": []}
 
         async def _spawn_one(suggestion: dict[str, Any]) -> dict[str, Any]:
-            task_ref = suggestion.get("ref", suggestion.get("id", "unknown"))
-            task_title = suggestion.get("title", "")
-            task_id = suggestion.get("id")
-            # Fetch full description via task_manager (to_brief() intentionally omits it)
-            task_desc = ""
-            if task_id and task_manager:
-                full_task = task_manager.get_task(task_id)
-                if full_task and full_task.description:
-                    task_desc = full_task.description
-            desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
+            if not isinstance(suggestion, dict):
+                return {
+                    "task_ref": "",
+                    "run_id": "",
+                    "success": False,
+                    "error": "dispatch_batch suggestions must be objects",
+                }
+
+            task_id = _first_string(suggestion, "task_id", "id")
+            task_ref = _first_string(suggestion, "ref", "task_ref", "task_id", "id")
+            if not task_ref:
+                return {
+                    "task_ref": "",
+                    "run_id": "",
+                    "success": False,
+                    "error": (
+                        "dispatch_batch suggestion is missing ref, task_ref, task_id, or id; "
+                        "refusing to spawn an unknown task"
+                    ),
+                }
+            if not task_id:
+                task_id = task_ref
+
+            task_title = _first_string(suggestion, "title", "summary") or ""
+            prompt = _non_empty_string(suggestion.get("prompt"))
+            if prompt is None:
+                if not task_title:
+                    return {
+                        "task_ref": task_ref,
+                        "run_id": "",
+                        "success": False,
+                        "error": (
+                            "dispatch_batch suggestion is missing prompt and title; "
+                            f"refusing to spawn {task_ref}"
+                        ),
+                    }
+                task_desc = _suggestion_task_description(task_manager, task_id)
+                desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
+                prompt = f"Implement task {task_ref}: {task_title}{desc_block}"
+
+            suggestion_agent = _coalesce_string(suggestion, "agent", agent)
             try:
                 result = await spawn_agent(
-                    prompt=f"Implement task {task_ref}: {task_title}{desc_block}",
-                    agent=agent,
+                    prompt=prompt,
+                    agent=suggestion_agent or "backend-developer",
                     task_id=task_id,
-                    worktree_id=worktree_id,
-                    clone_id=clone_id,
-                    isolation=isolation,
-                    branch_name=branch_name,
-                    base_branch=base_branch,
-                    provider=provider,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    reasoning_required=reasoning_required,
-                    timeout=timeout,
-                    parent_session_id=parent_session_id,
+                    worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
+                    clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
+                    isolation=_coalesce_string(suggestion, "isolation", isolation),
+                    branch_name=_coalesce_string(suggestion, "branch_name", branch_name),
+                    base_branch=_coalesce_string(suggestion, "base_branch", base_branch),
+                    provider=_coalesce_string(suggestion, "provider", provider),
+                    model=_coalesce_string(suggestion, "model", model),
+                    reasoning_effort=_coalesce_string(
+                        suggestion, "reasoning_effort", reasoning_effort
+                    ),
+                    reasoning_required=_coalesce_bool(
+                        suggestion, "reasoning_required", reasoning_required
+                    ),
+                    timeout=_coalesce_number(suggestion, "timeout", timeout),
+                    parent_session_id=_coalesce_string(
+                        suggestion, "parent_session_id", parent_session_id
+                    ),
                 )
                 out: dict[str, Any] = {
                     "task_ref": task_ref,
                     "run_id": result.get("run_id", ""),
                     "success": result.get("success", False),
+                    "agent": suggestion_agent or "backend-developer",
                 }
                 if not out["success"] and result.get("error"):
                     out["error"] = result["error"]
