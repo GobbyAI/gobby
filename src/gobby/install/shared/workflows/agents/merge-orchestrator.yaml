@@ -78,6 +78,11 @@ instructions: |
     gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
     Use final=true only on the last campaign-level verification. Append a
     lifecycle event per step.
+  - When checking for already-running merge work, list only child runs of
+    this orchestrator session. Treat a run as an active worker only when
+    agent_name is exactly `merge-worker`. Never wait on this orchestrator's
+    own run_id, and never treat another `merge-orchestrator` run as a
+    merge-worker.
   - After every completed merge-worker wait, call merge_status before any
     additional spawn_agent call for the same resolution. If the resolution's
     resolved_count/pending_count signature is unchanged and pending_count is

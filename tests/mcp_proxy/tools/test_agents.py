@@ -51,6 +51,7 @@ def _make_mock_agent_run(
     run.worktree_id = kwargs.get("worktree_id")
     run.clone_id = kwargs.get("clone_id")
     run.workflow_name = kwargs.get("workflow_name")
+    run.agent_name = kwargs.get("agent_name")
     run.model = kwargs.get("model")
 
     run.to_dict.return_value = {
@@ -60,7 +61,10 @@ def _make_mock_agent_run(
         "parent_session_id": parent_session_id,
         "status": status,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "terminal_type": kwargs.get("terminal_type"),
     }
     run.to_brief.return_value = {
@@ -68,7 +72,10 @@ def _make_mock_agent_run(
         "session_id": session_id,
         "parent_session_id": parent_session_id,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "status": status,
     }
     return run
@@ -537,6 +544,30 @@ class TestListRunningAgents:
         assert result["success"] is True
         assert result["count"] == 2
         runner.run_storage.list_by_parent.assert_called_once_with("parent-1")
+
+    @pytest.mark.asyncio
+    async def test_list_includes_agent_identity(self):
+        """List payloads expose agent identity so orchestrators can filter workers."""
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.list_by_parent.return_value = [
+            _make_mock_agent_run(
+                run_id="run-worker",
+                session_id="sess-worker",
+                parent_session_id="parent-1",
+                agent_name="merge-worker",
+                workflow_name="merge-worker",
+                model="sonnet",
+            )
+        ]
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(parent_session_id="parent-1")
+
+        assert result["agents"][0]["agent_name"] == "merge-worker"
+        assert result["agents"][0]["workflow_name"] == "merge-worker"
+        assert result["agents"][0]["model"] == "sonnet"
 
 
 class TestGetRunningAgent:

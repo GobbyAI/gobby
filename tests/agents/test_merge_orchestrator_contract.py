@@ -457,3 +457,11 @@ def test_merge_expert_continues_active_resolution_before_abort() -> None:
     assert "previous campaign recorded no progress" in skill
     assert "no-progress redispatch cap applies" in skill
     assert "current orchestrator run completes" in skill
+
+
+def test_merge_orchestrator_filters_running_workers_by_agent_identity() -> None:
+    instructions = _agent()["instructions"]
+
+    assert "agent_name is exactly `merge-worker`" in instructions
+    assert "Never wait on this orchestrator's" in instructions
+    assert "never treat another `merge-orchestrator` run as a" in instructions

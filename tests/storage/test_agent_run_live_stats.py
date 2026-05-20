@@ -226,3 +226,33 @@ def test_to_brief_includes_activity_counters(
 
     assert brief["tool_calls_count"] == 7
     assert brief["turns_used"] == 3
+
+
+def test_to_brief_includes_agent_identity(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """Brief agent-run payloads expose enough identity for orchestration filters."""
+    parent_id = _register_session(session_manager, sample_project, "parent-identity")
+    child_id = _register_session(
+        session_manager,
+        sample_project,
+        "child-identity",
+        parent_session_id=parent_id,
+    )
+    run = agent_manager.create(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        provider="claude",
+        prompt="identity",
+        workflow_name="merge-orchestrator",
+        agent_name="merge-worker",
+        model="sonnet",
+    )
+
+    brief = agent_manager.get(run.id).to_brief()
+
+    assert brief["agent_name"] == "merge-worker"
+    assert brief["workflow_name"] == "merge-orchestrator"
+    assert brief["model"] == "sonnet"

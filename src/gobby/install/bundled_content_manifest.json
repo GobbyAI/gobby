@@ -165,7 +165,7 @@
     "workflows/agents/frontend-developer.yaml": "4ec086899a92c0a1fb02c3abcd9fef1840adf9b0a321608c0b12157b09aea986",
     "workflows/agents/gemini-image-gen.yaml": "0f2a1dc979b1601dad9b9e46b4a3d64067fe59a95baa3ddd6e5fb2dad8d243ef",
     "workflows/agents/holistic-reviewer.yaml": "771fb7f4f26a2231eb7be7c1cfbfb58814b1ba65c26c5fb6e5bde7d947484d4c",
-    "workflows/agents/merge-orchestrator.yaml": "d8f36ca872c36cf9da122ab6a0e94e80d6b10c29a3d0ecbadc4d009e4d5ae674",
+    "workflows/agents/merge-orchestrator.yaml": "2047dca85923e1e966754bc6aaf872b2aafefee338fcb878b5e89283268e7426",
     "workflows/agents/merge-worker.yaml": "d9ed05565b1ad46948c29eb5079134cb09886cadc836d52c3f631a511002336e",
     "workflows/agents/nightly-linter.yaml": "9095a0de856350d2f2464950979cbf1338300cfc1ef7b0aa7576a18455ad1a52",
     "workflows/agents/nightly-test-fixer.yaml": "8fc375a902c334109667315839900d41fb582672dc6033f7da04acbf0366ffac",
