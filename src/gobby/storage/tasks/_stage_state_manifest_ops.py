@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -17,6 +18,11 @@ from gobby.storage.tasks._stage_types import (
     StageState,
 )
 from gobby.storage.tasks._stage_utils import _now
+
+
+def _is_subsequence(existing: Sequence[str], desired: Sequence[str]) -> bool:
+    cursor = iter(desired)
+    return all(any(candidate == stage_name for candidate in cursor) for stage_name in existing)
 
 
 class StageStateManifestOps:
@@ -43,7 +49,7 @@ class StageStateManifestOps:
         holder = by_session_id or "system"
         snapshot = self.rows.current_stage(task_id)
         with self.mutexes.mutex(task_id, holder, "initialize_manifest", expected_stage=snapshot):
-            existing = self.rows.list_for_task(task_id)
+            existing = cast(list[StageState], self.rows.list_for_task(task_id))
             if existing:
                 if [
                     (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds)
@@ -58,6 +64,13 @@ class StageStateManifestOps:
                     for spec in sorted(specs, key=lambda item: item.position)
                 ]:
                     return existing
+                if [(row.stage_name, row.position) for row in existing] == [
+                    (spec.stage_name, spec.position)
+                    for spec in sorted(specs, key=lambda item: item.position)
+                ]:
+                    return self._update_stage_caps(task_id, specs)
+                if self._can_insert_future_stages(task_id, existing, specs):
+                    return self._insert_future_stages(task_id, existing, specs, holder)
                 if not all(
                     row.state == "ready"
                     and row.entered_at is None
@@ -106,7 +119,131 @@ class StageStateManifestOps:
                     "initialize_manifest",
                     by_actor=holder,
                 )
-            return self.rows.list_for_task(task_id)
+            return cast(list[StageState], self.rows.list_for_task(task_id))
+
+    def _update_stage_caps(
+        self,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+    ) -> list[StageState]:
+        now = _now()
+        with self.db.transaction() as conn:
+            for spec in sorted(specs, key=lambda item: item.position):
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET max_work_attempts = ?,
+                           max_review_rounds = ?,
+                           updated_at = ?
+                     WHERE task_id = ? AND stage_name = ?
+                    """,
+                    (
+                        spec.max_work_attempts,
+                        spec.max_review_rounds,
+                        now,
+                        task_id,
+                        spec.stage_name,
+                    ),
+                )
+        return cast(list[StageState], self.rows.list_for_task(task_id))
+
+    def _can_insert_future_stages(
+        self,
+        task_id: str,
+        existing: Sequence[StageState],
+        specs: Sequence[StageManifestSpec],
+    ) -> bool:
+        desired = sorted(specs, key=lambda item: item.position)
+        desired_names = [spec.stage_name for spec in desired]
+        existing_names = [row.stage_name for row in existing]
+        if not _is_subsequence(existing_names, desired_names):
+            return False
+
+        current = self.rows.current_stage(task_id)
+        current_position = current.position if current is not None else -1
+        desired_position = {spec.stage_name: spec.position for spec in desired}
+        existing_name_set = set(existing_names)
+        for row in existing:
+            target_position = desired_position.get(row.stage_name)
+            if target_position is None:
+                return False
+            if row.position <= current_position and target_position != row.position:
+                return False
+            if row.state != "ready" and target_position != row.position:
+                return False
+        for spec in desired:
+            if spec.stage_name not in existing_name_set and spec.position <= current_position:
+                return False
+        return True
+
+    def _insert_future_stages(
+        self,
+        task_id: str,
+        existing: Sequence[StageState],
+        specs: Sequence[StageManifestSpec],
+        holder: str,
+    ) -> list[StageState]:
+        previous_shape = self.rows.shape_signature(task_id)
+        existing_by_name = {row.stage_name: row for row in existing}
+        desired_by_name = {spec.stage_name: spec for spec in specs}
+        now = _now()
+        with self.db.transaction() as conn:
+            for row in sorted(
+                existing,
+                key=lambda item: desired_by_name[item.stage_name].position,
+                reverse=True,
+            ):
+                spec = desired_by_name[row.stage_name]
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET position = ?,
+                           max_work_attempts = ?,
+                           max_review_rounds = ?,
+                           updated_at = ?
+                     WHERE task_id = ? AND stage_name = ?
+                    """,
+                    (
+                        spec.position,
+                        spec.max_work_attempts,
+                        spec.max_review_rounds,
+                        now,
+                        task_id,
+                        spec.stage_name,
+                    ),
+                )
+            for spec in sorted(specs, key=lambda item: item.position):
+                if spec.stage_name in existing_by_name:
+                    continue
+                registry = self.rows.registry_entry(spec.stage_name)
+                conn.execute(
+                    """
+                    INSERT INTO task_stage_states (
+                        task_id, stage_name, position, state, review_policy,
+                        reviewer_agent, work_attempt_count, review_round_count,
+                        max_work_attempts, max_review_rounds, updated_at
+                    )
+                    VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        spec.stage_name,
+                        spec.position,
+                        registry.review_policy,
+                        resolve_stage_reviewer(self.db, task_id, registry),
+                        spec.max_work_attempts,
+                        spec.max_review_rounds,
+                        now,
+                    ),
+                )
+            self.events.record_lifecycle_event(
+                task_id,
+                f"manifest:{previous_shape}",
+                f"manifest:{shape_signature_for_specs(specs)}",
+                "initialize_manifest",
+                by_actor=holder,
+            )
+        return cast(list[StageState], self.rows.list_for_task(task_id))
 
     def add_stage(
         self,

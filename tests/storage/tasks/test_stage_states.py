@@ -103,6 +103,36 @@ def test_initialize_manifest_mirrors_registry_policy_and_current_stage(
     assert manager.current_stage(task.id).stage_name == "development"
 
 
+def test_initialize_manifest_updates_caps_without_resetting_active_rows(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [
+            spec("development", 0),
+            spec("merge", 1, max_work_attempts=12),
+        ],
+    )
+    manager.start_stage(task.id, "development", by_session_id="session-stage-tests")
+
+    rows = manager.initialize_manifest(
+        task.id,
+        [
+            spec("development", 0, max_review_rounds=4),
+            spec("merge", 1),
+        ],
+        by_session_id="session-stage-tests",
+    )
+
+    assert [row.stage_name for row in rows] == ["development", "merge"]
+    assert rows[0].state == "in_progress"
+    assert rows[0].entered_at is not None
+    assert rows[0].max_review_rounds == 4
+    assert rows[1].max_work_attempts is None
+
+
 def test_development_manifest_resolves_docs_reviewer_from_selector(
     temp_db,
     sample_project,

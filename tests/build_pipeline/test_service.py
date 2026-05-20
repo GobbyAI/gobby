@@ -874,6 +874,60 @@ async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifes
 
 
 @pytest.mark.asyncio
+async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.tasks._stage_types import StageManifestSpec
+
+    _disable_dispatcher_tick(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_git_repo(repo_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project_id,
+        title="Root with reopened child",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=project_id,
+        title="Reopened child",
+        parent_task_id=root.id,
+        category="code",
+        task_type="feature",
+    )
+    task_manager.stage_states.initialize_manifest(
+        child.id,
+        [
+            StageManifestSpec("development", 0),
+            StageManifestSpec("merge", 1, max_work_attempts=12),
+        ],
+        by_session_id=None,
+    )
+    task_manager.stage_states.start_stage(child.id, "development", by_session_id="dispatcher")
+
+    await _build(
+        f"#{root.seq_num}",
+        _options(isolation="worktree", target_branch="main"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [(row.stage_name, row.position) for row in child_rows] == [
+        ("development", 0),
+        ("pr", 1),
+        ("merge", 2),
+    ]
+    assert child_rows[0].state == "in_progress"
+    assert child_rows[0].entered_by_session_id == "dispatcher"
+    assert child_rows[2].max_work_attempts is None
+
+
+@pytest.mark.asyncio
 async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
