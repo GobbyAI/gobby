@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.code_index.models import (
     CallRelation,
@@ -17,7 +17,11 @@ from gobby.code_index.models import (
     IndexedProject,
     Symbol,
 )
+from gobby.search.keyword import fetch_all, pick_search_backend, placeholder
 from gobby.storage.database import DatabaseProtocol
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +29,9 @@ logger = logging.getLogger(__name__)
 class CodeIndexStorage:
     """SQLite storage for code symbols, indexed files, and projects."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
-        self.db = db
+    def __init__(self, db: DatabaseProtocol | HubDatabase) -> None:
+        """Initialize storage against a legacy DB or HubDatabase seam."""
+        self.db = cast(DatabaseProtocol, db)
 
     # ── Symbols ──────────────────────────────────────────────────────
 
@@ -177,44 +182,22 @@ class CodeIndexStorage:
         file_path: str | None = None,
         limit: int = 50,
     ) -> list[Symbol]:
-        """Full-text search across symbol names, signatures, docstrings, and summaries.
-
-        Uses FTS5 for relevance-ranked results. Falls back gracefully if the
-        FTS5 table doesn't exist (pre-v155 databases).
-        """
-        fts_query = self._sanitize_fts_query(query)
-        if not fts_query:
+        """Full-text search across symbol names, signatures, docstrings, and summaries."""
+        if not query.strip():
             return []
-
-        conditions = ["cs.project_id = ?"]
-        params: list[Any] = [project_id]
-
-        if kind:
-            conditions.append("cs.kind = ?")
-            params.append(kind)
-        if file_path:
-            conditions.append("cs.file_path = ?")
-            params.append(file_path)
-
-        where = " AND ".join(conditions)
-        params.append(limit)
-
-        sql = f"""
-            SELECT cs.* FROM code_symbols_fts fts
-            JOIN code_symbols cs ON cs.rowid = fts.rowid
-            WHERE code_symbols_fts MATCH ? AND {where}
-            ORDER BY rank
-            LIMIT ?
-        """
-        # MATCH param goes first
-        all_params = [fts_query] + params
 
         try:
-            rows = self.db.fetchall(sql, tuple(all_params))
-            return [Symbol.from_row(r) for r in rows]
+            hits = pick_search_backend(self.db, "code_symbols").search(
+                query,
+                limit,
+                filters={"project_id": project_id, "kind": kind, "file_path": file_path},
+            )
         except Exception as e:
-            logger.debug(f"FTS5 search failed (table may not exist): {e}")
+            logger.debug(f"Code symbol keyword search failed: {e}")
             return []
+        rows = self._rows_by_ids("code_symbols", [hit.id for hit in hits])
+        symbols_by_id = {str(row["id"]): Symbol.from_row(row) for row in rows}
+        return [symbols_by_id[hit.id] for hit in hits if hit.id in symbols_by_id]
 
     def delete_symbols_for_file(self, project_id: str, file_path: str) -> int:
         """Delete all symbols for a file. Returns count."""
@@ -848,46 +831,18 @@ class CodeIndexStorage:
         file_path: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """Full-text search across file content chunks.
-
-        Returns dicts with file_path, line_start, line_end, snippet, language.
-        """
+        """Full-text search across file content chunks."""
         if not query.strip():
             return []
 
-        # Escape FTS5 special characters for safe querying
-        safe_query = query.replace('"', '""')
-
         try:
-            if file_path:
-                rows = self.db.fetchall(
-                    """SELECT
-                        c.file_path, c.line_start, c.line_end, c.language,
-                        snippet(code_content_fts, 0, '>>>', '<<<', '...', 40) as snippet
-                    FROM code_content_fts fts
-                    JOIN code_content_chunks c ON c.rowid = fts.rowid
-                    WHERE code_content_fts MATCH ?
-                      AND c.project_id = ?
-                      AND c.file_path = ?
-                    ORDER BY rank
-                    LIMIT ?""",
-                    (f'"{safe_query}"', project_id, file_path, limit),
-                )
-            else:
-                rows = self.db.fetchall(
-                    """SELECT
-                        c.file_path, c.line_start, c.line_end, c.language,
-                        snippet(code_content_fts, 0, '>>>', '<<<', '...', 40) as snippet
-                    FROM code_content_fts fts
-                    JOIN code_content_chunks c ON c.rowid = fts.rowid
-                    WHERE code_content_fts MATCH ?
-                      AND c.project_id = ?
-                    ORDER BY rank
-                    LIMIT ?""",
-                    (f'"{safe_query}"', project_id, limit),
-                )
+            hits = pick_search_backend(self.db, "code_content").search(
+                query,
+                limit,
+                filters={"project_id": project_id, "file_path": file_path},
+            )
         except Exception as e:
-            logger.debug(f"Content FTS search failed, falling back to LIKE: {e}")
+            logger.debug(f"Content keyword search failed, falling back to LIKE: {e}")
             # Fallback to LIKE search
             like_query = f"%{query}%"
             params: list[Any] = [project_id, like_query]
@@ -903,14 +858,49 @@ class CodeIndexStorage:
             sql += " LIMIT ?"
             params.append(limit)
             rows = self.db.fetchall(sql, tuple(params))
+            return [
+                {
+                    "file_path": row["file_path"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                    "snippet": row["snippet"],
+                    "language": row["language"],
+                }
+                for row in rows
+            ]
 
+        rows = self._rows_by_ids("code_content_chunks", [hit.id for hit in hits])
+        rows_by_id = {str(row["id"]): row for row in rows}
         return [
             {
                 "file_path": row["file_path"],
                 "line_start": row["line_start"],
                 "line_end": row["line_end"],
-                "snippet": row["snippet"],
+                "snippet": self._make_snippet(row["content"], query),
                 "language": row["language"],
             }
-            for row in rows
+            for hit in hits
+            if (row := rows_by_id.get(hit.id)) is not None
         ]
+
+    def _rows_by_ids(self, table: str, ids: list[str]) -> list[Any]:
+        if not ids:
+            return []
+        params = list(ids)
+        placeholders = ", ".join(placeholder(self.db, index) for index in range(1, len(ids) + 1))
+        return fetch_all(self.db, f"SELECT * FROM {table} WHERE id IN ({placeholders})", params)
+
+    @staticmethod
+    def _make_snippet(content: str, query: str) -> str:
+        lowered = content.lower()
+        tokens = [token.lower() for token in query.split() if token.strip()]
+        match_at = -1
+        for token in tokens:
+            match_at = lowered.find(token)
+            if match_at >= 0:
+                break
+        if match_at < 0:
+            match_at = 0
+        start = max(0, match_at - 60)
+        end = min(len(content), match_at + 120)
+        return content[start:end]
