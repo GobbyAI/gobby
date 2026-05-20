@@ -29,12 +29,23 @@ _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
 _POSTGRES_TEST_USER = "gobby_test"
 
+_PGAUDIT_COMMAND_OPTIONS = [
+    "shared_preload_libraries=pg_search,pgaudit",
+    "pgaudit.log=write",
+    "pgaudit.log_catalog=off",
+    "logging_collector=on",
+    "log_destination=stderr",
+    "log_directory=/var/log/pgaudit",
+    "log_filename=pgaudit-%Y-%m-%d_%H%M%S.log",
+    "log_rotation_age=1d",
+    "log_rotation_size=0",
+    "log_file_mode=0640",
+    "log_min_messages=log",
+]
+
 _POSTGRES_COMMAND = [
     "postgres",
-    "-c",
-    "shared_preload_libraries=pg_search,pgaudit",
-    "-c",
-    "pgaudit.log=write",
+    *(option for command_option in _PGAUDIT_COMMAND_OPTIONS for option in ("-c", command_option)),
 ]
 
 
@@ -121,6 +132,13 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
     )
     assert _has_run(
         runs,
+        "docker run --rm",
+        '"${GOBBY_POSTGRES_TEST_IMAGE}"',
+        "/usr/local/bin/pg_audit_export.sh",
+        "--help",
+    )
+    assert _has_run(
+        runs,
         "docker run -d",
         '--name "${GOBBY_POSTGRES_TEST_CONTAINER}"',
         '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
@@ -129,7 +147,8 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
         "--tmpfs /var/lib/postgresql/data",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
-        "postgres -c shared_preload_libraries=pg_search,pgaudit -c pgaudit.log=write",
+        "postgres",
+        *_PGAUDIT_COMMAND_OPTIONS,
     )
     assert _has_run(
         runs,

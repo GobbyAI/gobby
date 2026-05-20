@@ -9,6 +9,20 @@ import yaml
 
 pytestmark = pytest.mark.unit
 
+_PGAUDIT_COMMAND_OPTIONS = [
+    "shared_preload_libraries=pg_search,pgaudit",
+    "pgaudit.log=write",
+    "pgaudit.log_catalog=off",
+    "logging_collector=on",
+    "log_destination=stderr",
+    "log_directory=/var/log/pgaudit",
+    "log_filename=pgaudit-%Y-%m-%d_%H%M%S.log",
+    "log_rotation_age=1d",
+    "log_rotation_size=0",
+    "log_file_mode=0640",
+    "log_min_messages=log",
+]
+
 
 @pytest.fixture
 def compose_data(repo_root: Path) -> dict[str, object]:
@@ -58,8 +72,27 @@ def test_postgres_service_preloads_pg_search_and_pgaudit(
 ) -> None:
     command = " ".join(compose_data["services"]["postgres"]["command"])
 
-    assert "shared_preload_libraries=pg_search,pgaudit" in command
-    assert "pgaudit.log=write" in command
+    for option in _PGAUDIT_COMMAND_OPTIONS:
+        assert option in command
+
+
+def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
+    compose_data: dict[str, object],
+) -> None:
+    healthcheck = compose_data["services"]["postgres"]["healthcheck"]
+    test_command = " ".join(str(part) for part in healthcheck["test"])
+
+    assert "pg_isready" in test_command
+    assert "pg_extension" in test_command
+    assert "extname=$$pgaudit$$" in test_command
+    assert "SHOW pgaudit.log" in test_command
+    assert "/var/log/pgaudit" in test_command
+    assert "pgaudit-*.log" in test_command
+    assert "stat -c '%U %a'" in test_command
+    assert "postgres 640" in test_command
+    assert "UPDATE _pgaudit_probe SET last_probed_at = NOW()" in test_command
+    assert "AUDIT: SESSION" in test_command
+    assert "UPDATE" in test_command
 
 
 def test_postgres_service_has_pg_isready_healthcheck(
