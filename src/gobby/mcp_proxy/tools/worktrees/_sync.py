@@ -132,7 +132,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             project_path: Path to project directory (pass cwd from CLI).
 
         Returns:
-            Dict with source_branch, target_branch on success.
+            Dict with source_branch, target_branch, and final target merge_sha on success.
         """
         resolved_git_mgr, _, error = resolve_project_context(
             project_path, ctx.git_manager, ctx.project_id
@@ -404,6 +404,29 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             git_merged = await _source_is_merged_into_target()
             if git_merged:
                 ctx.worktree_storage.mark_merged(worktree_id)
+                target_sha_result = await asyncio.to_thread(
+                    resolved_git_mgr.run_git_command,
+                    ["rev-parse", "HEAD"],
+                    cwd=repo_path,
+                    timeout=10,
+                )
+                if target_sha_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Merged local target branch, but failed to determine final "
+                            f"target SHA: {target_sha_result.stderr.strip()}"
+                        ),
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                        "merged": True,
+                        "pushed": False,
+                    }
+                target_head_sha = target_sha_result.stdout.strip()
+            else:
+                target_head_sha = None
 
             result = {
                 "success": True,
@@ -415,6 +438,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "merged": git_merged,
                 "pushed": False,
             }
+            if target_head_sha:
+                result["merge_sha"] = target_head_sha
+                result["target_head_sha"] = target_head_sha
+                result["commit_sha"] = target_head_sha
             if auto_resolved:
                 result["auto_resolved"] = auto_resolved
             return result

@@ -78,17 +78,26 @@ instructions: |
     gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
     Use final=true only on the last campaign-level verification. Append a
     lifecycle event per step.
+  - For ordinary clean worktree delivery, worker prompts must instruct the
+    merge-worker to call gobby-worktrees:merge_worktree with the worktree_id
+    and target_branch, then record the merge_sha returned by merge_worktree.
+    Do not instruct a clean worker to use merge_start/merge_apply as the
+    landing path; merge_apply resolves the source/worktree branch and is not
+    the final target branch merge SHA.
   - Worker prompts must stay inside the merge-worker MCP surface. For active
     conflict resolution, instruct the worker to call merge_status, then resolve
     exactly one pending conflict_id at a time with
     merge_resolve(conflict_id=..., use_ai=true), call merge_status again, and
-    only then continue to the next pending conflict. Tell workers not to issue
-    multiple merge_resolve calls in the same assistant turn or parallel tool
-    batch. Do not instruct merge-workers to use Read/Bash or to synthesize
-    manual resolved_content from file inspection. If retries are exhausted or
-    conflicts remain unresolved, instruct the worker to call
-    gobby-tasks-ops:record_merge_result with failure_reason; the merge-worker
-    workflow will transition to terminate before end_agent_run.
+    only then continue to the next pending conflict. After merge_apply
+    resolves all conflicts, instruct the worker to call merge_worktree exactly
+    once and record merge_worktree's merge_sha as the final delivery SHA. Tell
+    workers not to issue multiple merge_resolve calls in the same assistant
+    turn or parallel tool batch. Do not instruct merge-workers to use
+    Read/Bash or to synthesize manual resolved_content from file inspection.
+    If retries are exhausted or conflicts remain unresolved, instruct the
+    worker to call gobby-tasks-ops:record_merge_result with failure_reason;
+    the merge-worker workflow will transition to terminate before
+    end_agent_run.
   - When checking for already-running merge work, list only child runs of
     this orchestrator session. Treat a run as an active worker only when
     agent_name is exactly `merge-worker`. Never wait on this orchestrator's

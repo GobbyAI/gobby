@@ -27,7 +27,12 @@ instructions: |
   WORKTREE MERGE FLOW:
   MAX_RESOLVE_RETRIES: 3 per conflict id.
   1. Call merge_worktree with worktree_id and target_branch. Do not push.
-  2. If SUCCESS: call gobby-tasks-ops:record_merge_result, then
+     merge_worktree is the authoritative final landing tool for worktree
+     delivery. Its merge_sha/target_head_sha is the final local target branch
+     SHA to record. Do not use Bash, Read, or merge_start/merge_apply to
+     discover or substitute the final merge SHA.
+  2. If SUCCESS: call gobby-tasks-ops:record_merge_result with the merge_sha
+     returned by merge_worktree, then
      gobby-tasks-ops:close_linked_github_issue. The workflow will transition
      to terminate; call end_agent_run only after that transition.
   3. If CONFLICTS (has_conflicts: true):
@@ -46,9 +51,13 @@ instructions: |
         MAX_RESOLVE_RETRIES, skip that conflict_id and continue with the
         remaining conflicts.
      d. Re-check merge_status after each attempt and before merge_apply. Call
-        merge_apply only if all conflicts are resolved.
-     e. Call merge_worktree again with target_branch to merge the resolved work locally
-     f. Call gobby-tasks-ops:record_merge_result, then
+        merge_apply only if all conflicts are resolved. merge_apply updates
+        the source/worktree branch for the resolved content; it is not the
+        final target-branch delivery SHA.
+     e. Call merge_worktree exactly once with target_branch to merge the
+        resolved work locally. Record the merge_sha returned by merge_worktree;
+        never record the merge_apply SHA as the final delivery SHA.
+     f. Call gobby-tasks-ops:record_merge_result with that merge_sha, then
         gobby-tasks-ops:close_linked_github_issue. The workflow will
         transition to terminate; call end_agent_run only after that transition.
   4. If any conflicts remain unresolved after all conflict_ids were attempted:
@@ -122,9 +131,12 @@ steps:
       2. Check your session variables for worktree_id or clone_id
       3. WORKTREE: call merge_worktree with worktree_id and target_branch
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
-      4. If merge succeeds with no conflicts, call record_merge_result, then
-         close_linked_github_issue. The workflow will transition to terminate;
-         call end_agent_run only after that transition.
+      4. If merge succeeds with no conflicts, record the merge_sha returned by
+         merge_worktree/merge_clone with record_merge_result, then call
+         close_linked_github_issue. Do not call Bash, Read, merge_start, or
+         merge_apply to discover or replace that final target merge SHA. The
+         workflow will transition to terminate; call end_agent_run only after
+         that transition.
 
       CONFLICT RESOLUTION (worktree only):
       If merge_worktree returns has_conflicts: true:
@@ -146,11 +158,14 @@ steps:
          tools to build manual resolved_content; merge_resolve(use_ai=true) is
          the conflict content access path in this step.
       4. Re-check merge_status after each attempt. Call merge_apply with the
-         resolution_id only when all conflicts are resolved.
-      5. Call merge_worktree again with target_branch to merge the resolved work locally
-      6. Call record_merge_result, then close_linked_github_issue. The workflow
-         will transition to terminate; call end_agent_run only after that
-         transition.
+         resolution_id only when all conflicts are resolved. Treat merge_apply
+         as source/worktree branch resolution only; do not record its SHA as
+         the final delivery SHA.
+      5. Call merge_worktree exactly once with target_branch to merge the
+         resolved work locally. Record the merge_sha returned by merge_worktree.
+      6. Call record_merge_result with that merge_sha, then
+         close_linked_github_issue. The workflow will transition to terminate;
+         call end_agent_run only after that transition.
 
       CLONE CONFLICTS: record_merge_result with failure_reason (no
       auto-resolution for clones), then terminate.

@@ -471,6 +471,10 @@ def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> N
     instructions = " ".join(_agent()["instructions"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
+    assert "For ordinary clean worktree delivery" in instructions
+    assert "gobby-worktrees:merge_worktree" in instructions
+    assert "record the merge_sha returned by merge_worktree" in instructions
+    assert "Do not instruct a clean worker to use merge_start/merge_apply" in instructions
     assert "merge_resolve(conflict_id=..., use_ai=true)" in instructions
     assert "exactly one pending conflict_id at a time" in instructions
     assert "multiple merge_resolve calls in the same assistant turn" in instructions

@@ -230,6 +230,8 @@ def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
     assert "Do NOT use Bash, Read, or other file-inspection tools" in instructions
+    assert "merge_worktree is the authoritative final landing tool" in instructions
+    assert "do not record its SHA as the final delivery SHA" in merge_status
     assert "merge_resolve(use_ai=true)" in instructions
     assert "Do not switch to Bash/Read" in instructions
     assert "Do not call Read, Bash, or file-inspection tools" in merge_status

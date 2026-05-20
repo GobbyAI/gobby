@@ -62,6 +62,8 @@ def _local_merge_git_side_effect(
             return MagicMock(returncode=0, stdout="", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout=current, stderr="")
+        if args == ["rev-parse", "HEAD"]:
+            return MagicMock(returncode=0, stdout="abc123def456\n", stderr="")
         if args == ["stash", "list"]:
             stash_list_calls += 1
             stdout = "" if stash_list_calls == 1 else "stash@{0}"
@@ -684,6 +686,8 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
     assert result["success"] is True
     assert result["source_branch"] == "feature/test"
     assert result["target_branch"] == "main"
+    assert result["merge_sha"] == "abc123def456"
+    assert result["target_head_sha"] == "abc123def456"
     mock_worktree_storage.mark_merged.assert_called_once_with("wt-1")
     calls = mock_git_manager._run_git.call_args_list
     merge_call = [c for c in calls if c[0][0][:1] == ["merge"] and "--no-edit" in c[0][0]]
