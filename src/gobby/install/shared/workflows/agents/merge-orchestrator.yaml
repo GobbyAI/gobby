@@ -260,6 +260,7 @@ steps:
       - "gobby-worktrees:get_worktree"
       - "gobby-tasks:get_task"
       - "gobby-tasks:close_task"
+      - "gobby-tasks-ops:get_artifacts"
       - "gobby-tasks-ops:get_delivery_state"
     on_mcp_success:
       - server: gobby-merge
@@ -294,9 +295,16 @@ steps:
       - mcp__gobby__set_variable
       - mcp__gobby__get_variable
     allowed_mcp_tools:
+      - "gobby-merge:analyze_merge_landscape"
+      - "gobby-merge:predict_conflicts"
+      - "gobby-merge:inspect_merge_state"
+      - "gobby-worktrees:list_worktrees"
+      - "gobby-worktrees:get_worktree"
       - "gobby-tasks:get_task"
       - "gobby-tasks:list_tasks"
       - "gobby-tasks:close_task"
+      - "gobby-tasks-ops:get_artifacts"
+      - "gobby-tasks-ops:get_delivery_state"
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
