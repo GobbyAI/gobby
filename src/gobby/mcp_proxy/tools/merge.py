@@ -186,6 +186,17 @@ def create_merge_registry(
                     "merge_strategy": strategy_name,
                 }
 
+            dirty_result = await _dirty_worktree_result(repo_path)
+            if dirty_result is not None:
+                dirty_result.update(
+                    {
+                        "merge_sha": merge_sha,
+                        "commit_sha": merge_sha,
+                        "merge_strategy": strategy_name,
+                    }
+                )
+                return dirty_result
+
             return {
                 "success": True,
                 "merge_sha": merge_sha,
@@ -206,6 +217,32 @@ def create_merge_registry(
                         original_branch,
                         git_output(restore_result),
                     )
+
+    async def _dirty_worktree_result(wt_path: str) -> dict[str, Any] | None:
+        if git_manager is None:
+            return {"success": False, "error": "git_manager not configured for clean-tree check"}
+
+        status_result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            ["status", "--porcelain"],
+            cwd=wt_path,
+            timeout=10,
+        )
+        if status_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"git status failed after merge commit: {git_output(status_result)}",
+            }
+
+        dirty_files = [line for line in status_result.stdout.splitlines() if line.strip()]
+        if not dirty_files:
+            return None
+
+        return {
+            "success": False,
+            "error": "merge completed but worktree is dirty",
+            "dirty_files": dirty_files,
+        }
 
     @registry.tool(
         name="merge_start",
@@ -685,6 +722,11 @@ def create_merge_registry(
             merge_sha = await rev_parse_head(git_manager, wt_path)
             if not merge_sha:
                 return {"success": False, "error": "Merge committed but HEAD could not be resolved"}
+
+            dirty_result = await _dirty_worktree_result(wt_path)
+            if dirty_result is not None:
+                dirty_result.update({"merge_sha": merge_sha, "commit_sha": merge_sha})
+                return dirty_result
 
             updated = merge_storage.update_resolution(
                 resolution_id=resolution_id,
