@@ -13,6 +13,23 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+
+class _StaticProvider:
+    def __init__(self, response: str):
+        self.response = response
+
+    async def generate_text(self, *_args, **_kwargs) -> str:
+        return self.response
+
+
+class _StaticLLMService:
+    def __init__(self, response: str):
+        self.provider = _StaticProvider(response)
+
+    def get_default_provider(self) -> _StaticProvider:
+        return self.provider
+
+
 # =============================================================================
 # Import Tests
 # =============================================================================
@@ -166,6 +183,56 @@ class TestTier2ConflictOnlyAI:
                 assert result.success is True
                 assert result.tier == ResolutionTier.CONFLICT_ONLY_AI
 
+    @pytest.mark.asyncio
+    async def test_conflict_only_ai_extracts_single_fenced_hunk(self, tmp_path):
+        """Tier 2 accepts one fenced code block as the hunk body."""
+        from gobby.worktrees.merge.resolver import MergeResolver
+
+        conflict_path = tmp_path / "test.py"
+        conflict_path.write_text(
+            "before\n<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\nafter\n",
+            encoding="utf-8",
+        )
+        resolver = MergeResolver(llm_service=_StaticLLMService("```python\nresolved()\n```"))
+
+        result = await resolver._resolve_conflicts_only(
+            [
+                {
+                    "file": "test.py",
+                    "worktree_path": str(tmp_path),
+                    "hunks": [{"ours": "ours()", "theirs": "theirs()"}],
+                }
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["resolutions"][0]["content"] == "before\nresolved()\nafter\n"
+
+    @pytest.mark.asyncio
+    async def test_conflict_only_ai_rejects_prose_fenced_hunk(self, tmp_path):
+        """Tier 2 rejects explanations instead of splicing them into source."""
+        from gobby.worktrees.merge.resolver import MergeResolver
+
+        conflict_path = tmp_path / "test.py"
+        conflict_path.write_text(
+            "<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        response = "Here are the resolved hunks:\n```python\nresolved()\n```\n\nRationale: ok"
+        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+
+        result = await resolver._resolve_conflicts_only(
+            [
+                {
+                    "file": "test.py",
+                    "worktree_path": str(tmp_path),
+                    "hunks": [{"ours": "ours()", "theirs": "theirs()"}],
+                }
+            ]
+        )
+
+        assert result == {"success": False, "resolutions": []}
+
 
 # =============================================================================
 # Tier 3: Full-File AI Resolution Tests
@@ -234,6 +301,44 @@ class TestTier3FullFileAI:
                     mock_t3.assert_called_once()
                     assert mock_t3.call_count == 1
                     assert mock_t3.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_full_file_ai_extracts_single_fenced_file(self, tmp_path):
+        """Tier 3 accepts one fenced full-file response and stores only source."""
+        from gobby.worktrees.merge.resolver import MergeResolver
+
+        conflict_path = tmp_path / "test.py"
+        conflict_path.write_text(
+            "<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        resolver = MergeResolver(llm_service=_StaticLLMService("```python\nresolved()\n```"))
+
+        result = await resolver._resolve_full_file(
+            [{"file": "test.py", "worktree_path": str(tmp_path)}]
+        )
+
+        assert result["success"] is True
+        assert result["resolutions"][0]["content"] == "resolved()"
+
+    @pytest.mark.asyncio
+    async def test_full_file_ai_rejects_prose_fenced_file(self, tmp_path):
+        """Tier 3 rejects markdown explanations rather than storing them."""
+        from gobby.worktrees.merge.resolver import MergeResolver
+
+        conflict_path = tmp_path / "test.py"
+        conflict_path.write_text(
+            "<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        response = "Here is the resolved file:\n```python\nresolved()\n```\n\nRationale: ok"
+        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+
+        result = await resolver._resolve_full_file(
+            [{"file": "test.py", "worktree_path": str(tmp_path)}]
+        )
+
+        assert result == {"success": False, "resolutions": []}
 
 
 # =============================================================================

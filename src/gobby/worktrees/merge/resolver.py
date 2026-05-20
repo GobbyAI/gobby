@@ -112,6 +112,15 @@ _CONFLICT_BLOCK_RE = re.compile(
     r"<<<<<<< [^\n]*\n.*?\n=======[ \t]*\n.*?\n>>>>>>> [^\n]*\n",
     re.DOTALL,
 )
+_FENCED_SOURCE_RESPONSE_RE = re.compile(
+    r"\A[ \t\r\n]*```[A-Za-z0-9_+.-]*[ \t]*\r?\n(?P<body>.*?)(?:\r?\n)?```[ \t\r\n]*\Z",
+    re.DOTALL,
+)
+_CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|=======[ \t]*$|>>>>>>>).*")
+_AI_PROSE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:\*\*)?(?:here (?:is|are)|the resolved|resolved hunks|"
+    r"i resolved|rationale|explanation)\b"
+)
 
 
 def splice_resolutions_into_file(
@@ -140,6 +149,29 @@ def splice_resolutions_into_file(
         last_end = match.end()
     out.append(file_content[last_end:])
     return "".join(out)
+
+
+def clean_ai_source_response(response: str) -> str | None:
+    """Return source content from an AI response, or None when prose leaked in."""
+    candidate = response.strip()
+    if not candidate:
+        return None
+
+    fenced = _FENCED_SOURCE_RESPONSE_RE.fullmatch(candidate)
+    if fenced is not None:
+        candidate = fenced.group("body").strip("\n")
+    elif "```" in candidate:
+        return None
+    else:
+        candidate = response.strip("\n")
+
+    if "```" in candidate:
+        return None
+    if _CONFLICT_MARKER_LINE_RE.search(candidate):
+        return None
+    if _AI_PROSE_LINE_RE.search(candidate):
+        return None
+    return candidate
 
 
 class ResolutionTier(Enum):
@@ -554,6 +586,16 @@ class MergeResolver:
                 resolved_hunks = [h for h in resolved_hunks if h]
                 if not resolved_hunks:
                     resolved_hunks = [response.strip("\n")]
+                cleaned_hunks: list[str] = []
+                for hunk in resolved_hunks:
+                    cleaned = clean_ai_source_response(hunk)
+                    if cleaned is None:
+                        logger.warning(
+                            "Rejected prose-contaminated AI hunk resolution for %s",
+                            file_path,
+                        )
+                        return {"success": False, "resolutions": []}
+                    cleaned_hunks.append(cleaned)
 
                 try:
                     file_with_markers = await asyncio.to_thread(
@@ -563,12 +605,12 @@ class MergeResolver:
                     logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
                     return {"success": False, "resolutions": []}
 
-                spliced = splice_resolutions_into_file(file_with_markers, resolved_hunks)
+                spliced = splice_resolutions_into_file(file_with_markers, cleaned_hunks)
                 if spliced is None:
                     logger.warning(
                         f"Hunk count mismatch splicing {file_path}: "
                         f"file has {len(_CONFLICT_BLOCK_RE.findall(file_with_markers))} "
-                        f"conflict blocks, LLM returned {len(resolved_hunks)} hunks"
+                        f"conflict blocks, LLM returned {len(cleaned_hunks)} hunks"
                     )
                     return {"success": False, "resolutions": []}
 
@@ -576,7 +618,7 @@ class MergeResolver:
                     {
                         "file": file_path,
                         "content": spliced,
-                        "hunks_resolved": len(resolved_hunks),
+                        "hunks_resolved": len(cleaned_hunks),
                     }
                 )
             except Exception as e:
@@ -632,10 +674,16 @@ class MergeResolver:
                     caller="worktrees.merge.resolve_full_file",
                 )
 
-                if response:
-                    resolutions.append({"file": file_path, "content": response})
-                else:
+                if not response:
                     return {"success": False, "resolutions": []}
+                cleaned = clean_ai_source_response(response)
+                if cleaned is None:
+                    logger.warning(
+                        "Rejected prose-contaminated AI full-file resolution for %s",
+                        file_path,
+                    )
+                    return {"success": False, "resolutions": []}
+                resolutions.append({"file": file_path, "content": cleaned})
             except Exception as e:
                 logger.error(f"Full file resolution failed for {file_path}: {e}")
                 return {"success": False, "resolutions": []}
