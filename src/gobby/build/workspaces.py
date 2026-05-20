@@ -235,11 +235,13 @@ class _WorkspaceServices:
     ) -> str | None:
         if backend == "worktree" and artifacts.worktree_id:
             worktree = self.worktree_storage.get(artifacts.worktree_id)
-            if worktree is not None and _is_promotable_workspace(worktree, task.id, "worktree"):
+            if worktree is not None and _is_recoverable_workspace(
+                worktree, task.id, "worktree"
+            ):
                 return worktree.branch_name
         if backend == "clone" and artifacts.clone_id:
             clone = self.clone_storage.get(artifacts.clone_id)
-            if clone is not None and _is_promotable_workspace(clone, task.id, "clone"):
+            if clone is not None and _is_recoverable_workspace(clone, task.id, "clone"):
                 return clone.branch_name
         return None
 
@@ -400,9 +402,19 @@ def _is_promotable_workspace(
     task_id: str,
     backend: WorkspaceBackend,
 ) -> bool:
+    if not _is_recoverable_workspace(record, task_id, backend):
+        return False
+    return getattr(record, "workspace_role", "task") == "task"
+
+
+def _is_recoverable_workspace(
+    record: Worktree | Clone | None,
+    task_id: str,
+    backend: WorkspaceBackend,
+) -> bool:
     if record is None or record.task_id != task_id:
         return False
-    if getattr(record, "workspace_role", "task") != "task":
+    if getattr(record, "workspace_role", "task") not in {"task", "integration"}:
         return False
     path = getattr(record, "worktree_path", None) or getattr(record, "clone_path", None)
     if path is None or not Path(str(path)).is_dir():
