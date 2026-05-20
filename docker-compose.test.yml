@@ -1,0 +1,27 @@
+services:
+  postgres-test:
+    build:
+      context: ./src/gobby/data/postgres-pgsearch
+      args:
+        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.23.4}
+        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256}
+    image: gobby-postgres-local:17-pgsearch
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_search,pgaudit
+      - -c
+      - pgaudit.log=write
+    environment:
+      POSTGRES_DB: gobby_test
+      POSTGRES_USER: gobby_test
+      POSTGRES_PASSWORD: gobby_test
+    ports:
+      - "60892:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gobby_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
