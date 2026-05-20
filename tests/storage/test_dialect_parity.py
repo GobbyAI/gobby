@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from _pytest.fixtures import FixtureLookupError
 
 pytestmark = pytest.mark.unit
 
@@ -29,10 +28,9 @@ def _raw_fts_lines(source: str, pattern: str) -> list[str]:
 
 
 def _hub_db(request: pytest.FixtureRequest) -> object:
-    try:
+    if "hub_db" in request.fixturenames:
         return request.getfixturevalue("hub_db")
-    except FixtureLookupError:
-        return request.getfixturevalue("temp_db")
+    return request.getfixturevalue("temp_db")
 
 
 def _detect_search_backend_seams() -> dict[str, bool]:

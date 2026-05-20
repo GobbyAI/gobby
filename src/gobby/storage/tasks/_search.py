@@ -7,6 +7,7 @@ BM25 through the hub database seam.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.search.keyword import (
@@ -16,9 +17,12 @@ from gobby.search.keyword import (
     SearchHit,
     SearchMode,
     fetch_all,
+    normalize_fts5_scores,
+    normalize_positive_scores,
     pick_search_backend,
     placeholder,
     row_value,
+    sanitize_pg_search_query,
 )
 
 if TYPE_CHECKING:
@@ -33,6 +37,7 @@ __all__ = [
     "SearchHit",
     "SearchMode",
     "TaskFTS5Searcher",
+    "TaskSearchBackend",
     "pick_search_backend",
     "search_tasks",
 ]
@@ -51,8 +56,8 @@ def search_tasks(
     category: str | None = None,
     min_score: float = 0.0,
 ) -> list[tuple[str, float]]:
-    """Search tasks through the stage-native FTS5 searcher."""
-    return TaskFTS5Searcher(db).search(
+    """Search tasks through the dialect-aware keyword searcher."""
+    return TaskSearchBackend(db).search(
         query,
         top_k=top_k,
         project_id=project_id,
@@ -65,14 +70,34 @@ def search_tasks(
     )
 
 
-class TaskFTS5Searcher:
-    """FTS5-based search for tasks.
+@dataclass(frozen=True)
+class _TaskSearchFilters:
+    project_id: str | None = None
+    current_stage_state: str | list[str] | None = None
+    task_type: str | None = None
+    priority: int | None = None
+    parent_task_id: str | None = None
+    category: str | None = None
 
-    Uses the tasks_fts virtual table which is kept in sync via triggers.
-    All filters are pushed into SQL WHERE clauses for single-query search.
+    def keyword_filters(self) -> dict[str, Any]:
+        return {
+            "project_id": self.project_id,
+            "task_type": self.task_type,
+            "priority": self.priority,
+            "parent_task_id": self.parent_task_id,
+            "category": self.category,
+        }
+
+
+class TaskSearchBackend:
+    """Dialect-aware keyword search for tasks.
+
+    Uses the shared keyword backend for normal filters. Stage-state filtering
+    needs a task-specific query because the current stage is derived from
+    `task_stage_states`.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: DatabaseProtocol) -> None:
         self._db = db
         self._backend = pick_search_backend(db, "tasks")
 
@@ -88,7 +113,7 @@ class TaskFTS5Searcher:
         category: str | None = None,
         min_score: float = 0.0,
     ) -> list[tuple[str, float]]:
-        """Search tasks with FTS5 and SQL filter push-down.
+        """Search tasks with SQL filter push-down.
 
         Args:
             query: Search query text
@@ -105,26 +130,22 @@ class TaskFTS5Searcher:
             List of (task_id, normalized_score) tuples, highest score first.
         """
         fetch_limit = top_k * 3 if min_score > 0 else top_k
-        if current_stage_state:
+        filters = _TaskSearchFilters(
+            project_id=project_id,
+            current_stage_state=current_stage_state,
+            task_type=task_type,
+            priority=priority,
+            parent_task_id=parent_task_id,
+            category=category,
+        )
+        if filters.current_stage_state:
             hits = self._search_with_stage_state(
                 query=query,
                 limit=fetch_limit,
-                project_id=project_id,
-                current_stage_state=current_stage_state,
-                task_type=task_type,
-                priority=priority,
-                parent_task_id=parent_task_id,
-                category=category,
+                filters=filters,
             )
         else:
-            filters = {
-                "project_id": project_id,
-                "task_type": task_type,
-                "priority": priority,
-                "parent_task_id": parent_task_id,
-                "category": category,
-            }
-            hits = self._backend.search(query, fetch_limit, filters=filters)
+            hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
 
         results: list[tuple[str, float]] = []
         for hit in hits:
@@ -140,33 +161,23 @@ class TaskFTS5Searcher:
         *,
         query: str,
         limit: int,
-        project_id: str | None,
-        current_stage_state: str | list[str],
-        task_type: str | None,
-        priority: int | None,
-        parent_task_id: str | None,
-        category: str | None,
+        filters: _TaskSearchFilters,
     ) -> list[SearchHit]:
+        stage_state = filters.current_stage_state
+        if stage_state is None:
+            return []
         if getattr(self._db, "dialect", "sqlite") == "postgres":
             return self._search_postgres_with_stage_state(
                 query=query,
                 limit=limit,
-                project_id=project_id,
-                current_stage_state=current_stage_state,
-                task_type=task_type,
-                priority=priority,
-                parent_task_id=parent_task_id,
-                category=category,
+                filters=filters,
+                current_stage_state=stage_state,
             )
         return self._search_sqlite_with_stage_state(
             query=query,
             limit=limit,
-            project_id=project_id,
-            current_stage_state=current_stage_state,
-            task_type=task_type,
-            priority=priority,
-            parent_task_id=parent_task_id,
-            category=category,
+            filters=filters,
+            current_stage_state=stage_state,
         )
 
     def _search_sqlite_with_stage_state(
@@ -174,12 +185,8 @@ class TaskFTS5Searcher:
         *,
         query: str,
         limit: int,
-        project_id: str | None,
+        filters: _TaskSearchFilters,
         current_stage_state: str | list[str],
-        task_type: str | None,
-        priority: int | None,
-        parent_task_id: str | None,
-        category: str | None,
     ) -> list[SearchHit]:
         from gobby.search.fts5 import sanitize_fts_query
 
@@ -192,11 +199,7 @@ class TaskFTS5Searcher:
         self._append_common_filters(
             params=params,
             conditions=conditions,
-            project_id=project_id,
-            task_type=task_type,
-            priority=priority,
-            parent_task_id=parent_task_id,
-            category=category,
+            filters=filters,
         )
         self._append_stage_filter(params, conditions, current_stage_state)
         limit_placeholder = self._add_param(params, limit)
@@ -215,7 +218,7 @@ class TaskFTS5Searcher:
         except Exception as e:
             logger.warning(f"FTS5 task search failed: {e}")
             return []
-        scores = _normalize_fts_scores([float(row_value(row, "score")) for row in rows])
+        scores = normalize_fts5_scores([float(row_value(row, "score")) for row in rows])
         return [
             SearchHit(id=str(row_value(row, "id")), score=score)
             for row, score in zip(rows, scores, strict=False)
@@ -226,15 +229,10 @@ class TaskFTS5Searcher:
         *,
         query: str,
         limit: int,
-        project_id: str | None,
+        filters: _TaskSearchFilters,
         current_stage_state: str | list[str],
-        task_type: str | None,
-        priority: int | None,
-        parent_task_id: str | None,
-        category: str | None,
     ) -> list[SearchHit]:
-        bm25_query = " ".join(ch if ch.isalnum() or ch in (" ", "_", "-") else " " for ch in query)
-        bm25_query = " ".join(bm25_query.split())
+        bm25_query = sanitize_pg_search_query(query)
         if not bm25_query:
             return []
 
@@ -244,23 +242,10 @@ class TaskFTS5Searcher:
         self._append_common_filters(
             params=params,
             conditions=conditions,
-            project_id=project_id,
-            task_type=task_type,
-            priority=priority,
-            parent_task_id=parent_task_id,
-            category=category,
+            filters=filters,
         )
         self._append_stage_filter(params, conditions, current_stage_state)
         limit_placeholder = self._add_param(params, limit)
-        # Normalize scores
-        ids = [str(row["id"]) for row in rows]
-        raw_scores = [float(row["rank"]) for row in rows]
-        positive = [-s for s in raw_scores]
-        max_score = max(positive) if positive else 1.0
-        if max_score == 0:
-            normalized = [0.0] * len(positive)
-        else:
-            normalized = [s / max_score for s in positive]
 
         sql = f"""
             SELECT t.id AS id, pdb.score(t.id) AS score
@@ -274,7 +259,7 @@ class TaskFTS5Searcher:
         except Exception as e:
             logger.warning(f"pg_search task search failed: {e}")
             return []
-        scores = _normalize_positive_scores([float(row_value(row, "score")) for row in rows])
+        scores = normalize_positive_scores([float(row_value(row, "score")) for row in rows])
         return [
             SearchHit(id=str(row_value(row, "id")), score=score)
             for row, score in zip(rows, scores, strict=False)
@@ -285,22 +270,20 @@ class TaskFTS5Searcher:
         *,
         params: list[Any],
         conditions: list[str],
-        project_id: str | None,
-        task_type: str | None,
-        priority: int | None,
-        parent_task_id: str | None,
-        category: str | None,
+        filters: _TaskSearchFilters,
     ) -> None:
-        if project_id:
-            conditions.append(f"t.project_id = {self._add_param(params, project_id)}")
-        if task_type:
-            conditions.append(f"t.task_type = {self._add_param(params, task_type)}")
-        if priority is not None:
-            conditions.append(f"t.priority = {self._add_param(params, priority)}")
-        if parent_task_id:
-            conditions.append(f"t.parent_task_id = {self._add_param(params, parent_task_id)}")
-        if category:
-            conditions.append(f"t.category = {self._add_param(params, category)}")
+        if filters.project_id:
+            conditions.append(f"t.project_id = {self._add_param(params, filters.project_id)}")
+        if filters.task_type:
+            conditions.append(f"t.task_type = {self._add_param(params, filters.task_type)}")
+        if filters.priority is not None:
+            conditions.append(f"t.priority = {self._add_param(params, filters.priority)}")
+        if filters.parent_task_id:
+            conditions.append(
+                f"t.parent_task_id = {self._add_param(params, filters.parent_task_id)}"
+            )
+        if filters.category:
+            conditions.append(f"t.category = {self._add_param(params, filters.category)}")
 
     def _append_stage_filter(
         self,
@@ -381,14 +364,4 @@ class TaskFTS5Searcher:
         return self._backend.get_stats()
 
 
-def _normalize_fts_scores(raw_scores: list[float]) -> list[float]:
-    return _normalize_positive_scores([-score for score in raw_scores])
-
-
-def _normalize_positive_scores(raw_scores: list[float]) -> list[float]:
-    if not raw_scores:
-        return []
-    max_score = max(raw_scores)
-    if max_score <= 0:
-        return [0.0] * len(raw_scores)
-    return [score / max_score for score in raw_scores]
+TaskFTS5Searcher = TaskSearchBackend

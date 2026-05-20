@@ -195,7 +195,7 @@ class FTS5SearchBackend:
             return []
 
         raw_scores = [float(row_value(row, "score")) for row in rows]
-        normalized = _normalize_fts5_scores(raw_scores)
+        normalized = normalize_fts5_scores(raw_scores)
         return [
             SearchHit(id=str(row_value(row, "id")), score=score)
             for row, score in zip(rows, normalized, strict=False)
@@ -245,7 +245,7 @@ class BM25SearchBackend:
         *,
         filters: Mapping[str, Any] | None = None,
     ) -> list[SearchHit]:
-        bm25_query = _sanitize_pg_search_query(query)
+        bm25_query = sanitize_pg_search_query(query)
         if not bm25_query:
             return []
 
@@ -277,7 +277,7 @@ class BM25SearchBackend:
             return []
 
         raw_scores = [float(row_value(row, "score")) for row in rows]
-        normalized = _normalize_positive_scores(raw_scores)
+        normalized = normalize_positive_scores(raw_scores)
         return [
             SearchHit(id=str(row_value(row, "id")), score=score)
             for row, score in zip(rows, normalized, strict=False)
@@ -409,17 +409,20 @@ def _dialect(hub: Any) -> Literal["sqlite", "postgres"]:
     return "postgres" if getattr(hub, "dialect", "sqlite") == "postgres" else "sqlite"
 
 
-def _sanitize_pg_search_query(query: str) -> str:
+def sanitize_pg_search_query(query: str) -> str:
+    """Sanitize user input for pg_search's BM25 query DSL."""
     cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_", "-") else " " for ch in query)
     return " ".join(token for token in cleaned.split() if token)
 
 
-def _normalize_fts5_scores(raw_scores: list[float]) -> list[float]:
+def normalize_fts5_scores(raw_scores: list[float]) -> list[float]:
+    """Normalize FTS5 bm25 scores where lower negative scores rank higher."""
     positive = [-score for score in raw_scores]
-    return _normalize_positive_scores(positive)
+    return normalize_positive_scores(positive)
 
 
-def _normalize_positive_scores(raw_scores: list[float]) -> list[float]:
+def normalize_positive_scores(raw_scores: list[float]) -> list[float]:
+    """Normalize positive scores to the 0..1 range while preserving rank order."""
     if not raw_scores:
         return []
     max_score = max(raw_scores) if raw_scores else 1.0
