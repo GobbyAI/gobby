@@ -131,6 +131,7 @@ async def normalized_status_conflicts(
     worktree_manager: Any | None,
     git_manager: Any | None,
     resolution: Any,
+    include_content: bool = False,
 ) -> tuple[list[dict[str, Any]], int, int, bool]:
     """Return merge_status conflict payloads normalized against current Git state."""
     conflicts = _list_conflicts(merge_storage, resolution.id)
@@ -154,7 +155,7 @@ async def normalized_status_conflicts(
     resolved_count = 0
     downgraded = False
     for conflict in conflicts:
-        item = conflict.to_dict()
+        item = conflict.to_dict(include_content=include_content)
         status = str(conflict.status)
         if conflict.file_path in unmerged_paths and conflict.resolved_content is None:
             status = ConflictStatus.PENDING.value

@@ -97,19 +97,36 @@ class MergeConflict:
             updated_at=row["updated_at"],
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_content: bool = True) -> dict[str, Any]:
         """Convert conflict to dictionary for serialization."""
-        return {
+        data = {
             "id": self.id,
             "resolution_id": self.resolution_id,
             "file_path": self.file_path,
             "status": self.status,
-            "ours_content": self.ours_content,
-            "theirs_content": self.theirs_content,
-            "resolved_content": self.resolved_content,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if include_content:
+            data.update(
+                {
+                    "ours_content": self.ours_content,
+                    "theirs_content": self.theirs_content,
+                    "resolved_content": self.resolved_content,
+                }
+            )
+        else:
+            data.update(
+                {
+                    "has_ours_content": self.ours_content is not None,
+                    "has_theirs_content": self.theirs_content is not None,
+                    "has_resolved_content": self.resolved_content is not None,
+                    "ours_content_length": len(self.ours_content or ""),
+                    "theirs_content_length": len(self.theirs_content or ""),
+                    "resolved_content_length": len(self.resolved_content or ""),
+                }
+            )
+        return data
 
 
 class MergeResolutionManager:

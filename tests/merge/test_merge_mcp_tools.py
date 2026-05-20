@@ -499,7 +499,7 @@ class TestMergeStatusTool:
 
     @pytest.mark.asyncio
     async def test_merge_status_includes_conflicts(self, merge_registry, mock_storage):
-        """merge_status includes conflict details."""
+        """merge_status includes compact conflict details by default."""
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
@@ -533,6 +533,52 @@ class TestMergeStatusTool:
         assert result["success"] is True
         assert len(result["conflicts"]) == 1
         assert result["conflicts"][0]["file_path"] == "src/test.py"
+        assert result["conflicts"][0]["has_ours_content"] is True
+        assert result["conflicts"][0]["has_theirs_content"] is True
+        assert result["conflicts"][0]["has_resolved_content"] is False
+        assert "ours_content" not in result["conflicts"][0]
+        assert "theirs_content" not in result["conflicts"][0]
+        assert "resolved_content" not in result["conflicts"][0]
+
+    @pytest.mark.asyncio
+    async def test_merge_status_can_include_conflict_content(self, merge_registry, mock_storage):
+        """merge_status can opt into full conflict content for debug/manual callers."""
+        from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+        mock_resolution = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = mock_resolution
+        mock_storage.list_conflicts.return_value = [
+            MergeConflict(
+                id="mc-conflict1",
+                resolution_id="mr-test123",
+                file_path="src/test.py",
+                status="resolved",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content="merged version",
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            )
+        ]
+
+        result = await merge_registry.call(
+            "merge_status",
+            {"resolution_id": "mr-test123", "include_content": True},
+        )
+
+        assert result["success"] is True
+        assert result["conflicts"][0]["ours_content"] == "our version"
+        assert result["conflicts"][0]["theirs_content"] == "their version"
+        assert result["conflicts"][0]["resolved_content"] == "merged version"
 
     @pytest.mark.asyncio
     async def test_merge_status_not_found(self, merge_registry, mock_storage):

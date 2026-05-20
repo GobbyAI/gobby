@@ -531,14 +531,18 @@ def create_merge_registry(
 
     @registry.tool(
         name="merge_status",
-        description="Get the status of a merge resolution including conflict details.",
+        description=(
+            "Get the status of a merge resolution. Conflict file contents are omitted "
+            "by default; pass include_content=true only when full content is needed."
+        ),
     )
-    async def merge_status(resolution_id: str) -> dict[str, Any]:
+    async def merge_status(resolution_id: str, include_content: bool = False) -> dict[str, Any]:
         """
         Get merge resolution status.
 
         Args:
             resolution_id: The resolution ID.
+            include_content: Include full conflict content fields in the response.
 
         Returns:
             Dict with resolution details and conflicts.
@@ -560,6 +564,7 @@ def create_merge_registry(
             worktree_manager=worktree_manager,
             git_manager=git_manager,
             resolution=resolution,
+            include_content=include_content,
         )
         if (downgraded or pending_count) and resolution.status == "resolved":
             resolution = (
