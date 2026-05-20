@@ -50,6 +50,22 @@ def _strategy_requests_no_ff(strategy: str) -> bool:
     return strategy.strip().lower() in _NO_FF_STRATEGIES
 
 
+def _status_path_is_gobby_only(pathspec: str) -> bool:
+    paths = [part.strip() for part in pathspec.split(" -> ")]
+    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
+
+
+def _non_gobby_status_lines(status_output: str) -> list[str]:
+    dirty: list[str] = []
+    for line in status_output.splitlines():
+        if not line:
+            continue
+        pathspec = line[3:] if len(line) > 3 else line
+        if not _status_path_is_gobby_only(pathspec):
+            dirty.append(line)
+    return dirty
+
+
 def create_merge_registry(
     merge_storage: MergeResolutionManager,
     merge_resolver: MergeResolver,
@@ -234,7 +250,7 @@ def create_merge_registry(
                 "error": f"git status failed after merge commit: {git_output(status_result)}",
             }
 
-        dirty_files = [line for line in status_result.stdout.splitlines() if line.strip()]
+        dirty_files = _non_gobby_status_lines(status_result.stdout)
         if not dirty_files:
             return None
 

@@ -492,6 +492,38 @@ async def test_merge_apply_reports_dirty_worktree_after_commit(
 
 
 @pytest.mark.asyncio
+async def test_merge_apply_allows_gobby_sync_file_dirty_after_direct_merge(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/direct-with-task-sync-dirty"
+    _init_repo(repo)
+    (repo / ".gobby").mkdir()
+    (repo / ".gobby" / "tasks.jsonl").write_text('{"state":"baseline"}\n', encoding="utf-8")
+    _git(repo, "add", ".gobby/tasks.jsonl")
+    _git(repo, "commit", "-m", "add task sync file")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    worktree_path, feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    registry, _merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+
+    (repo / ".gobby" / "tasks.jsonl").write_text('{"state":"dirty"}\n', encoding="utf-8")
+    started = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
+    )
+
+    result = await registry.call("merge_apply", {"resolution_id": started["resolution_id"]})
+
+    assert result["success"] is True
+    assert result["direct_merge"] is True
+    assert result["merge_sha"] == feature_sha
+    assert _git(repo, "rev-parse", "main") == feature_sha
+    assert _git(repo, "status", "--short") == "M .gobby/tasks.jsonl"
+
+
+@pytest.mark.asyncio
 async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
