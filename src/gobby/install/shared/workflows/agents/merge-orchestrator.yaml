@@ -74,9 +74,10 @@ instructions: |
     merge_plan). Each step picks an action: merge | cherry-pick |
     merge_subset | abort.
   - Execute: for each step, dispatch merge-worker via spawn_agent (or
-    dispatch_batch for parallel-safe steps), wait, then run
-    verify_in_worktree as the gate. Use final=true only on the last
-    campaign-level verification. Append a lifecycle event per step.
+    dispatch_batch for parallel-safe steps), wait with
+    gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
+    Use final=true only on the last campaign-level verification. Append a
+    lifecycle event per step.
   - Recover orphaned merge state with merge_abort or merge_resolve before
     scheduling fresh work in the same worktree.
   - Report: record the campaign result with
@@ -97,6 +98,9 @@ instructions: |
   - Do NOT call kill_agent on yourself; use end_agent_run in terminate.
   - Workers cannot spawn workers — the depth-5 cap is enforced by the
     runtime. Plan accordingly.
+  - Do NOT use Bash sleep loops, tmux polling loops, or provider Monitor for
+    worker waits. Use gobby-agents:wait_for_agent, then get_agent_result only
+    if you need to re-read the final report.
   - Always use `uv run` for any Python invocation that ends up inside
     verify_in_worktree commands.
   - Use progressive discovery: list_mcp_servers -> list_tools ->
@@ -252,6 +256,7 @@ steps:
       - "gobby-agents:evaluate_spawn"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:dispatch_batch"
+      - "gobby-agents:wait_for_agent"
       - "gobby-agents:list_agent_runs"
       - "gobby-agents:get_agent_result"
       - "gobby-agents:list_running_agents"

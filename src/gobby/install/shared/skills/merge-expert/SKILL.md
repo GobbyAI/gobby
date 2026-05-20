@@ -153,7 +153,10 @@ Iterate the plan in order. For each step:
    use the target branch as source to "pull latest target" into the worktree.
    The worker handles the actual merge + AI resolution.
 3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
-   poll their session/run state via `gobby-agents` tools rather than spinning.
+   call `gobby-agents:wait_for_agent(run_id=...)` to wait for completion, then
+   call `gobby-agents:get_agent_result` only if you need to re-read the final
+   report. Do not use Bash sleep loops, tmux polling loops, or provider Monitor
+   for worker waits.
 4. **Verify.** Run the step's `verify_command` via
    `gobby-merge:verify_in_worktree`. Treat exit code 0 as the gate. Capture
    stdout/stderr in the campaign report on failure.

@@ -50,6 +50,7 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-agents:evaluate_spawn",
     "gobby-agents:spawn_agent",
     "gobby-agents:dispatch_batch",
+    "gobby-agents:wait_for_agent",
     "gobby-agents:list_agent_runs",
     "gobby-agents:get_agent_result",
     "gobby-agents:list_running_agents",
@@ -199,7 +200,20 @@ def test_execute_allow_list_matches_merge_expert_contract() -> None:
     assert FORBIDDEN_EXECUTE_TOOLS <= blocked
     assert "gobby-agents:kill_agent" not in allowed
     assert "Workers terminate themselves via `end_agent_run`" in skill
+    assert "gobby-agents:wait_for_agent" in skill
+    assert "Do not use Bash sleep loops" in skill
     assert "Workers terminate themselves via `kill_agent`" not in skill
+
+
+def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    execute = _step(agent, "execute")
+
+    assert "gobby-agents:wait_for_agent" in instructions
+    assert "Do NOT use Bash sleep loops" in instructions
+    assert "provider Monitor" in instructions
+    assert "gobby-agents:wait_for_agent" in execute["allowed_mcp_tools"]
 
 
 @pytest.mark.asyncio
