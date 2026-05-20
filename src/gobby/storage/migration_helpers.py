@@ -58,8 +58,12 @@ def _setup_code_symbols_fts(db: LocalDatabase, *, include_summary: bool = False)
                 VALUES (new.rowid, {vals_insert});
             END;
 
-            INSERT OR IGNORE INTO code_symbols_fts(rowid, {cols})
-            SELECT rowid, {cols} FROM code_symbols;
+            INSERT INTO code_symbols_fts(rowid, {cols})
+            SELECT source.rowid, {source_cols}
+            FROM code_symbols AS source
+            WHERE NOT EXISTS (
+                SELECT 1 FROM code_symbols_fts WHERE code_symbols_fts.rowid = source.rowid
+            );
         """)
 
 
@@ -89,8 +93,12 @@ def _setup_code_content_fts(db: LocalDatabase) -> None:
                 VALUES (new.rowid, new.content, new.file_path, new.language);
             END;
 
-            INSERT OR IGNORE INTO code_content_fts(rowid, content, file_path, language)
-            SELECT rowid, content, file_path, language FROM code_content_chunks;
+            INSERT INTO code_content_fts(rowid, content, file_path, language)
+            SELECT source.rowid, source.content, source.file_path, source.language
+            FROM code_content_chunks AS source
+            WHERE NOT EXISTS (
+                SELECT 1 FROM code_content_fts WHERE code_content_fts.rowid = source.rowid
+            );
         """)
 
 
@@ -124,8 +132,13 @@ def _setup_tasks_fts(db: LocalDatabase) -> None:
                 VALUES (new.rowid, new.title, new.description, new.labels, new.task_type, new.category);
             END;
 
-            INSERT OR IGNORE INTO tasks_fts(rowid, title, description, labels, task_type, category)
-            SELECT rowid, title, description, labels, task_type, category FROM tasks;
+            INSERT INTO tasks_fts(rowid, title, description, labels, task_type, category)
+            SELECT source.rowid, source.title, source.description, source.labels,
+                   source.task_type, source.category
+            FROM tasks AS source
+            WHERE NOT EXISTS (
+                SELECT 1 FROM tasks_fts WHERE tasks_fts.rowid = source.rowid
+            );
         """)
 
 
@@ -143,15 +156,19 @@ def _setup_skills_fts(db: LocalDatabase) -> None:
             );
         """)
         conn.execute("""
-            INSERT OR IGNORE INTO skills_fts(rowid, name, description, tags_text, category)
-            SELECT rowid, name, description,
-                   COALESCE(json_extract(metadata, '$.skillport.tags'), ''),
+            INSERT INTO skills_fts(rowid, name, description, tags_text, category)
+            SELECT source.rowid, source.name, source.description,
+                   COALESCE(json_extract(source.metadata, '$.skillport.tags'), ''),
                    COALESCE(
-                       json_extract(metadata, '$.skillport.category'),
-                       json_extract(metadata, '$.category'),
+                       json_extract(source.metadata, '$.skillport.category'),
+                       json_extract(source.metadata, '$.category'),
                        ''
                    )
-            FROM skills WHERE deleted_at IS NULL
+            FROM skills AS source
+            WHERE source.deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM skills_fts WHERE skills_fts.rowid = source.rowid
+              )
         """)
 
 
@@ -203,9 +220,12 @@ def _setup_memories_fts(db: LocalDatabase) -> None:
                 );
             END;
 
-            INSERT OR IGNORE INTO memories_fts(rowid, content, tags, memory_type, source_type)
-            SELECT rowid, content,
-                   REPLACE(REPLACE(REPLACE(COALESCE(tags, ''), '"', ''), '[', ''), ']', ''),
-                   memory_type, COALESCE(source_type, '')
-            FROM memories;
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            SELECT source.rowid, source.content,
+                   REPLACE(REPLACE(REPLACE(COALESCE(source.tags, ''), '"', ''), '[', ''), ']', ''),
+                   source.memory_type, COALESCE(source.source_type, '')
+            FROM memories AS source
+            WHERE NOT EXISTS (
+                SELECT 1 FROM memories_fts WHERE memories_fts.rowid = source.rowid
+            );
         """)
