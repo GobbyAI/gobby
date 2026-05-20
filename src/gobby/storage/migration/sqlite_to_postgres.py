@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -35,7 +36,6 @@ from gobby.storage.migration.validation import (
 from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
 
 _BASELINE_INSERT_RE = re.compile(r'^\s*INSERT\s+INTO\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I | re.M)
-_SEED_BEARING_TABLES: tuple[str, ...] = ()
 _IMPORT_COMPLETE_KEY = "imported_from_sqlite_at"
 _EXTERNAL_SENTINEL_MISSING = (
     "external-ownership sentinel missing -- was the database recreated or is this a "
@@ -47,18 +47,14 @@ _FAIL = "\u2717"
 _InstallMode = Literal["docker", "native", "external"]
 
 
+@cache
 def _seed_bearing_tables() -> tuple[str, ...]:
-    global _SEED_BEARING_TABLES
-    if not _SEED_BEARING_TABLES:
-        baseline_sql = (
-            importlib.resources.files("gobby.storage")
-            .joinpath("postgres_baseline_schema.sql")
-            .read_text()
-        )
-        _SEED_BEARING_TABLES = tuple(
-            sorted(set(_BASELINE_INSERT_RE.findall(baseline_sql)) - _POSTGRES_ONLY_TABLES)
-        )
-    return _SEED_BEARING_TABLES
+    baseline_sql = (
+        importlib.resources.files("gobby.storage")
+        .joinpath("postgres_baseline_schema.sql")
+        .read_text()
+    )
+    return tuple(sorted(set(_BASELINE_INSERT_RE.findall(baseline_sql)) - _POSTGRES_ONLY_TABLES))
 
 
 class SqliteToPostgresMigrationError(RuntimeError):
@@ -120,51 +116,111 @@ def migrate_sqlite_to_postgres(
         _assert_source_schema_supported(source_conn)
         install_mode = active_install_mode()
 
-        with _connect_postgres(target) as pg:
-            _run_target_read_only_preflight(pg, install_mode=install_mode, emit=sink)
-            if dry_run:
-                counts = _run_table_mapping_preflight(source_conn, pg, emit=sink)
-                rows = sum(counts.values())
-                return {
-                    "rows": rows,
-                    "tables": len(counts),
-                    "dry_run": True,
-                    "log_path": None,
-                    "validation_artifact": None,
-                }
+        if dry_run:
+            return _run_dry_run(source_conn, target, install_mode=install_mode, emit=sink)
 
-        _apply_postgres_schema(target)
-        log_path = _default_import_log_path()
-        with _connect_postgres(target) as pg:
-            _assert_target_ready_for_import(source_conn, pg, emit=sink)
-            _fail_if_import_complete_marker(pg)
-            if reset_seeded_tables:
-                _reset_seed_bearing_tables(pg)
-            _drop_bm25_indexes(pg)
-            copy_result = _coerce_copy_result(
-                _copy_sqlite_rows_to_postgres(source_conn, pg, batch_size, log_path)
-            )
-            _recreate_bm25_indexes(pg)
-            reseed_identity_sequences(pg)
-            try:
-                report = validate_migration(source_conn, cast(Any, pg), emit=sink)
-            except MigrationValidationError as exc:
-                raise SqliteToPostgresMigrationError(str(exc)) from exc
-            _write_import_complete_marker(pg)
-
-        return {
-            "rows": copy_result.rows,
-            "tables": copy_result.tables,
-            "dry_run": False,
-            "log_path": str(log_path),
-            "validation_artifact": str(report.artifact_path) if report.artifact_path else None,
-        }
+        return _run_import(
+            source_conn,
+            target,
+            batch_size=batch_size,
+            reset_seeded_tables=reset_seeded_tables,
+            install_mode=install_mode,
+            emit=sink,
+        )
 
 
-def _coerce_copy_result(value: object) -> _CopyResult:
-    if isinstance(value, _CopyResult):
-        return value
-    return _CopyResult(rows=0, tables=0)
+def _run_dry_run(
+    source: sqlite3.Connection,
+    target: str,
+    *,
+    install_mode: _InstallMode,
+    emit: Callable[[str], None],
+) -> dict[str, Any]:
+    with _connect_postgres(target) as pg:
+        _run_target_read_only_preflight(pg, install_mode=install_mode, emit=emit)
+        counts = _run_table_mapping_preflight(source, pg, emit=emit)
+    return _migration_result(
+        rows=sum(counts.values()),
+        tables=len(counts),
+        dry_run=True,
+        log_path=None,
+        validation_artifact=None,
+    )
+
+
+def _run_import(
+    source: sqlite3.Connection,
+    target: str,
+    *,
+    batch_size: int,
+    reset_seeded_tables: bool,
+    install_mode: _InstallMode,
+    emit: Callable[[str], None],
+) -> dict[str, Any]:
+    with _connect_postgres(target) as pg:
+        _run_target_read_only_preflight(pg, install_mode=install_mode, emit=emit)
+
+    _apply_postgres_schema(target)
+    log_path = _default_import_log_path()
+    with _connect_postgres(target) as pg:
+        copy_result, validation_artifact = _copy_validate_and_mark(
+            source,
+            pg,
+            batch_size=batch_size,
+            log_path=log_path,
+            reset_seeded_tables=reset_seeded_tables,
+            emit=emit,
+        )
+
+    return _migration_result(
+        rows=copy_result.rows,
+        tables=copy_result.tables,
+        dry_run=False,
+        log_path=log_path,
+        validation_artifact=validation_artifact,
+    )
+
+
+def _copy_validate_and_mark(
+    source: sqlite3.Connection,
+    target: psycopg.Connection[Any],
+    *,
+    batch_size: int,
+    log_path: Path,
+    reset_seeded_tables: bool,
+    emit: Callable[[str], None],
+) -> tuple[_CopyResult, Path | None]:
+    _assert_target_ready_for_import(source, target, emit=emit)
+    _fail_if_import_complete_marker(target)
+    if reset_seeded_tables:
+        _reset_seed_bearing_tables(target)
+    _drop_bm25_indexes(target)
+    copy_result = _copy_sqlite_rows_to_postgres(source, target, batch_size, log_path)
+    _recreate_bm25_indexes(target)
+    reseed_identity_sequences(target)
+    try:
+        report = validate_migration(source, cast(Any, target), emit=emit)
+    except MigrationValidationError as exc:
+        raise SqliteToPostgresMigrationError(str(exc)) from exc
+    _write_import_complete_marker(target)
+    return copy_result, report.artifact_path
+
+
+def _migration_result(
+    *,
+    rows: int,
+    tables: int,
+    dry_run: bool,
+    log_path: Path | None,
+    validation_artifact: Path | None,
+) -> dict[str, Any]:
+    return {
+        "rows": rows,
+        "tables": tables,
+        "dry_run": dry_run,
+        "log_path": str(log_path) if log_path else None,
+        "validation_artifact": str(validation_artifact) if validation_artifact else None,
+    }
 
 
 def _assert_source_schema_supported(source: sqlite3.Connection) -> None:
