@@ -799,8 +799,9 @@ class LocalPipelineExecutionManager:
         """
         self.db.execute(
             """
-            INSERT OR IGNORE INTO completion_subscribers (completion_id, session_id)
+            INSERT INTO completion_subscribers (completion_id, session_id)
             VALUES (?, ?)
+            ON CONFLICT (completion_id, session_id) DO NOTHING
             """,
             (completion_id, session_id),
         )
@@ -815,7 +816,8 @@ class LocalPipelineExecutionManager:
         if not session_ids:
             return
         self.db.executemany(
-            "INSERT OR IGNORE INTO completion_subscribers (completion_id, session_id) VALUES (?, ?)",
+            "INSERT INTO completion_subscribers (completion_id, session_id) "
+            "VALUES (?, ?) ON CONFLICT (completion_id, session_id) DO NOTHING",
             [(completion_id, sid) for sid in session_ids],
         )
 

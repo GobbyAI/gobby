@@ -484,9 +484,10 @@ class TaskSyncManager:
                         # Check if both exist (they should, unless depends_on is missing)
                         conn.execute(
                             """
-                            INSERT OR IGNORE INTO task_dependencies (
+                            INSERT INTO task_dependencies (
                                 task_id, depends_on, dep_type, created_at
                             ) VALUES (?, ?, 'blocks', ?)
+                            ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
                             """,
                             (task_id, depends_on, datetime.now(UTC).isoformat()),
                         )
