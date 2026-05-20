@@ -141,7 +141,12 @@ jobs:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: postgresql://gobby_test:gobby_test@localhost:60892/gobby_test
+      GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
+      GOBBY_POSTGRES_TEST_DB: gobby_test
+      GOBBY_POSTGRES_TEST_IMAGE: gobby-postgres-local:17-pgsearch
+      GOBBY_POSTGRES_TEST_PASSWORD: gobby_test
+      GOBBY_POSTGRES_TEST_PORT: "60892"
+      GOBBY_POSTGRES_TEST_USER: gobby_test
     strategy:
       fail-fast: false
       matrix:
@@ -154,6 +159,9 @@ jobs:
         run: |
           pg_search_version="$(jq -r '.pg_search_version' src/gobby/data/postgres-pgsearch/version.json)"
           pg_search_sha256="$(jq -r '.pg_search_sha256' src/gobby/data/postgres-pgsearch/version.json)"
+          database_authority="${GOBBY_POSTGRES_TEST_USER}:${GOBBY_POSTGRES_TEST_PASSWORD}"
+          database_authority="${database_authority}@localhost:${GOBBY_POSTGRES_TEST_PORT}"
+          database_url="postgresql://${database_authority}/${GOBBY_POSTGRES_TEST_DB}"
           test -n "$pg_search_version"
           test -n "$pg_search_sha256"
           test "$pg_search_version" != "null"
@@ -161,6 +169,7 @@ jobs:
           {
             echo "GOBBY_PG_SEARCH_VERSION=$pg_search_version"
             echo "GOBBY_PG_SEARCH_SHA256=$pg_search_sha256"
+            echo "DATABASE_URL=$database_url"
           } >> "$GITHUB_ENV"
 
       - name: Build Postgres test image
@@ -168,33 +177,35 @@ jobs:
           docker build \
             --build-arg PG_SEARCH_VERSION="${GOBBY_PG_SEARCH_VERSION}" \
             --build-arg PG_SEARCH_SHA256="${GOBBY_PG_SEARCH_SHA256}" \
-            -t gobby-postgres-local:17-pgsearch \
+            -t "${GOBBY_POSTGRES_TEST_IMAGE}" \
             src/gobby/data/postgres-pgsearch
 
       - name: Start Postgres test container
         run: |
-          docker run -d --name postgres-test \
-            -e POSTGRES_DB=gobby_test \
-            -e POSTGRES_USER=gobby_test \
-            -e POSTGRES_PASSWORD=gobby_test \
-            -p 60892:5432 \
+          docker run -d --name "${GOBBY_POSTGRES_TEST_CONTAINER}" \
+            -e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}" \
+            -e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}" \
+            -e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}" \
+            -p "${GOBBY_POSTGRES_TEST_PORT}:5432" \
             --tmpfs /var/lib/postgresql/data \
-            --health-cmd "pg_isready -U gobby_test" \
+            --health-cmd "pg_isready -U ${GOBBY_POSTGRES_TEST_USER}" \
             --health-interval 2s \
             --health-timeout 2s \
             --health-retries 15 \
-            gobby-postgres-local:17-pgsearch \
+            "${GOBBY_POSTGRES_TEST_IMAGE}" \
             postgres -c shared_preload_libraries=pg_search,pgaudit -c pgaudit.log=write
 
           for _ in $(seq 1 30); do
-            status="$(docker inspect -f '{{.State.Health.Status}}' postgres-test)"
+            status="$(
+              docker inspect -f '{{.State.Health.Status}}' "${GOBBY_POSTGRES_TEST_CONTAINER}"
+            )"
             if [ "$status" = "healthy" ]; then
               exit 0
             fi
             sleep 2
           done
 
-          docker logs postgres-test
+          docker logs "${GOBBY_POSTGRES_TEST_CONTAINER}"
           exit 1
 
       - name: Install uv
