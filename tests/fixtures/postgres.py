@@ -25,7 +25,10 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.hub.postgres import (
+    _BASELINE_BOOKKEEPING_TABLES,
+    PostgresHubDatabase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,22 +61,6 @@ def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
                 logger.exception("Failed to drop orphaned schema %s", schema_name)
 
 
-# Bookkeeping tables whose rows must survive reset verbatim. Their contents
-# are either written once by apply_migrations() and never mutated by tests
-# through the standard fixture path (schema_migrations), or they carry
-# cross-test cutover state by design (gobby_migration_state — its
-# `imported_from_sqlite_at` row survives test isolation intentionally). Tests
-# that mutate gobby_migration_state must opt out of the standard postgres_db
-# fixture and own their own cleanup; the standard fixture preserves both row
-# contents and table existence across resets.
-_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
-    {
-        "schema_migrations",
-        "gobby_migration_state",
-    }
-)
-
-
 def _capture_canonical_seed(
     conn: psycopg.Connection[Any],
 ) -> dict[str, list[tuple[Any, ...]]]:
@@ -84,7 +71,9 @@ def _capture_canonical_seed(
     tables: any table that ships seed rows in the baseline (`projects`,
     `task_type_default_stages`, `task_stages_registry`, `sessions`, plus
     any table a future baseline adds) is automatically protected.
-    Bookkeeping tables are skipped because their rows survive resets verbatim.
+    Bookkeeping tables (the shared `_BASELINE_BOOKKEEPING_TABLES` set owned
+    by `gobby.storage.hub.postgres`) are skipped because their rows survive
+    resets verbatim.
     """
     snapshot: dict[str, list[tuple[Any, ...]]] = {}
     all_tables = [
@@ -94,7 +83,7 @@ def _capture_canonical_seed(
         ).fetchall()
     ]
     for table in all_tables:
-        if table in _BOOKKEEPING_TABLES:
+        if table in _BASELINE_BOOKKEEPING_TABLES:
             continue
         rows = conn.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table))).fetchall()
         if rows:
@@ -129,7 +118,7 @@ def _reset_schema(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
         }
-        truncate_tables = sorted(all_tables - _BOOKKEEPING_TABLES)
+        truncate_tables = sorted(all_tables - _BASELINE_BOOKKEEPING_TABLES)
 
         with conn.transaction():
             conn.execute("SET CONSTRAINTS ALL DEFERRED")
