@@ -275,6 +275,45 @@ async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     assert spawned == []
 
 
+async def test_cancelled_spawn_releases_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+    from gobby.dispatch.mutex import RuntimeDispatchMutex
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    mutex = RuntimeDispatchMutex(
+        storage,
+        task_id=task.id,
+        holder="dispatcher",
+        action_kind="heartbeat",
+        ttl_seconds=600,
+    )
+    mutex.__enter__()
+
+    async def cancelled_spawn(*_args: object, **_kwargs: object) -> str:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", cancelled_spawn)
+
+    with pytest.raises(asyncio.CancelledError):
+        await dispatcher.execute_action(
+            SpawnAgentAction(
+                task_id=task.id,
+                task_ref=f"#{task.seq_num}",
+                agent_slug="backend-developer",
+                prompt="do work",
+            ),
+            mutex=mutex,
+            db=temp_db,
+        )
+
+    assert storage.get_mutex(task.id) is None
+
+
 async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
     from gobby.dispatch import dispatcher
 
