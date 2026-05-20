@@ -487,7 +487,6 @@ def register_merge_landscape_tools(
         timeout: int = 300,
         final: bool = False,
     ) -> dict[str, Any]:
-        _ = final
         if not command.strip():
             return {"success": False, "error": "command is required"}
         try:
@@ -525,11 +524,46 @@ def register_merge_landscape_tools(
                     "timed_out": True,
                 }
             exit_code = proc.returncode
+            stdout = stdout_b.decode("utf-8", errors="replace")
+            stderr = stderr_b.decode("utf-8", errors="replace")
+            if exit_code == 0 and final:
+                if not git_manager:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": "git_manager not configured for final clean-tree check",
+                    }
+                status_rc, status_stdout, status_stderr = await _git_async(
+                    git_manager,
+                    ["status", "--porcelain"],
+                    cwd=wt_path,
+                    timeout=10,
+                )
+                if status_rc != 0:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": f"git status failed after verification: {status_stderr.strip()}",
+                    }
+                dirty_files = [line for line in status_stdout.splitlines() if line.strip()]
+                if dirty_files:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": "final verification failed: worktree is dirty",
+                        "dirty_files": dirty_files,
+                    }
             return {
                 "success": exit_code == 0,
                 "exit_code": exit_code,
-                "stdout": stdout_b.decode("utf-8", errors="replace"),
-                "stderr": stderr_b.decode("utf-8", errors="replace"),
+                "stdout": stdout,
+                "stderr": stderr,
             }
         except (OSError, ValueError) as e:
             logger.exception("verify_in_worktree subprocess failed for %s", worktree_id)

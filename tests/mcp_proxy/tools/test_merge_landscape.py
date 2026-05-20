@@ -82,6 +82,36 @@ def _init_git_repo(path) -> None:
     )
 
 
+class _SubprocessGitManager:
+    def run_git_command(self, args, cwd=None, timeout=30, check=False):
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            timeout=timeout,
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+
+def _commit_file(path, name: str, content: str) -> None:
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    (path / name).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", name], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", f"add {name}"], cwd=path, check=True)
+
+
 # --- analyze_merge_landscape ---
 
 
@@ -378,6 +408,52 @@ async def test_verify_in_worktree_success(tmp_path) -> None:
     assert result["success"] is True
     assert result["exit_code"] == 0
     assert result["stdout"] == ""
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_final_rejects_dirty_tree(tmp_path) -> None:
+    _init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tracked.txt", "clean\n")
+    (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=_SubprocessGitManager(),
+    )
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "git status --short", "final": True},
+    )
+
+    assert result["success"] is False
+    assert result["exit_code"] == 0
+    assert result["error"] == "final verification failed: worktree is dirty"
+    assert result["dirty_files"] == [" M tracked.txt"]
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_non_final_allows_dirty_tree(tmp_path) -> None:
+    _init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tracked.txt", "clean\n")
+    (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=_SubprocessGitManager(),
+    )
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "git status --short"},
+    )
+
+    assert result["success"] is True
+    assert result["stdout"] == " M tracked.txt\n"
 
 
 @pytest.mark.asyncio
