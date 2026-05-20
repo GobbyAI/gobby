@@ -84,49 +84,60 @@ def _execute_merge_workspace_sync(
     try:
         paths = _resolve_paths(action, db=db, services=services)
         source_branch = action.source_branch or paths.source_branch
-        _ensure_branch(paths.source_path, source_branch, "source")
-        _ensure_branch(paths.target_path, action.target_branch, "target")
-        _ensure_clean(paths.target_path, "target integration workspace")
-        source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
-        if _is_ancestor(paths.target_path, source_commit):
-            _complete_merge_stage(db, action.task_id, source_commit)
+        try:
+            _ensure_branch(paths.source_path, source_branch, "source")
+            _ensure_branch(paths.target_path, action.target_branch, "target")
+            _ensure_clean(paths.target_path, "target integration workspace")
+            source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
+            if _is_ancestor(paths.target_path, source_commit):
+                _complete_merge_stage(db, action.task_id, source_commit)
+                _mark_source_merged(action, db=db, source_id=paths.source_id)
+                return source_commit
+
+            merge_ref = source_commit
+            if action.backend == "clone":
+                _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
+                merge_ref = "FETCH_HEAD"
+            result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
+            if result.returncode != 0:
+                conflicted = _conflicted_files(paths.target_path)
+                remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
+                if conflicted and not remaining:
+                    commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
+                    if commit_result.returncode == 0:
+                        merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                        if action.backend == "clone" and not paths.target_is_local:
+                            _sync_source_repo_branch(
+                                db,
+                                action.task_id,
+                                paths.target_path,
+                                action.target_branch,
+                            )
+                        _mark_source_merged(action, db=db, source_id=paths.source_id)
+                        _complete_merge_stage(db, action.task_id, merge_sha)
+                        return merge_sha
+                _abort_merge(paths.target_path)
+                detail_files = remaining or conflicted
+                detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
+                _fail_merge_stage(db, action.task_id, f"merge_conflict:{detail or 'unknown'}")
+                return None
+
+            merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+            if action.backend == "clone" and not paths.target_is_local:
+                _sync_source_repo_branch(
+                    db,
+                    action.task_id,
+                    paths.target_path,
+                    action.target_branch,
+                )
             _mark_source_merged(action, db=db, source_id=paths.source_id)
-            return source_commit
-
-        merge_ref = source_commit
-        if action.backend == "clone":
-            _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
-            merge_ref = "FETCH_HEAD"
-        result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
-        if result.returncode != 0:
-            conflicted = _conflicted_files(paths.target_path)
-            remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
-            if conflicted and not remaining:
-                commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
-                if commit_result.returncode == 0:
-                    merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-                    if action.backend == "clone" and not paths.target_is_local:
-                        _sync_source_repo_branch(
-                            db,
-                            action.task_id,
-                            paths.target_path,
-                            action.target_branch,
-                        )
-                    _mark_source_merged(action, db=db, source_id=paths.source_id)
-                    _complete_merge_stage(db, action.task_id, merge_sha)
-                    return merge_sha
-            _abort_merge(paths.target_path)
-            detail_files = remaining or conflicted
-            detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
-            _fail_merge_stage(db, action.task_id, f"merge_conflict:{detail or 'unknown'}")
+            _complete_merge_stage(db, action.task_id, merge_sha)
+            return merge_sha
+        except RuntimeError as exc:
+            reason = f"workspace_merge_failed:{exc}"
+            _append_merge_failure_audit(db, action.task_id, reason)
+            _fail_merge_stage(db, action.task_id, reason)
             return None
-
-        merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-        if action.backend == "clone" and not paths.target_is_local:
-            _sync_source_repo_branch(db, action.task_id, paths.target_path, action.target_branch)
-        _mark_source_merged(action, db=db, source_id=paths.source_id)
-        _complete_merge_stage(db, action.task_id, merge_sha)
-        return merge_sha
     finally:
         _release_integration_mutex(db, key)
 
@@ -504,6 +515,16 @@ def _fail_merge_stage(db: DatabaseProtocol, task_id: str, reason: str) -> None:
         needs_human=True,
         by_session_id="dispatcher",
     )
+
+
+def _append_merge_failure_audit(db: DatabaseProtocol, task_id: str, reason: str) -> None:
+    task_manager = LocalTaskManager(db)
+    task = task_manager.get_task(task_id)
+    description = task.description or ""
+    marker = f"\n\n### Workspace merge failed\n\n{reason}"
+    if marker in description:
+        return
+    task_manager.update_task(task_id, description=f"{description}{marker}")
 
 
 def _mark_source_merged(
