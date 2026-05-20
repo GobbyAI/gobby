@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.database import LocalDatabase
@@ -127,6 +128,79 @@ class TestSyncBundledAgents:
         assert row is not None
         body = AgentDefinitionBody.model_validate_json(row.definition_json)
         assert body.description == "Updated description"
+
+    @pytest.mark.unit
+    def test_sync_repairs_stale_generated_step_workflow_for_unchanged_agent(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Agent sync should refresh stale `<agent>-steps` rows even when the agent row skips."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = (
+            "name: merge-helper\n"
+            "description: Merge helper\n"
+            "provider: claude\n"
+            "mode: interactive\n"
+            "steps:\n"
+            "  - name: merge\n"
+            "    allowed_tools:\n"
+            "      - mcp__gobby__call_tool\n"
+            "    allowed_mcp_tools:\n"
+            "      - gobby-worktrees:get_worktree\n"
+            "      - gobby-merge:inspect_merge_state\n"
+        )
+        (agents_dir / "merge-helper.yaml").write_text(agent_yaml)
+
+        body = AgentDefinitionBody.model_validate(yaml.safe_load(agent_yaml))
+        mgr = LocalWorkflowDefinitionManager(db)
+        mgr.create(
+            name="merge-helper",
+            definition_json=body.model_dump_json(),
+            workflow_type="agent",
+            description=body.description,
+            source="installed",
+            enabled=body.enabled,
+            tags=["gobby"],
+        )
+        mgr.create(
+            name="merge-helper-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "merge-helper-steps",
+                    "type": "step",
+                    "version": "2.0",
+                    "enabled": False,
+                    "steps": [
+                        {
+                            "name": "merge",
+                            "allowed_tools": ["mcp__gobby__call_tool"],
+                            "allowed_mcp_tools": ["gobby-worktrees:merge_worktree"],
+                        }
+                    ],
+                    "variables": {},
+                    "exit_condition": None,
+                }
+            ),
+            workflow_type="workflow",
+            source="agent",
+            enabled=False,
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["skipped"] == 1
+        step_row = mgr.get_by_name("merge-helper-steps")
+        assert step_row is not None
+        step_body = json.loads(step_row.definition_json)
+        allowed = step_body["steps"][0]["allowed_mcp_tools"]
+        assert allowed == [
+            "gobby-worktrees:get_worktree",
+            "gobby-merge:inspect_merge_state",
+        ]
 
     @pytest.mark.unit
     def test_sync_enables_legacy_discovery_placeholder(self, tmp_path: Path) -> None:
