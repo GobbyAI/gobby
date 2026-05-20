@@ -276,6 +276,7 @@ def de_escalate_task(
     *,
     reason: str,
     reset_validation: bool = False,
+    reset_stage_attempts: bool = False,
 ) -> Task:
     """Clear escalation state and keep the current stage unchanged."""
     task = get_task(db, task_id)
@@ -296,7 +297,41 @@ def de_escalate_task(
         escalation_reason=None,
         validation_fail_count=0 if reset_validation else UNSET,
     )
+    if reset_stage_attempts:
+        _reset_current_stage_work_attempts(db, task_id, reason=reason)
     return get_task(db, task_id)
+
+
+def _reset_current_stage_work_attempts(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    reason: str,
+) -> None:
+    row = _current_stage_row(db, task_id)
+    if row is None:
+        return
+
+    stage_name = row["stage_name"]
+    stage_state = row["state"]
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET work_attempt_count = 0,
+                   updated_at = ?
+             WHERE task_id = ? AND stage_name = ?
+            """,
+            (now, task_id, stage_name),
+        )
+    TaskLifecycleEventManager(db).record_lifecycle_event(
+        task_id,
+        f"{stage_name}:{stage_state}",
+        f"{stage_name}:{stage_state}",
+        f"reset_stage_work_attempts:{reason}",
+        by_actor="system",
+    )
 
 
 def submit_for_review(

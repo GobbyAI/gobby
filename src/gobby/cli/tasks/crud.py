@@ -808,10 +808,12 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", required=True, help="Reason for de-escalation")
 @click.option("--reset-validation", is_flag=True, help="Reset validation fail count")
+@click.option("--reset-stage-attempts", is_flag=True, help="Reset current stage work attempts")
 def de_escalate_cmd(
     task_id: str,
     reason: str,
     reset_validation: bool,
+    reset_stage_attempts: bool,
 ) -> None:
     """Return an escalated task to its preserved current stage.
 
@@ -835,10 +837,13 @@ def de_escalate_cmd(
         resolved.id,
         reason=reason,
         reset_validation=reset_validation,
+        reset_stage_attempts=reset_stage_attempts,
     )
     click.echo(f"De-escalated task {resolved.id[:8]} ({reason})")
     if reset_validation:
         click.echo("  Validation fail count reset to 0")
+    if reset_stage_attempts:
+        click.echo("  Current stage work attempts reset to 0")
 
 
 @click.command("validation-history")
