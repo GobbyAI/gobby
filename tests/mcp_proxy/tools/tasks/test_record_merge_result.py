@@ -11,6 +11,7 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -31,6 +32,8 @@ def _context() -> SimpleNamespace:
 
     def execute(sql: str, params: tuple[object, ...]) -> SimpleNamespace | None:
         executed.append((sql, params))
+        if "FROM task_delivery_units" in sql:
+            return SimpleNamespace(fetchall=lambda: [])
         if "SELECT task_id, state, merge_strategy" not in sql:
             return None
         return SimpleNamespace(
@@ -192,7 +195,11 @@ def test_success_writes_artifacts_and_completes_merge(
         report_ref="merge-report.md",
     )
 
-    sql, params = ctx.task_manager.db.executed[0]
+    sql, params = next(
+        (sql, params)
+        for sql, params in ctx.task_manager.db.executed
+        if "INSERT INTO task_delivery_campaigns" in sql
+    )
     assert "task_delivery_campaigns" in sql
     assert "merge_sha" in sql
     assert "merge_report_ref" in sql
@@ -290,6 +297,111 @@ def test_success_idempotent_merge_rejects_different_completed_sha(
     assert _artifact_row(temp_db, task.id) == {
         "merge_sha": "merge-worker-sha",
         "merge_report_ref": "merge-worker-report.md",
+    }
+
+
+def test_success_reconciles_ready_merge_after_prior_failure(
+    temp_db,
+    sample_project,
+) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=3)
+
+    failed = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        failure_reason="verification failed",
+        report_ref="merge-failure.md",
+    )
+    result = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="merge-retry-sha",
+        report_ref="merge-retry-report.md",
+    )
+
+    assert failed["stage"]["state"] == "ready"
+    assert result["ok"] is True
+    assert result["reconciled"] is True
+    assert result["stage"]["state"] == "done"
+    row = stage_row(temp_db, task.id, "merge")
+    assert row["state"] == "done"
+    assert row["completed_commit_sha"] == "merge-retry-sha"
+    task_state = task_row(temp_db, task.id)
+    assert task_state["closed_commit_sha"] == "merge-retry-sha"
+    assert task_state["is_escalated"] == 0
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "merge-retry-sha",
+        "merge_report_ref": "merge-retry-report.md",
+    }
+
+
+def test_success_reconciles_ready_merge_when_campaign_already_merged(
+    temp_db,
+    sample_project,
+) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project)
+    manager = LocalTaskManager(temp_db)
+    manager.stage_states.fail_stage(
+        task.id,
+        "merge",
+        reason="stale failure already rolled stage back",
+        by_session_id="merge-agent",
+    )
+    TaskDeliveryStateManager(temp_db).record_campaign(
+        task.id,
+        state="merged",
+        merge_sha="already-merged-sha",
+        merge_report_ref="previous-report.md",
+        last_error="",
+    )
+
+    result = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="already-merged-sha",
+        report_ref="reconcile-report.md",
+    )
+
+    assert result["ok"] is True
+    assert result["reconciled"] is True
+    assert result["stage"]["state"] == "done"
+    assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "already-merged-sha"
+    assert task_row(temp_db, task.id)["closed_commit_sha"] == "already-merged-sha"
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "already-merged-sha",
+        "merge_report_ref": "reconcile-report.md",
+    }
+
+
+def test_success_rejects_different_ready_campaign_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project)
+    manager = LocalTaskManager(temp_db)
+    manager.stage_states.fail_stage(
+        task.id,
+        "merge",
+        reason="stale failure already rolled stage back",
+        by_session_id="merge-agent",
+    )
+    TaskDeliveryStateManager(temp_db).record_campaign(
+        task.id,
+        state="merged",
+        merge_sha="already-merged-sha",
+        merge_report_ref="previous-report.md",
+        last_error="",
+    )
+
+    with pytest.raises(ValueError, match="different merge_sha"):
+        _record_merge_result(_real_context(temp_db))(
+            task_id=task.id,
+            merge_sha="different-sha",
+            report_ref="different-report.md",
+        )
+
+    assert stage_row(temp_db, task.id, "merge")["state"] == "ready"
+    assert task_row(temp_db, task.id)["closed_at"] is None
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "already-merged-sha",
+        "merge_report_ref": "previous-report.md",
     }
 
 
