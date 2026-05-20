@@ -754,9 +754,7 @@ class TestMergeResolveTool:
             git_manager=mock_git_manager,
         )
 
-        first = asyncio.create_task(
-            registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
-        )
+        first = asyncio.create_task(registry.call("merge_resolve", {"conflict_id": "mc-conflict1"}))
         await first_started.wait()
 
         second = await registry.call("merge_resolve", {"conflict_id": "mc-conflict2"})

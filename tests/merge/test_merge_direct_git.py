@@ -311,6 +311,66 @@ async def test_pending_resolution_without_rows_hydrates_current_git_conflicts(
 
 
 @pytest.mark.asyncio
+async def test_merge_status_rehydrates_existing_stale_conflict_content(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/rehydrate-stale-conflict"
+    _init_repo(repo)
+    (repo / "shared.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-m", "add shared")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    (worktree_path / "shared.py").write_text("value = 'feature'\n", encoding="utf-8")
+    _git(worktree_path, "add", "shared.py")
+    _git(worktree_path, "commit", "-m", "feature shared")
+    _commit_on_main(repo, "shared.py", "value = 'main'\n", update_origin=False)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merge.returncode != 0
+
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    resolution = merge_storage.create_resolution(
+        worktree_id=worktree.id,
+        source_branch=branch,
+        target_branch="main",
+        status="pending",
+    )
+    stale = merge_storage.create_conflict(
+        resolution_id=resolution.id,
+        file_path="shared.py",
+        status="pending",
+    )
+    assert stale.ours_content is None
+    assert stale.theirs_content is None
+
+    compact = await registry.call("merge_status", {"resolution_id": resolution.id})
+    stored = merge_storage.get_conflict(stale.id)
+    assert stored is not None
+    assert stored.ours_content == "value = 'feature'"
+    assert stored.theirs_content == "value = 'main'"
+    assert compact["conflicts"][0]["has_ours_content"] is True
+    assert compact["conflicts"][0]["has_theirs_content"] is True
+    assert compact["conflicts"][0]["ours_content_length"] == len("value = 'feature'")
+    assert "ours_content" not in compact["conflicts"][0]
+
+    verbose = await registry.call(
+        "merge_status",
+        {"resolution_id": resolution.id, "include_content": True},
+    )
+    assert verbose["conflicts"][0]["ours_content"] == "value = 'feature'"
+    assert verbose["conflicts"][0]["theirs_content"] == "value = 'main'"
+
+
+@pytest.mark.asyncio
 async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

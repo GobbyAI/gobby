@@ -83,21 +83,26 @@ def store_missing_conflicts(
     status: str,
 ) -> None:
     existing = {
-        conflict.file_path for conflict in merge_storage.list_conflicts(resolution_id=resolution_id)
+        conflict.file_path: conflict
+        for conflict in merge_storage.list_conflicts(resolution_id=resolution_id)
     }
     for conflict in conflicts:
         file_path = str(conflict.get("file") or "")
-        if not file_path or file_path in existing:
+        if not file_path:
+            continue
+        stored_conflict = existing.get(file_path)
+        if stored_conflict is not None:
+            _hydrate_existing_conflict(merge_storage, stored_conflict, conflict)
             continue
         try:
-            merge_storage.create_conflict(
+            created = merge_storage.create_conflict(
                 resolution_id=resolution_id,
                 file_path=file_path,
                 ours_content=_first_hunk_content(conflict, "ours"),
                 theirs_content=_first_hunk_content(conflict, "theirs"),
                 status=status,
             )
-            existing.add(file_path)
+            existing[file_path] = created
         except sqlite3.IntegrityError:
             logger.debug("Conflict row already exists for %s in %s", file_path, resolution_id)
 
@@ -199,6 +204,24 @@ def _first_hunk_content(conflict: dict[str, Any], attr: str) -> str | None:
     else:
         value = getattr(first, attr, None)
     return value if isinstance(value, str) else None
+
+
+def _hydrate_existing_conflict(
+    merge_storage: Any,
+    stored_conflict: Any,
+    git_conflict: dict[str, Any],
+) -> None:
+    if stored_conflict.ours_content is not None and stored_conflict.theirs_content is not None:
+        return
+    ours_content = _first_hunk_content(git_conflict, "ours")
+    theirs_content = _first_hunk_content(git_conflict, "theirs")
+    if ours_content is None and theirs_content is None:
+        return
+    merge_storage.update_conflict(
+        stored_conflict.id,
+        ours_content=ours_content,
+        theirs_content=theirs_content,
+    )
 
 
 def _list_conflicts(merge_storage: Any, resolution_id: str) -> list[Any]:

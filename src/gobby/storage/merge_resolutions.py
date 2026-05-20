@@ -99,7 +99,7 @@ class MergeConflict:
 
     def to_dict(self, *, include_content: bool = True) -> dict[str, Any]:
         """Convert conflict to dictionary for serialization."""
-        data = {
+        data: dict[str, Any] = {
             "id": self.id,
             "resolution_id": self.resolution_id,
             "file_path": self.file_path,
@@ -453,6 +453,9 @@ class MergeResolutionManager:
         conflict_id: str,
         status: str | None = None,
         resolved_content: str | None = None,
+        *,
+        ours_content: str | None = None,
+        theirs_content: str | None = None,
     ) -> MergeConflict | None:
         """Update a conflict.
 
@@ -460,6 +463,8 @@ class MergeResolutionManager:
             conflict_id: The conflict ID
             status: New status (optional)
             resolved_content: Resolved content (optional)
+            ours_content: Our-side conflict content (optional)
+            theirs_content: Their-side conflict content (optional)
 
         Returns:
             The updated MergeConflict if found, None otherwise
@@ -470,6 +475,8 @@ class MergeResolutionManager:
 
         now = datetime.now(UTC).isoformat()
         new_status = status if status is not None else conflict.status
+        new_ours = ours_content if ours_content is not None else conflict.ours_content
+        new_theirs = theirs_content if theirs_content is not None else conflict.theirs_content
         new_resolved = (
             resolved_content if resolved_content is not None else conflict.resolved_content
         )
@@ -478,10 +485,11 @@ class MergeResolutionManager:
             conn.execute(
                 """
                 UPDATE merge_conflicts
-                SET status = ?, resolved_content = ?, updated_at = ?
+                SET status = ?, ours_content = ?, theirs_content = ?, resolved_content = ?,
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (new_status, new_resolved, now, conflict_id),
+                (new_status, new_ours, new_theirs, new_resolved, now, conflict_id),
             )
 
         self._notify_listeners()
