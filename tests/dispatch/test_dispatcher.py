@@ -459,6 +459,77 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert storage.get_mutex(task.id).run_id == "run-services"
 
 
+async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path="/tmp/missing-worktree",
+        worktree_id="wt-missing",
+        base_commit_sha="old-base",
+        target_branch="main",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs):
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=kwargs["parent_session_id"],
+            provider="codex",
+            prompt=kwargs["prompt"],
+            agent_name=kwargs["agent_lookup_name"],
+            task_id=task.id,
+            run_id="run-fresh-worktree",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["worktree_id"] is None
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
+    assert artifacts.base_commit_sha is None
+    assert artifacts.target_branch == "main"
+
+
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -547,7 +618,9 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     assert prepare_calls[0]["root_task"].id == task.id
     assert spawn_kwargs["worktree_id"] == "wt-integration"
     assert spawn_kwargs["clone_id"] is None
-    assert artifacts.worktree_id == "wt-stale"
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
+    assert artifacts.base_commit_sha is None
 
 
 async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missing(

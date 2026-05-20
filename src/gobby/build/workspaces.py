@@ -115,7 +115,10 @@ def ensure_task_parent_integration_workspace(
         return None
 
     task_artifacts = task_manager.artifacts.get_artifacts(task.id)
-    branch_name = task_artifacts.target_branch
+    branch_name = task_artifacts.target_branch or _nearest_ancestor_integration_branch(
+        task_manager,
+        task.parent_task_id,
+    )
     if not branch_name:
         return None
 
@@ -161,6 +164,8 @@ def ensure_task_parent_integration_workspace(
         artifact_fields["integration_clone_id"] = integration.id
         artifact_fields["integration_workspace_id"] = None
     task_manager.artifacts.set_artifacts_atomic(epic.id, **artifact_fields)
+    if not task_artifacts.target_branch:
+        task_manager.artifacts.set_artifact(task.id, "target_branch", branch_name)
     return integration
 
 
@@ -235,14 +240,12 @@ class _WorkspaceServices:
     ) -> str | None:
         if backend == "worktree" and artifacts.worktree_id:
             worktree = self.worktree_storage.get(artifacts.worktree_id)
-            if worktree is not None and _is_recoverable_workspace(
-                worktree, task.id, "worktree"
-            ):
-                return worktree.branch_name
+            if worktree is not None and _is_recoverable_workspace(worktree, task.id, "worktree"):
+                return cast(str, worktree.branch_name)
         if backend == "clone" and artifacts.clone_id:
             clone = self.clone_storage.get(artifacts.clone_id)
             if clone is not None and _is_recoverable_workspace(clone, task.id, "clone"):
-                return clone.branch_name
+                return cast(str, clone.branch_name)
         return None
 
     def _ensure_worktree(
@@ -446,7 +449,7 @@ def _service_git_manager(services: object | None, project_id: str) -> WorktreeGi
         if manager is not None:
             return cast(WorktreeGitManager, manager)
     manager = getattr(services, "git_manager", None)
-    return cast(WorktreeGitManager | None, manager)
+    return manager
 
 
 def _subtree_tasks(db: DatabaseProtocol, root_task_id: str) -> list[Task]:
@@ -535,7 +538,7 @@ def _nearest_ancestor_integration_branch(
             return None
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         if artifacts.integration_branch:
-            return artifacts.integration_branch
+            return cast(str, artifacts.integration_branch)
         current_id = task.parent_task_id
     return None
 
