@@ -311,8 +311,25 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
 
 def _ensure_clean(path: str, label: str) -> None:
     status = _git_stdout(path, ["status", "--porcelain"])
-    if status:
+    dirty = _non_gobby_status_lines(status)
+    if dirty:
         raise RuntimeError(f"{label} is dirty")
+
+
+def _status_path_is_gobby_only(pathspec: str) -> bool:
+    paths = [part.strip() for part in pathspec.split(" -> ")]
+    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
+
+
+def _non_gobby_status_lines(status_output: str) -> list[str]:
+    dirty: list[str] = []
+    for line in status_output.splitlines():
+        if not line:
+            continue
+        pathspec = line[3:] if len(line) > 3 else line
+        if not _status_path_is_gobby_only(pathspec):
+            dirty.append(line)
+    return dirty
 
 
 def _is_ancestor(target_path: str, commit_sha: str) -> bool:

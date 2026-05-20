@@ -273,6 +273,8 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
         integration_branch="gobby/integration/phase",
         integration_workspace_id=integration.id,
     )
+    (repo / ".gobby").mkdir()
+    (repo / ".gobby" / "tasks.jsonl").write_text("sync artifact\n")
 
     merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
