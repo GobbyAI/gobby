@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")

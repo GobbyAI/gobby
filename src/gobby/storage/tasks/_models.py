@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import Row
 from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES as TDD_ELIGIBLE_CATEGORIES
 from gobby.tasks.state_semantics import serialize_task_state
 

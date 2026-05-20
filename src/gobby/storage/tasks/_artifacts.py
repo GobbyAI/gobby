@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 
 _ARTIFACT_FIELDS = frozenset(
     {

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,

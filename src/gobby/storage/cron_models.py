@@ -8,8 +8,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import Row
-
 logger = logging.getLogger(__name__)
 
 

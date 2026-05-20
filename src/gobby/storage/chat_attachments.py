@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Row, Transaction
+from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Transaction
 
 CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (

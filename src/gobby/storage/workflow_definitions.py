@@ -10,7 +10,7 @@ from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 

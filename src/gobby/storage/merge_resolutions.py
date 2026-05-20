@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)

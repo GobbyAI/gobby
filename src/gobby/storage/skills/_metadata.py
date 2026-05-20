@@ -12,7 +12,7 @@ from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase, Row
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 

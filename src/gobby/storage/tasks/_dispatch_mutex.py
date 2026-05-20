@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase, Row
+from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
 
 
 @dataclass(frozen=True)

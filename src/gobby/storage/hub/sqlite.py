@@ -14,6 +14,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.placeholders import (
     params_from_indexes as _params_from_indexes,
+)
+from gobby.storage.hub.placeholders import (
     remap_dollar_placeholders,
     scan_dollar_placeholder_indexes,
 )

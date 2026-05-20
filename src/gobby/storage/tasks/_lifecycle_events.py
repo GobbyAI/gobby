@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 
 # Reason recorded by ``gobby build`` (see gobby.build.lifecycle._record_build_event).
 # This is the durable, append-only signal that automation was ever started for a

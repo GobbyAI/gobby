@@ -1,12 +1,10 @@
 """Skill data models."""
 
 import json
-from collections.abc import KeysView, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
-
-from gobby.storage.hub.protocol import Row
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 __all__ = [

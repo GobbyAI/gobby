@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.storage.hub.protocol import Row
-
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
     from gobby.storage.hub.protocol import HubDatabase
