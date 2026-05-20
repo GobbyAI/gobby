@@ -165,8 +165,9 @@ class LocalProjectManager:
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             """
-            INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
+            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
             """,
             (project_id, name, repo_path, now, now),
         )
@@ -176,7 +177,7 @@ class LocalProjectManager:
             return project
 
         raise RuntimeError(
-            f"Project '{name}' ({project_id}) not found after INSERT OR IGNORE — "
+            f"Project '{name}' ({project_id}) not found after idempotent insert — "
             "possible database inconsistency"
         )
 

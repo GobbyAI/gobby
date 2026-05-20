@@ -53,12 +53,12 @@ class SessionTaskManager:
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction() as conn:
-            # Use INSERT OR IGNORE to handle duplicate links gracefully
             conn.execute(
                 """
-                INSERT OR IGNORE INTO session_tasks (
+                INSERT INTO session_tasks (
                     session_id, task_id, action, created_at
                 ) VALUES (?, ?, ?, ?)
+                ON CONFLICT (session_id, task_id, action) DO NOTHING
                 """,
                 (session_id, task_id, action, now),
             )

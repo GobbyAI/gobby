@@ -133,7 +133,7 @@ class TokenEventStore:
         """Insert a token event row idempotently."""
         cursor = self.db.execute(
             """
-            INSERT OR IGNORE INTO token_events (
+            INSERT INTO token_events (
                 session_id,
                 project_id,
                 message_id,
@@ -150,6 +150,7 @@ class TokenEventStore:
                 metadata
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
             """,
             (
                 event.session_id,

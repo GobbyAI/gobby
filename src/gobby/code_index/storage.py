@@ -451,9 +451,10 @@ class CodeIndexStorage:
             if not imports:
                 return 0
             conn.executemany(
-                """INSERT OR IGNORE INTO code_imports
+                """INSERT INTO code_imports
                    (project_id, source_file, target_module)
-                   VALUES (?, ?, ?)""",
+                   VALUES (?, ?, ?)
+                   ON CONFLICT (project_id, source_file, target_module) DO NOTHING""",
                 [(project_id, imp.source_file, imp.target_module) for imp in imports],
             )
             return len(imports)
@@ -473,12 +474,16 @@ class CodeIndexStorage:
             if not calls:
                 return 0
             conn.executemany(
-                """INSERT OR IGNORE INTO code_calls
+                """INSERT INTO code_calls
                    (
                        project_id, caller_symbol_id, callee_symbol_id, callee_name,
                        callee_target_kind, callee_external_module, file_path, line
                    )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (
+                       project_id, caller_symbol_id, callee_symbol_id, callee_name,
+                       callee_target_kind, callee_external_module, file_path, line
+                   ) DO NOTHING""",
                 [
                     (
                         project_id,

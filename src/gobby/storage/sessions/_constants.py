@@ -47,11 +47,12 @@ def ensure_system_session(db: DatabaseProtocol) -> None:
         now = datetime.now(UTC).isoformat()
         db.execute(
             """
-            INSERT OR IGNORE INTO sessions (
+            INSERT INTO sessions (
                 id, external_id, machine_id, source, project_id, title,
                 status, agent_depth, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+            ON CONFLICT (id) DO NOTHING
             """,
             (
                 SYSTEM_SESSION_ID,

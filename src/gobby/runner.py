@@ -85,8 +85,9 @@ DISPATCHER_CRON_ACTION_CONFIG: dict[str, Any] = {"handler": DISPATCHER_CRON_HAND
 def _ensure_dispatcher_project_row(db: DatabaseProtocol, project_id: str) -> None:
     db.execute(
         """
-        INSERT OR IGNORE INTO projects (id, name, created_at, updated_at)
+        INSERT INTO projects (id, name, created_at, updated_at)
         VALUES (?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT (id) DO NOTHING
         """,
         (project_id, f"project:{project_id}"),
     )

@@ -115,8 +115,8 @@ class _TerminalMixin:
         with self.db.transaction():
             for name in skill_names:
                 cursor = self.db.execute(
-                    "INSERT OR IGNORE INTO session_skills (session_id, skill_name, created_at) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO session_skills (session_id, skill_name, created_at) "
+                    "VALUES (?, ?, ?) ON CONFLICT (session_id, skill_name) DO NOTHING",
                     (session_id, name, now),
                 )
                 if cursor.rowcount == 1:
