@@ -69,6 +69,8 @@ def _local_merge_side_effect(
     target: str = "main",
     merge_result: MagicMock | None = None,
     unmerged_stdout: str = "",
+    status_stdout: str = "",
+    incoming_stdout: str = "feature.txt\n",
 ):
     stash_list_calls = 0
 
@@ -79,7 +81,9 @@ def _local_merge_side_effect(
         if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{source}"]:
             return _make_git_result(0)
         if args == ["status", "--porcelain"]:
-            return _make_git_result(0, stdout="")
+            return _make_git_result(0, stdout=status_stdout)
+        if args == ["diff", "--name-only", "HEAD", source]:
+            return _make_git_result(0, stdout=incoming_stdout)
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return _make_git_result(0, stdout=target)
         if args == ["rev-parse", "HEAD"]:
@@ -343,6 +347,62 @@ async def test_merge_worktree_non_conflict_error_returns_worktree_path():
     assert result["success"] is False
     assert result["has_conflicts"] is False
     assert result["worktree_path"] == "/tmp/wt"
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_allows_disjoint_target_dirt():
+    """Target checkout dirt is allowed when incoming merge does not touch it."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        status_stdout=" D docs/plans/one-surface-ui-draft.md\n",
+        incoming_stdout="src/gobby/cli/postgres.py\n",
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert result["merge_sha"] == "abc123def456"
+    ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_rejects_overlapping_target_dirt():
+    """Target checkout dirt still blocks when source changes the same path."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        status_stdout=" M src/gobby/cli/postgres.py\n",
+        incoming_stdout="src/gobby/cli/postgres.py\n",
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is False
+    assert result["error"] == "Target checkout has uncommitted changes that overlap merge"
+    assert result["dirty_files"] == [" M src/gobby/cli/postgres.py"]
+    assert result["overlapping_dirty_paths"] == ["src/gobby/cli/postgres.py"]
+    assert ["merge", "feat", "--no-edit"] not in [
+        call.args[0] for call in ctx.git_manager._run_git.call_args_list
+    ]
+    ctx.worktree_storage.mark_merged.assert_not_called()
 
 
 @pytest.mark.asyncio

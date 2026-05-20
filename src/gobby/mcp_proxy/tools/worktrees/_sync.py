@@ -19,15 +19,31 @@ def _status_path_is_gobby_only(pathspec: str) -> bool:
     return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
 
 
+def _porcelain_pathspec(line: str) -> str:
+    if len(line) >= 3 and line[2] == " ":
+        return line[3:]
+    if len(line) >= 2 and line[1] == " ":
+        return line[2:]
+    return line[3:] if len(line) > 3 else line
+
+
 def _non_gobby_status_lines(status_output: str) -> list[str]:
     dirty: list[str] = []
     for line in status_output.splitlines():
         if not line:
             continue
-        pathspec = line[3:] if len(line) > 3 else line
+        pathspec = _porcelain_pathspec(line)
         if not _status_path_is_gobby_only(pathspec):
             dirty.append(line)
     return dirty
+
+
+def _non_gobby_dirty_paths(status_output: str) -> set[str]:
+    paths: set[str] = set()
+    for line in _non_gobby_status_lines(status_output):
+        pathspec = _porcelain_pathspec(line)
+        paths.update(part.strip() for part in pathspec.split(" -> ") if part.strip())
+    return paths
 
 
 def _worktree_path_for_branch(git_manager: Any, branch_name: str) -> str | None:
@@ -230,35 +246,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "target_branch": merge_target,
             }
 
-        status_result = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
-            ["status", "--porcelain"],
-            cwd=merge_cwd,
-            timeout=10,
-        )
-        if status_result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to inspect target checkout: {status_result.stderr.strip()}",
-                "worktree_path": wt_path,
-                "project_path": repo_path,
-                "target_worktree_path": target_worktree_path,
-                "source_branch": effective_source,
-                "target_branch": merge_target,
-            }
-        non_gobby_dirty = _non_gobby_status_lines(status_result.stdout)
-        if non_gobby_dirty:
-            return {
-                "success": False,
-                "error": "Target checkout has uncommitted non-.gobby changes",
-                "dirty_files": non_gobby_dirty,
-                "worktree_path": wt_path,
-                "project_path": repo_path,
-                "target_worktree_path": target_worktree_path,
-                "source_branch": effective_source,
-                "target_branch": merge_target,
-            }
-
         current_branch_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
             ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -291,24 +278,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
         checked_out_target = original_branch == merge_target
 
-        # Stash dirty .gobby/ sync files to prevent merge blocking.
-        # Compare stash list before/after to reliably detect if a stash was created
-        # (same pattern as merge_clone).
         stash_created = False
-        stash_list_before = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
-        )
-        stash_push = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
-            ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
-            cwd=merge_cwd,
-            timeout=10,
-        )
-        if stash_push.returncode == 0:
-            stash_list_after = await asyncio.to_thread(
-                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
-            )
-            stash_created = stash_list_after.stdout != stash_list_before.stdout
 
         async def _restore_stash() -> None:
             """Restore stashed .gobby/ files if any were stashed."""
@@ -353,6 +323,81 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
                 checked_out_target = True
+
+            status_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                ["status", "--porcelain"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if status_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Failed to inspect target checkout: {status_result.stderr.strip()}",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            dirty_paths = _non_gobby_dirty_paths(status_result.stdout)
+            if dirty_paths:
+                incoming_result = await asyncio.to_thread(
+                    resolved_git_mgr.run_git_command,
+                    ["diff", "--name-only", "HEAD", effective_source],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+                if incoming_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Failed to inspect incoming merge paths: "
+                            f"{incoming_result.stderr.strip()}"
+                        ),
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+                incoming_paths = {
+                    line.strip() for line in incoming_result.stdout.splitlines() if line.strip()
+                }
+                overlapping = sorted(dirty_paths & incoming_paths)
+                if overlapping:
+                    return {
+                        "success": False,
+                        "error": "Target checkout has uncommitted changes that overlap merge",
+                        "dirty_files": _non_gobby_status_lines(status_result.stdout),
+                        "overlapping_dirty_paths": overlapping,
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+
+            # Stash dirty .gobby/ sync files to prevent merge blocking.
+            # Compare stash list before/after to reliably detect if a stash was created
+            # (same pattern as merge_clone).
+            stash_list_before = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
+            )
+            stash_push = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if stash_push.returncode == 0:
+                stash_list_after = await asyncio.to_thread(
+                    resolved_git_mgr.run_git_command,
+                    ["stash", "list"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+                stash_created = stash_list_after.stdout != stash_list_before.stdout
 
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
