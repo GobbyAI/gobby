@@ -121,6 +121,8 @@ _AI_PROSE_LINE_RE = re.compile(
     r"(?im)^\s*(?:\*\*)?(?:here (?:is|are)|the resolved|resolved hunks|"
     r"i resolved|rationale|explanation)\b"
 )
+_HUNK_SEPARATOR = "---HUNK SEPARATOR---"
+_EMPTY_HUNK_SENTINEL = "__GOBBY_EMPTY_HUNK__"
 
 
 def splice_resolutions_into_file(
@@ -174,6 +176,25 @@ def clean_ai_source_response(response: str) -> str | None:
     return candidate
 
 
+def split_ai_hunk_response(response: str) -> tuple[list[str] | None, str | None]:
+    """Return separator-delimited hunk bodies, preserving intentional empty hunks."""
+    cleaned = clean_ai_source_response(response)
+    if cleaned is None:
+        return None, "ai_hunk_response_rejected:prose_markdown_or_conflict_markers"
+
+    if _HUNK_SEPARATOR in cleaned:
+        hunks = [part.strip("\n") for part in cleaned.split(_HUNK_SEPARATOR)]
+    else:
+        hunks = [cleaned.strip("\n")]
+
+    return ["" if hunk.strip() == _EMPTY_HUNK_SENTINEL else hunk for hunk in hunks], None
+
+
+def _join_failure_reasons(*reasons: Any) -> str | None:
+    parts = [str(reason) for reason in reasons if reason]
+    return "; ".join(parts) if parts else None
+
+
 class ResolutionTier(Enum):
     """Resolution strategy tiers, from fastest to most expensive."""
 
@@ -200,6 +221,7 @@ class MergeResult:
         needs_human_review: Whether manual intervention is required
         resolved_content_by_file: Map of file path -> full resolved file content,
             populated by AI tiers so callers can write the resolution to disk.
+        failure_reason: Machine-readable reason when resolution fails.
     """
 
     success: bool
@@ -209,6 +231,7 @@ class MergeResult:
     unresolved_conflicts: list[dict[str, Any]] = field(default_factory=list)
     needs_human_review: bool = False
     resolved_content_by_file: dict[str, str] = field(default_factory=dict)
+    failure_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -220,6 +243,7 @@ class MergeResult:
             "unresolved_conflicts": self.unresolved_conflicts,
             "needs_human_review": self.needs_human_review,
             "resolved_content_by_file": self.resolved_content_by_file,
+            "failure_reason": self.failure_reason,
         }
 
 
@@ -312,6 +336,8 @@ class MergeResolver:
 
         total_lines = sum(get_hunk_lines(h) for h in conflict_hunks)
 
+        tier2_failure_reason: str | None = None
+
         # Tier 2: Try conflict-only if under threshold
         if total_lines <= self.conflict_size_threshold:
             result = await self._resolve_conflicts_only([conflict])
@@ -330,6 +356,12 @@ class MergeResolver:
                     needs_human_review=False,
                     resolved_content_by_file=content_by_file,
                 )
+            tier2_failure_reason = str(result.get("failure_reason") or "conflict_only_failed")
+        else:
+            tier2_failure_reason = (
+                f"conflict_only_skipped:line_count {total_lines} exceeds "
+                f"threshold {self.conflict_size_threshold}"
+            )
 
         # Tier 3: Full-file resolution
         result = await self._resolve_full_file([conflict])
@@ -355,6 +387,9 @@ class MergeResolver:
             resolved_files=[],
             unresolved_conflicts=[conflict],
             needs_human_review=True,
+            failure_reason=_join_failure_reasons(
+                tier2_failure_reason, result.get("failure_reason")
+            ),
         )
 
     async def resolve(
@@ -451,6 +486,7 @@ class MergeResolver:
             resolved_files=[],
             unresolved_conflicts=conflicts,
             needs_human_review=True,
+            failure_reason=tier3_result.get("failure_reason"),
         )
 
     async def _git_merge(
@@ -536,14 +572,28 @@ class MergeResolver:
         """
         if not self._llm_service:
             logger.warning("No LLM service available for resolution")
-            return {"success": False, "resolutions": []}
+            return {
+                "success": False,
+                "resolutions": [],
+                "failure_reason": "llm_service_unavailable",
+            }
 
         resolutions = []
         for conflict in conflicts:
             file_path = conflict.get("file", "unknown")
             hunks = conflict.get("hunks", [])
 
-            prompt = f"Resolve the following merge conflicts in {file_path}. Return ONLY the resolved code content for each hunk.\n\n"
+            prompt = (
+                f"Resolve the following merge conflicts in {file_path}.\n\n"
+                "Return raw source only: no markdown fences, no explanations, no headings, "
+                "and no conflict markers.\n"
+                f"Return exactly one output chunk per conflict hunk, in the same order, "
+                f"separated by a line containing exactly {_HUNK_SEPARATOR}.\n"
+                f"If a hunk resolves to no code, output exactly {_EMPTY_HUNK_SENTINEL} "
+                "for that hunk.\n"
+                "An empty ours/theirs side below is intentional and means that side "
+                "contributes no lines.\n\n"
+            )
 
             for i, hunk in enumerate(hunks):
                 # Handle both dict and object hunk formats
@@ -557,7 +607,7 @@ class MergeResolver:
                 prompt += f"CONFLICT {i + 1}:\n"
                 prompt += f"<<<<<<< HEAD\n{ours}\n=======\n{theirs}\n>>>>>>> INCOMING\n\n"
 
-            prompt += "Provide the resolved code for each conflict hunk, separated by '---HUNK SEPARATOR---'."
+            prompt += f"Return the resolved code chunks separated only by {_HUNK_SEPARATOR}."
 
             try:
                 if self._config:
@@ -578,23 +628,42 @@ class MergeResolver:
                 )
 
                 if not response:
-                    return {"success": False, "resolutions": []}
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": f"llm_empty_response:{file_path}",
+                    }
 
-                resolved_hunks = [
-                    chunk.strip("\n") for chunk in response.split("---HUNK SEPARATOR---")
-                ]
-                resolved_hunks = [h for h in resolved_hunks if h]
-                if not resolved_hunks:
-                    resolved_hunks = [response.strip("\n")]
+                resolved_hunks, split_error = split_ai_hunk_response(response)
+                if resolved_hunks is None:
+                    logger.warning(
+                        "Rejected prose-contaminated AI hunk resolution for %s",
+                        file_path,
+                    )
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": f"{split_error}:{file_path}",
+                    }
                 cleaned_hunks: list[str] = []
                 for hunk in resolved_hunks:
+                    if hunk == "":
+                        cleaned_hunks.append("")
+                        continue
                     cleaned = clean_ai_source_response(hunk)
                     if cleaned is None:
                         logger.warning(
                             "Rejected prose-contaminated AI hunk resolution for %s",
                             file_path,
                         )
-                        return {"success": False, "resolutions": []}
+                        return {
+                            "success": False,
+                            "resolutions": [],
+                            "failure_reason": (
+                                "ai_hunk_response_rejected:"
+                                f"prose_markdown_or_conflict_markers:{file_path}"
+                            ),
+                        }
                     cleaned_hunks.append(cleaned)
 
                 try:
@@ -603,7 +672,11 @@ class MergeResolver:
                     )
                 except OSError as read_err:
                     logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
-                    return {"success": False, "resolutions": []}
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": f"read_failed:{file_path}:{read_err}",
+                    }
 
                 spliced = splice_resolutions_into_file(file_with_markers, cleaned_hunks)
                 if spliced is None:
@@ -612,7 +685,15 @@ class MergeResolver:
                         f"file has {len(_CONFLICT_BLOCK_RE.findall(file_with_markers))} "
                         f"conflict blocks, LLM returned {len(cleaned_hunks)} hunks"
                     )
-                    return {"success": False, "resolutions": []}
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": (
+                            f"hunk_count_mismatch:{file_path}:"
+                            f"file_blocks={len(_CONFLICT_BLOCK_RE.findall(file_with_markers))}:"
+                            f"ai_hunks={len(cleaned_hunks)}"
+                        ),
+                    }
 
                 resolutions.append(
                     {
@@ -623,7 +704,11 @@ class MergeResolver:
                 )
             except Exception as e:
                 logger.error(f"LLM resolution failed for {file_path}: {e}")
-                return {"success": False, "resolutions": []}
+                return {
+                    "success": False,
+                    "resolutions": [],
+                    "failure_reason": f"llm_resolution_exception:{file_path}:{e}",
+                }
 
         return {"success": True, "resolutions": resolutions}
 
@@ -641,7 +726,11 @@ class MergeResolver:
         """
         if not self._llm_service:
             logger.warning("No LLM service available for resolution")
-            return {"success": False, "resolutions": []}
+            return {
+                "success": False,
+                "resolutions": [],
+                "failure_reason": "llm_service_unavailable",
+            }
 
         resolutions = []
         for conflict in conflicts:
@@ -654,7 +743,13 @@ class MergeResolver:
                     _conflict_file_path(conflict).read_text, encoding="utf-8"
                 )
 
-                prompt = f"Resolve all merge conflicts in the following file {file_path}. Return the FULL resolved file content.\n\n"
+                prompt = (
+                    f"Resolve all merge conflicts in the following file {file_path}.\n"
+                    "Return the full resolved file content as raw source only: no markdown "
+                    "fences, no explanations, no headings, and no conflict markers.\n"
+                    "An empty ours/theirs side in a conflict block is intentional and means "
+                    "that side contributes no lines.\n\n"
+                )
                 prompt += content_with_markers
 
                 if self._config:
@@ -675,18 +770,33 @@ class MergeResolver:
                 )
 
                 if not response:
-                    return {"success": False, "resolutions": []}
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": f"llm_empty_response:{file_path}",
+                    }
                 cleaned = clean_ai_source_response(response)
                 if cleaned is None:
                     logger.warning(
                         "Rejected prose-contaminated AI full-file resolution for %s",
                         file_path,
                     )
-                    return {"success": False, "resolutions": []}
+                    return {
+                        "success": False,
+                        "resolutions": [],
+                        "failure_reason": (
+                            "ai_full_file_response_rejected:"
+                            f"prose_markdown_or_conflict_markers:{file_path}"
+                        ),
+                    }
                 resolutions.append({"file": file_path, "content": cleaned})
             except Exception as e:
                 logger.error(f"Full file resolution failed for {file_path}: {e}")
-                return {"success": False, "resolutions": []}
+                return {
+                    "success": False,
+                    "resolutions": [],
+                    "failure_reason": f"full_file_resolution_exception:{file_path}:{e}",
+                }
 
         return {"success": True, "resolutions": resolutions}
 

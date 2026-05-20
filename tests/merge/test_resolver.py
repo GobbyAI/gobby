@@ -209,6 +209,41 @@ class TestTier2ConflictOnlyAI:
         assert result["resolutions"][0]["content"] == "before\nresolved()\nafter\n"
 
     @pytest.mark.asyncio
+    async def test_conflict_only_ai_extracts_fenced_multi_hunk_response(self, tmp_path):
+        """Tier 2 accepts one fenced code block containing hunk separators."""
+        from gobby.worktrees.merge.resolver import MergeResolver
+
+        conflict_path = tmp_path / "test.py"
+        conflict_path.write_text(
+            "before\n"
+            "<<<<<<< HEAD\nours1()\n=======\ntheirs1()\n>>>>>>> main\n"
+            "middle\n"
+            "<<<<<<< HEAD\nours2()\n=======\ntheirs2()\n>>>>>>> main\n"
+            "after\n",
+            encoding="utf-8",
+        )
+        response = "```python\nresolved1()\n---HUNK SEPARATOR---\nresolved2()\n```"
+        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+
+        result = await resolver._resolve_conflicts_only(
+            [
+                {
+                    "file": "test.py",
+                    "worktree_path": str(tmp_path),
+                    "hunks": [
+                        {"ours": "ours1()", "theirs": "theirs1()"},
+                        {"ours": "ours2()", "theirs": "theirs2()"},
+                    ],
+                }
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["resolutions"][0]["content"] == (
+            "before\nresolved1()\nmiddle\nresolved2()\nafter\n"
+        )
+
+    @pytest.mark.asyncio
     async def test_conflict_only_ai_rejects_prose_fenced_hunk(self, tmp_path):
         """Tier 2 rejects explanations instead of splicing them into source."""
         from gobby.worktrees.merge.resolver import MergeResolver
@@ -231,7 +266,9 @@ class TestTier2ConflictOnlyAI:
             ]
         )
 
-        assert result == {"success": False, "resolutions": []}
+        assert result["success"] is False
+        assert result["resolutions"] == []
+        assert "ai_hunk_response_rejected" in result["failure_reason"]
 
 
 # =============================================================================
@@ -338,7 +375,9 @@ class TestTier3FullFileAI:
             [{"file": "test.py", "worktree_path": str(tmp_path)}]
         )
 
-        assert result == {"success": False, "resolutions": []}
+        assert result["success"] is False
+        assert result["resolutions"] == []
+        assert "ai_full_file_response_rejected" in result["failure_reason"]
 
 
 # =============================================================================

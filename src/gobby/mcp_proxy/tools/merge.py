@@ -512,6 +512,7 @@ def create_merge_registry(
                         "success": False,
                         "error": "AI resolution failed",
                         "needs_human_review": result.needs_human_review,
+                        "failure_reason": result.failure_reason,
                     }
 
             return {"success": False, "error": "No resolution method specified"}

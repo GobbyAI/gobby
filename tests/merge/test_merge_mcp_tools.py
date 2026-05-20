@@ -684,6 +684,50 @@ class TestMergeResolveTool:
         mock_resolver.resolve_file.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_merge_resolve_returns_ai_failure_reason(
+        self, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve surfaces resolver failure detail to workers."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        mock_storage.get_conflict.return_value = MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/test.py",
+            status="pending",
+            ours_content="our version",
+            theirs_content="their version",
+            resolved_content=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = None
+        mock_resolver.resolve_file.return_value = ResolutionResult(
+            success=False,
+            tier=ResolutionTier.HUMAN_REVIEW,
+            conflicts=[],
+            resolved_files=[],
+            unresolved_conflicts=[],
+            needs_human_review=True,
+            failure_reason="hunk_count_mismatch:src/test.py:file_blocks=2:ai_hunks=1",
+        )
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+        )
+
+        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+
+        assert result["success"] is False
+        assert result["error"] == "AI resolution failed"
+        assert result["failure_reason"] == (
+            "hunk_count_mismatch:src/test.py:file_blocks=2:ai_hunks=1"
+        )
+
+    @pytest.mark.asyncio
     async def test_merge_resolve_rejects_parallel_ai_resolves_for_same_resolution(
         self, mock_storage, mock_resolver, mock_git_manager
     ):
