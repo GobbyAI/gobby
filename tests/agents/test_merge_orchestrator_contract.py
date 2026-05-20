@@ -35,6 +35,7 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-tasks-ops:close_linked_github_issue",
     "gobby-tasks-ops:append_description_section",
     "gobby-tasks:escalate_task",
+    "gobby-skills:get_skill",
     "gobby-worktrees:push_branch",
     "gobby-worktrees:merge_worktree",
     "gobby-worktrees:list_worktrees",
@@ -228,6 +229,20 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "no_progress_merge_status_count" in agent["step_variables"]
 
 
+def test_merge_orchestrator_loads_monitoring_skill_before_agent_queries() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    load_skill = _step(agent, "load_skill")
+
+    assert 'get_skill(name="merge-expert")' in instructions
+    assert 'get_skill(name="agent-monitoring")' in instructions
+    assert "gobby-skills:get_skill" in load_skill["allowed_mcp_tools"]
+    assert "vars.skill_loaded and vars.monitoring_skill_loaded" in {
+        transition["when"] for transition in load_skill["transitions"]
+    }
+    assert agent["step_variables"]["monitoring_skill_loaded"] is False
+
+
 @pytest.mark.asyncio
 async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
     db: LocalDatabase,
@@ -250,6 +265,42 @@ async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
             variables={},
         )
         assert response.decision == "block", mcp_key
+
+
+@pytest.mark.asyncio
+async def test_load_skill_step_waits_for_merge_and_monitoring_skills(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="load_skill")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-skills:get_skill",
+            arguments={"name": "merge-expert"},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "load_skill"
+    assert instance.variables["skill_loaded"] is True
+    assert instance.variables["monitoring_skill_loaded"] is False
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-skills:get_skill",
+            arguments={"name": "agent-monitoring"},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "survey"
+    assert instance.variables["monitoring_skill_loaded"] is True
 
 
 @pytest.mark.asyncio
