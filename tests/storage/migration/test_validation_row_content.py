@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.migrations import BASELINE_VERSION
+
 pytestmark = pytest.mark.unit
 
 
@@ -84,9 +86,21 @@ def test_validate_migration_ignores_postgres_generated_columns() -> None:
     validation.validate_migration(source, target)
 
 
-def _sqlite_source() -> sqlite3.Connection:
+def test_validate_migration_rejects_source_without_schema_bookkeeping() -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = _sqlite_source(schema_version=None)
+    target = _PostgresRows({"tasks": [{"id": 1, "title": "imported"}]})
+
+    with pytest.raises(validation.MigrationValidationError, match="schema"):
+        validation.validate_migration(source, target)
+
+
+def _sqlite_source(schema_version: int | None = BASELINE_VERSION) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
+    if schema_version is not None:
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (schema_version,))
     conn.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
     conn.execute("INSERT INTO tasks (id, title) VALUES (1, 'imported')")
     return conn
