@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -238,6 +239,83 @@ async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
     assert result.automation_updated == 3
     for task in [epic, *descendants]:
         assert task_manager.get_task(task.id).allow_automation is True
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_orphan_no_run_dispatch_mutex(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.build.controls import build_resume_target
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Orphan dispatch mutex",
+        category="code",
+        task_type="task",
+    )
+    storage = TaskDispatchMutexManager(temp_db)
+    acquired_at = datetime.now(UTC) - timedelta(seconds=60)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        now=acquired_at,
+    )
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=object()),
+    ):
+        result = await build_resume_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+    assert storage.get_mutex(task.id) is None
+    assert result.mutexes_cleared == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_preserves_fresh_no_run_dispatch_mutex(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.build.controls import build_resume_target
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Fresh dispatch mutex",
+        category="code",
+        task_type="task",
+    )
+    storage = TaskDispatchMutexManager(temp_db)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        now=datetime.now(UTC),
+    )
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=object()),
+    ):
+        result = await build_resume_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+    assert storage.get_mutex(task.id) is not None
+    assert result.mutexes_cleared == 0
 
 
 @pytest.mark.asyncio

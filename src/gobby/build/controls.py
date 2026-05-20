@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 BuildTargetAction = Literal["stop", "resume", "clean", "restart"]
 ArtifactFamily = Literal["worktree", "clone"]
+ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -489,16 +491,50 @@ async def _cancel_active_agents(
             logger.debug("Agent %s was already terminal while stopping build", run.id)
 
 
-def _clear_stale_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
+def _clear_stale_dispatch_mutexes(
+    db: DatabaseProtocol,
+    task_ids: list[str],
+    *,
+    now: datetime | None = None,
+) -> int:
     mutexes = TaskDispatchMutexManager(db)
-    cleared = mutexes.sweep_expired()
+    resolved_now = now or datetime.now(UTC)
+    cleared = mutexes.sweep_expired(now=resolved_now)
     active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
     for task_id in task_ids:
         mutex = mutexes.get_mutex(task_id)
-        if mutex is not None and mutex.run_id and mutex.run_id not in active_run_ids:
+        if mutex is None:
+            continue
+        if mutex.run_id:
+            if mutex.run_id not in active_run_ids and mutexes.force_release(task_id):
+                cleared += 1
+            continue
+        if _is_orphan_no_run_dispatch_mutex(mutex, now=resolved_now):
             if mutexes.force_release(task_id):
                 cleared += 1
     return cleared
+
+
+def _is_orphan_no_run_dispatch_mutex(mutex: Any, *, now: datetime) -> bool:
+    if getattr(mutex, "lease_holder", None) != "dispatcher":
+        return False
+
+    updated_at = _parse_mutex_timestamp(getattr(mutex, "updated_at", None))
+    if updated_at is None:
+        return False
+    return now - updated_at >= timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS)
+
+
+def _parse_mutex_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _clear_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
