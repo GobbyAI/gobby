@@ -15,25 +15,23 @@ from typing import Any, cast
 
 import click
 import psycopg
-import yaml
 
 from gobby import __version__
 from gobby.cli.installers.postgres import (
     DEFAULT_POSTGRES_PORT,
-    InstallMode,
     _active_install_mode,
     _docker_database_url,
     _external_ownership_status,
     _migration_complete,
     _preload_libraries,
     _read_bootstrap_database_url,
-    _read_bootstrap_yaml,
     get_postgres_status,
     install_postgres,
     render_postgres_status,
     uninstall_postgres,
 )
 from gobby.cli.installers.service import get_service_status
+from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, get_gobby_home
 
 _NO_ROLLBACK_ACK = "I accept no-rollback risk"
@@ -458,32 +456,7 @@ def _restore_bootstrap(backup_path: Path) -> None:
 
 
 def _set_bootstrap_field(field: str, value: str) -> None:
-    bootstrap_path = _bootstrap_path()
-    data = _read_bootstrap_yaml(bootstrap_path)
-    data[field] = value
-    _write_bootstrap_yaml_atomic(bootstrap_path, data)
-
-
-def _write_bootstrap_yaml_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-        text=True,
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as file:
-            yaml.safe_dump(data, file, default_flow_style=False)
-            file.flush()
-            os.fsync(file.fileno())
-        tmp_path.chmod(0o600)
-        os.replace(tmp_path, path)
-        path.chmod(0o600)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    set_bootstrap_field(gobby_home=get_gobby_home(), field=field, value=value)
 
 
 def _write_cutover_ticket(ticket: dict[str, Any]) -> None:

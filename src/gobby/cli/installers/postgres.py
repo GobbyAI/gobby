@@ -16,18 +16,17 @@ import urllib.request
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import click
 import psycopg
-import yaml
 
+from gobby.cli import postgres_bootstrap as _bootstrap
+from gobby.cli.postgres_bootstrap import InstallMode
 from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
-
-InstallMode = Literal["docker", "native", "external"]
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 _COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
@@ -405,38 +404,23 @@ def _write_bootstrap_defaults(
     mode: InstallMode,
     database_url: str,
 ) -> None:
-    bootstrap_path = gobby_home / "bootstrap.yaml"
-    data = _read_bootstrap_yaml(bootstrap_path)
-    data["hub_backend"] = "sqlite"
-    data["database_url"] = database_url
-    data["postgres_install_mode"] = mode
-    _write_bootstrap_yaml(bootstrap_path, data)
+    _bootstrap.write_postgres_defaults(
+        gobby_home=gobby_home,
+        mode=mode,
+        database_url=database_url,
+    )
 
 
 def _clear_bootstrap_postgres_fields(gobby_home: Path) -> None:
-    bootstrap_path = gobby_home / "bootstrap.yaml"
-    data = _read_bootstrap_yaml(bootstrap_path)
-    data["hub_backend"] = "sqlite"
-    data.pop("database_url", None)
-    data.pop("postgres_install_mode", None)
-    _write_bootstrap_yaml(bootstrap_path, data)
+    _bootstrap.clear_postgres_fields(gobby_home)
 
 
 def _read_bootstrap_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open(encoding="utf-8") as file:
-        loaded = yaml.safe_load(file) or {}
-    if not isinstance(loaded, dict):
-        return {}
-    return dict(loaded)
+    return _bootstrap.read_bootstrap_yaml(path)
 
 
 def _write_bootstrap_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        yaml.safe_dump(data, file, default_flow_style=False)
-    path.chmod(0o600)
+    _bootstrap.write_bootstrap_yaml(path, data)
 
 
 def _wait_for_pg_isready(
@@ -688,18 +672,11 @@ def _docker_database_url(port: int) -> str:
 
 
 def _read_bootstrap_database_url(gobby_home: Path) -> str | None:
-    data = _read_bootstrap_yaml(gobby_home / "bootstrap.yaml")
-    value = data.get("database_url")
-    return str(value) if value else None
+    return _bootstrap.read_bootstrap_database_url(gobby_home)
 
 
 def _active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    home = gobby_home or Path("~/.gobby").expanduser()
-    data = _read_bootstrap_yaml(home / "bootstrap.yaml")
-    mode = data.get("postgres_install_mode")
-    if mode in {"docker", "native", "external"}:
-        return cast(InstallMode, mode)
-    return "docker"
+    return _bootstrap.active_install_mode(gobby_home=gobby_home)
 
 
 def _dsn_host(dsn: str) -> str | None:

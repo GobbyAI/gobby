@@ -22,6 +22,14 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in parts[:3])  # type: ignore[return-value]
 
 
+def _locked_artifacts(package: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = list(package.get("wheels", []))
+    sdist = package.get("sdist")
+    if sdist is not None:
+        artifacts.append(sdist)
+    return artifacts
+
+
 def test_pyproject_declares_psycopg_binary_pool_dependency(repo_root: Path) -> None:
     pyproject = _load_toml(repo_root / "pyproject.toml")
 
@@ -38,7 +46,7 @@ def test_uv_lock_records_psycopg_packages_and_gobby_requirement(repo_root: Path)
         package = packages.get(package_name)
         assert package is not None, f"uv.lock is missing {package_name}"
         assert _version_tuple(package["version"]) >= (3, 2, 0)
-        artifacts = [package["sdist"], *package.get("wheels", [])]
+        artifacts = _locked_artifacts(package)
         assert artifacts, f"{package_name} has no locked artifacts"
         assert all("hash" in artifact for artifact in artifacts)
 
