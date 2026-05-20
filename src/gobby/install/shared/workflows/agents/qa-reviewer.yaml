@@ -150,6 +150,9 @@ steps:
       4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
+      If get_task shows the task is no longer at development:needs_review,
+      this reviewer is stale. Do not emit a second verdict; call end_agent_run
+      after the workflow transitions to terminate.
       After deciding, call exactly one verdict tool immediately:
       - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
         stage_name="development", and approval_notes containing review evidence
@@ -183,6 +186,19 @@ steps:
       - "gobby-tasks-ops:reject_review"
       - "gobby-tasks:escalate_task"
     on_mcp_success:
+      - server: gobby-tasks
+        tool: get_task
+        when: >-
+          tool_output.get('success') is not False
+          and bool(tool_output.get('result'))
+          and (
+            tool_output.get('result', {}).get('state', {}).get('is_closed')
+            or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('name') != 'development'
+            or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('state') != 'needs_review'
+          )
+        action: set_variable
+        variable: review_complete
+        value: true
       - server: gobby-tasks-ops
         tool: approve_review
         action: set_variable
