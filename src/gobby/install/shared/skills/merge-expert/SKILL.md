@@ -154,7 +154,13 @@ Iterate the plan in order. For each step:
    pass the `worktree_id`, `target_branch`, and source-branch info as
    spawn-time variables. `source_branch` is always the worktree branch; never
    use the target branch as source to "pull latest target" into the worktree.
-   The worker handles the actual merge + AI resolution.
+   The worker handles the actual merge + AI resolution. When dispatching a
+   worker to continue an active resolution, keep the prompt inside the
+   merge-worker MCP surface: tell it to call `merge_status`, then
+   `merge_resolve(conflict_id=..., use_ai=true)` for pending conflicts, and
+   to report unresolved ids/files if retries/timeouts are exhausted. Do not
+   ask the worker to use Read/Bash or synthesize manual `resolved_content`
+   from file inspection.
 3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
    call `gobby-agents:wait_for_agent(run_id=...)` to wait for completion, then
    call `gobby-agents:get_agent_result` only if you need to re-read the final

@@ -97,3 +97,15 @@ def test_merge_worker_retry_cap_guidance_continues_remaining_conflicts() -> None
     assert "Skip it, continue with the next pending conflict_id" in retry_reason
     assert "Do not call merge_abort" in retry_reason
     assert "solely because one conflict_id" in retry_reason
+
+
+def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
+    agent = _agent("merge-worker")
+    instructions = agent["instructions"]
+    merge_status = _step(agent, "merge")["status_message"]
+
+    assert "Do NOT use Bash, Read, or other file-inspection tools" in instructions
+    assert "merge_resolve(use_ai=true)" in instructions
+    assert "Do not switch to Bash/Read" in instructions
+    assert "Do not call Read, Bash, or file-inspection tools" in merge_status
+    assert "manual\n   resolved_content" in merge_status

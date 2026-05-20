@@ -465,3 +465,15 @@ def test_merge_orchestrator_filters_running_workers_by_agent_identity() -> None:
     assert "agent_name is exactly `merge-worker`" in instructions
     assert "Never wait on this orchestrator's" in instructions
     assert "never treat another `merge-orchestrator` run as a" in instructions
+
+
+def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> None:
+    instructions = _agent()["instructions"]
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "merge_resolve(conflict_id=..., use_ai=true)" in instructions
+    assert "Do not" in instructions
+    assert "synthesize manual" in instructions
+    assert "merge_resolve(conflict_id=..., use_ai=true)" in skill
+    assert "Do not" in skill
+    assert "synthesize manual `resolved_content`" in skill

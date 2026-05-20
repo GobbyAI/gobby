@@ -67,7 +67,14 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task — the coordinator handles task lifecycle.
   - Do NOT spawn other agents.
-  - Do NOT use Bash for git commands — the merge tools handle everything.
+  - Do NOT use Bash, Read, or other file-inspection tools during merge conflict
+    resolution — the merge step allows only MCP tools. `merge_status` gives
+    conflict ids/paths and `merge_resolve(use_ai=true)` hydrates the current
+    conflict content from the worktree.
+  - If `merge_resolve(use_ai=true)` times out or fails, retry that same
+    conflict_id within MAX_RESOLVE_RETRIES. Do not switch to Bash/Read or
+    blocked inspection tools. If retries are exhausted, continue the remaining
+    conflict_ids, then report unresolved ids/files before end_agent_run.
   - Do NOT push. Remote publication is allowed only through explicit PR delivery.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
@@ -105,6 +112,9 @@ steps:
       3. Call merge_resolve with use_ai=true for each conflict. Track attempts
          by conflict_id. If one conflict_id reaches MAX_RESOLVE_RETRIES=3,
          skip that conflict_id and continue with the next pending conflict.
+         Do not call Read, Bash, or file-inspection tools to build manual
+         resolved_content; merge_resolve(use_ai=true) is the conflict content
+         access path in this step.
       4. Re-check merge_status. Call merge_apply with the resolution_id only
          when all conflicts are resolved.
       5. Call merge_worktree again with target_branch to merge the resolved work locally
