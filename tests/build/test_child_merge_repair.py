@@ -112,6 +112,88 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
     assert task_manager.get_task(sibling.id).allow_automation is False
 
 
+@pytest.mark.asyncio
+async def test_child_build_resume_restores_missing_leaf_target_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    integration_branch = _integration_branch(parent)
+    base_sha = _git(repo, "rev-parse", "main")
+
+    _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), integration_branch)
+    _git(task_path, "config", "user.email", "test@example.com")
+    _git(task_path, "config", "user.name", "Test User")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch=integration_branch,
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        target_branch="main",
+        integration_branch=integration_branch,
+        integration_workspace_id=integration.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=base_sha,
+    )
+
+    async def fake_tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
+        return DispatcherTickSummary()
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
+
+    await build(
+        str(leaf.seq_num),
+        BuildOptions(isolation="worktree"),
+        db=temp_db,
+        project_id=project.id,
+    )
+
+    leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
+
+    assert leaf_artifacts.target_branch == integration_branch
+    assert leaf_artifacts.worktree_id == source.id
+    assert leaf_artifacts.worktree_path == str(task_path)
+
+
 def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
     temp_db,
     tmp_path: Path,
