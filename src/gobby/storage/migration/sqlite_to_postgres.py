@@ -18,7 +18,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from gobby.cli.postgres_bootstrap import active_install_mode
+from gobby.config.postgres_bootstrap import active_install_mode
 from gobby.storage.hub.postgres import PostgresHubDatabase, _classify_baseline_state
 from gobby.storage.migration.reseed import reseed_identity_sequences
 from gobby.storage.migration.validation import (
