@@ -418,6 +418,97 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert storage.get_mutex(task.id).run_id == "run-services"
 
 
+async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path="/tmp/stale-parent",
+        worktree_id="wt-stale",
+        base_commit_sha="old-base",
+        target_branch="main",
+        integration_branch="gobby/integration/parent",
+        integration_workspace_id="wt-integration",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+    prepare_calls: list[dict[str, object]] = []
+    spawn_kwargs: dict[str, object] = {}
+
+    def fake_prepare(**kwargs: object) -> None:
+        prepare_calls.append(kwargs)
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-holistic",
+        )
+        return {
+            "success": True,
+            "run_id": run.id,
+            "isolation": "worktree",
+            "worktree_id": kwargs["worktree_id"],
+            "worktree_path": "/tmp/integration-parent",
+        }
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert prepare_calls
+    assert prepare_calls[0]["root_task"].id == task.id
+    assert spawn_kwargs["worktree_id"] == "wt-integration"
+    assert spawn_kwargs["clone_id"] is None
+    assert artifacts.worktree_id == "wt-stale"
+
+
 async def test_spawn_failure_rolls_stage_ready_and_releases(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
