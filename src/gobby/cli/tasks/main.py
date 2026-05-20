@@ -38,6 +38,7 @@ from gobby.cli.tasks.repair import repair_lifecycle_cmd
 from gobby.cli.tasks.review import review_cmd
 from gobby.cli.tasks.search import reindex_tasks, search_tasks
 from gobby.cli.tasks.stages import advance_cmd, stages_cmd
+from gobby.sync.export_context import in_jsonl_export_context
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +78,19 @@ tasks.add_command(repair_lifecycle_cmd)
 
 @tasks.command("sync")
 @click.option("--import", "do_import", is_flag=True, help="Import tasks from JSONL")
-@click.option("--export", "do_export", is_flag=True, help="Export tasks to JSONL")
+@click.option(
+    "--export",
+    "do_export",
+    is_flag=True,
+    help="Export tasks to JSONL when running in the remote-push export context",
+)
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 def sync_tasks(do_import: bool, do_export: bool, quiet: bool) -> None:
     """Sync tasks with .gobby/tasks.jsonl.
 
-    If neither --import nor --export specified, does both.
+    If neither --import nor --export specified, imports only. Task JSONL export
+    is limited to the remote-push path so local task activity does not dirty
+    .gobby/tasks.jsonl.
     """
     from pathlib import Path
 
@@ -93,10 +101,10 @@ def sync_tasks(do_import: bool, do_export: bool, quiet: bool) -> None:
 
     manager = get_sync_manager()
 
-    # Default to both if neither specified
+    # Default to import only. Export is publication material and is triggered
+    # from the pre-push hook with an explicit export context.
     if not do_import and not do_export:
         do_import = True
-        do_export = True
 
     if do_import:
         if not quiet:
@@ -104,9 +112,15 @@ def sync_tasks(do_import: bool, do_export: bool, quiet: bool) -> None:
         manager.import_from_jsonl(project_id=project_id)
 
     if do_export:
-        if not quiet:
-            click.echo("Exporting tasks...")
-        manager.export_to_jsonl(project_id=project_id)
+        if not in_jsonl_export_context():
+            if not quiet:
+                click.echo(
+                    "Skipping task export: .gobby/tasks.jsonl is generated only during remote push."
+                )
+        else:
+            if not quiet:
+                click.echo("Exporting tasks...")
+            manager.export_to_jsonl(project_id=project_id)
 
     if not quiet:
         click.echo("Sync completed")

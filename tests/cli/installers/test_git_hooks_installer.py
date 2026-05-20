@@ -881,6 +881,7 @@ class TestHookTemplates:
     def test_prepush_template_contains_gobby_sync(self) -> None:
         """Test that pre-push template keeps JSONL export commands."""
         content = HOOK_TEMPLATES["pre-push"]
+        assert "GOBBY_JSONL_EXPORT_CONTEXT=pre-push" in content
         assert "gobby tasks sync --export" in content
         assert "gobby memory backup" in content
 

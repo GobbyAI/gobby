@@ -67,8 +67,24 @@ class TestMemorySyncExportDirect:
         assert result == {"error": "Memory Sync Manager not available"}
 
     @pytest.mark.asyncio
-    async def test_memory_sync_export_success(self):
+    async def test_memory_sync_export_skips_outside_jsonl_export_context(self, monkeypatch):
+        """Test memory_sync_export avoids local JSONL writes outside remote push."""
+        monkeypatch.delenv("GOBBY_JSONL_EXPORT_CONTEXT", raising=False)
+        mock_manager = AsyncMock()
+
+        result = await memory_sync_export(mock_manager)
+
+        assert result == {
+            "exported": {"memories": 0},
+            "skipped": True,
+            "reason": "not_remote_push",
+        }
+        mock_manager.export_to_files.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_sync_export_success(self, monkeypatch):
         """Test memory_sync_export success path."""
+        monkeypatch.setenv("GOBBY_JSONL_EXPORT_CONTEXT", "pre-push")
         mock_manager = AsyncMock()
         mock_manager.export_to_files.return_value = 7
 
