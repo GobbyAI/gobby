@@ -444,12 +444,14 @@ class TestSpawnAgentImplErrorBranches:
         index.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_isolated_spawn_fails_when_code_index_preflight_fails(self, tmp_path) -> None:
+    async def test_isolated_spawn_continues_when_code_index_preflight_fails(
+        self, tmp_path
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
         runner.can_spawn.return_value = (True, "ok", 0)
-        runner._child_session_manager = MagicMock()
+        runner.child_session_manager = MagicMock()
         runner.run_storage = MagicMock()
         runner.run_storage.has_active_run_for_task.return_value = False
         worktree_path = tmp_path / "worktree"
@@ -457,6 +459,17 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        spawn_result = SimpleNamespace(
+            success=True,
+            child_session_id="child-1",
+            status="running",
+            terminal_type="process",
+            tmux_session_name=None,
+            tmux_socket_name=None,
+            tmux_socket_path=None,
+            pid=123,
+            message="spawned",
+        )
 
         with (
             patch(
@@ -476,7 +489,8 @@ class TestSpawnAgentImplErrorBranches:
                 new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new=AsyncMock(return_value=spawn_result),
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
@@ -488,14 +502,15 @@ class TestSpawnAgentImplErrorBranches:
                 worktree_storage=worktree_storage,
             )
 
-        assert result["success"] is False
-        assert result["error"] == "code_index_preflight_failed"
-        assert result["message"] == "gcode_index_timeout:120s"
-        assert result["details"] == {
-            "preflight": "code_index",
-            "cwd": str(worktree_path),
-        }
-        mock_execute.assert_not_called()
+        assert result["success"] is True
+        assert result["warnings"] == [
+            {
+                "preflight": "code_index",
+                "cwd": str(worktree_path),
+                "message": "gcode_index_timeout:120s",
+            }
+        ]
+        mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_fails_when_provider_mcp_config_missing(self, tmp_path) -> None:

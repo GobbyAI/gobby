@@ -88,6 +88,7 @@ class _OutOfOrderLock:
             "/* $1 should not bind */ SELECT ?",
             ("bound",),
         ),
+        ('SELECT "$1", $1 FROM t', ("a",), 'SELECT "$1", ? FROM t', ("a",)),
         ("SELECT foo$1, $1 FROM t", ("a",), "SELECT foo$1, ? FROM t", ("a",)),
     ],
 )

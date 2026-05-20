@@ -63,7 +63,7 @@ from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_types import StageState
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.id import generate_prefixed_id
@@ -775,36 +775,54 @@ def _handle_spawn_failure(
     context: object | None,
     error: str,
 ) -> None:
-    append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
-    task = get_task(db, action.task_id)
-    failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
-    update_task(db, action.task_id, dispatch_failure_count=failure_count)
-    stage = _field(context, "current_stage")
-    stage_name = _stage_name(stage)
-    if stage_name and _field(stage, "state") == "in_progress":
-        try:
-            _stage_states_manager(db=db, services=getattr(context, "services", None)).fail_stage(
-                action.task_id,
-                stage_name,
-                reason="dispatch_spawn_failed",
-                by_session_id="dispatcher",
+    try:
+        append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
+        task = get_task(db, action.task_id)
+        failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
+        update_task(db, action.task_id, dispatch_failure_count=failure_count)
+        stage = _field(context, "current_stage")
+        stage_name = _stage_name(stage)
+        if stage_name and _field(stage, "state") == "in_progress":
+            try:
+                _stage_states_manager(
+                    db=db,
+                    services=getattr(context, "services", None),
+                ).fail_stage(
+                    action.task_id,
+                    stage_name,
+                    reason="dispatch_spawn_failed",
+                    by_session_id="dispatcher",
+                )
+            except IllegalStageTransitionError:
+                fresh_stage = _stage_states_manager(
+                    db=db,
+                    services=getattr(context, "services", None),
+                ).get(action.task_id, stage_name)
+                if fresh_stage is None or fresh_stage.state != "ready":
+                    raise
+                logger.info(
+                    "Dispatch spawn failure rollback already applied: "
+                    "task_id=%s stage_name=%s",
+                    action.task_id,
+                    stage_name,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to roll back stage after dispatch spawn failure: "
+                    "task_id=%s stage_name=%s by_session_id=%s",
+                    action.task_id,
+                    stage_name,
+                    "dispatcher",
+                    exc_info=True,
+                )
+        if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
+            escalate_task(
+                db=db,
+                task_id=action.task_id,
+                reason=f"dispatch_spawn_max_attempts:{error}",
             )
-        except Exception:
-            logger.warning(
-                "Failed to roll back stage after dispatch spawn failure: "
-                "task_id=%s stage_name=%s by_session_id=%s",
-                action.task_id,
-                stage_name,
-                "dispatcher",
-                exc_info=True,
-            )
-    if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
-        escalate_task(
-            db=db,
-            task_id=action.task_id,
-            reason=f"dispatch_spawn_max_attempts:{error}",
-        )
-    mutex.release()
+    finally:
+        mutex.release()
 
 
 def allocate_expansion_run_id() -> str:

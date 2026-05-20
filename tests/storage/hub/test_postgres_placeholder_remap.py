@@ -102,6 +102,7 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
             "/* $1 should not bind */ SELECT %s",
             ("bound",),
         ),
+        ('SELECT "$1", $1 FROM t', ("a",), 'SELECT "$1", %s FROM t', ("a",)),
         ("SELECT foo$1, $1 FROM t", ("a",), "SELECT foo$1, %s FROM t", ("a",)),
     ],
 )

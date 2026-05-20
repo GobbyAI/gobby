@@ -145,8 +145,26 @@ def test_postgres_baseline_replaces_fts5_with_pg_search_bm25_indexes() -> None:
     for label, pattern in expected_bm25_indexes.items():
         _assert_matches(sql, pattern, f"{label} must have a pg_search BM25 index")
 
+    assert len(re.findall(r"\bUSING\s+bm25\b", sql, flags=re.IGNORECASE)) == 5
     _assert_matches(
         sql,
         r"WITH\s*\(\s*key_field\s*=\s*'id'\s*\)",
         "pg_search BM25 indexes must declare id as key_field",
+    )
+    _assert_matches(
+        sql,
+        r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+memories_tags_to_text\s*\(\s*tags\s+jsonb\s*\)"
+        r".*IMMUTABLE.*PARALLEL\s+SAFE.*RETURNS\s+NULL\s+ON\s+NULL\s+INPUT",
+        "memories.tags JSONB must be flattened through an immutable generated-column helper",
+    )
+    _assert_matches(
+        sql,
+        r"ADD\s+COLUMN\s+tags_text\s+TEXT\s+GENERATED\s+ALWAYS\s+AS\s*"
+        r"\(\s*memories_tags_to_text\s*\(\s*tags\s*\)\s*\)\s+STORED",
+        "memories BM25 index needs a stored text column for JSON tags",
+    )
+    _assert_matches(
+        sql,
+        r"string_agg\s*\(\s*value\s*,\s*'\s+'\s+ORDER\s+BY\s+ord\s*\)",
+        "memories_tags_to_text must aggregate tags deterministically",
     )

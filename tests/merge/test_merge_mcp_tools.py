@@ -779,7 +779,12 @@ class TestMergeApplyTool:
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
-            result.stdout = ""
+            if args == ["rev-parse", "-q", "--verify", "MERGE_HEAD"]:
+                result.stdout = "merge-head\n"
+            elif args == ["rev-parse", "HEAD"]:
+                result.stdout = "merged-sha\n"
+            else:
+                result.stdout = ""
             return result
 
         mock_git_manager.stage_files.side_effect = lambda *args, **kwargs: fake_run_git(
@@ -808,9 +813,16 @@ class TestMergeApplyTool:
         assert written == "merged version\n"
         mock_git_manager.stage_files.assert_called_once_with(["src/test.py"], cwd=str(tmp_path))
         mock_git_manager.get_unmerged_files.assert_called_once_with(cwd=str(tmp_path))
-        mock_git_manager.run_git_command.assert_called_once_with(
+        mock_git_manager.run_git_command.assert_any_call(
+            ["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=str(tmp_path), timeout=10
+        )
+        mock_git_manager.run_git_command.assert_any_call(
             ["commit", "--no-edit"], cwd=str(tmp_path), timeout=30
         )
+        mock_git_manager.run_git_command.assert_any_call(
+            ["rev-parse", "HEAD"], cwd=str(tmp_path), timeout=10
+        )
+        assert result["merge_sha"] == "merged-sha"
 
     @pytest.mark.asyncio
     async def test_merge_apply_with_pending_conflicts(self, merge_registry, mock_storage):
