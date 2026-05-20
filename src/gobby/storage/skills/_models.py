@@ -1,21 +1,15 @@
 """Skill data models."""
 
 import json
-from collections.abc import KeysView
+from collections.abc import KeysView, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from gobby.storage.hub.protocol import Row
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
-
-
-class RowLike(Protocol):
-    def __getitem__(self, key: str) -> Any: ...
-
-    def keys(self) -> KeysView[str] | list[str]: ...
 
 
 @dataclass
@@ -98,7 +92,7 @@ class Skill:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: RowLike) -> "Skill":
+    def from_row(cls, row: Mapping[str, Any]) -> "Skill":
         """Create a Skill from a database row.
 
         Args:
@@ -277,7 +271,7 @@ class SkillFile:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: Row) -> "SkillFile":
+    def from_row(cls, row: Mapping[str, Any]) -> "SkillFile":
         """Create a SkillFile from a database row."""
         return cls(
             id=row["id"],

@@ -149,7 +149,9 @@ Iterate the plan in order. For each step:
 2. **Dispatch.** Call `gobby-agents:spawn_agent` (or `dispatch_batch` for a
    group of independent `clean: true` steps) with `agent=merge-worker` and
    pass the `worktree_id`, `target_branch`, and source-branch info as
-   spawn-time variables. The worker handles the actual merge + AI resolution.
+   spawn-time variables. `source_branch` is always the worktree branch; never
+   use the target branch as source to "pull latest target" into the worktree.
+   The worker handles the actual merge + AI resolution.
 3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
    poll their session/run state via `gobby-agents` tools rather than spinning.
 4. **Verify.** Run the step's `verify_command` via

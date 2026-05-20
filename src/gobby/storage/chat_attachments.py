@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -90,7 +91,7 @@ class ChatAttachmentRecord:
         return bool(self.conversation_id or self.message_id or self.target_session_id)
 
 
-def _row_to_record(row: Row) -> ChatAttachmentRecord:
+def _row_to_record(row: Mapping[str, Any]) -> ChatAttachmentRecord:
     return ChatAttachmentRecord(
         id=str(row["id"]),
         project_id=str(row["project_id"]),

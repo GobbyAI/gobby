@@ -50,6 +50,21 @@ class WorktreeManagerProtocol(Protocol):
     ) -> list[Any]: ...
 
 
+class MergeStorageProtocol(Protocol):
+    def get_active_resolution(self, worktree_id: str | None = None) -> Any | None: ...
+
+    def get_latest_resolution(self, worktree_id: str) -> Any | None: ...
+
+    def list_conflicts(
+        self,
+        resolution_id: str | None = None,
+        file_path: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Any]: ...
+
+
 def _git(
     git_manager: WorktreeGitManager,
     args: list[str],
@@ -135,6 +150,7 @@ def register_merge_landscape_tools(
     *,
     worktree_manager: WorktreeManagerProtocol | None,
     git_manager: WorktreeGitManager | None,
+    merge_storage: MergeStorageProtocol | None = None,
 ) -> None:
     """Add merge-landscape analytics tools to an existing registry.
 
@@ -562,7 +578,7 @@ def register_merge_landscape_tools(
 
         can_resume = bool(conflicted_files) or state != "clean"
 
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "state": state,
             "has_merge_head": has_merge_head,
@@ -571,3 +587,59 @@ def register_merge_landscape_tools(
             "conflicted_files": conflicted_files,
             "can_resume": can_resume,
         }
+        result.update(
+            _active_merge_resolution_payload(
+                merge_storage,
+                worktree_id,
+                conflicted_files=conflicted_files,
+            )
+        )
+        return result
+
+
+def _active_merge_resolution_payload(
+    merge_storage: MergeStorageProtocol | None,
+    worktree_id: str,
+    *,
+    conflicted_files: list[str],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "active_resolution_id": None,
+        "source_branch": None,
+        "target_branch": None,
+        "conflicts": [],
+    }
+    if merge_storage is None:
+        return payload
+
+    resolution = merge_storage.get_active_resolution(worktree_id)
+    if resolution is None and conflicted_files:
+        resolution = merge_storage.get_latest_resolution(worktree_id)
+    if resolution is None:
+        return payload
+
+    unmerged = set(conflicted_files)
+    conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
+    payload.update(
+        {
+            "active_resolution_id": resolution.id,
+            "source_branch": resolution.source_branch,
+            "target_branch": resolution.target_branch,
+            "conflicts": [
+                {
+                    "conflict_id": conflict.id,
+                    "file_path": conflict.file_path,
+                    "status": _inspect_conflict_status(conflict, unmerged),
+                    "has_resolved_content": conflict.resolved_content is not None,
+                }
+                for conflict in conflicts
+            ],
+        }
+    )
+    return payload
+
+
+def _inspect_conflict_status(conflict: Any, unmerged: set[str]) -> str:
+    if conflict.file_path in unmerged and conflict.resolved_content is None:
+        return "pending"
+    return str(conflict.status)

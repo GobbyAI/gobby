@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -33,7 +34,7 @@ class Project:
     deleted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> "Project":
+    def from_row(cls, row: Mapping[str, Any]) -> "Project":
         """Create Project from database row."""
         keys = row.keys()
         return cls(

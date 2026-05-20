@@ -135,7 +135,7 @@ class FTS5SearchBackend:
             # Contentless table — rowid is the only join key available.
             # Caller must map rowids to IDs externally.
             sql = f"""
-                SELECT fts.rowid, {bm25_expr} as rank
+                SELECT fts.rowid AS id, {bm25_expr} as rank
                 FROM {self._fts_table} fts
                 WHERE {self._fts_table} MATCH ?
                 ORDER BY rank
@@ -151,8 +151,8 @@ class FTS5SearchBackend:
         if not rows:
             return []
 
-        ids = [str(row[0]) for row in rows]
-        raw_scores = [float(row[1]) for row in rows]
+        ids = [str(row["id"]) for row in rows]
+        raw_scores = [float(row["rank"]) for row in rows]
         normalized = _normalize_scores(raw_scores)
 
         return list(zip(ids, normalized, strict=False))

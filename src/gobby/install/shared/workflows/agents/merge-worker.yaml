@@ -30,6 +30,10 @@ instructions: |
   2. If SUCCESS: call end_agent_run — you're done
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
+        where source_branch is the worktree branch and target_branch is the
+        local branch being merged into. Never pass the target branch as
+        source_branch to "pull target into the worktree"; merge_start already
+        updates the worktree branch from target before applying resolutions.
         (this resets merge_retry_count=0 for deterministic retry enforcement)
      b. Check merge_status for conflict details
      c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
@@ -89,6 +93,11 @@ steps:
       CONFLICT RESOLUTION (worktree only):
       If merge_worktree returns has_conflicts: true:
       1. Call merge_start with worktree_id, source_branch, target_branch
+         using the worktree branch as source_branch and the local delivery
+         branch as target_branch. If merge_start rejects a stale/reused
+         resolution or reports that source_branch does not match the worktree
+         branch, retry once with the corrected source/target pair from the
+         worktree metadata before recording failure.
          (this sets merge_retry_count=0)
       2. Check merge_status for the resolution_id to see conflict details
       3. Call merge_resolve with use_ai=true for each conflict. Track attempts

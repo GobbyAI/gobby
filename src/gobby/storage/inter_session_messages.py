@@ -7,6 +7,7 @@ enabling parent-child session communication and agent coordination.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -67,7 +68,7 @@ class InterSessionMessage:
     delivered_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> InterSessionMessage:
+    def from_row(cls, row: Mapping[str, Any]) -> InterSessionMessage:
         """Create instance from database row.
 
         Args:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,7 +51,7 @@ class AgentRun:
     terminal_reason: AgentRunTerminalReason | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> AgentRun:
+    def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
         """Create AgentRun from database row."""
         is_local: bool
         if "is_local" in row.keys() and row["is_local"] is not None:

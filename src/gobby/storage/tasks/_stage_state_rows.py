@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -12,14 +12,16 @@ from gobby.storage.tasks._stage_types import StageManifestSpec, StageState, _coe
 VALID_STAGE_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved", "done"})
 
 
-def row_value(row: Any, column: str) -> Any:
+def row_value(row: Mapping[str, Any], column: str) -> Any:
     try:
         return row[column]
     except (IndexError, KeyError):
         return None
 
 
-def state_from_row(row: Any, registry: StageRegistryManager | None = None) -> StageState:
+def state_from_row(
+    row: Mapping[str, Any], registry: StageRegistryManager | None = None
+) -> StageState:
     display_label = row_value(row, "display_label")
     category = row_value(row, "category")
     if (display_label is None or category is None) and registry is not None:
@@ -130,7 +132,7 @@ class StageStateRows:
         )
         return [row["task_id"] for row in rows]
 
-    def state_from_row(self, row: Any) -> StageState:
+    def state_from_row(self, row: Mapping[str, Any]) -> StageState:
         return state_from_row(row, self.registry)
 
     def validate_specs(self, specs: Sequence[StageManifestSpec]) -> None:

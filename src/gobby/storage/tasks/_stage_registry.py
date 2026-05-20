@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -258,7 +258,7 @@ class StageRegistryManager:
             raise ValueError(f"Stage '{name}' could not be deleted")
         return deleted
 
-    def _entry_from_row(self, row: Row) -> StageRegistryEntry:
+    def _entry_from_row(self, row: Mapping[str, Any]) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
         if review_policy not in {"none", "required", "optional"}:
             review_policy = "none"
@@ -320,26 +320,26 @@ class StageRegistryManager:
         return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
 
     @staticmethod
-    def _row_value(row: Row, column: str) -> Any:
+    def _row_value(row: Mapping[str, Any], column: str) -> Any:
         try:
             return row[column]
         except (IndexError, KeyError):
             return None
 
     @classmethod
-    def _dispatch_type_from_row(cls, row: Row) -> DispatchType | None:
+    def _dispatch_type_from_row(cls, row: Mapping[str, Any]) -> DispatchType | None:
         value = cls._row_value(row, "dispatch_type")
         return value if value in {"agent", "pipeline"} else None
 
     @classmethod
-    def _is_row_edited(cls, row: Row) -> bool:
+    def _is_row_edited(cls, row: Mapping[str, Any]) -> bool:
         bundled_hash = cls._row_value(row, "bundled_hash")
         if not bundled_hash:
             return False
         return cls.row_hash(row) != str(bundled_hash)
 
     @classmethod
-    def row_hash(cls, row: Row | dict[str, Any]) -> str:
+    def row_hash(cls, row: Mapping[str, Any]) -> str:
         import hashlib
 
         body = json.dumps(
@@ -350,10 +350,8 @@ class StageRegistryManager:
         return hashlib.sha256(body).hexdigest()
 
     @classmethod
-    def _row_canonical_payload(cls, row: Row | dict[str, Any]) -> dict[str, Any]:
+    def _row_canonical_payload(cls, row: Mapping[str, Any]) -> dict[str, Any]:
         def value(key: str) -> Any:
-            if isinstance(row, dict):
-                return row.get(key)
             return cls._row_value(row, key)
 
         return {

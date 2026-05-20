@@ -7,6 +7,7 @@ storing and retrieving prompts from SQLite, with three-tier scope precedence
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -64,7 +65,7 @@ class PromptRecord:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: Row) -> "PromptRecord":
+    def from_row(cls, row: Mapping[str, Any]) -> "PromptRecord":
         """Create a PromptRecord from a database row."""
         variables_json = row["variables"]
         variables = json.loads(variables_json) if variables_json else None

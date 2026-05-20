@@ -5,6 +5,7 @@ preserving their uncommitted work as hidden git refs.
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -27,7 +28,7 @@ class Checkpoint:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: Row) -> "Checkpoint":
+    def from_row(cls, row: Mapping[str, Any]) -> "Checkpoint":
         return cls(
             id=row["id"],
             task_id=row["task_id"],

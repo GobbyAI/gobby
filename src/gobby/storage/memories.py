@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -31,7 +31,7 @@ class MemoryCrossRef:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: Row) -> "MemoryCrossRef":
+    def from_row(cls, row: Mapping[str, Any]) -> "MemoryCrossRef":
         return cls(
             source_id=row["source_id"],
             target_id=row["target_id"],
@@ -70,7 +70,7 @@ class Memory:
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
 
     @classmethod
-    def from_row(cls, row: Row) -> "Memory":
+    def from_row(cls, row: Mapping[str, Any]) -> "Memory":
         tags_json = row["tags"]
         tags = json.loads(tags_json) if tags_json else []
 

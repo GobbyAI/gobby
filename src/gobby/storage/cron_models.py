@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -37,7 +38,7 @@ class CronJob:
     consecutive_failures: int = 0
 
     @classmethod
-    def from_row(cls, row: Row) -> CronJob:
+    def from_row(cls, row: Mapping[str, Any]) -> CronJob:
         """Convert database row to CronJob object."""
         keys = set(row.keys())
         action_config_raw = row["action_config"]
@@ -129,7 +130,7 @@ class CronRun:
     pipeline_execution_id: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> CronRun:
+    def from_row(cls, row: Mapping[str, Any]) -> CronRun:
         """Convert database row to CronRun object."""
         keys = set(row.keys())
         return cls(

@@ -61,12 +61,14 @@ def _make_registry(
     *,
     worktree_manager: MagicMock | None,
     git_manager: MagicMock | None,
+    merge_storage: MagicMock | None = None,
 ) -> InternalToolRegistry:
     registry = InternalToolRegistry(name="gobby-merge", description="test")
     register_merge_landscape_tools(
         registry,
         worktree_manager=worktree_manager,
         git_manager=git_manager,
+        merge_storage=merge_storage,
     )
     return registry
 
@@ -505,6 +507,8 @@ async def test_inspect_merge_state_clean(tmp_path) -> None:
     assert result["has_merge_head"] is False
     assert result["conflicted_files"] == []
     assert result["can_resume"] is False
+    assert result["active_resolution_id"] is None
+    assert result["conflicts"] == []
 
 
 @pytest.mark.asyncio
@@ -530,6 +534,137 @@ async def test_inspect_merge_state_orphaned_merge(tmp_path) -> None:
     assert result["has_merge_head"] is True
     assert result["conflicted_files"] == ["src/conflicted.py"]
     assert result["can_resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path) -> None:
+    from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout=".git\n"),
+        _completed(stdout="src/conflicted.py\n"),
+    ]
+
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = MergeResolution(
+        id="mr-test123",
+        worktree_id="wt-1",
+        source_branch="feature/test",
+        target_branch="0.4.7",
+        status="pending",
+        tier_used=None,
+        created_at="2026-05-20T00:00:00+00:00",
+        updated_at="2026-05-20T00:00:00+00:00",
+    )
+    merge_storage.list_conflicts.return_value = [
+        MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/conflicted.py",
+            status="pending",
+            ours_content=None,
+            theirs_content=None,
+            resolved_content=None,
+            created_at="2026-05-20T00:00:00+00:00",
+            updated_at="2026-05-20T00:00:00+00:00",
+        )
+    ]
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    assert result["state"] == "merging"
+    assert result["active_resolution_id"] == "mr-test123"
+    assert result["source_branch"] == "feature/test"
+    assert result["target_branch"] == "0.4.7"
+    assert result["conflicts"] == [
+        {
+            "conflict_id": "mc-conflict1",
+            "file_path": "src/conflicted.py",
+            "status": "pending",
+            "has_resolved_content": False,
+        }
+    ]
+    merge_storage.get_active_resolution.assert_called_once_with("wt-1")
+    merge_storage.list_conflicts.assert_called_once_with(resolution_id="mr-test123")
+
+
+@pytest.mark.asyncio
+async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_merge(
+    tmp_path,
+) -> None:
+    from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout=".git\n"),
+        _completed(stdout="src/conflicted.py\n"),
+    ]
+
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = None
+    merge_storage.get_latest_resolution.return_value = MergeResolution(
+        id="mr-stale123",
+        worktree_id="wt-1",
+        source_branch="feature/test",
+        target_branch="0.4.7",
+        status="resolved",
+        tier_used="conflict_only_ai",
+        created_at="2026-05-20T00:00:00+00:00",
+        updated_at="2026-05-20T00:01:00+00:00",
+    )
+    merge_storage.list_conflicts.return_value = [
+        MergeConflict(
+            id="mc-stale1",
+            resolution_id="mr-stale123",
+            file_path="src/conflicted.py",
+            status="resolved",
+            ours_content=None,
+            theirs_content=None,
+            resolved_content=None,
+            created_at="2026-05-20T00:00:00+00:00",
+            updated_at="2026-05-20T00:01:00+00:00",
+        )
+    ]
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    assert result["active_resolution_id"] == "mr-stale123"
+    assert result["conflicts"] == [
+        {
+            "conflict_id": "mc-stale1",
+            "file_path": "src/conflicted.py",
+            "status": "pending",
+            "has_resolved_content": False,
+        }
+    ]
+    merge_storage.get_latest_resolution.assert_called_once_with("wt-1")
 
 
 @pytest.mark.asyncio

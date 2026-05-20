@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -45,23 +46,25 @@ class SkillMetadataMixin:
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
 
-    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            return conn.execute(query, params).fetchone()
+            row = conn.execute(query, params).fetchone()
+            return cast(Mapping[str, Any] | None, row)
 
-    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Row]:
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            return conn.execute(query, params).fetchall()
+            rows = conn.execute(query, params).fetchall()
+            return cast(list[Mapping[str, Any]], rows)
 
     def create_skill(
         self,

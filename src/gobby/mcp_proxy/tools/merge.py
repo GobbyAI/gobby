@@ -27,6 +27,12 @@ from urllib.parse import urlparse
 import httpx
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.merge_git_state import (
+    merge_head_exists,
+    resolved_reuse_error,
+    rev_parse_head,
+    source_branch_validation_error,
+)
 from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.merge_resolutions import ConflictStatus
 
@@ -238,13 +244,28 @@ def create_merge_registry(
         description="AI-powered merge conflict resolution - start merges, resolve conflicts, and apply resolutions",
     )
 
-    def _existing_resolution_start_response(resolution: Any) -> dict[str, Any] | None:
+    async def _existing_resolution_start_response(
+        resolution: Any,
+        *,
+        worktree_path: str,
+    ) -> dict[str, Any] | None:
         conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
         unresolved_conflicts = [
             conflict for conflict in conflicts if conflict.status != ConflictStatus.RESOLVED.value
         ]
 
         if resolution.status == "resolved":
+            stale_reason = await resolved_reuse_error(
+                git_manager=git_manager,
+                worktree_path=worktree_path,
+                target_branch=resolution.target_branch,
+            )
+            if stale_reason:
+                merge_storage.delete_resolution(resolution.id)
+                logger.info(
+                    "Invalidated stale merge resolution %s: %s", resolution.id, stale_reason
+                )
+                return None
             return {
                 "success": True,
                 "resolution_id": resolution.id,
@@ -268,32 +289,7 @@ def create_merge_registry(
 
         return None
 
-    async def _merge_head_exists(wt_path: str) -> bool:
-        if git_manager is None:
-            return False
-        result = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-            cwd=wt_path,
-            timeout=10,
-        )
-        return result.returncode == 0
-
-    async def _rev_parse_head(cwd: str) -> str | None:
-        if git_manager is None:
-            return None
-        result = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["rev-parse", "HEAD"],
-            cwd=cwd,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
-
     async def _complete_direct_merge(resolution: Any, wt_path: str) -> dict[str, Any]:
-        """Land a clean direct merge when merge_start left no MERGE_HEAD."""
         if git_manager is None:
             return {"success": False, "error": "git_manager not configured"}
 
@@ -351,7 +347,7 @@ def create_merge_registry(
                     "merge_strategy": strategy_name,
                 }
 
-            merge_sha = await _rev_parse_head(repo_path)
+            merge_sha = await rev_parse_head(git_manager, repo_path)
             if not merge_sha:
                 return {
                     "success": False,
@@ -387,26 +383,43 @@ def create_merge_registry(
     async def merge_start(
         worktree_id: str,
         source_branch: str,
-        target_branch: str = "main",
+        target_branch: str | None = None,
         strategy: str = "auto",
     ) -> dict[str, Any]:
-        """
-        Start a merge operation.
-
-        Args:
-            worktree_id: ID of the worktree to merge in.
-            source_branch: Branch being merged in.
-            target_branch: Target branch (default: main).
-            strategy: Resolution strategy ('auto', 'conflict_only', 'full_file', 'manual').
-
-        Returns:
-            Dict with resolution_id, success status, and conflict details.
-        """
-        # Validate required parameters
+        """Start a merge operation."""
         if not worktree_id:
             return {"success": False, "error": "worktree_id is required"}
         if not source_branch:
             return {"success": False, "error": "source_branch is required"}
+
+        worktree_path = None
+        worktree_branch = None
+        if worktree_manager:
+            worktree = worktree_manager.get(worktree_id)
+            if worktree and worktree.worktree_path:
+                worktree_path = worktree.worktree_path
+                branch_value = getattr(worktree, "branch_name", None)
+                if isinstance(branch_value, str) and branch_value:
+                    worktree_branch = branch_value
+                base_branch = getattr(worktree, "base_branch", None)
+                if not target_branch and isinstance(base_branch, str) and base_branch:
+                    target_branch = base_branch
+
+        if not worktree_path:
+            return {
+                "success": False,
+                "error": f"Worktree '{worktree_id}' not found or has no path",
+            }
+        target_branch = target_branch or "main"
+        validation_error = await source_branch_validation_error(
+            git_manager=git_manager,
+            worktree_path=worktree_path,
+            worktree_branch=worktree_branch,
+            source_branch=source_branch,
+            target_branch=target_branch,
+        )
+        if validation_error:
+            return {"success": False, "error": validation_error}
 
         resolution = None
         try:
@@ -420,11 +433,13 @@ def create_merge_registry(
                 existing_response = (
                     None
                     if no_ff_requested and existing.status == "resolved"
-                    else _existing_resolution_start_response(existing)
+                    else await _existing_resolution_start_response(
+                        existing, worktree_path=worktree_path
+                    )
                 )
                 if existing_response is not None:
                     return existing_response
-                resolution = existing
+                resolution = None if existing.status == "resolved" else existing
             else:
                 active = merge_storage.get_active_resolution(worktree_id)
                 if active and (
@@ -450,12 +465,27 @@ def create_merge_registry(
                     existing_response = (
                         None
                         if no_ff_requested and resolution.status == "resolved"
-                        else _existing_resolution_start_response(resolution)
+                        else await _existing_resolution_start_response(
+                            resolution, worktree_path=worktree_path
+                        )
                     )
                     if existing_response is not None:
                         return existing_response
+                    if resolution.status == "resolved":
+                        resolution, _ = merge_storage.get_or_create_resolution(
+                            worktree_id=worktree_id,
+                            source_branch=source_branch,
+                            target_branch=target_branch,
+                            status="pending",
+                        )
+            if resolution is None:
+                resolution, _ = merge_storage.get_or_create_resolution(
+                    worktree_id=worktree_id,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    status="pending",
+                )
 
-            # Attempt merge resolution
             from gobby.worktrees.merge import ResolutionTier
 
             force_tier = None
@@ -464,19 +494,6 @@ def create_merge_registry(
             elif strategy == "full_file":
                 force_tier = ResolutionTier.FULL_FILE_AI
 
-            # Get worktree path from manager
-            worktree_path = None
-            if worktree_manager:
-                worktree = worktree_manager.get(worktree_id)
-                if worktree and worktree.worktree_path:
-                    worktree_path = worktree.worktree_path
-
-            if not worktree_path:
-                return {
-                    "success": False,
-                    "error": f"Worktree '{worktree_id}' not found or has no path",
-                }
-
             result = await merge_resolver.resolve(
                 worktree_path=worktree_path,
                 source_branch=source_branch,
@@ -484,7 +501,6 @@ def create_merge_registry(
                 force_tier=force_tier,
             )
 
-            # Update resolution with result
             tier_used = _GIT_NO_FF_TIER if result.success and no_ff_requested else result.tier.value
             merge_storage.update_resolution(
                 resolution_id=resolution.id,
@@ -492,7 +508,6 @@ def create_merge_registry(
                 tier_used=tier_used if result.success else None,
             )
 
-            # Create conflict records if needed
             for conflict in result.conflicts:
                 file_path = conflict.get("file", "")
                 merge_storage.create_conflict(
@@ -701,6 +716,19 @@ def create_merge_registry(
                     "error": (f"Worktree '{resolution.worktree_id}' not found or has no path"),
                 }
             wt_path = worktree.worktree_path
+            validation_error = await source_branch_validation_error(
+                git_manager=git_manager,
+                worktree_path=wt_path,
+                worktree_branch=(
+                    getattr(worktree, "branch_name", None)
+                    if isinstance(getattr(worktree, "branch_name", None), str)
+                    else None
+                ),
+                source_branch=resolution.source_branch,
+                target_branch=resolution.target_branch,
+            )
+            if validation_error:
+                return {"success": False, "error": validation_error}
 
             written: list[str] = []
             for conflict in conflicts:
@@ -743,7 +771,7 @@ def create_merge_registry(
                     "unmerged_files": unmerged,
                 }
 
-            merge_in_progress = await _merge_head_exists(wt_path)
+            merge_in_progress = await merge_head_exists(git_manager, wt_path)
             if not merge_in_progress:
                 if written:
                     return {
@@ -787,7 +815,7 @@ def create_merge_registry(
                     "error": f"git commit failed: {_git_output(commit_result)}",
                 }
 
-            merge_sha = await _rev_parse_head(wt_path)
+            merge_sha = await rev_parse_head(git_manager, wt_path)
             if not merge_sha:
                 return {"success": False, "error": "Merge committed but HEAD could not be resolved"}
 
@@ -965,6 +993,7 @@ def create_merge_registry(
         registry,
         worktree_manager=worktree_manager,
         git_manager=git_manager,
+        merge_storage=merge_storage,
     )
 
     return registry

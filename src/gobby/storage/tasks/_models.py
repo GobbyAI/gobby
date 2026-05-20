@@ -8,6 +8,7 @@ This module contains:
 """
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -251,7 +252,7 @@ class Task:
             self.is_escalated = True
 
     @classmethod
-    def from_row(cls, row: Row) -> "Task":
+    def from_row(cls, row: Mapping[str, Any]) -> "Task":
         """Convert database row to Task object."""
         labels_json = row["labels"]
         labels = json.loads(labels_json) if labels_json else []

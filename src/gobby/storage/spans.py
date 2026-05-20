@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -162,7 +163,7 @@ class SpanStorage:
         row = self.db.fetchone("SELECT COUNT(*) as count FROM spans")
         return row["count"] if row else 0
 
-    def _row_to_dict(self, row: Any) -> dict[str, Any]:
+    def _row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """Convert a database row to a dictionary with parsed JSON fields."""
         d = dict(row)
         if "attributes_json" in d:
