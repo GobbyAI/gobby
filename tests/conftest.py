@@ -11,6 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from filelock import FileLock
 
+# Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
+# postgres_db). Tests that don't use them pay no runtime cost; the session
+# fixtures only fire on first request.
+pytest_plugins = ["tests.fixtures.postgres"]
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register CLI flags for opt-in local-only test suites."""
