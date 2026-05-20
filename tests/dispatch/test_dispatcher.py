@@ -88,9 +88,11 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
     temp_db,
     sample_project,
 ) -> None:
+    from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import rules
     from gobby.dispatch.dispatcher import build_context
 
+    sync_bundled_agents(temp_db)
     task = _task(
         temp_db,
         sample_project,
@@ -1167,8 +1169,10 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     temp_db,
     sample_project,
 ) -> None:
+    from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
+    sync_bundled_agents(temp_db)
     task = _task(temp_db, sample_project, isolation="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     spawned: list[str] = []

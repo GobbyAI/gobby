@@ -9,14 +9,18 @@ This module provides operations for managing task lifecycle:
 """
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import get_task, update_task
+from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
+
+logger = logging.getLogger(__name__)
 
 
 def close_task(
@@ -65,6 +69,14 @@ def close_task(
         closed_commit_sha=closed_commit_sha,
         validation_override_reason=validation_override_reason,
     )
+    try:
+        wake_dispatcher_for_task_change(db, task_id)
+    except Exception:
+        logger.warning(
+            "dispatcher_wake_after_task_close_failed",
+            extra={"task_id": task_id},
+            exc_info=True,
+        )
 
 
 def reopen_task(
