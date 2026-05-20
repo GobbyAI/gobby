@@ -43,6 +43,72 @@ def test_postgres_cli_help_exposes_phase1_options(args: list[str], expected: lis
         assert text in result.output
 
 
+def test_postgres_cli_exposes_migrate_from_sqlite_command() -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli import cli
+
+    assert callable(getattr(postgres_cli_module, "migrate_from_sqlite", None))
+    assert "migrate-from-sqlite" in postgres_cli_module.postgres_cli.commands
+    assert "migrate-from-sqlite" in cli.commands["postgres"].commands
+
+    result = CliRunner().invoke(cli, ["postgres", "migrate-from-sqlite", "--help"])
+
+    assert result.exit_code == 0
+    assert "--source" in result.output
+    assert "--target" in result.output
+    assert "--batch-size" in result.output
+    assert "--dry-run" in result.output
+
+
+def test_migrate_from_sqlite_command_invokes_importer_with_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    source = tmp_path / "gobby-hub.db"
+    source.write_bytes(b"sqlite fixture")
+    calls: list[dict[str, Any]] = []
+
+    def _migrate_sqlite_to_postgres(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"rows": 42, "tables": 7, "dry_run": kwargs["dry_run"]}
+
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
+    monkeypatch.setattr(
+        postgres_cli_module,
+        "migrate_sqlite_to_postgres",
+        _migrate_sqlite_to_postgres,
+        raising=False,
+    )
+
+    result = CliRunner().invoke(
+        postgres_cli,
+        [
+            "migrate-from-sqlite",
+            "--source",
+            str(source),
+            "--target",
+            "postgresql://gobby:secret@example.com/gobby",
+            "--batch-size",
+            "17",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        {
+            "source": source,
+            "target": "postgresql://gobby:secret@example.com/gobby",
+            "batch_size": 17,
+            "dry_run": True,
+        }
+    ]
+    assert "dry-run: would import 42 rows across 7 tables" in result.output
+
+
 def test_postgres_install_command_calls_installer_and_renders_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
