@@ -227,6 +227,7 @@ def test_merge_worker_resolves_conflicts_sequentially() -> None:
 def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     agent = _agent("merge-worker")
     instructions = agent["instructions"]
+    normalized_instructions = " ".join(instructions.split())
     merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
     assert "Do NOT use Bash, Read, or other file-inspection tools" in instructions
@@ -236,6 +237,34 @@ def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     assert "Do not switch to Bash/Read" in instructions
     assert "Do not call Read, Bash, or file-inspection tools" in merge_status
     assert "manual resolved_content" in merge_status
+    assert "verification is a pre-record success gate" in normalized_instructions
+    assert "call verify_in_worktree before record_merge_result" in merge_status
+
+
+@pytest.mark.asyncio
+async def test_merge_worker_allows_verify_before_recording_result(tmp_path: Path) -> None:
+    db = _test_db(tmp_path)
+    instance_manager = _install_merge_worker_workflow(db)
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _mcp_event(
+            "gobby-merge:verify_in_worktree",
+            event_type=HookEventType.BEFORE_TOOL,
+            arguments={
+                "worktree_id": "wt-1",
+                "command": "uv run pytest tests/cli/test_postgres_cli.py -v",
+            },
+        ),
+        session_id="merge-worker-session",
+        variables=variables,
+    )
+
+    assert response.decision == "allow"
+    instance = instance_manager.get_instance("merge-worker-session", "merge-worker")
+    assert instance is not None
+    assert instance.current_step == "merge"
 
 
 def test_merge_worker_allows_end_agent_run_only_in_terminate_step() -> None:

@@ -155,11 +155,14 @@ Iterate the plan in order. For each step:
    spawn-time variables. `source_branch` is always the worktree branch; never
    use the target branch as source to "pull latest target" into the worktree.
    For a clean direct merge, instruct the worker to call
-   `gobby-worktrees:merge_worktree` and record the `merge_sha` returned by
-   that tool as the final target branch SHA. Do not ask a clean worker to use
-   `merge_start`/`merge_apply` as the landing path; `merge_apply` resolves the
-   source/worktree branch and is not the final target merge SHA. The worker
-   handles the actual merge + AI resolution. When dispatching a
+   `gobby-worktrees:merge_worktree`; if the plan has a `verify_command`, include
+   it in the worker prompt and require `gobby-merge:verify_in_worktree` before
+   the worker records success. The worker records the `merge_sha` returned by
+   `merge_worktree` as the final target branch SHA only after verification
+   passes, or immediately when no verification command was supplied. Do not ask
+   a clean worker to use `merge_start`/`merge_apply` as the landing path;
+   `merge_apply` resolves the source/worktree branch and is not the final target
+   merge SHA. The worker handles the actual merge + AI resolution. When dispatching a
    worker to continue an active resolution, keep the prompt inside the
    merge-worker MCP surface: tell it to call `merge_status`, then
    resolve exactly one pending conflict_id at a time with
@@ -179,9 +182,12 @@ Iterate the plan in order. For each step:
    call `gobby-agents:get_agent_result` only if you need to re-read the final
    report. Do not use Bash sleep loops, tmux polling loops, or provider Monitor
    for worker waits.
-4. **Verify.** Run the step's `verify_command` via
-   `gobby-merge:verify_in_worktree`. Treat exit code 0 as the gate. Capture
-   stdout/stderr in the campaign report on failure.
+4. **Verify.** Prefer worker-side verification: pass the step's
+   `verify_command` to the merge-worker and require it to run
+   `gobby-merge:verify_in_worktree` before `record_merge_result`. Treat exit
+   code 0 as the gate. If a legacy worker did not run verification, the
+   orchestrator must run the same command with `verify_in_worktree` before
+   reporting success. Capture stdout/stderr in the campaign report on failure.
 5. **Decide retry vs. escalate.**
    - Worker reports success + verify passes → mark step complete, move on.
    - Worker reports success + verify fails → re-dispatch the worker with the

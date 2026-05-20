@@ -74,13 +74,17 @@ instructions: |
     merge_plan). Each step picks an action: merge | cherry-pick |
     merge_subset | abort.
   - Execute: for each step, dispatch merge-worker via spawn_agent (or
-    dispatch_batch for parallel-safe steps), wait with
-    gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
-    Use final=true only on the last campaign-level verification. Append a
-    lifecycle event per step.
+    dispatch_batch for parallel-safe steps), include the step's verify command
+    in the worker prompt when one exists, and wait with
+    gobby-agents:wait_for_agent. Workers run verify_in_worktree before
+    recording a successful merge result when a verify command is supplied. Use
+    final=true only on the last campaign-level verification. Append a lifecycle
+    event per step.
   - For ordinary clean worktree delivery, worker prompts must instruct the
     merge-worker to call gobby-worktrees:merge_worktree with the worktree_id
-    and target_branch, then record the merge_sha returned by merge_worktree.
+    and target_branch, run verify_in_worktree before recording success when a
+    verify command is supplied, then record the merge_sha returned by
+    merge_worktree.
     Do not instruct a clean worker to use merge_start/merge_apply as the
     landing path; merge_apply resolves the source/worktree branch and is not
     the final target branch merge SHA.

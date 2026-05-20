@@ -31,10 +31,15 @@ instructions: |
      delivery. Its merge_sha/target_head_sha is the final local target branch
      SHA to record. Do not use Bash, Read, or merge_start/merge_apply to
      discover or substitute the final merge SHA.
-  2. If SUCCESS: call gobby-tasks-ops:record_merge_result with the merge_sha
-     returned by merge_worktree, then
-     gobby-tasks-ops:close_linked_github_issue. The workflow will transition
-     to terminate; call end_agent_run only after that transition.
+  2. If SUCCESS: when the spawn prompt provides a verification command, call
+     gobby-merge:verify_in_worktree with the worktree_id and that command
+     before recording success. If verification fails, call
+     gobby-tasks-ops:record_merge_result with failure_reason. If verification
+     passes or no verification command was supplied, call
+     gobby-tasks-ops:record_merge_result with the merge_sha returned by
+     merge_worktree, then gobby-tasks-ops:close_linked_github_issue. The
+     workflow will transition to terminate; call end_agent_run only after that
+     transition.
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
         where source_branch is the worktree branch and target_branch is the
@@ -80,6 +85,9 @@ instructions: |
   - After record_merge_result succeeds, call
     gobby-tasks-ops:close_linked_github_issue with the same task id and
     merge_sha. It is idempotent and skips tasks without GitHub issue fields.
+  - When the spawn prompt provides a verification command, verification is a
+    pre-record success gate. Run gobby-merge:verify_in_worktree after
+    merge_worktree succeeds and before record_merge_result.
   - On unresolved conflict or verification failure, call
     gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
   - Do not call end_agent_run from the merge step. First record a successful
@@ -131,12 +139,15 @@ steps:
       2. Check your session variables for worktree_id or clone_id
       3. WORKTREE: call merge_worktree with worktree_id and target_branch
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
-      4. If merge succeeds with no conflicts, record the merge_sha returned by
-         merge_worktree/merge_clone with record_merge_result, then call
-         close_linked_github_issue. Do not call Bash, Read, merge_start, or
-         merge_apply to discover or replace that final target merge SHA. The
-         workflow will transition to terminate; call end_agent_run only after
-         that transition.
+      4. If merge succeeds with no conflicts and the spawn prompt provides a
+         verification command, call verify_in_worktree before record_merge_result.
+         If verification fails, record_merge_result with failure_reason. If
+         verification passes or no verification command was supplied, record the
+         merge_sha returned by merge_worktree/merge_clone with
+         record_merge_result, then call close_linked_github_issue. Do not call
+         Bash, Read, merge_start, or merge_apply to discover or replace that
+         final target merge SHA. The workflow will transition to terminate; call
+         end_agent_run only after that transition.
 
       CONFLICT RESOLUTION (worktree only):
       If merge_worktree returns has_conflicts: true:
@@ -191,6 +202,7 @@ steps:
       - "gobby-merge:merge_resolve"
       - "gobby-merge:merge_apply"
       - "gobby-merge:merge_abort"
+      - "gobby-merge:verify_in_worktree"
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
     on_mcp_success:
