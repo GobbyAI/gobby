@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tool
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
+    IllegalStageTransitionError,
     StageManifestSpec,
     StageState,
 )
@@ -60,6 +61,35 @@ def _manifest_error(error: IllegalManifestMutationError) -> dict[str, Any]:
 
 def _operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
     return {"ok": True, "task_id": task_id, "stage": stage_state_operation_view(stage)}
+
+
+def _idempotent_operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
+    response = _operation_response(task_id, stage)
+    response["idempotent"] = True
+    return response
+
+
+def _get_stage_state(ctx: RegistryContext, task_id: str, stage_name: str) -> StageState | None:
+    getter = getattr(ctx.task_manager.stage_states, "get", None)
+    if not callable(getter):
+        return None
+    return cast(StageState | None, getter(task_id, stage_name))
+
+
+def _existing_merge_sha(delivery: TaskDeliveryStateManager, task_id: str) -> str | None:
+    campaign = delivery.get_state(task_id).get("campaign")
+    if not isinstance(campaign, dict):
+        return None
+    value = campaign.get("merge_sha")
+    return value if isinstance(value, str) and value else None
+
+
+def _is_completed_merge_transition(error: IllegalStageTransitionError) -> bool:
+    return (
+        error.stage_name == "merge"
+        and error.current_state == "done"
+        and error.attempted_transition == "complete_stage"
+    )
 
 
 def _findings_text(findings: str | dict[str, Any] | list[Any]) -> str:
@@ -501,6 +531,22 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
+        existing_stage = _get_stage_state(ctx, resolved_id, "merge")
+        if existing_stage is not None and existing_stage.state == "done":
+            existing_sha = _existing_merge_sha(delivery, resolved_id)
+            if existing_sha and existing_sha != merge_sha:
+                raise ValueError(
+                    "merge stage is already done with a different merge_sha "
+                    f"({existing_sha}); refusing to overwrite it with {merge_sha}"
+                )
+            delivery.record_campaign(
+                resolved_id,
+                state="merged",
+                merge_sha=merge_sha,
+                merge_report_ref=report_ref or "",
+                last_error="",
+            )
+            return _idempotent_operation_response(resolved_id, existing_stage)
         delivery.record_campaign(
             resolved_id,
             state="merged",
@@ -515,12 +561,20 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 task_id=resolved_id,
                 session_id=resolved_session_id,
             )
-        stage = ctx.task_manager.stage_states.complete_stage(
-            resolved_id,
-            "merge",
-            by_session_id=resolved_session_id,
-            commit_sha=merge_sha,
-        )
+        try:
+            stage = ctx.task_manager.stage_states.complete_stage(
+                resolved_id,
+                "merge",
+                by_session_id=resolved_session_id,
+                commit_sha=merge_sha,
+            )
+        except IllegalStageTransitionError as exc:
+            if not _is_completed_merge_transition(exc):
+                raise
+            completed_stage = _get_stage_state(ctx, resolved_id, "merge")
+            if completed_stage is None:
+                raise
+            return _idempotent_operation_response(resolved_id, completed_stage)
         try:
             cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
         except Exception:

@@ -242,6 +242,57 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     }
 
 
+def test_success_is_idempotent_after_worker_recorded_merge(temp_db, sample_project) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project)
+
+    first = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="merge-worker-sha",
+        report_ref="merge-worker-report.md",
+    )
+    second = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="merge-worker-sha",
+        report_ref="merge-orchestrator-report.md",
+    )
+
+    assert first["stage"]["state"] == "done"
+    assert second["ok"] is True
+    assert second["idempotent"] is True
+    assert second["stage"]["state"] == "done"
+    assert stage_row(temp_db, task.id, "merge")["state"] == "done"
+    assert task_row(temp_db, task.id)["closed_commit_sha"] == "merge-worker-sha"
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "merge-worker-sha",
+        "merge_report_ref": "merge-orchestrator-report.md",
+    }
+
+
+def test_success_idempotent_merge_rejects_different_completed_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project)
+
+    _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="merge-worker-sha",
+        report_ref="merge-worker-report.md",
+    )
+
+    with pytest.raises(ValueError, match="different merge_sha"):
+        _record_merge_result(_real_context(temp_db))(
+            task_id=task.id,
+            merge_sha="different-orchestrator-sha",
+            report_ref="merge-orchestrator-report.md",
+        )
+
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "merge-worker-sha",
+        "merge_report_ref": "merge-worker-report.md",
+    }
+
+
 def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
     temp_db,
     sample_project,
