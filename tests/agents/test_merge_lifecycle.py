@@ -52,6 +52,13 @@ def test_merge_worker_uses_stage_native_merge_result_tool() -> None:
     assert tools.isdisjoint(LEGACY_MERGE_TOOLS)
 
 
+def test_merge_worker_default_provider_is_reliable_for_unattended_merges() -> None:
+    agent = _agent("merge-worker")
+
+    assert agent["provider"] == "claude"
+    assert agent["model"] == "sonnet"
+
+
 def test_merge_orchestrator_instructions_do_not_reference_removed_lifecycle_tools() -> None:
     text = Path("src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml").read_text(
         encoding="utf-8"

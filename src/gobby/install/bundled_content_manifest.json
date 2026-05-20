@@ -166,7 +166,7 @@
     "workflows/agents/gemini-image-gen.yaml": "0f2a1dc979b1601dad9b9e46b4a3d64067fe59a95baa3ddd6e5fb2dad8d243ef",
     "workflows/agents/holistic-reviewer.yaml": "771fb7f4f26a2231eb7be7c1cfbfb58814b1ba65c26c5fb6e5bde7d947484d4c",
     "workflows/agents/merge-orchestrator.yaml": "ad8fc101c913ebe46292fd4940f9682dfa1d4c7235534bc777c937397a36bd1e",
-    "workflows/agents/merge-worker.yaml": "80018612d01e0f08a5c093a5d502af675026de08293bbac3e6f9851de920500e",
+    "workflows/agents/merge-worker.yaml": "d9ed05565b1ad46948c29eb5079134cb09886cadc836d52c3f631a511002336e",
     "workflows/agents/nightly-linter.yaml": "9095a0de856350d2f2464950979cbf1338300cfc1ef7b0aa7576a18455ad1a52",
     "workflows/agents/nightly-test-fixer.yaml": "8fc375a902c334109667315839900d41fb582672dc6033f7da04acbf0366ffac",
     "workflows/agents/plan-adversary.yaml": "8ffb77c482312198ab70c0843d1a4514a64019f8db11427d55043ee21cf8cb5f",
