@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.database import LocalDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 

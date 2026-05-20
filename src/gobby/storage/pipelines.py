@@ -6,9 +6,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sql_dialect import timestamp_plus_seconds_before_now_expr
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import timestamp_plus_seconds_before_now_expr
 from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
