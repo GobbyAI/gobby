@@ -133,19 +133,24 @@ instructions: |
     merge_abort only when there is no resumable active resolution or recovery
     is explicitly unsafe.
   - Report: record the campaign result with
-    gobby-tasks-ops:record_merge_result.
+    gobby-tasks-ops:record_merge_result. If the merge survey/plan is empty
+    because the campaign work is already landed, close the campaign task with
+    gobby-tasks:close_task(reason="already_implemented") instead of recording
+    a failed merge result.
   - After a successful merge result is recorded, call
     gobby-tasks-ops:close_linked_github_issue with the assigned task id and
     merge_sha. The tool comments on the linked issue, applies `gobby:resolved`,
     and closes it when the task has github_repo and github_issue_number.
-  - Record a clean merge, record a failed merge with failure_reason, or
-    escalate_task when human intervention is required. Terminate only by
-    calling end_agent_run.
+  - Record a clean merge, record a failed merge with failure_reason, close an
+    empty/no-op campaign with reason="already_implemented", or escalate_task
+    when human intervention is required. Terminate only by calling
+    end_agent_run.
 
   CRITICAL RULES:
   - Do NOT call GitHub create_pull_request_review with event=APPROVE. Use
     COMMENT only; external review remains the approval gate.
-  - Do NOT close_task on the campaign task. Use the review flow.
+  - Do NOT close_task on the campaign task except for the explicit
+    already_implemented no-op path when survey/plan finds no merge work.
   - Do NOT edit code. Survey + dispatch + verify only.
   - Do NOT call kill_agent on yourself; use end_agent_run in terminate.
   - Workers cannot spawn workers — the depth-5 cap is enforced by the
@@ -254,6 +259,7 @@ steps:
       - "gobby-worktrees:list_worktrees"
       - "gobby-worktrees:get_worktree"
       - "gobby-tasks:get_task"
+      - "gobby-tasks:close_task"
       - "gobby-tasks-ops:get_delivery_state"
     on_mcp_success:
       - server: gobby-merge
@@ -261,7 +267,15 @@ steps:
         action: set_variable
         variable: survey_complete
         value: true
+      - server: gobby-tasks
+        tool: close_task
+        when: "tool_input.get('reason') == 'already_implemented'"
+        action: set_variable
+        variable: report_complete
+        value: true
     transitions:
+      - to: terminate
+        when: "vars.report_complete"
       - to: plan
         when: "vars.survey_complete"
 
@@ -282,7 +296,17 @@ steps:
     allowed_mcp_tools:
       - "gobby-tasks:get_task"
       - "gobby-tasks:list_tasks"
+      - "gobby-tasks:close_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        when: "tool_input.get('reason') == 'already_implemented'"
+        action: set_variable
+        variable: report_complete
+        value: true
     transitions:
+      - to: terminate
+        when: "vars.report_complete"
       - to: execute
         when: "vars.get('merge_plan')"
 
@@ -305,6 +329,7 @@ steps:
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
       - "gobby-tasks-ops:append_description_section"
+      - "gobby-tasks:close_task"
       - "gobby-tasks:escalate_task"
       - "gobby-skills:get_skill"
       - "gobby-worktrees:push_branch"
@@ -338,7 +363,6 @@ steps:
       - "github:update_pull_request_branch"
       - "github:merge_pull_request"
     blocked_mcp_tools:
-      - "gobby-tasks:close_task"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:kill_agent"
     on_mcp_success:
@@ -402,6 +426,18 @@ steps:
         variable: report_complete
         value: true
       - server: gobby-tasks
+        tool: close_task
+        when: "tool_input.get('reason') == 'already_implemented'"
+        action: set_variable
+        variable: execution_complete
+        value: true
+      - server: gobby-tasks
+        tool: close_task
+        when: "tool_input.get('reason') == 'already_implemented'"
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks
         tool: escalate_task
         action: set_variable
         variable: execution_complete
@@ -453,6 +489,7 @@ steps:
     allowed_mcp_tools:
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
+      - "gobby-tasks:close_task"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks-ops:append_description_section"
     on_mcp_success:
@@ -464,6 +501,12 @@ steps:
         value: true
       - server: gobby-tasks-ops
         tool: close_linked_github_issue
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks
+        tool: close_task
+        when: "tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: report_complete
         value: true

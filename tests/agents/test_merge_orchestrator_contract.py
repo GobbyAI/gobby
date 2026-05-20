@@ -34,6 +34,7 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-tasks-ops:record_merge_result",
     "gobby-tasks-ops:close_linked_github_issue",
     "gobby-tasks-ops:append_description_section",
+    "gobby-tasks:close_task",
     "gobby-tasks:escalate_task",
     "gobby-skills:get_skill",
     "gobby-worktrees:push_branch",
@@ -69,7 +70,6 @@ REQUIRED_EXECUTE_TOOLS = {
 }
 
 FORBIDDEN_EXECUTE_TOOLS = {
-    "gobby-tasks:close_task",
     "gobby-tasks:reopen_task",
     "gobby-agents:kill_agent",
 }
@@ -229,6 +229,29 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "no_progress_merge_status_count" in agent["step_variables"]
 
 
+def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    survey = _step(agent, "survey")
+    plan = _step(agent, "plan")
+    report = _step(agent, "report")
+
+    assert 'reason="already_implemented"' in instructions
+    assert "Do NOT close_task on the campaign task except" in instructions
+    assert "gobby-tasks:close_task" in survey["allowed_mcp_tools"]
+    assert "gobby-tasks:close_task" in plan["allowed_mcp_tools"]
+    assert "gobby-tasks:close_task" in report["allowed_mcp_tools"]
+    assert "gobby-tasks:close_task" not in _step(agent, "execute")["blocked_mcp_tools"]
+    assert any(
+        transition["to"] == "terminate" and transition["when"] == "vars.report_complete"
+        for transition in survey["transitions"]
+    )
+    assert any(
+        transition["to"] == "terminate" and transition["when"] == "vars.report_complete"
+        for transition in plan["transitions"]
+    )
+
+
 def test_merge_orchestrator_loads_monitoring_skill_before_agent_queries() -> None:
     agent = _agent()
     instructions = agent["instructions"]
@@ -265,6 +288,105 @@ async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
             variables={},
         )
         assert response.decision == "block", mcp_key
+
+
+@pytest.mark.asyncio
+async def test_survey_empty_campaign_can_close_already_implemented(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="survey")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks:close_task"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-tasks:close_task",
+            arguments={
+                "task_id": "#14063",
+                "reason": "already_implemented",
+                "changes_summary": "All phase work already landed through child tasks.",
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["report_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_plan_empty_campaign_can_close_already_implemented(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="plan")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks:close_task"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-tasks:close_task",
+            arguments={
+                "task_id": "#14063",
+                "reason": "already_implemented",
+                "changes_summary": "Merge plan is empty because child merges already landed.",
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["report_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_can_close_already_implemented_and_terminate(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="report")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks:close_task"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-tasks:close_task",
+            arguments={
+                "task_id": "#14063",
+                "reason": "already_implemented",
+                "changes_summary": "No merge commit required for this parent phase.",
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["report_complete"] is True
 
 
 @pytest.mark.asyncio
