@@ -791,6 +791,7 @@ def _prompt_context(context: object) -> dict[str, object]:
     return {
         "artifacts": _field(context, "artifacts"),
         "build_config": _field(context, "build_config"),
+        "failure_context": _field(context, "failure_context"),
         "reason": _field(context, "reason"),
     }
 

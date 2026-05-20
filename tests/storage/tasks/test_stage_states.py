@@ -337,6 +337,20 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     assert reopened["closed_at"] is None
     assert reopened["closed_commit_sha"] is None
     assert reopened["claimed_by_session_id"] is None
+    parent_comment = temp_db.fetchone(
+        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        (parent.id,),
+    )
+    child_comment = temp_db.fetchone(
+        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        (leaf.id,),
+    )
+    assert parent_comment is not None
+    assert child_comment is not None
+    assert parent_comment["body"].startswith("## Holistic QA Failure")
+    assert child_comment["body"].startswith("## Holistic QA Follow-Up")
+    assert "needs changes" in parent_comment["body"]
+    assert "needs changes" in child_comment["body"]
 
 
 def test_holistic_failure_reopens_multiple_cited_children_only(
