@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
+def cleanup_merged_task_artifacts_after_agent_exit(
+    db: DatabaseProtocol,
+    task_id: str,
+) -> list[Any]:
+    """Retry merge artifact cleanup once the owning agent is no longer active."""
+    from gobby.build.controls import cleanup_successful_merge_artifacts
+    from gobby.storage.tasks import LocalTaskManager
+
+    task_manager = LocalTaskManager(db)
+    merge_stage = task_manager.stage_states.get(task_id, "merge")
+    if merge_stage is None or merge_stage.state != "done":
+        return []
+    return cleanup_successful_merge_artifacts(db, task_id)
+
+
 class AgentCleanupHandler:
     """Handles terminal state transitions and cleanup for agent runs."""
 
@@ -142,6 +157,29 @@ class AgentCleanupHandler:
                 cleanup.dispatch_mutex_rows,
                 cleanup.workflow_instance_rows,
             )
+        if run.task_id:
+            try:
+                artifacts = await self._run_sqlite(
+                    cleanup_merged_task_artifacts_after_agent_exit,
+                    self._db,
+                    run.task_id,
+                )
+                deleted_count = len([artifact for artifact in artifacts if artifact.deleted])
+                deferred_count = len([artifact for artifact in artifacts if artifact.deferred])
+                if deleted_count or deferred_count:
+                    logger.info(
+                        "Post-agent merge artifact cleanup for %s: deleted=%s deferred=%s",
+                        run.id,
+                        deleted_count,
+                        deferred_count,
+                    )
+            except Exception:
+                logger.warning(
+                    "Post-agent merge artifact cleanup failed for run %s task %s",
+                    run.id,
+                    run.task_id,
+                    exc_info=True,
+                )
 
     async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
         tool_calls_count = run.tool_calls_count or 0
