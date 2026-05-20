@@ -353,6 +353,56 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     assert "needs changes" in child_comment["body"]
 
 
+def test_holistic_failure_reactivates_merged_cited_child_worktree(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    temp_db.execute(
+        """
+        INSERT INTO worktrees (
+            id, project_id, task_id, branch_name, worktree_path, base_branch,
+            agent_session_id, status, created_at, updated_at, merged_at, cleanup_after
+        )
+        VALUES (
+            'wt-reopened', ?, ?, 'task-reopened', '/tmp/gobby-reopened', 'main',
+            NULL, 'merged', '2026-05-07T00:00:00+00:00',
+            '2026-05-07T00:00:00+00:00', '2026-05-07T00:00:00+00:00',
+            '2026-05-14T00:00:00+00:00'
+        )
+        """,
+        (sample_project["id"], leaf.id),
+    )
+
+    manager.stage_states.fail_stage(
+        parent.id,
+        "holistic_qa",
+        reason="needs changes",
+        by_session_id="holistic-reviewer",
+        cited_subtasks=[leaf.id],
+    )
+
+    worktree = temp_db.fetchone("SELECT * FROM worktrees WHERE id = 'wt-reopened'")
+    assert worktree is not None
+    assert worktree["status"] == "active"
+    assert worktree["merged_at"] is None
+    assert worktree["cleanup_after"] is None
+
+
 def test_holistic_failure_reopens_multiple_cited_children_only(
     temp_db,
     sample_project,

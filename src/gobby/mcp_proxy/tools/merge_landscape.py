@@ -184,9 +184,10 @@ def register_merge_landscape_tools(
 
         worktrees = worktree_manager.list_worktrees(
             project_id=project_id,
-            status="active",
+            status=None,
             limit=200,
         )
+        worktrees = [wt for wt in worktrees if getattr(wt, "status", None) in {"active", "merged"}]
 
         out: list[dict[str, Any]] = []
         for wt in worktrees:
@@ -195,6 +196,7 @@ def register_merge_landscape_tools(
                 "branch": wt.branch_name,
                 "base": wt.base_branch,
                 "task_ref": wt.task_id,
+                "status": wt.status,
                 "merge_state": wt.merge_state,
                 "created_at": wt.created_at,
             }
@@ -242,6 +244,10 @@ def register_merge_landscape_tools(
                 entry["commits_behind"] = None
             ahead = entry["commits_ahead"]
             behind = entry["commits_behind"]
+            if wt.status == "merged" and ahead == 0:
+                continue
+            if wt.status == "merged" and isinstance(ahead, int) and ahead > 0:
+                entry["reactivation_required"] = True
             entry["divergence_commits"] = (
                 ahead + behind if isinstance(ahead, int) and isinstance(behind, int) else None
             )

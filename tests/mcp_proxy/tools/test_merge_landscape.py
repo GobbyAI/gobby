@@ -33,6 +33,7 @@ def _make_worktree(
     base: str = "main",
     project_id: str = "proj-1",
     task_id: str | None = None,
+    status: str = "active",
 ) -> Worktree:
     return Worktree(
         id=id,
@@ -42,7 +43,7 @@ def _make_worktree(
         worktree_path=path,
         base_branch=base,
         agent_session_id=None,
-        status="active",
+        status=status,
         created_at="2026-04-28T00:00:00Z",
         updated_at="2026-04-28T00:00:00Z",
         merged_at=None,
@@ -137,6 +138,7 @@ async def test_analyze_merge_landscape_happy_path(tmp_path) -> None:
     entry = result["worktrees"][0]
     assert entry["worktree_id"] == "wt-1"
     assert entry["branch"] == "feat/x"
+    assert entry["status"] == "active"
     assert entry["commits_ahead"] == 3
     assert entry["commits_behind"] == 1
     assert entry["divergence_commits"] == 4
@@ -166,6 +168,76 @@ async def test_analyze_merge_landscape_behind_only_keeps_divergence_zero(tmp_pat
     assert entry["commits_ahead"] == 0
     assert entry["commits_behind"] == 2
     assert entry["divergence_commits"] == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_merge_landscape_keeps_merged_worktree_with_branch_only_commits(
+    tmp_path,
+) -> None:
+    active = _make_worktree(id="wt-active", path=str(tmp_path / "active"))
+    merged = _make_worktree(
+        id="wt-merged",
+        branch="task/reopened",
+        path=str(tmp_path / "merged"),
+        task_id="task-reopened",
+        status="merged",
+    )
+    (tmp_path / "active").mkdir()
+    (tmp_path / "merged").mkdir()
+    worktree_manager = MagicMock()
+    worktree_manager.list_worktrees.return_value = [active, merged]
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout="0\n"),  # active: rev-list --count main..HEAD
+        _completed(stdout="2\n"),  # active: rev-list --count HEAD..main
+        _completed(stdout=""),  # active: diff --name-only
+        _completed(stdout="2026-04-28T12:34:56+00:00\n"),  # active: log -1 %cI
+        _completed(stdout="1\n"),  # merged: branch-only commit after reopen
+        _completed(stdout="0\n"),  # merged: rev-list --count HEAD..main
+        _completed(stdout="tests/reopened.py\n"),  # merged: diff --name-only
+        _completed(stdout="2026-04-29T12:34:56+00:00\n"),  # merged: log -1 %cI
+    ]
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("analyze_merge_landscape", {})
+
+    assert result["success"] is True
+    assert [entry["worktree_id"] for entry in result["worktrees"]] == [
+        "wt-active",
+        "wt-merged",
+    ]
+    reopened = result["worktrees"][1]
+    assert reopened["status"] == "merged"
+    assert reopened["commits_ahead"] == 1
+    assert reopened["reactivation_required"] is True
+    assert reopened["files_touched"] == ["tests/reopened.py"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_merge_landscape_skips_merged_worktree_without_ahead_commits(
+    tmp_path,
+) -> None:
+    merged = _make_worktree(
+        id="wt-merged",
+        branch="task/already-landed",
+        path=str(tmp_path),
+        status="merged",
+    )
+    worktree_manager = MagicMock()
+    worktree_manager.list_worktrees.return_value = [merged]
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout="0\n"),  # rev-list --count main..HEAD
+        _completed(stdout="0\n"),  # rev-list --count HEAD..main
+    ]
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("analyze_merge_landscape", {})
+
+    assert result["success"] is True
+    assert result["worktrees"] == []
 
 
 @pytest.mark.asyncio

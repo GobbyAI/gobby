@@ -211,6 +211,30 @@ class StageStateTransitions:
         self.reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
         for cited_id in cited_ids:
             self.reset_task_from_stage(conn, cited_id, "development", now=now, holder=holder)
+        self.reactivate_cited_worktrees(conn, cited_ids, now=now)
+
+    def reactivate_cited_worktrees(
+        self,
+        conn: sqlite3.Connection,
+        cited_subtasks: Sequence[str],
+        *,
+        now: str,
+    ) -> None:
+        if not cited_subtasks:
+            return
+        placeholders = sql_placeholders(len(cited_subtasks))
+        conn.execute(
+            f"""
+            UPDATE worktrees
+               SET status = 'active',
+                   merged_at = NULL,
+                   cleanup_after = NULL,
+                   updated_at = ?
+             WHERE task_id IN ({placeholders})
+               AND status = 'merged'
+            """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
+            (now, *cited_subtasks),
+        )
 
     def append_holistic_failure_comments(
         self,
