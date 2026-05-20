@@ -52,6 +52,58 @@ def _normalize_optional_model(value: str | None) -> str | None:
     return value or None
 
 
+def _run_string_attr(run: Any, name: str) -> str | None:
+    value = getattr(run, name, None)
+    return value if isinstance(value, str) and value else None
+
+
+def _is_parent_merge_orchestrator_run(
+    run: Any,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> bool:
+    return (
+        requested_agent_name == "merge-worker"
+        and _run_string_attr(run, "agent_name") == "merge-orchestrator"
+        and _run_string_attr(run, "child_session_id") == parent_session_id
+    )
+
+
+def _active_task_spawn_blocker(
+    run_storage: Any,
+    task_id: str,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> Any | None:
+    """Return an active run that should block spawning another agent for a task."""
+    if not run_storage.has_active_run_for_task(task_id):
+        return None
+
+    active_runs: list[Any] = []
+    try:
+        maybe_runs = run_storage.list_active(task_ids=[task_id], limit=100)
+    except (AttributeError, TypeError):
+        maybe_runs = None
+    if isinstance(maybe_runs, list | tuple):
+        active_runs = list(maybe_runs)
+
+    if not active_runs:
+        active_run = run_storage.get_active_run_for_task(task_id)
+        active_runs = [active_run] if active_run is not None else []
+
+    for active_run in active_runs:
+        if _is_parent_merge_orchestrator_run(
+            active_run,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        ):
+            continue
+        return active_run
+    return None
+
+
 _MODEL_PROVIDER_PREFIXES = {
     "anthropic": "claude",
     "claude": "claude",
@@ -418,6 +470,7 @@ async def spawn_agent_impl(
 
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
+    requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
@@ -465,8 +518,13 @@ async def spawn_agent_impl(
 
     # 4b. Dedup check — idempotent: return success if agent already running
     if resolved_task_id and runner.run_storage:
-        if runner.run_storage.has_active_run_for_task(resolved_task_id):
-            active_run = runner.run_storage.get_active_run_for_task(resolved_task_id)
+        active_run = _active_task_spawn_blocker(
+            runner.run_storage,
+            resolved_task_id,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+        if active_run is not None:
             return {
                 "success": True,
                 "skipped": True,
@@ -642,7 +700,7 @@ async def spawn_agent_impl(
         effective_initial_variables["branch_name"] = isolation_ctx.branch_name
 
     # 11. Build a meaningful session title from agent name and/or task
-    agent_display_name = agent_lookup_name or (agent_body.name if agent_body else None)
+    agent_display_name = requested_agent_name
     if agent_display_name and task_title:
         spawn_title = f"{agent_display_name}: {task_title}"
     elif agent_display_name:
