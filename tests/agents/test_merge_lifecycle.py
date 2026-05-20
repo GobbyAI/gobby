@@ -153,6 +153,23 @@ def test_merge_worker_uses_stage_native_merge_result_tool() -> None:
     assert tools.isdisjoint(LEGACY_MERGE_TOOLS)
 
 
+def test_merge_worker_allows_read_only_preflight_tools_without_prompting_them() -> None:
+    merge = _step(_agent("merge-worker"), "merge")
+    tools = set(merge["allowed_mcp_tools"])
+    text = " ".join(
+        [
+            _agent("merge-worker")["instructions"],
+            merge["status_message"],
+        ]
+    )
+
+    assert "inspect_merge_state" not in text
+    assert "get_worktree_by_task" not in text
+    assert "gobby-merge:inspect_merge_state" in tools
+    assert "gobby-worktrees:get_worktree" in tools
+    assert "gobby-worktrees:get_worktree_by_task" in tools
+
+
 def test_merge_worker_default_provider_is_reliable_for_unattended_merges() -> None:
     agent = _agent("merge-worker")
 
