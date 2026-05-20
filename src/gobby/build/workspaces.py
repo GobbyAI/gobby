@@ -55,7 +55,15 @@ def ensure_epic_integration_workspaces(
             integration_by_epic=integration_by_epic,
         )
         base_branch = parent_integration or target_branch
-        integration_branch = artifacts.integration_branch or _integration_branch(task)
+        integration_branch = (
+            artifacts.integration_branch
+            or workspace_services.existing_task_workspace_branch(
+                task=task,
+                backend=backend,
+                artifacts=artifacts,
+            )
+            or _integration_branch(task)
+        )
         integration = workspace_services.ensure_integration(
             task=task,
             backend=backend,
@@ -70,14 +78,14 @@ def ensure_epic_integration_workspaces(
         if backend == "worktree":
             artifact_fields["integration_workspace_id"] = integration.id
             artifact_fields["integration_clone_id"] = None
-            if artifacts.worktree_id and artifacts.worktree_id != integration.id:
+            if artifacts.worktree_id:
                 artifact_fields["worktree_id"] = None
                 artifact_fields["worktree_path"] = None
                 artifact_fields["base_commit_sha"] = None
         else:
             artifact_fields["integration_clone_id"] = integration.id
             artifact_fields["integration_workspace_id"] = None
-            if artifacts.clone_id and artifacts.clone_id != integration.id:
+            if artifacts.clone_id:
                 artifact_fields["clone_id"] = None
                 artifact_fields["clone_path"] = None
                 artifact_fields["base_commit_sha"] = None
@@ -218,6 +226,23 @@ class _WorkspaceServices:
             return self._ensure_worktree(task, branch_name, base_branch, artifacts)
         return self._ensure_clone(task, branch_name, base_branch, artifacts)
 
+    def existing_task_workspace_branch(
+        self,
+        *,
+        task: Task,
+        backend: WorkspaceBackend,
+        artifacts: TaskArtifacts,
+    ) -> str | None:
+        if backend == "worktree" and artifacts.worktree_id:
+            worktree = self.worktree_storage.get(artifacts.worktree_id)
+            if worktree is not None and _is_promotable_workspace(worktree, task.id, "worktree"):
+                return worktree.branch_name
+        if backend == "clone" and artifacts.clone_id:
+            clone = self.clone_storage.get(artifacts.clone_id)
+            if clone is not None and _is_promotable_workspace(clone, task.id, "clone"):
+                return clone.branch_name
+        return None
+
     def _ensure_worktree(
         self,
         task: Task,
@@ -235,6 +260,12 @@ class _WorkspaceServices:
 
         existing = self.worktree_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
+            if _is_promotable_workspace(existing, task.id, "worktree"):
+                promoted = self.worktree_storage.update(existing.id, workspace_role="integration")
+                if promoted is None:
+                    raise BuildWorkspaceError("failed to promote task worktree to integration")
+                _refresh_clean_git_dir(promoted.worktree_path, branch_name, base_branch)
+                return promoted
             self._validate_record(existing, branch_name=branch_name, backend="worktree")
             _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
             return existing
@@ -298,6 +329,16 @@ class _WorkspaceServices:
 
         existing = self.clone_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
+            if _is_promotable_workspace(existing, task.id, "clone"):
+                promoted = self.clone_storage.update(existing.id, workspace_role="integration")
+                if promoted is None:
+                    raise BuildWorkspaceError("failed to promote task clone to integration")
+                _refresh_clean_git_dir(
+                    promoted.clone_path,
+                    branch_name,
+                    _clone_base_ref(promoted.clone_path, base_branch),
+                )
+                return promoted
             self._validate_record(existing, branch_name=branch_name, backend="clone")
             _refresh_clean_git_dir(
                 existing.clone_path,
@@ -352,6 +393,23 @@ class _WorkspaceServices:
             )
         if path is None or not Path(str(path)).is_dir():
             raise BuildWorkspaceError(f"integration {backend} path is missing; clean/restart")
+
+
+def _is_promotable_workspace(
+    record: Worktree | Clone | None,
+    task_id: str,
+    backend: WorkspaceBackend,
+) -> bool:
+    if record is None or record.task_id != task_id:
+        return False
+    if getattr(record, "workspace_role", "task") != "task":
+        return False
+    path = getattr(record, "worktree_path", None) or getattr(record, "clone_path", None)
+    if path is None or not Path(str(path)).is_dir():
+        return False
+    if not getattr(record, "base_branch", None):
+        raise BuildWorkspaceError(f"{backend} base branch is required for integration promotion")
+    return True
 
 
 def _project_repo_path(db: DatabaseProtocol, project_id: str) -> Path:

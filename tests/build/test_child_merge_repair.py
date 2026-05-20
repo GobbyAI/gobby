@@ -229,3 +229,64 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     assert parent_artifacts.worktree_id is None
     assert parent_artifacts.worktree_path is None
     assert parent_artifacts.base_commit_sha is None
+
+
+def test_epic_integration_workspace_promotes_existing_task_worktree(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    phase_path = tmp_path / "phase"
+    repo.mkdir()
+    _init_repo(repo)
+    base_sha = _git(repo, "rev-parse", "main")
+
+    _git(repo, "worktree", "add", "-b", "task/phase", str(phase_path), "main")
+    _git(phase_path, "config", "user.email", "test@example.com")
+    _git(phase_path, "config", "user.name", "Test User")
+    (phase_path / "phase.txt").write_text("phase work\n")
+    _git(phase_path, "add", "phase.txt")
+    _git(phase_path, "commit", "-m", "phase work")
+    phase_sha = _git(phase_path, "rev-parse", "HEAD")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    worktrees = LocalWorktreeManager(temp_db)
+    phase = worktrees.create(
+        project_id=project.id,
+        branch_name="task/phase",
+        worktree_path=str(phase_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="task",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        worktree_path=str(phase_path),
+        worktree_id=phase.id,
+        base_commit_sha=base_sha,
+    )
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    promoted = worktrees.get(phase.id)
+
+    assert parent_artifacts.target_branch == "main"
+    assert parent_artifacts.integration_branch == "task/phase"
+    assert parent_artifacts.integration_workspace_id == phase.id
+    assert parent_artifacts.worktree_id is None
+    assert parent_artifacts.worktree_path is None
+    assert parent_artifacts.base_commit_sha is None
+    assert promoted is not None
+    assert promoted.workspace_role == "integration"
+    assert _git(phase_path, "rev-parse", "HEAD") == phase_sha
+    assert _git(repo, "branch", "--list", _integration_branch(parent)) == ""
