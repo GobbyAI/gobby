@@ -52,6 +52,32 @@ def _normalize_optional_model(value: str | None) -> str | None:
     return value or None
 
 
+_MODEL_PROVIDER_PREFIXES = {
+    "anthropic": "claude",
+    "claude": "claude",
+    "google": "gemini",
+    "gemini": "gemini",
+    "openai": "codex",
+    "codex": "codex",
+    "qwen": "qwen",
+    "droid": "droid",
+}
+
+
+def _provider_prefixed_model(value: str | None) -> tuple[str, str] | None:
+    """Return provider/model from values like ``claude/sonnet-4-6``."""
+    if not value or "/" not in value:
+        return None
+    prefix, model = value.split("/", 1)
+    provider = _MODEL_PROVIDER_PREFIXES.get(prefix.strip().lower())
+    model = model.strip()
+    if not provider or not model:
+        return None
+    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-")):
+        model = f"claude-{model}"
+    return provider, model
+
+
 def _defaulted_provider(value: str | None) -> str:
     if value is None or value == "inherit":
         return "claude"
@@ -274,16 +300,31 @@ async def spawn_agent_impl(
     )
 
     provider_was_overridden = provider is not None
+    model_from_prefix = _provider_prefixed_model(_normalize_optional_model(model))
     _raw_provider: str | None = provider
+    if _raw_provider is None and model_from_prefix is not None:
+        _raw_provider = model_from_prefix[0]
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
     effective_provider = _defaulted_provider(_raw_provider)
+
+    if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
+        return {
+            "success": False,
+            "error": (
+                "model provider prefix "
+                f"'{model_from_prefix[0]}' does not match explicit provider "
+                f"'{effective_provider}'"
+            ),
+        }
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
         provider_differs_from_agent = effective_provider != _defaulted_provider(agent_body.provider)
 
-    effective_model = _normalize_optional_model(model)
+    effective_model = (
+        model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)
+    )
     if effective_model is None and agent_body and not provider_differs_from_agent:
         effective_model = _normalize_optional_model(agent_body.model)
     from gobby.llm.local_detection import is_local_agent_definition
@@ -549,8 +590,7 @@ async def spawn_agent_impl(
             except Exception as e:
                 reason = str(e)
                 logger.warning(
-                    "Continuing isolated spawn after code index preflight failed "
-                    "for cwd=%s: %s",
+                    "Continuing isolated spawn after code index preflight failed for cwd=%s: %s",
                     isolation_ctx.cwd,
                     reason,
                 )
@@ -587,9 +627,7 @@ async def spawn_agent_impl(
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
     if code_index_preflight_warning is not None:
-        effective_initial_variables["code_index_preflight_warning"] = (
-            code_index_preflight_warning
-        )
+        effective_initial_variables["code_index_preflight_warning"] = code_index_preflight_warning
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills

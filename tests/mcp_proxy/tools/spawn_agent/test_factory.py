@@ -280,6 +280,67 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.provider == "gemini"
         assert spawn_request.model == "gemini-3.1-pro-preview"
 
+    @pytest.mark.asyncio
+    async def test_model_prefix_infers_provider_without_provider_override(
+        self, mock_runner
+    ) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "model": "claude/sonnet-4-6",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "claude-sonnet-4-6"
+
+    @pytest.mark.asyncio
+    async def test_explicit_provider_rejects_mismatched_model_prefix(self, mock_runner) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": "parent-789",
+                    "agent": "merge-worker",
+                    "provider": "gemini",
+                    "model": "claude/sonnet-4-6",
+                },
+            )
+
+        assert result["success"] is False
+        assert "does not match explicit provider" in result["error"]
+        mock_execute.assert_not_called()
+
 
 class TestSpawnAgentTaskResolution:
     """Tests for task_id resolution formats."""
