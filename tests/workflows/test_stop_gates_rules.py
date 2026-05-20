@@ -57,6 +57,7 @@ def _get_rule(manager, name):
 
 STOP_GATES_RULES = {
     "require-task-close",
+    "require-step-completion",
 }
 
 
@@ -285,6 +286,86 @@ class TestRequireTaskClose:
 
         assert response.decision == "block"
         assert "require-task-close" in (response.reason or "")
+
+
+class TestRequireStepCompletion:
+    """Verify spawned-agent step completion gates only apply to active step workflows."""
+
+    def test_blocks_on_turn_end(self, db, manager) -> None:
+        """Should be a block effect on semantic turn_end."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_end"
+        assert body.effects[0].type == "block"
+
+    def test_when_requires_current_step(self, db, manager) -> None:
+        """Default/no-step spawned agents should not be trapped at stop."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.when is not None
+        assert "current_step" in body.when
+
+    def test_does_not_block_spawned_agent_without_current_step(self, db, manager) -> None:
+        """A spawned agent without a step instance may terminate normally."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "step_workflow_complete": False,
+            "stop_attempts": 1,
+        }
+        evaluator = SafeExpressionEvaluator(
+            context={"variables": variables},
+            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
+        )
+        assert not evaluator.evaluate(body.when)
+
+    def test_blocks_spawned_agent_with_incomplete_current_step(self, db, manager) -> None:
+        """A real active step workflow still blocks termination until complete."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "stop_attempts": 1,
+        }
+        evaluator = SafeExpressionEvaluator(
+            context={"variables": variables},
+            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
+        )
+        assert evaluator.evaluate(body.when)
+
+    @pytest.mark.asyncio
+    async def test_turn_end_allows_spawned_agent_without_current_step(self, db) -> None:
+        """Regression: no-step spawned agents must not hit an unknown-step stop loop."""
+        _sync_bundled(db)
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+        }
+
+        event = _make_event(HookEventType.AFTER_AGENT)
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables["stop_attempts"] == 1
 
 
 class TestCompactPreservesTriagedState:
