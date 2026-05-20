@@ -73,3 +73,20 @@ def test_merge_worker_retry_cap_tracks_conflict_ids_not_total_calls() -> None:
     assert set_handler["variable"] == "merge_resolve_attempts"
     assert ".count(tool_input.get('conflict_id'" in block_handler["when"]
     assert "[tool_input.get('conflict_id'" in set_handler["value"]
+
+
+def test_merge_worker_retry_cap_guidance_continues_remaining_conflicts() -> None:
+    agent = _agent("merge-worker")
+    merge = _step(agent, "merge")
+    block_handler = next(
+        handler for handler in merge["on_mcp_before"] if handler["action"] == "block"
+    )
+    workflow_text = str(agent)
+    retry_reason = block_handler["reason"]
+
+    assert "skip that conflict_id and continue" in workflow_text
+    assert "Do not call merge_abort solely because one conflict_id" in workflow_text
+    assert "Call gobby-merge:merge_abort" not in retry_reason
+    assert "Skip it, continue with the next pending conflict_id" in retry_reason
+    assert "Do not call merge_abort" in retry_reason
+    assert "solely because one conflict_id" in retry_reason

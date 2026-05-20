@@ -78,6 +78,10 @@ instructions: |
     gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
     Use final=true only on the last campaign-level verification. Append a
     lifecycle event per step.
+  - If a worker returns success but inspect_merge_state or merge_status still
+    shows unresolved merge state, treat that as a failed execution, record a
+    failed merge result with the stale worker run id and unresolved files, and
+    do not mark the campaign clean.
   - Recover orphaned merge state with merge_abort or merge_resolve before
     scheduling fresh work in the same worktree.
   - Report: record the campaign result with
@@ -237,7 +241,10 @@ steps:
       - "gobby-tasks-ops:open_delivery_pr"
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks-ops:record_pr_verdict"
+      - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
+      - "gobby-tasks-ops:append_description_section"
+      - "gobby-tasks:escalate_task"
       - "gobby-worktrees:push_branch"
       - "gobby-worktrees:merge_worktree"
       - "gobby-worktrees:list_worktrees"
@@ -278,6 +285,26 @@ steps:
         when: "tool_input.final is True"
         action: set_variable
         variable: execution_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: record_merge_result
+        action: set_variable
+        variable: execution_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: record_merge_result
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: execution_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: report_complete
         value: true
     transitions:
       - to: report

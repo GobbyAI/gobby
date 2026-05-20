@@ -25,7 +25,7 @@ instructions: |
   - If you have clone_id: use clone merge flow
 
   WORKTREE MERGE FLOW:
-  MAX_RESOLVE_RETRIES: 3 per conflict set.
+  MAX_RESOLVE_RETRIES: 3 per conflict id.
   1. Call merge_worktree with worktree_id and target_branch. Do not push.
   2. If SUCCESS: call end_agent_run — you're done
   3. If CONFLICTS (has_conflicts: true):
@@ -37,12 +37,14 @@ instructions: |
         (this resets merge_resolve_attempts=[] for deterministic retry enforcement)
      b. Check merge_status for conflict details
      c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
-        by the exact unresolved conflict file/id set
-     d. Call merge_apply to finalize the resolved merge
+        by conflict_id. If one conflict reaches MAX_RESOLVE_RETRIES, skip that
+        conflict_id and continue with the remaining conflicts.
+     d. Re-check merge_status. Call merge_apply only if all conflicts are resolved.
      e. Call merge_worktree again with target_branch to merge the resolved work locally
      f. Call end_agent_run
-  4. If resolution fails, or the same conflict set reaches MAX_RESOLVE_RETRIES:
-     call merge_abort, report the conflict ids/files and retry count, then end_agent_run.
+  4. If any conflicts remain unresolved after all conflict_ids were attempted:
+     report the unresolved conflict ids/files and retry counts, then end_agent_run.
+     Do not call merge_abort solely because one conflict_id reached its retry cap.
 
   CLONE MERGE FLOW:
   1. Sync the clone first: call sync_clone with clone_id
@@ -101,15 +103,17 @@ steps:
          (this sets merge_resolve_attempts=[])
       2. Check merge_status for the resolution_id to see conflict details
       3. Call merge_resolve with use_ai=true for each conflict. Track attempts
-         by the exact unresolved conflict file/id set and stop after
-         MAX_RESOLVE_RETRIES=3 for the same set.
-      4. Call merge_apply with the resolution_id to finalize
+         by conflict_id. If one conflict_id reaches MAX_RESOLVE_RETRIES=3,
+         skip that conflict_id and continue with the next pending conflict.
+      4. Re-check merge_status. Call merge_apply with the resolution_id only
+         when all conflicts are resolved.
       5. Call merge_worktree again with target_branch to merge the resolved work locally
       6. Call end_agent_run
 
       CLONE CONFLICTS: call end_agent_run (no auto-resolution for clones)
-      RESOLUTION FAILURE OR RETRY CAP: call merge_abort, report the conflict
-      ids/files that hit the cap, then end_agent_run
+      RESOLUTION FAILURE OR RETRY CAP: do not call merge_abort solely because
+      one conflict_id hit the cap. Continue other conflict_ids, then report the
+      unresolved ids/files and retry counts before end_agent_run.
 
       The target branch is in your spawn prompt. Defaults:
       merge_worktree uses the worktree's base_branch, merge_clone uses "main".
@@ -143,9 +147,11 @@ steps:
         action: block
         when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
         reason: |
-          MAX_RESOLVE_RETRIES reached for merge_resolve. Call gobby-merge:merge_abort,
-          report the conflict ids/files and retry count, then call
-          gobby-agents:end_agent_run. Do not retry merge_resolve.
+          MAX_RESOLVE_RETRIES reached for this conflict_id. Do not retry this
+          conflict_id. Skip it, continue with the next pending conflict_id, then
+          call merge_status and report any unresolved ids/files with retry
+          counts before gobby-agents:end_agent_run. Do not call merge_abort
+          solely because one conflict_id hit the retry cap.
       - server: gobby-merge
         tool: merge_resolve
         action: set_variable

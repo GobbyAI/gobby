@@ -31,7 +31,10 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-tasks-ops:open_delivery_pr",
     "gobby-tasks-ops:submit_for_review",
     "gobby-tasks-ops:record_pr_verdict",
+    "gobby-tasks-ops:record_merge_result",
     "gobby-tasks-ops:close_linked_github_issue",
+    "gobby-tasks-ops:append_description_section",
+    "gobby-tasks:escalate_task",
     "gobby-worktrees:push_branch",
     "gobby-worktrees:merge_worktree",
     "gobby-worktrees:list_worktrees",
@@ -214,6 +217,8 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "Do NOT use Bash sleep loops" in instructions
     assert "provider Monitor" in instructions
     assert "gobby-agents:wait_for_agent" in execute["allowed_mcp_tools"]
+    assert "worker returns success" in instructions
+    assert "unresolved merge state" in instructions
 
 
 @pytest.mark.asyncio
@@ -280,3 +285,39 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: LocalDatab
     instance = manager.get_instance("agent-session", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "report"
+
+
+@pytest.mark.asyncio
+async def test_execute_failure_report_can_record_merge_result_and_terminate(
+    db: LocalDatabase,
+) -> None:
+    manager = _install_workflow(db, current_step="execute")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-tasks-ops:record_merge_result",
+            arguments={
+                "task_id": "#14094",
+                "failure_reason": (
+                    "worker run-66394ffe69ab exited success but merge_status still "
+                    "showed 17 pending conflicts"
+                ),
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["execution_complete"] is True
+    assert instance.variables["report_complete"] is True
