@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from gobby.llm.model_registry import ModelInfo
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class ModelCostStore:
     (context_length, max_completion_tokens), not pricing data.
     """
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def populate(self, models: list[ModelInfo] | None = None) -> int:

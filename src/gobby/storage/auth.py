@@ -9,7 +9,7 @@ import logging
 import os
 from datetime import UTC, datetime, timedelta
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 class AuthStore:
     """Manages auth sessions in SQLite."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def create_session(self, remember_me: bool = False) -> tuple[str, datetime]:

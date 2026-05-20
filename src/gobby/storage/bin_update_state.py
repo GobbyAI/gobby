@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 BinUpdateStatus = Literal[
     "updated",
@@ -104,7 +104,7 @@ class BinUpdateRecord:
 class BinUpdateStateStore:
     """Read and write rows in ``bin_update_state``."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def upsert(

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import newer_than_now_expr
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
@@ -129,7 +129,7 @@ class Memory:
 
 
 class LocalMemoryManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 

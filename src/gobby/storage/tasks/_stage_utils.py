@@ -6,7 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def _now() -> str:
@@ -24,7 +24,7 @@ def _close_task_in_txn(
     conn: sqlite3.Connection,
     task_id: str,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     reason: str | None = None,
     commit_sha: str | None = None,
     closed_at: str | None = None,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._constants import AgentRunStatus
 from ._helpers import _positive_rowcount
@@ -13,7 +13,7 @@ from ._models import AgentRun
 
 
 class _AgentRunQueryHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _fetch_run_with_live_stats(
         self,

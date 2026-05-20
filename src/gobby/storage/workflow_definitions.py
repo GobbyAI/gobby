@@ -10,7 +10,7 @@ from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ class WorkflowDefinitionRow:
 class LocalWorkflowDefinitionManager:
     """Manages workflow definitions in the local database."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create(

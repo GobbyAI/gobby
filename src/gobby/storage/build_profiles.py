@@ -15,7 +15,7 @@ import yaml
 
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.paths import get_install_dir
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.sql import sql_placeholders
 
 BuildProfileSource = Literal["installed", "project"]
@@ -74,7 +74,7 @@ class BuildProfileLoader:
         payload, _digest = self._read_payload()
         return self._parse_profiles(payload)
 
-    def sync(self, db: DatabaseProtocol) -> BuildProfileSyncResult:
+    def sync(self, db: HubDatabase) -> BuildProfileSyncResult:
         payload, digest = self._read_payload()
         profiles = self._parse_profiles(payload)
         names = {profile.name for profile in profiles}
@@ -225,7 +225,7 @@ class BuildProfileLoader:
 class BuildProfileManager:
     """CRUD and resolution for build profiles."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def list_profiles(
@@ -718,7 +718,7 @@ def _json_list(raw: str | None, field_name: str) -> list[str]:
     return [str(item) for item in payload]
 
 
-def sync_bundled_build_profiles(db: DatabaseProtocol) -> dict[str, int]:
+def sync_bundled_build_profiles(db: HubDatabase) -> dict[str, int]:
     result = BuildProfileLoader().sync(db)
     return {
         "synced": result.upserted,

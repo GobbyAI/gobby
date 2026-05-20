@@ -26,7 +26,7 @@ from gobby.search.keyword import (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ __all__ = [
 
 
 def search_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     query: str,
     *,
     top_k: int = 20,
@@ -97,7 +97,7 @@ class TaskSearchBackend:
     `task_stage_states`.
     """
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self._db = db
         self._backend = pick_search_backend(db, "tasks")
 

@@ -21,6 +21,7 @@ from gobby.storage.hub.placeholders import (
     remap_dollar_placeholders,
     scan_dollar_placeholder_indexes,
 )
+from gobby.storage.hub.protocol import Cursor, HubDatabase, LockTarget, Row
 
 # Register custom datetime adapters/converters (required since Python 3.12)
 # See: https://docs.python.org/3/library/sqlite3.html#default-adapters-and-converters-deprecated
@@ -68,8 +69,10 @@ _DB_CONNECTION_WARNING_THRESHOLD = 32
 
 
 @runtime_checkable
-class DatabaseProtocol(Protocol):
+class DatabaseProtocol(HubDatabase, Protocol):
     """Protocol defining the database interface for storage managers."""
+
+    dialect: Literal["sqlite", "postgres"]
 
     @property
     def dialect(self) -> Literal["sqlite", "postgres"]:
@@ -86,37 +89,52 @@ class DatabaseProtocol(Protocol):
         """Get database connection (for reads)."""
         ...
 
-    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+    def execute(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Cursor:
         """Execute SQL statement."""
         ...
 
-    def executemany(self, sql: str, params_list: list[tuple[Any, ...]]) -> sqlite3.Cursor:
+    def executemany(self, sql: str, params_list: Iterable[Sequence[Any]]) -> Cursor:
         """Execute SQL statement with multiple parameter sets."""
         ...
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
+    def fetchone(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Row | None:
         """Execute query and fetch one row."""
         ...
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> list[Row]:
         """Execute query and fetch all rows."""
         ...
 
     def safe_update(
         self,
         table: str,
-        values: dict[str, Any],
+        values: Mapping[str, Any],
         where: str,
-        where_params: tuple[Any, ...],
-    ) -> sqlite3.Cursor:
+        where_params: Sequence[Any] = (),
+    ) -> Cursor:
         """Safely execute an UPDATE statement with dynamic columns."""
         ...
 
-    def transaction(self) -> AbstractContextManager[sqlite3.Connection]:
+    def transaction(self) -> AbstractContextManager[Any]:
         """Context manager for database transactions."""
         ...
 
-    def transaction_immediate(self) -> AbstractContextManager[sqlite3.Connection]:
+    def transaction_immediate(
+        self,
+        lock: LockTarget | None = None,
+    ) -> AbstractContextManager[Any]:
         """Context manager for IMMEDIATE transactions (write-intent).
 
         Acquires write lock at BEGIN, preventing concurrent read-modify-write races.
@@ -218,6 +236,8 @@ class _ThreadConnectionLease:
 
 
 class LocalDatabase:
+    dialect: Literal["sqlite", "postgres"] = "sqlite"
+
     """
     SQLite database manager with connection pooling.
 
@@ -334,29 +354,48 @@ class LocalDatabase:
         """Get current thread's database connection."""
         return self._get_connection()
 
-    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+    def execute(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Cursor:
         """Execute SQL statement."""
-        return self.connection.execute(sql, params)
+        return cast(Cursor, self.connection.execute(sql, params))
 
-    def executemany(self, sql: str, params_list: list[tuple[Any, ...]]) -> sqlite3.Cursor:
+    def executemany(self, sql: str, params_list: Iterable[Sequence[Any]]) -> Cursor:
         """Execute SQL statement with multiple parameter sets."""
-        return self.connection.executemany(sql, params_list)
+        rows = [tuple(row) for row in params_list]
+        return cast(Cursor, self.connection.executemany(sql, rows))
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
+    def fetchone(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Row | None:
         """Execute query and fetch one row."""
-        cursor = self.execute(sql, params)
+        cursor = self.connection.execute(sql, params)
         try:
-            return cast(Mapping[str, Any] | None, cursor.fetchone())
+            return cast(Row | None, cursor.fetchone())
         finally:
             cursor.close()
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> list[Row]:
         """Execute query and fetch all rows."""
-        cursor = self.execute(sql, params)
+        cursor = self.connection.execute(sql, params)
         try:
-            return cast(list[Mapping[str, Any]], cursor.fetchall())
+            return cast(list[Row], cursor.fetchall())
         finally:
             cursor.close()
+
+    def apply_migrations(self) -> None:
+        """Apply pending SQLite migrations."""
+        from gobby.storage.migrations import run_migrations
+
+        run_migrations(self)
 
     def schema_version(self) -> int:
         """Return the current SQLite schema version recorded in schema_version."""
@@ -377,10 +416,10 @@ class LocalDatabase:
     def safe_update(
         self,
         table: str,
-        values: dict[str, Any],
+        values: Mapping[str, Any],
         where: str,
-        where_params: tuple[Any, ...],
-    ) -> sqlite3.Cursor:
+        where_params: Sequence[Any] = (),
+    ) -> Cursor:
         """
         Safely execute an UPDATE statement with dynamic columns.
 
@@ -413,7 +452,7 @@ class LocalDatabase:
             # No-op: return closed cursor without executing
             cursor = self.connection.cursor()
             cursor.close()
-            return cursor
+            return cast(Cursor, cursor)
 
         # Validate table name
         if not _SQL_IDENTIFIER_PATTERN.match(table):
@@ -431,12 +470,12 @@ class LocalDatabase:
 
         # Construct and execute query
         sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
-        full_params = tuple(update_params) + where_params
+        full_params = tuple(update_params) + tuple(where_params)
 
         return self.execute(sql, full_params)
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self) -> Iterator[Any]:
         """
         Context manager for database transactions.
 
@@ -481,7 +520,7 @@ class LocalDatabase:
             raise
 
     @contextmanager
-    def transaction_immediate(self) -> Iterator[sqlite3.Connection]:
+    def transaction_immediate(self, lock: LockTarget | None = None) -> Iterator[Any]:
         """Context manager for IMMEDIATE transactions (write-intent).
 
         Acquires write lock at BEGIN, preventing concurrent read-modify-write races.
@@ -490,6 +529,7 @@ class LocalDatabase:
         Tolerates inner code that implicitly commits the transaction (e.g.
         ``Connection.executescript``). See ``transaction`` for details.
         """
+        _ = lock
         conn = self.connection
         if conn.in_transaction:
             savepoint = self._next_savepoint_name()

@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, TaskSubtreeCascade
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -39,13 +39,13 @@ def _is_unattended(task: Any) -> bool:
     return bool(getattr(task, "unattended", False))
 
 
-def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
+def _session_exists(db: HubDatabase, session_id: str) -> bool:
     """Return whether the given session ID exists in storage."""
     return bool(db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (session_id,)))
 
 
 def _derive_claimed_by_session_id(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     assignee: MaybeUnset[str | None] = UNSET,
     claimed_by_session_id: MaybeUnset[str | None] = UNSET,
@@ -69,7 +69,7 @@ def _derive_claimed_by_session_id(
 
 
 def create_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     title: str,
     description: str | None = None,
@@ -119,7 +119,7 @@ def create_task(
         try:
             task_id = generate_task_id(project_id, salt=str(attempt))
 
-            with db.transaction_immediate() as conn:
+            with db.transaction_immediate(TaskSeqAllocation(project_id=project_id)) as conn:
                 # Get next seq_num for this project (auto-increment per project)
                 max_seq_row = conn.execute(
                     "SELECT MAX(seq_num) as max_seq FROM tasks WHERE project_id = ?",
@@ -220,7 +220,7 @@ def create_task(
     raise TaskIDCollisionError("Unreachable")
 
 
-def get_task(db: DatabaseProtocol, task_id: str, project_id: str | None = None) -> Task:
+def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Task:
     """Get a task by ID or reference.
 
     Accepts multiple formats:
@@ -270,7 +270,7 @@ def is_blocked_by_deps(task: object) -> bool:
 
 
 def list_automation_candidates(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str | None = None,
 ) -> list[Task]:
@@ -319,7 +319,7 @@ def list_automation_candidates(
 
 
 def sweep_stale_claims(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str | None = None,
 ) -> int:
@@ -365,7 +365,7 @@ def sweep_stale_claims(
         return cursor.rowcount
 
 
-def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
+def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
     """Find a task by ID prefix. Returns None if no match or multiple matches."""
     # First try exact match
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (prefix,))
@@ -385,7 +385,7 @@ def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     return None
 
 
-def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
+def find_tasks_by_prefix(db: HubDatabase, prefix: str) -> list[Task]:
     """Find all tasks matching an ID prefix."""
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
     tasks = [Task.from_row(row) for row in rows]
@@ -395,7 +395,7 @@ def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
 
 
 def cascade_build_state_to_subtree(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     epic_id: str,
     isolation: Isolation | str,
     unattended: bool | None,
@@ -420,7 +420,12 @@ def cascade_build_state_to_subtree(
     _ = tuple(skip_stages)
     now = datetime.now(UTC).isoformat()
 
-    with db.transaction_immediate() as conn:
+    root_row = db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (epic_id,))
+    if root_row is None:
+        raise ValueError(f"Task {epic_id} not found")
+    project_id = cast(str, root_row["project_id"])
+
+    with db.transaction_immediate(TaskSubtreeCascade(project_id=project_id)) as conn:
         rows = conn.execute(
             """
             WITH RECURSIVE subtree(id) AS (
@@ -496,7 +501,7 @@ def cascade_build_state_to_subtree(
 
 
 def update_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     title: MaybeUnset[str | None] = UNSET,
     description: MaybeUnset[str | None] = UNSET,
@@ -702,7 +707,7 @@ def update_task(
 
 
 def update_task_metadata(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     title: MaybeUnset[str | None] = UNSET,

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.sessions.model_family import normalize_model
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import is_postgres, newer_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
 class TokenEventStore:
     """Token event ledger and aggregation facade."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def record(self, event: TokenEvent) -> bool:

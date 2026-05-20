@@ -162,8 +162,8 @@ def test_register_raises_on_storage_failure(
             return getattr(self._conn, name)
 
     @contextmanager
-    def transaction_with_insert_failure():
-        with original_transaction() as conn:
+    def transaction_with_insert_failure(lock: object | None = None):
+        with original_transaction(lock) as conn:
             yield FailingConnection(conn)
 
     with patch.object(session_mgr.db, "transaction_immediate", transaction_with_insert_failure):

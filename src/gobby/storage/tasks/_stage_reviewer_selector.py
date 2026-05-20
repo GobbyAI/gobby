@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import VALID_CATEGORIES, VALID_TASK_TYPES
 
 
@@ -94,7 +94,7 @@ def validate_reviewer_agent_selector_json(selector_json: str | None, *, stage_na
 
 
 def resolve_stage_reviewer(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     registry_entry: object,
     *,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import cast
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_reviewer_selector import resolve_stage_reviewer
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
@@ -28,7 +28,7 @@ def _is_subsequence(existing: Sequence[str], desired: Sequence[str]) -> bool:
 class StageStateManifestOps:
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         events: TaskLifecycleEventManager,
         rows: StageStateRows,
         mutexes: StageStateMutexFactory,

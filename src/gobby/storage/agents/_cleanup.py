@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_than_now_expr
 
 from ._constants import get_logger
@@ -13,7 +13,7 @@ from ._models import AgentRun
 
 
 class _AgentRunCleanupHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def timeout(
         self,

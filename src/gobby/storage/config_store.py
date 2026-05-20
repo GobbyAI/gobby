@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
     from gobby.storage.secrets import SecretStore
@@ -57,7 +57,7 @@ class ConfigStore:
     Values are JSON-encoded for type preservation.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def get(self, key: str) -> Any | None:

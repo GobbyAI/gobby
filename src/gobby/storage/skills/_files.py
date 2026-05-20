@@ -10,7 +10,7 @@ from gobby.storage.skills._models import SkillFile
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 class SkillFilesMixin:
     """Mixin providing skill file I/O operations.
 
-    Requires ``self.db`` (DatabaseProtocol).
+    Requires ``self.db`` (HubDatabase).
     """
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def set_skill_files(self, skill_id: str, files: list[SkillFile]) -> int:
         """Bulk upsert skill files in one transaction.

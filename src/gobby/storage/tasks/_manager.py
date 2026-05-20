@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
 from gobby.storage.tasks._aggregates import (
     count_blocked_tasks as _count_blocked_tasks,
 )
@@ -142,7 +142,7 @@ __all__ = [
 
 
 class LocalTaskManager(TaskDecompositionMixin):
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
         self._searcher: TaskSearchBackend | None = None
@@ -529,7 +529,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         cwd: str | Path | None = None,
     ) -> Task:
         """Link a commit and close the task in one transaction."""
-        with self.db.transaction_immediate():
+        with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
             _link_commit(self.db, task_id, commit_sha, cwd)
             _close_task(
                 self.db,
