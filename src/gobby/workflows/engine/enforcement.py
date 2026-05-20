@@ -378,6 +378,8 @@ class EnforcementMixin:
                         return HookResponse(decision="block", reason=reason)
 
                 if mcp_key:
+                    if event.metadata.get("_mcp_proxy_duplicate_before_tool") is True:
+                        return None
                     handler_tool_input = self._step_handler_tool_input(tool_input)
                     before_response = self._process_step_before_mcp_tool(
                         event,
