@@ -468,12 +468,16 @@ def test_merge_orchestrator_filters_running_workers_by_agent_identity() -> None:
 
 
 def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> None:
-    instructions = _agent()["instructions"]
-    skill = SKILL_PATH.read_text(encoding="utf-8")
+    instructions = " ".join(_agent()["instructions"].split())
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert "merge_resolve(conflict_id=..., use_ai=true)" in instructions
+    assert "exactly one pending conflict_id at a time" in instructions
+    assert "multiple merge_resolve calls in the same assistant turn" in instructions
     assert "Do not" in instructions
     assert "synthesize manual" in instructions
     assert "merge_resolve(conflict_id=..., use_ai=true)" in skill
+    assert "exactly one pending conflict_id at a time" in skill
+    assert "multiple `merge_resolve` calls in the same assistant turn" in skill
     assert "Do not" in skill
     assert "synthesize manual `resolved_content`" in skill

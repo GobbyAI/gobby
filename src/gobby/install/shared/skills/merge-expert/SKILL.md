@@ -157,8 +157,11 @@ Iterate the plan in order. For each step:
    The worker handles the actual merge + AI resolution. When dispatching a
    worker to continue an active resolution, keep the prompt inside the
    merge-worker MCP surface: tell it to call `merge_status`, then
-   `merge_resolve(conflict_id=..., use_ai=true)` for pending conflicts. If
-   retries/timeouts are exhausted, tell it to call
+   resolve exactly one pending conflict_id at a time with
+   `merge_resolve(conflict_id=..., use_ai=true)`, call `merge_status` again,
+   and only then continue to the next pending conflict. Tell it not to issue
+   multiple `merge_resolve` calls in the same assistant turn or parallel tool
+   batch. If retries/timeouts are exhausted, tell it to call
    `gobby-tasks-ops:record_merge_result` with `failure_reason` including the
    unresolved ids/files, then terminate through its normal `end_agent_run`
    step. Never ask the worker to use Read/Bash or synthesize manual `resolved_content`

@@ -38,10 +38,15 @@ instructions: |
         updates the worktree branch from target before applying resolutions.
         (this resets merge_resolve_attempts=[] for deterministic retry enforcement)
      b. Check merge_status for conflict details
-     c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
-        by conflict_id. If one conflict reaches MAX_RESOLVE_RETRIES, skip that
-        conflict_id and continue with the remaining conflicts.
-     d. Re-check merge_status. Call merge_apply only if all conflicts are resolved.
+     c. Resolve conflicts sequentially. Call merge_resolve with use_ai=true
+        for exactly one conflict_id at a time, then call merge_status before
+        attempting the next pending conflict. Never issue multiple
+        merge_resolve calls in the same assistant turn or parallel tool batch.
+        Track attempts by conflict_id. If one conflict reaches
+        MAX_RESOLVE_RETRIES, skip that conflict_id and continue with the
+        remaining conflicts.
+     d. Re-check merge_status after each attempt and before merge_apply. Call
+        merge_apply only if all conflicts are resolved.
      e. Call merge_worktree again with target_branch to merge the resolved work locally
      f. Call gobby-tasks-ops:record_merge_result, then
         gobby-tasks-ops:close_linked_github_issue. The workflow will
@@ -87,6 +92,9 @@ instructions: |
     conflict_id within MAX_RESOLVE_RETRIES. Do not switch to Bash/Read or
     blocked inspection tools. If retries are exhausted, continue the remaining
     conflict_ids, then record unresolved ids/files with record_merge_result.
+  - Do NOT parallelize conflict resolution. For a single active resolution,
+    make one `merge_resolve(use_ai=true)` call, wait for it to complete, call
+    `merge_status`, and only then attempt the next pending conflict_id.
   - Do NOT push. Remote publication is allowed only through explicit PR delivery.
   - Do NOT terminate or exit the agent process without first transitioning to
     the terminate step and then calling end_agent_run.
@@ -128,14 +136,17 @@ steps:
          worktree metadata before recording failure.
          (this sets merge_resolve_attempts=[])
       2. Check merge_status for the resolution_id to see conflict details
-      3. Call merge_resolve with use_ai=true for each conflict. Track attempts
-         by conflict_id. If one conflict_id reaches MAX_RESOLVE_RETRIES=3,
-         skip that conflict_id and continue with the next pending conflict.
-         Do not call Read, Bash, or file-inspection tools to build manual
-         resolved_content; merge_resolve(use_ai=true) is the conflict content
-         access path in this step.
-      4. Re-check merge_status. Call merge_apply with the resolution_id only
-         when all conflicts are resolved.
+      3. Resolve conflicts sequentially: call merge_resolve with use_ai=true
+         for exactly one conflict_id, wait for it to complete, then call
+         merge_status before selecting the next pending conflict. Never issue
+         multiple merge_resolve calls in one assistant turn or parallel tool
+         batch. Track attempts by conflict_id. If one conflict_id reaches
+         MAX_RESOLVE_RETRIES=3, skip that conflict_id and continue with the
+         next pending conflict. Do not call Read, Bash, or file-inspection
+         tools to build manual resolved_content; merge_resolve(use_ai=true) is
+         the conflict content access path in this step.
+      4. Re-check merge_status after each attempt. Call merge_apply with the
+         resolution_id only when all conflicts are resolved.
       5. Call merge_worktree again with target_branch to merge the resolved work locally
       6. Call record_merge_result, then close_linked_github_issue. The workflow
          will transition to terminate; call end_agent_run only after that

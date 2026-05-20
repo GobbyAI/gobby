@@ -8,6 +8,7 @@ Tests for MCP tools in gobby-merge server:
 - merge_abort: Cancel merge and restore state
 """
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -681,6 +682,93 @@ class TestMergeResolveTool:
         assert result["success"] is True
         assert result["conflict"]["status"] == "resolved"
         mock_resolver.resolve_file.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_merge_resolve_rejects_parallel_ai_resolves_for_same_resolution(
+        self, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve fails fast instead of parallelizing one active resolution."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        conflicts = {
+            "mc-conflict1": MergeConflict(
+                id="mc-conflict1",
+                resolution_id="mr-test123",
+                file_path="src/one.py",
+                status="pending",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content=None,
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            ),
+            "mc-conflict2": MergeConflict(
+                id="mc-conflict2",
+                resolution_id="mr-test123",
+                file_path="src/two.py",
+                status="pending",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content=None,
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            ),
+        }
+
+        mock_storage.get_conflict.side_effect = lambda conflict_id: conflicts.get(conflict_id)
+        mock_storage.get_resolution.return_value = None
+
+        async def resolve_file(**kwargs):
+            first_started.set()
+            await release_first.wait()
+            return ResolutionResult(
+                success=True,
+                tier=ResolutionTier.CONFLICT_ONLY_AI,
+                conflicts=[],
+                resolved_files=[kwargs["path"]],
+                unresolved_conflicts=[],
+                needs_human_review=False,
+                resolved_content_by_file={kwargs["path"]: "merged version"},
+            )
+
+        mock_resolver.resolve_file.side_effect = resolve_file
+        mock_storage.update_conflict.side_effect = lambda conflict_id, **kwargs: MergeConflict(
+            id=conflict_id,
+            resolution_id="mr-test123",
+            file_path=conflicts[conflict_id].file_path,
+            status=kwargs["status"],
+            ours_content="our version",
+            theirs_content="their version",
+            resolved_content=kwargs["resolved_content"],
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+        )
+
+        first = asyncio.create_task(
+            registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+        )
+        await first_started.wait()
+
+        second = await registry.call("merge_resolve", {"conflict_id": "mc-conflict2"})
+        release_first.set()
+        first_result = await first
+
+        assert first_result["success"] is True
+        assert second["success"] is False
+        assert second["retry_later"] is True
+        assert second["resolution_id"] == "mr-test123"
+        assert "do not parallelize" in second["error"]
+        mock_resolver.resolve_file.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_merge_resolve_reads_current_conflict_hunks_from_worktree(

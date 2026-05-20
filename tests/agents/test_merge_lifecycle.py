@@ -200,16 +200,29 @@ def test_merge_worker_retry_cap_guidance_continues_remaining_conflicts() -> None
     assert "solely because one conflict_id" in retry_reason
 
 
+def test_merge_worker_resolves_conflicts_sequentially() -> None:
+    agent = _agent("merge-worker")
+    workflow_text = " ".join(str(agent).split())
+    merge_status = " ".join(_step(agent, "merge")["status_message"].split())
+
+    assert "Resolve conflicts sequentially" in workflow_text
+    assert "exactly one conflict_id at a time" in workflow_text
+    assert "Never issue multiple" in workflow_text
+    assert "merge_resolve calls" in workflow_text
+    assert "Do NOT parallelize conflict resolution" in workflow_text
+    assert "call merge_status before selecting the next pending conflict" in merge_status
+
+
 def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     agent = _agent("merge-worker")
     instructions = agent["instructions"]
-    merge_status = _step(agent, "merge")["status_message"]
+    merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
     assert "Do NOT use Bash, Read, or other file-inspection tools" in instructions
     assert "merge_resolve(use_ai=true)" in instructions
     assert "Do not switch to Bash/Read" in instructions
     assert "Do not call Read, Bash, or file-inspection tools" in merge_status
-    assert "manual\n   resolved_content" in merge_status
+    assert "manual resolved_content" in merge_status
 
 
 def test_merge_worker_allows_end_agent_run_only_in_terminate_step() -> None:

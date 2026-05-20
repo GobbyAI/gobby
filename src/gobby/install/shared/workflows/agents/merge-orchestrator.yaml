@@ -79,10 +79,13 @@ instructions: |
     Use final=true only on the last campaign-level verification. Append a
     lifecycle event per step.
   - Worker prompts must stay inside the merge-worker MCP surface. For active
-    conflict resolution, instruct the worker to call merge_status, then
-    merge_resolve(conflict_id=..., use_ai=true) for pending conflicts. Do not
-    instruct merge-workers to use Read/Bash or to synthesize manual
-    resolved_content from file inspection. If retries are exhausted or
+    conflict resolution, instruct the worker to call merge_status, then resolve
+    exactly one pending conflict_id at a time with
+    merge_resolve(conflict_id=..., use_ai=true), call merge_status again, and
+    only then continue to the next pending conflict. Tell workers not to issue
+    multiple merge_resolve calls in the same assistant turn or parallel tool
+    batch. Do not instruct merge-workers to use Read/Bash or to synthesize
+    manual resolved_content from file inspection. If retries are exhausted or
     conflicts remain unresolved, instruct the worker to call
     gobby-tasks-ops:record_merge_result with failure_reason; the merge-worker
     workflow will transition to terminate before end_agent_run.
