@@ -563,6 +563,19 @@ class MergeResolutionManager:
             )
         return MergeResolution.from_row(row) if row else None
 
+    def get_latest_resolution(self, worktree_id: str) -> MergeResolution | None:
+        """Get the most recently updated merge resolution for a worktree."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM merge_resolutions
+            WHERE worktree_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            (worktree_id,),
+        )
+        return MergeResolution.from_row(row) if row else None
+
     def get_conflict_by_path(
         self, file_path: str, resolution_id: str | None = None
     ) -> MergeConflict | None:
