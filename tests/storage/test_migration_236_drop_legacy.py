@@ -87,13 +87,20 @@ def test_legacy_column_audit_grep_returns_zero_runtime_matches() -> None:
         "src/gobby/hooks/event_handlers/_plan.py",
     )
     scoped = "\n".join(source_text(path) for path in runtime_files)
+    # The bare `status`/`lifecycle` patterns require whitespace (or start of
+    # string) immediately before the keyword so they catch unqualified SQL
+    # references to the dropped `tasks.status`/`tasks.lifecycle` columns
+    # without flagging legitimate joins on other tables — for example
+    # `s.status IN ('active', 'paused')` against the `sessions` table in the
+    # stale-claim sweep, or `` `status IN (...)` `` mentioned inside a
+    # docstring.
     for legacy_pattern in (
         r"\btasks\.status\b",
         r"\btasks\.lifecycle\b",
         r"\bTask\.status\b",
-        r"\bstatus\s*=\s*\?",
-        r"\bstatus\s+IN\s*\(",
-        r"\blifecycle\s*=\s*\?",
+        r"(?<!\S)status\s*=\s*\?",
+        r"(?<!\S)status\s+IN\s*\(",
+        r"(?<!\S)lifecycle\s*=\s*\?",
         r"\blifecycle_stage\b",
     ):
         assert not re.search(legacy_pattern, scoped)
