@@ -163,6 +163,48 @@ async def test_merge_worktree_local_only_target_uses_local_branch():
 
 
 @pytest.mark.asyncio
+async def test_merge_worktree_uses_existing_target_worktree_when_branch_is_checked_out():
+    """Merge in the target worktree when git already has the target branch checked out."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    target_worktree = MagicMock()
+    target_worktree.branch = "main"
+    target_worktree.path = "/tmp/target-wt"
+    ctx.git_manager.list_worktrees.return_value = [target_worktree]
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        merge_result=_make_git_result(0, stdout="Already up to date.\n")
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert result["merge_sha"] == "abc123def456"
+    assert result["target_worktree_path"] == "/tmp/target-wt"
+
+    merge_calls = [
+        call
+        for call in ctx.git_manager._run_git.call_args_list
+        if call[0][0] == ["merge", "feat", "--no-edit"]
+    ]
+    assert len(merge_calls) == 1
+    assert merge_calls[0].kwargs.get("cwd") == "/tmp/target-wt"
+
+    checkout_calls = [
+        call for call in ctx.git_manager._run_git.call_args_list if call[0][0][:1] == ["checkout"]
+    ]
+    assert checkout_calls == []
+
+
+@pytest.mark.asyncio
 async def test_merge_worktree_prefer_remote_is_rejected():
     """Remote target selection is rejected; worktree merges are local-only."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
