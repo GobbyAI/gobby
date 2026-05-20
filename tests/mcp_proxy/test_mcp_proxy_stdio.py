@@ -639,6 +639,30 @@ class TestDaemonProxy:
                 assert mock_request.call_count >= 1
                 assert mock_request.call_args is not None
 
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_merge_resolve(self):
+        """merge_resolve is LLM-backed and must not use the default 30s timeout."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                await proxy.call_tool(
+                    "gobby-merge",
+                    "merge_resolve",
+                    {"conflict_id": "mc-one", "use_ai": True},
+                )
+
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-merge/tools/merge_resolve",
+                    json={"conflict_id": "mc-one", "use_ai": True},
+                    timeout=300.0,
+                )
+
 
 class TestDaemonProxyMethods:
     """Tests for DaemonProxy specific methods."""

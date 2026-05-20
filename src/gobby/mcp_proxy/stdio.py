@@ -53,6 +53,7 @@ LLM_TASK_TOOLS = (
     "close_task",
     "expand_task",
     "apply_tdd",
+    "merge_resolve",
     "suggest_next_task",
 )
 
