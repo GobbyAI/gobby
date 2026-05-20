@@ -187,6 +187,15 @@ def _prepare_spawn_artifacts(
     if isolation not in {"worktree", "clone"}:
         return artifacts
     if not artifacts.target_branch:
+        artifacts = _repair_missing_epic_target_branch(
+            db=db,
+            task=task,
+            task_manager=task_manager,
+            project_id=project_id,
+            backend=cast(Literal["worktree", "clone"], isolation),
+            artifacts=artifacts,
+        )
+    if not artifacts.target_branch:
         raise DispatchSpawnFailed("target_branch_missing")
 
     ensure_epic_integration_workspaces(
@@ -198,6 +207,137 @@ def _prepare_spawn_artifacts(
         services=services,
     )
     return TaskArtifactManager(db).get_artifacts(action.task_id)
+
+
+def _repair_missing_epic_target_branch(
+    *,
+    db: DatabaseProtocol,
+    task: Task,
+    task_manager: LocalTaskManager,
+    project_id: str,
+    backend: Literal["worktree", "clone"],
+    artifacts: TaskArtifacts,
+) -> TaskArtifacts:
+    if backend == "worktree":
+        repaired = _promote_existing_worktree_artifact(db, task, artifacts)
+    else:
+        repaired = _promote_existing_clone_artifact(db, task, artifacts)
+    if repaired is not None:
+        return repaired
+
+    target_branch = _nearest_parent_integration_or_target(task_manager, task)
+    if target_branch is None:
+        target_branch = _current_project_branch(db, project_id)
+    if target_branch is None:
+        return artifacts
+
+    TaskArtifactManager(db).set_artifacts_atomic(task.id, target_branch=target_branch)
+    return TaskArtifactManager(db).get_artifacts(task.id)
+
+
+def _promote_existing_worktree_artifact(
+    db: DatabaseProtocol,
+    task: Task,
+    artifacts: TaskArtifacts,
+) -> TaskArtifacts | None:
+    if not artifacts.worktree_id:
+        return None
+
+    from pathlib import Path
+
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    worktrees = LocalWorktreeManager(db)
+    worktree = worktrees.get(artifacts.worktree_id)
+    if worktree is None or worktree.task_id != task.id:
+        return None
+    if not worktree.base_branch or not Path(worktree.worktree_path).is_dir():
+        return None
+
+    worktrees.update(worktree.id, workspace_role="integration")
+    TaskArtifactManager(db).set_artifacts_atomic(
+        task.id,
+        target_branch=worktree.base_branch,
+        integration_branch=worktree.branch_name,
+        integration_workspace_id=worktree.id,
+        integration_clone_id=None,
+        worktree_path=None,
+        worktree_id=None,
+        base_commit_sha=None,
+    )
+    return TaskArtifactManager(db).get_artifacts(task.id)
+
+
+def _promote_existing_clone_artifact(
+    db: DatabaseProtocol,
+    task: Task,
+    artifacts: TaskArtifacts,
+) -> TaskArtifacts | None:
+    if not artifacts.clone_id:
+        return None
+
+    from pathlib import Path
+
+    from gobby.storage.clones import LocalCloneManager
+
+    clones = LocalCloneManager(db)
+    clone = clones.get(artifacts.clone_id)
+    if clone is None or clone.task_id != task.id:
+        return None
+    if not clone.base_branch or not Path(clone.clone_path).is_dir():
+        return None
+
+    clones.update(clone.id, workspace_role="integration")
+    TaskArtifactManager(db).set_artifacts_atomic(
+        task.id,
+        target_branch=clone.base_branch,
+        integration_branch=clone.branch_name,
+        integration_workspace_id=None,
+        integration_clone_id=clone.id,
+        clone_path=None,
+        clone_id=None,
+        base_commit_sha=None,
+    )
+    return TaskArtifactManager(db).get_artifacts(task.id)
+
+
+def _nearest_parent_integration_or_target(
+    task_manager: LocalTaskManager,
+    task: Task,
+) -> str | None:
+    current_id = task.parent_task_id
+    while current_id:
+        try:
+            parent = task_manager.get_task(current_id)
+        except ValueError:
+            return None
+        if parent is None:
+            return None
+        parent_artifacts = TaskArtifactManager(task_manager.db).get_artifacts(parent.id)
+        if parent_artifacts.integration_branch:
+            return parent_artifacts.integration_branch
+        if parent_artifacts.target_branch:
+            return parent_artifacts.target_branch
+        current_id = parent.parent_task_id
+    return None
+
+
+def _current_project_branch(db: DatabaseProtocol, project_id: str) -> str | None:
+    from pathlib import Path
+
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.worktrees.git import WorktreeGitManager
+
+    project = LocalProjectManager(db).get(project_id)
+    if project is None or project.repo_path is None:
+        return None
+    repo_path = Path(project.repo_path)
+    if not (repo_path / ".git").exists():
+        return None
+    status = WorktreeGitManager(repo_path).get_worktree_status(repo_path)
+    if status is None or not status.branch or status.branch == "HEAD":
+        return None
+    return status.branch
 
 
 def _spawn_workspace_ids(
