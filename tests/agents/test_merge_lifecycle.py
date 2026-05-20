@@ -32,6 +32,12 @@ def _allowed_mcp_tools(agent: dict) -> set[str]:
     return tools
 
 
+def _step(agent: dict, name: str) -> dict:
+    matches = [step for step in agent.get("steps", []) if step.get("name") == name]
+    assert len(matches) == 1
+    return matches[0]
+
+
 def test_merge_orchestrator_uses_stage_native_merge_result_tool() -> None:
     tools = _allowed_mcp_tools(_agent("merge-orchestrator"))
 
@@ -53,3 +59,17 @@ def test_merge_orchestrator_instructions_do_not_reference_removed_lifecycle_tool
 
     for tool in LEGACY_MERGE_TOOLS:
         assert tool.split(":", 1)[1] not in text
+
+
+def test_merge_worker_retry_cap_tracks_conflict_ids_not_total_calls() -> None:
+    merge = _step(_agent("merge-worker"), "merge")
+    before_handlers = merge["on_mcp_before"]
+    block_handler = next(handler for handler in before_handlers if handler["action"] == "block")
+    set_handler = next(
+        handler for handler in before_handlers if handler["action"] == "set_variable"
+    )
+
+    assert "merge_retry_count" not in str(merge)
+    assert set_handler["variable"] == "merge_resolve_attempts"
+    assert ".count(tool_input.get('conflict_id'" in block_handler["when"]
+    assert "[tool_input.get('conflict_id'" in set_handler["value"]

@@ -1246,13 +1246,13 @@ class TestStepBeforeMcpHandlers:
     """Test step handlers that run before allowed MCP tools execute."""
 
     @pytest.mark.asyncio
-    async def test_on_mcp_before_enforces_retry_counter(
+    async def test_on_mcp_before_enforces_retry_counter_per_conflict(
         self, db, manager, engine, instance_mgr
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
             "version": "1.0",
-            "variables": {"merge_retry_count": 0},
+            "variables": {"merge_resolve_attempts": []},
             "steps": [
                 {
                     "name": "merge",
@@ -1263,15 +1263,21 @@ class TestStepBeforeMcpHandlers:
                             "server": "gobby-merge",
                             "tool": "merge_resolve",
                             "action": "block",
-                            "when": "vars.get('merge_retry_count', 0) >= 3",
+                            "when": (
+                                "vars.get('merge_resolve_attempts', [])"
+                                ".count(tool_input.get('conflict_id', '')) >= 3"
+                            ),
                             "reason": "retry cap reached",
                         },
                         {
                             "server": "gobby-merge",
                             "tool": "merge_resolve",
                             "action": "set_variable",
-                            "variable": "merge_retry_count",
-                            "value": "vars.get('merge_retry_count', 0) + 1",
+                            "variable": "merge_resolve_attempts",
+                            "value": (
+                                "vars.get('merge_resolve_attempts', []) "
+                                "+ [tool_input.get('conflict_id', '')]"
+                            ),
                         },
                     ],
                 }
@@ -1290,6 +1296,7 @@ class TestStepBeforeMcpHandlers:
                 "tool_input": {
                     "server_name": "gobby-merge",
                     "tool_name": "merge_resolve",
+                    "arguments": {"conflict_id": "mc-one"},
                 },
             }
         )
@@ -1300,7 +1307,23 @@ class TestStepBeforeMcpHandlers:
             assert response.decision == "allow"
             instance = instance_mgr.get_instance("test-session", "merge-retry-test")
             assert instance is not None
-            assert instance.variables["merge_retry_count"] == expected_count
+            assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
+
+        other_conflict_event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-merge",
+                    "tool_name": "merge_resolve",
+                    "arguments": {"conflict_id": "mc-two"},
+                },
+            }
+        )
+        response = await engine.evaluate(
+            other_conflict_event, session_id="test-session", variables=variables
+        )
+
+        assert response.decision == "allow"
 
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
 
@@ -1308,4 +1331,5 @@ class TestStepBeforeMcpHandlers:
         assert "retry cap reached" in response.reason
         instance = instance_mgr.get_instance("test-session", "merge-retry-test")
         assert instance is not None
-        assert instance.variables["merge_retry_count"] == 3
+        assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
+        assert instance.variables["merge_resolve_attempts"].count("mc-two") == 1

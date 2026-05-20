@@ -34,7 +34,7 @@ instructions: |
         local branch being merged into. Never pass the target branch as
         source_branch to "pull target into the worktree"; merge_start already
         updates the worktree branch from target before applying resolutions.
-        (this resets merge_retry_count=0 for deterministic retry enforcement)
+        (this resets merge_resolve_attempts=[] for deterministic retry enforcement)
      b. Check merge_status for conflict details
      c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
         by the exact unresolved conflict file/id set
@@ -98,7 +98,7 @@ steps:
          resolution or reports that source_branch does not match the worktree
          branch, retry once with the corrected source/target pair from the
          worktree metadata before recording failure.
-         (this sets merge_retry_count=0)
+         (this sets merge_resolve_attempts=[])
       2. Check merge_status for the resolution_id to see conflict details
       3. Call merge_resolve with use_ai=true for each conflict. Track attempts
          by the exact unresolved conflict file/id set and stop after
@@ -135,13 +135,13 @@ steps:
       - server: gobby-merge
         tool: merge_start
         action: set_variable
-        variable: merge_retry_count
-        value: 0
+        variable: merge_resolve_attempts
+        value: []
     on_mcp_before:
       - server: gobby-merge
         tool: merge_resolve
         action: block
-        when: "vars.get('merge_retry_count', 0) >= 3"
+        when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
         reason: |
           MAX_RESOLVE_RETRIES reached for merge_resolve. Call gobby-merge:merge_abort,
           report the conflict ids/files and retry count, then call
@@ -149,8 +149,8 @@ steps:
       - server: gobby-merge
         tool: merge_resolve
         action: set_variable
-        variable: merge_retry_count
-        value: "vars.get('merge_retry_count', 0) + 1"
+        variable: merge_resolve_attempts
+        value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
     # No on_mcp_success — merge_worktree returns success:false on conflicts
     # but on_mcp_success fires on any non-transport-error response, which
     # would incorrectly set merge_complete=true and skip conflict resolution.
