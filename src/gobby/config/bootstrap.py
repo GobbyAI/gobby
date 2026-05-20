@@ -1,7 +1,8 @@
 """Bootstrap configuration for pre-database settings.
 
 These settings are needed before the database is available:
-database_path, daemon_port, bind_host, websocket_port, ui_port, neo4j_password.
+database_path, daemon_port, bind_host, websocket_port, ui_port, neo4j_password,
+hub_backend, database_url, postgres_install_mode.
 
 All other configuration is managed via the DB (config_store) + Pydantic defaults.
 """
@@ -54,6 +55,9 @@ class BootstrapConfig:
             "bind_host": self.bind_host,
             "websocket": {"port": self.websocket_port},
             "ui": {"port": self.ui_port},
+            "hub_backend": self.hub_backend,
+            "database_url": self.database_url,
+            "postgres_install_mode": self.postgres_install_mode,
         }
         return data
 
@@ -87,6 +91,8 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
         return BootstrapConfig()
 
     try:
+        if bootstrap_path.name == "bootstrap.yaml":
+            _validate_bootstrap_file_permissions(bootstrap_path)
         with open(bootstrap_path) as f:
             data = yaml.safe_load(f)
 
@@ -94,7 +100,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
             return BootstrapConfig()
 
         hub_backend = _parse_hub_backend(data.get("hub_backend", "sqlite"))
-        database_url = _parse_optional_str(data.get("database_url"))
+        database_url = _parse_optional_str(data.get("database_url"), "database_url")
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
         if hub_backend == "postgres" and not database_url:
             raise BootstrapConfigError("hub_backend=postgres requires database_url")
@@ -123,7 +129,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
 
 
 def _parse_hub_backend(value: object) -> HubBackend:
-    if value in {"sqlite", "postgres"}:
+    if isinstance(value, str) and value in {"sqlite", "postgres"}:
         return cast(HubBackend, value)
     raise BootstrapConfigError("hub_backend must be one of: sqlite, postgres")
 
@@ -131,13 +137,26 @@ def _parse_hub_backend(value: object) -> HubBackend:
 def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
     if value is None:
         return None
-    if value in {"docker", "native", "external"}:
+    if isinstance(value, str) and value in {"docker", "native", "external"}:
         return cast(PostgresInstallMode, value)
     raise BootstrapConfigError("postgres_install_mode must be one of: docker, native, external")
 
 
-def _parse_optional_str(value: object) -> str | None:
+def _parse_optional_str(value: object, field_name: str) -> str | None:
     if value is None:
         return None
+    if not isinstance(value, str):
+        raise BootstrapConfigError(f"{field_name} must be a string")
     text = str(value)
-    return text or None
+    return text if text.strip() else None
+
+
+def _validate_bootstrap_file_permissions(path: Path) -> None:
+    if os.name == "nt":
+        return
+    mode = path.stat().st_mode & 0o777
+    if mode != 0o600:
+        raise BootstrapConfigError(
+            f"bootstrap.yaml permissions must be 0600 (owner read/write only): "
+            f"{path} has {mode:#04o}"
+        )

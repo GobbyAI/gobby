@@ -61,6 +61,7 @@ class TestEnsureDaemonConfig:
         bootstrap_path = temp_dir / ".gobby" / "bootstrap.yaml"
         bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
         bootstrap_path.write_text("daemon_port: 60887\n")
+        bootstrap_path.chmod(0o600)
 
         with patch.object(Path, "expanduser", return_value=bootstrap_path):
             result = _ensure_daemon_config()
@@ -75,6 +76,7 @@ class TestEnsureDaemonConfig:
         shared_bootstrap = temp_dir / "install" / "shared" / "config" / "bootstrap.yaml"
         shared_bootstrap.parent.mkdir(parents=True, exist_ok=True)
         shared_bootstrap.write_text("daemon_port: 60887\nbind_host: localhost\n")
+        shared_bootstrap.chmod(0o600)
 
         with (
             patch.object(Path, "expanduser", return_value=bootstrap_path),

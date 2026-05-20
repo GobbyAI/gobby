@@ -469,6 +469,7 @@ def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
             }
         )
     )
+    bootstrap_yaml.chmod(0o600)
 
     result = load_full_config_from_db(config_file=str(bootstrap_yaml))
     assert result.ui.enabled is True

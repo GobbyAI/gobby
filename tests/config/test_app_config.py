@@ -53,6 +53,11 @@ from gobby.telemetry.config import TelemetrySettings
 pytestmark = pytest.mark.unit
 
 
+def write_secure_bootstrap(path: Path, content: str) -> None:
+    path.write_text(content)
+    path.chmod(0o600)
+
+
 class TestExpandEnvVars:
     """Tests for expand_env_vars function."""
 
@@ -565,7 +570,7 @@ class TestLoadConfig:
         """Test loading config with config_file=None reads bootstrap.yaml."""
         default_path = temp_dir / ".gobby" / "bootstrap.yaml"
         default_path.parent.mkdir(parents=True, exist_ok=True)
-        default_path.write_text(yaml.dump({"daemon_port": 7777}))
+        write_secure_bootstrap(default_path, yaml.dump({"daemon_port": 7777}))
 
         # Patch expanduser to redirect ~/.gobby to temp_dir/.gobby
         original_expanduser = Path.expanduser
@@ -585,7 +590,7 @@ class TestLoadConfig:
         """Test load_config raises ValueError on invalid bootstrap configuration."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
         # Write invalid port value (out of range)
-        bootstrap_file.write_text(yaml.dump({"daemon_port": 80}))
+        write_secure_bootstrap(bootstrap_file, yaml.dump({"daemon_port": 80}))
 
         with pytest.raises(ValueError, match="Configuration validation failed"):
             load_config(config_file=str(bootstrap_file))
@@ -594,7 +599,7 @@ class TestLoadConfig:
         """Test load_config falls back to defaults when bootstrap has invalid type."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
         # Write string instead of int for port — bootstrap silently falls back
-        bootstrap_file.write_text("daemon_port: not_a_number")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: not_a_number")
 
         config = load_config(config_file=str(bootstrap_file))
         # Bootstrap swallows the int() conversion error and returns defaults
@@ -691,6 +696,36 @@ class TestLoadConfig:
 
         assert config.cron.check_interval_seconds == 60
 
+    def test_load_config_preserves_bootstrap_backend_selection_over_db(
+        self, temp_dir: Path
+    ) -> None:
+        """DB config cannot override bootstrap-level hub backend selection."""
+
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(
+            bootstrap_file,
+            "hub_backend: postgres\n"
+            "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+            "postgres_install_mode: docker\n",
+        )
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "hub_backend": "sqlite",
+                    "database_url": None,
+                    "postgres_install_mode": "external",
+                }
+
+        config = load_config(
+            config_file=str(bootstrap_file),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.hub_backend == "postgres"
+        assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
+        assert config.postgres_install_mode == "docker"
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""
@@ -711,12 +746,13 @@ class TestBootstrapConfig:
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text(
+        write_secure_bootstrap(
+            bootstrap_file,
             "database_path: /custom/db.sqlite\n"
             "daemon_port: 9999\n"
             "bind_host: 0.0.0.0\n"
             "websocket_port: 9998\n"
-            "ui_port: 9997\n"
+            "ui_port: 9997\n",
         )
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 9999
@@ -734,13 +770,16 @@ class TestBootstrapConfig:
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
+        assert d["hub_backend"] == "sqlite"
+        assert d["database_url"] is None
+        assert d["postgres_install_mode"] is None
 
     def test_partial_yaml(self, temp_dir: Path) -> None:
         """Test bootstrap fills defaults for missing fields."""
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text("daemon_port: 5555\n")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: 5555\n")
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 5555
         assert bootstrap.database_path == "~/.gobby/gobby-hub.db"  # default
@@ -750,7 +789,7 @@ class TestBootstrapConfig:
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text("daemon_port: 4444\n")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: 4444\n")
         # Pass legacy config.yaml path — should find bootstrap.yaml instead
         bootstrap = load_bootstrap(str(temp_dir / "config.yaml"))
         assert bootstrap.daemon_port == 4444

@@ -19,6 +19,9 @@ def set_mock_default(obj: MagicMock, name: str, default):
 def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     """Populate runner tests with scalar defaults so background tasks stay deterministic."""
     config.bind_host = "localhost"
+    config.hub_backend = "sqlite"
+    config.database_url = None
+    config.postgres_install_mode = None
 
     if getattr(config, "websocket", None) is None:
         config.websocket = None
