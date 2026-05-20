@@ -38,12 +38,19 @@ def _create_feature_worktree(repo: Path, tmp_path: Path, branch: str) -> tuple[P
     return worktree_path, _git(worktree_path, "rev-parse", "HEAD")
 
 
-def _commit_on_main(repo: Path, filename: str, content: str) -> str:
+def _commit_on_main(
+    repo: Path,
+    filename: str,
+    content: str,
+    *,
+    update_origin: bool = True,
+) -> str:
     _git(repo, "checkout", "main")
     (repo / filename).write_text(content, encoding="utf-8")
     _git(repo, "add", filename)
     _git(repo, "commit", "-m", f"main update {filename}")
-    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    if update_origin:
+        _git(repo, "update-ref", "refs/remotes/origin/main", "main")
     return _git(repo, "rev-parse", "HEAD")
 
 
@@ -101,7 +108,7 @@ async def test_merge_start_refreshes_stale_resolved_resolution(
     branch = "feature/stale-resolved"
     _init_repo(repo)
     worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
-    main_sha = _commit_on_main(repo, "target.txt", "target\n")
+    main_sha = _commit_on_main(repo, "target.txt", "target\n", update_origin=False)
     registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
     merge_storage.create_resolution(
         worktree_id=worktree.id,

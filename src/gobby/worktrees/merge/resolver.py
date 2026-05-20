@@ -437,11 +437,10 @@ class MergeResolver:
         Returns:
             Dict with 'success' bool and 'conflicts' list if any
         """
-        # Run git merge without committing
-        # Merge target INTO the worktree branch (worktree is on source_branch)
-        merge_ref = (
-            f"origin/{target_branch}" if not target_branch.startswith("origin/") else target_branch
-        )
+        # Merge target INTO the worktree branch. Local build campaigns advance
+        # target branches without pushing, so default to the local ref and let
+        # callers pass origin/<branch> explicitly when they need a remote ref.
+        merge_ref = target_branch
         process = await asyncio.create_subprocess_exec(
             "git",
             "merge",
