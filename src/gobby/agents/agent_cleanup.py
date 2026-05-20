@@ -37,7 +37,11 @@ def cleanup_merged_task_artifacts_after_agent_exit(
 
     task_manager = LocalTaskManager(db)
     merge_stage = task_manager.stage_states.get(task_id, "merge")
-    if merge_stage is None or merge_stage.state != "done":
+    if merge_stage is not None and merge_stage.state == "done":
+        return cleanup_successful_merge_artifacts(db, task_id)
+
+    task = task_manager.get_task(task_id)
+    if task.closed_at is None or task.closed_reason != "already_implemented":
         return []
     return cleanup_successful_merge_artifacts(db, task_id)
 

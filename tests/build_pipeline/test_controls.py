@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -417,6 +418,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     from gobby.storage.tasks import TaskArtifactManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
     _set_project_repo(temp_db, sample_project["id"], tmp_path)
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
@@ -495,6 +497,72 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     stored = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert stored.worktree_id == worktree.id
     assert stored.worktree_path == str(worktree_path)
+
+
+def test_successful_merge_cleanup_deletes_inactive_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Merged after agent exit",
+        category="code",
+        task_type="task",
+    )
+    worktree_path = tmp_path / "inactive-worktree"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-inactive-worktree",
+        worktree_path=str(worktree_path),
+        base_branch="0.4.7",
+        task_id=task.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="abc123",
+    )
+
+    deleted_paths: list[Path] = []
+
+    class DeletingWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def delete_worktree(self, path: Path, *, force: bool = False) -> SimpleNamespace:
+            deleted_paths.append(Path(path))
+            Path(path).rmdir()
+            return SimpleNamespace(success=True, error=None, message="deleted")
+
+    monkeypatch.setattr(controls, "WorktreeGitManager", DeletingWorktreeGitManager)
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        task.id,
+        project_id=sample_project["id"],
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].deleted is True
+    assert artifacts[0].deferred is False
+    assert deleted_paths == [worktree_path]
+    assert not worktree_path.exists()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is None
+    stored = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert stored.worktree_id is None
+    assert stored.worktree_path is None
 
 
 @pytest.mark.asyncio

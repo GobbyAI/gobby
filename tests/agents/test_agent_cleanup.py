@@ -56,6 +56,7 @@ def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None
     db = MagicMock()
     task_manager = MagicMock()
     task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
+    task_manager.get_task.return_value = SimpleNamespace(closed_at=None, closed_reason=None)
 
     with (
         patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
@@ -65,6 +66,29 @@ def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None
 
     assert result == []
     cleanup.assert_not_called()
+
+
+def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> None:
+    db = MagicMock()
+    artifacts = [SimpleNamespace(deleted=True, deferred=False)]
+    task_manager = MagicMock()
+    task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
+    task_manager.get_task.return_value = SimpleNamespace(
+        closed_at="2026-05-20T00:00:00+00:00",
+        closed_reason="already_implemented",
+    )
+
+    with (
+        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
+        patch(
+            "gobby.build.controls.cleanup_successful_merge_artifacts",
+            return_value=artifacts,
+        ) as cleanup,
+    ):
+        result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
+
+    assert result == artifacts
+    cleanup.assert_called_once_with(db, "task-1")
 
 
 def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
