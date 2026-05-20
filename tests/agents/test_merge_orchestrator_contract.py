@@ -159,6 +159,7 @@ def _after_mcp_tool(
     mcp_key: str,
     *,
     arguments: dict[str, Any] | None = None,
+    tool_output: dict[str, Any] | None = None,
 ) -> HookEvent:
     server, tool = mcp_key.split(":", 1)
     tool_input: dict[str, Any] = {"server_name": server, "tool_name": tool}
@@ -172,7 +173,7 @@ def _after_mcp_tool(
         data={
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": tool_input,
-            "tool_output": {"success": True},
+            "tool_output": tool_output or {"success": True},
         },
         metadata={},
     )
@@ -219,6 +220,8 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "gobby-agents:wait_for_agent" in execute["allowed_mcp_tools"]
     assert "worker returns success" in instructions
     assert "unresolved merge state" in instructions
+    assert "resolved_count/pending_count signature is unchanged" in instructions
+    assert "no_progress_merge_status_count" in agent["step_variables"]
 
 
 @pytest.mark.asyncio
@@ -321,3 +324,90 @@ async def test_execute_failure_report_can_record_merge_result_and_terminate(
     assert instance.current_step == "terminate"
     assert instance.variables["execution_complete"] is True
     assert instance.variables["report_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_blocks_no_progress_worker_redispatch(db: LocalDatabase) -> None:
+    manager = _install_workflow(db, current_step="execute")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:merge_status",
+            arguments={"resolution_id": "mr-1"},
+            tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
+    assert instance.variables["no_progress_merge_status_count"] == 0
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool("gobby-agents:spawn_agent"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={
+                "success": True,
+                "result": {
+                    "completed": True,
+                    "run_id": "run-worker",
+                    "status": "success",
+                    "result": "",
+                },
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "block"
+    assert "merge_status has not been checked" in (response.reason or "")
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:merge_status",
+            arguments={"resolution_id": "mr-1"},
+            tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["post_worker_merge_status_checked"] is True
+    assert instance.variables["no_progress_merge_status_count"] == 1
+    assert instance.variables["last_worker_run_id"] == "run-worker"
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "block"
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"

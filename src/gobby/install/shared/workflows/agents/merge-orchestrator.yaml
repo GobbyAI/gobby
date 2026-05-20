@@ -78,6 +78,11 @@ instructions: |
     gobby-agents:wait_for_agent, then run verify_in_worktree as the gate.
     Use final=true only on the last campaign-level verification. Append a
     lifecycle event per step.
+  - After every completed merge-worker wait, call merge_status before any
+    additional spawn_agent call for the same resolution. If the resolution's
+    resolved_count/pending_count signature is unchanged and pending_count is
+    still non-zero, do not redispatch another worker. Record a failed merge
+    result with the worker run ids, unchanged counts, and unresolved files.
   - If a worker returns success but inspect_merge_state or merge_status still
     shows unresolved merge state, treat that as a failed execution, record a
     failed merge result with the stale worker run id and unresolved files, and
@@ -125,6 +130,11 @@ step_variables:
   survey_complete: false
   execution_complete: false
   report_complete: false
+  merge_worker_completed: false
+  post_worker_merge_status_checked: false
+  last_merge_status_signature: ""
+  no_progress_merge_status_count: 0
+  last_worker_run_id: ""
 
 steps:
   - name: claim
@@ -280,6 +290,49 @@ steps:
       - "gobby-tasks:reopen_task"
       - "gobby-agents:kill_agent"
     on_mcp_success:
+      - server: gobby-agents
+        tool: spawn_agent
+        action: set_variable
+        variable: merge_worker_completed
+        value: false
+      - server: gobby-agents
+        tool: spawn_agent
+        action: set_variable
+        variable: post_worker_merge_status_checked
+        value: false
+      - server: gobby-agents
+        tool: wait_for_agent
+        when: "tool_output.result.completed is True"
+        action: set_variable
+        variable: merge_worker_completed
+        value: true
+      - server: gobby-agents
+        tool: wait_for_agent
+        when: "tool_output.result.completed is True"
+        action: set_variable
+        variable: post_worker_merge_status_checked
+        value: false
+      - server: gobby-agents
+        tool: wait_for_agent
+        when: "tool_output.result.completed is True"
+        action: set_variable
+        variable: last_worker_run_id
+        value: "str(tool_output.result.run_id)"
+      - server: gobby-merge
+        tool: merge_status
+        action: set_variable
+        variable: no_progress_merge_status_count
+        value: "vars.get('no_progress_merge_status_count', 0) + 1 if vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.result.resolved_count) + '/' + str(tool_output.result.pending_count) and int(tool_output.result.pending_count) > 0 else 0"
+      - server: gobby-merge
+        tool: merge_status
+        action: set_variable
+        variable: last_merge_status_signature
+        value: "str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.result.resolved_count) + '/' + str(tool_output.result.pending_count)"
+      - server: gobby-merge
+        tool: merge_status
+        action: set_variable
+        variable: post_worker_merge_status_checked
+        value: true
       - server: gobby-merge
         tool: verify_in_worktree
         when: "tool_input.final is True"
@@ -306,6 +359,28 @@ steps:
         action: set_variable
         variable: report_complete
         value: true
+    on_mcp_before:
+      - server: gobby-agents
+        tool: spawn_agent
+        action: block
+        when: "vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False)"
+        reason: |
+          A merge-worker completed, but merge_status has not been checked yet.
+          Before spawning another worker, call gobby-merge:merge_status for the
+          active resolution and compare resolved_count/pending_count. If pending
+          conflicts remain, record a failed merge result instead of redispatching
+          blindly.
+      - server: gobby-agents
+        tool: spawn_agent
+        action: block
+        when: "vars.get('no_progress_merge_status_count', 0) >= 1"
+        reason: |
+          NO_PROGRESS_MERGE_WORKER_REDISPATCH_CAP reached. The last completed
+          merge-worker did not change the active merge_status
+          resolved_count/pending_count signature, and conflicts remain pending.
+          Do not spawn another merge-worker for the same resolution. Call
+          gobby-tasks-ops:record_merge_result with failure_reason, including
+          last_worker_run_id, unchanged counts, and unresolved conflict ids/files.
     transitions:
       - to: report
         when: "vars.execution_complete"
