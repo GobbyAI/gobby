@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-def wake_dispatcher_for_task_change(db: DatabaseProtocol, task_id: str) -> bool:
+def wake_dispatcher_for_task_change(db: HubDatabase, task_id: str) -> bool:
     """Wake the project dispatcher cron row after an automated task changes state.
 
     Build dispatch is project-scoped. When the dispatcher has parked itself after an
