@@ -380,6 +380,7 @@ bind_host: localhost
 websocket_port: {ws_port}
 """
     bootstrap_path.write_text(bootstrap_content)
+    bootstrap_path.chmod(0o600)
 
     yield config_path, http_port, ws_port
 

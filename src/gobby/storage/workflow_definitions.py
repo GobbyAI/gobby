@@ -3,14 +3,15 @@
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class WorkflowDefinitionRow:
     deleted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> "WorkflowDefinitionRow":
+    def from_row(cls, row: Mapping[str, Any]) -> "WorkflowDefinitionRow":
         def _parse_json_list(val: str | None) -> list[str] | None:
             if val is None:
                 return None
@@ -264,10 +265,15 @@ class LocalWorkflowDefinitionManager:
         """Hard-delete rows that were soft-deleted more than older_than_days ago."""
         if older_than_days < 1:
             raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
+        deleted_before_sql = older_than_now_expr(self.db, "deleted_at", "?", "day")
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM workflow_definitions WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)",
-                (f"-{older_than_days} days",),
+                f"""
+                DELETE FROM workflow_definitions
+                WHERE deleted_at IS NOT NULL
+                  AND {deleted_before_sql}
+                """,  # nosec B608 - cutoff expression is selected by storage dialect.
+                (older_than_days,),
             )
             count = cursor.rowcount
         if count:
@@ -315,10 +321,11 @@ class LocalWorkflowDefinitionManager:
         enabled: bool | None = None,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by event type from definition_json."""
+        event_sql = json_text_expr(self.db, "definition_json", "event")
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "json_extract(definition_json, '$.event') = ?",
+            f"{event_sql} = ?",
         ]
         params: list[Any] = [event]
 
@@ -344,10 +351,11 @@ class LocalWorkflowDefinitionManager:
         enabled: bool | None = None,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by group from definition_json."""
+        group_sql = json_text_expr(self.db, "definition_json", "group")
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "json_extract(definition_json, '$.group') = ?",
+            f"{group_sql} = ?",
         ]
         params: list[Any] = [group]
 

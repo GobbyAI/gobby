@@ -9,6 +9,11 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def _write_bootstrap(path: Path, content: str, mode: int = 0o600) -> None:
+    path.write_text(content)
+    path.chmod(mode)
+
+
 def test_bootstrap_defaults_to_sqlite_backend(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 
@@ -23,11 +28,12 @@ def test_bootstrap_loads_postgres_fields_from_yaml(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    bootstrap_file.write_text(
+    _write_bootstrap(
+        bootstrap_file,
         "hub_backend: postgres\n"
         "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
         "postgres_install_mode: docker\n"
-        "database_path: /tmp/sqlite.db\n"
+        "database_path: /tmp/sqlite.db\n",
     )
 
     bootstrap = load_bootstrap(str(bootstrap_file))
@@ -42,7 +48,7 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    bootstrap_file.write_text("hub_backend: postgres\n")
+    _write_bootstrap(bootstrap_file, "hub_backend: postgres\n")
 
     with pytest.raises(BootstrapConfigError, match="database_url"):
         load_bootstrap(str(bootstrap_file))
@@ -52,6 +58,7 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
     ("content", "expected_message"),
     [
         ("hub_backend: mysql\n", "hub_backend"),
+        ("database_url: 123\n", "database_url"),
         ("postgres_install_mode: managed\n", "postgres_install_mode"),
     ],
 )
@@ -63,7 +70,17 @@ def test_invalid_postgres_bootstrap_modes_raise_field_level_error(
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    bootstrap_file.write_text(content)
+    _write_bootstrap(bootstrap_file, content)
 
     with pytest.raises(BootstrapConfigError, match=expected_message):
+        load_bootstrap(str(bootstrap_file))
+
+
+def test_bootstrap_rejects_insecure_file_permissions(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "hub_backend: sqlite\n", mode=0o644)
+
+    with pytest.raises(BootstrapConfigError, match="permissions.*0600"):
         load_bootstrap(str(bootstrap_file))

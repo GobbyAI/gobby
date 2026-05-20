@@ -33,6 +33,7 @@ def _make_worktree(
     base: str = "main",
     project_id: str = "proj-1",
     task_id: str | None = None,
+    status: str = "active",
 ) -> Worktree:
     return Worktree(
         id=id,
@@ -42,7 +43,7 @@ def _make_worktree(
         worktree_path=path,
         base_branch=base,
         agent_session_id=None,
-        status="active",
+        status=status,
         created_at="2026-04-28T00:00:00Z",
         updated_at="2026-04-28T00:00:00Z",
         merged_at=None,
@@ -61,12 +62,14 @@ def _make_registry(
     *,
     worktree_manager: MagicMock | None,
     git_manager: MagicMock | None,
+    merge_storage: MagicMock | None = None,
 ) -> InternalToolRegistry:
     registry = InternalToolRegistry(name="gobby-merge", description="test")
     register_merge_landscape_tools(
         registry,
         worktree_manager=worktree_manager,
         git_manager=git_manager,
+        merge_storage=merge_storage,
     )
     return registry
 
@@ -78,6 +81,36 @@ def _init_git_repo(path) -> None:
         check=True,
         capture_output=True,
     )
+
+
+class _SubprocessGitManager:
+    def run_git_command(self, args, cwd=None, timeout=30, check=False):
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            timeout=timeout,
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+
+def _commit_file(path, name: str, content: str) -> None:
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    (path / name).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", name], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", f"add {name}"], cwd=path, check=True)
 
 
 # --- analyze_merge_landscape ---
@@ -105,6 +138,7 @@ async def test_analyze_merge_landscape_happy_path(tmp_path) -> None:
     entry = result["worktrees"][0]
     assert entry["worktree_id"] == "wt-1"
     assert entry["branch"] == "feat/x"
+    assert entry["status"] == "active"
     assert entry["commits_ahead"] == 3
     assert entry["commits_behind"] == 1
     assert entry["divergence_commits"] == 4
@@ -134,6 +168,76 @@ async def test_analyze_merge_landscape_behind_only_keeps_divergence_zero(tmp_pat
     assert entry["commits_ahead"] == 0
     assert entry["commits_behind"] == 2
     assert entry["divergence_commits"] == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_merge_landscape_keeps_merged_worktree_with_branch_only_commits(
+    tmp_path,
+) -> None:
+    active = _make_worktree(id="wt-active", path=str(tmp_path / "active"))
+    merged = _make_worktree(
+        id="wt-merged",
+        branch="task/reopened",
+        path=str(tmp_path / "merged"),
+        task_id="task-reopened",
+        status="merged",
+    )
+    (tmp_path / "active").mkdir()
+    (tmp_path / "merged").mkdir()
+    worktree_manager = MagicMock()
+    worktree_manager.list_worktrees.return_value = [active, merged]
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout="0\n"),  # active: rev-list --count main..HEAD
+        _completed(stdout="2\n"),  # active: rev-list --count HEAD..main
+        _completed(stdout=""),  # active: diff --name-only
+        _completed(stdout="2026-04-28T12:34:56+00:00\n"),  # active: log -1 %cI
+        _completed(stdout="1\n"),  # merged: branch-only commit after reopen
+        _completed(stdout="0\n"),  # merged: rev-list --count HEAD..main
+        _completed(stdout="tests/reopened.py\n"),  # merged: diff --name-only
+        _completed(stdout="2026-04-29T12:34:56+00:00\n"),  # merged: log -1 %cI
+    ]
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("analyze_merge_landscape", {})
+
+    assert result["success"] is True
+    assert [entry["worktree_id"] for entry in result["worktrees"]] == [
+        "wt-active",
+        "wt-merged",
+    ]
+    reopened = result["worktrees"][1]
+    assert reopened["status"] == "merged"
+    assert reopened["commits_ahead"] == 1
+    assert reopened["reactivation_required"] is True
+    assert reopened["files_touched"] == ["tests/reopened.py"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_merge_landscape_skips_merged_worktree_without_ahead_commits(
+    tmp_path,
+) -> None:
+    merged = _make_worktree(
+        id="wt-merged",
+        branch="task/already-landed",
+        path=str(tmp_path),
+        status="merged",
+    )
+    worktree_manager = MagicMock()
+    worktree_manager.list_worktrees.return_value = [merged]
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout="0\n"),  # rev-list --count main..HEAD
+        _completed(stdout="0\n"),  # rev-list --count HEAD..main
+    ]
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("analyze_merge_landscape", {})
+
+    assert result["success"] is True
+    assert result["worktrees"] == []
 
 
 @pytest.mark.asyncio
@@ -379,6 +483,52 @@ async def test_verify_in_worktree_success(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_verify_in_worktree_final_rejects_dirty_tree(tmp_path) -> None:
+    _init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tracked.txt", "clean\n")
+    (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=_SubprocessGitManager(),
+    )
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "git status --short", "final": True},
+    )
+
+    assert result["success"] is False
+    assert result["exit_code"] == 0
+    assert result["error"] == "final verification failed: worktree is dirty"
+    assert result["dirty_files"] == [" M tracked.txt"]
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_non_final_allows_dirty_tree(tmp_path) -> None:
+    _init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tracked.txt", "clean\n")
+    (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=_SubprocessGitManager(),
+    )
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "git status --short"},
+    )
+
+    assert result["success"] is True
+    assert result["stdout"] == " M tracked.txt\n"
+
+
+@pytest.mark.asyncio
 async def test_verify_in_worktree_command_failure(tmp_path) -> None:
     _init_git_repo(tmp_path)
     wt = _make_worktree(path=str(tmp_path))
@@ -505,6 +655,8 @@ async def test_inspect_merge_state_clean(tmp_path) -> None:
     assert result["has_merge_head"] is False
     assert result["conflicted_files"] == []
     assert result["can_resume"] is False
+    assert result["active_resolution_id"] is None
+    assert result["conflicts"] == []
 
 
 @pytest.mark.asyncio
@@ -530,6 +682,137 @@ async def test_inspect_merge_state_orphaned_merge(tmp_path) -> None:
     assert result["has_merge_head"] is True
     assert result["conflicted_files"] == ["src/conflicted.py"]
     assert result["can_resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path) -> None:
+    from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout=".git\n"),
+        _completed(stdout="src/conflicted.py\n"),
+    ]
+
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = MergeResolution(
+        id="mr-test123",
+        worktree_id="wt-1",
+        source_branch="feature/test",
+        target_branch="0.4.7",
+        status="pending",
+        tier_used=None,
+        created_at="2026-05-20T00:00:00+00:00",
+        updated_at="2026-05-20T00:00:00+00:00",
+    )
+    merge_storage.list_conflicts.return_value = [
+        MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/conflicted.py",
+            status="pending",
+            ours_content=None,
+            theirs_content=None,
+            resolved_content=None,
+            created_at="2026-05-20T00:00:00+00:00",
+            updated_at="2026-05-20T00:00:00+00:00",
+        )
+    ]
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    assert result["state"] == "merging"
+    assert result["active_resolution_id"] == "mr-test123"
+    assert result["source_branch"] == "feature/test"
+    assert result["target_branch"] == "0.4.7"
+    assert result["conflicts"] == [
+        {
+            "conflict_id": "mc-conflict1",
+            "file_path": "src/conflicted.py",
+            "status": "pending",
+            "has_resolved_content": False,
+        }
+    ]
+    merge_storage.get_active_resolution.assert_called_once_with("wt-1")
+    merge_storage.list_conflicts.assert_called_once_with(resolution_id="mr-test123")
+
+
+@pytest.mark.asyncio
+async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_merge(
+    tmp_path,
+) -> None:
+    from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    git_manager = MagicMock()
+    git_manager.run_git_command.side_effect = [
+        _completed(stdout=".git\n"),
+        _completed(stdout="src/conflicted.py\n"),
+    ]
+
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = None
+    merge_storage.get_latest_resolution.return_value = MergeResolution(
+        id="mr-stale123",
+        worktree_id="wt-1",
+        source_branch="feature/test",
+        target_branch="0.4.7",
+        status="resolved",
+        tier_used="conflict_only_ai",
+        created_at="2026-05-20T00:00:00+00:00",
+        updated_at="2026-05-20T00:01:00+00:00",
+    )
+    merge_storage.list_conflicts.return_value = [
+        MergeConflict(
+            id="mc-stale1",
+            resolution_id="mr-stale123",
+            file_path="src/conflicted.py",
+            status="resolved",
+            ours_content=None,
+            theirs_content=None,
+            resolved_content=None,
+            created_at="2026-05-20T00:00:00+00:00",
+            updated_at="2026-05-20T00:01:00+00:00",
+        )
+    ]
+
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    assert result["active_resolution_id"] == "mr-stale123"
+    assert result["conflicts"] == [
+        {
+            "conflict_id": "mc-stale1",
+            "file_path": "src/conflicted.py",
+            "status": "pending",
+            "has_resolved_content": False,
+        }
+    ]
+    merge_storage.get_latest_resolution.assert_called_once_with("wt-1")
 
 
 @pytest.mark.asyncio

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
+from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ class SkillMetadataMixin:
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
 
-    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
@@ -54,9 +55,9 @@ class SkillMetadataMixin:
         """
         with self.db.transaction() as conn:
             row = conn.execute(query, params).fetchone()
-            return cast(sqlite3.Row | None, row)
+            return cast(Mapping[str, Any] | None, row)
 
-    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
@@ -64,7 +65,7 @@ class SkillMetadataMixin:
         """
         with self.db.transaction() as conn:
             rows = conn.execute(query, params).fetchall()
-            return cast(list[sqlite3.Row], rows)
+            return cast(list[Mapping[str, Any]], rows)
 
     def create_skill(
         self,
@@ -576,10 +577,12 @@ class SkillMetadataMixin:
         # Filter by category using JSON extraction in SQL to avoid under-filled results
         # Check both top-level $.category and nested $.skillport.category
         if category:
-            query += """ AND (
-                json_extract(metadata, '$.category') = ?
-                OR json_extract(metadata, '$.skillport.category') = ?
-            )"""
+            category_sql = json_text_expr(self.db, "metadata", "category")
+            skillport_category_sql = json_text_expr(self.db, "metadata", "skillport", "category")
+            query += f""" AND (
+                {category_sql} = ?
+                OR {skillport_category_sql} = ?
+            )"""  # nosec B608 - JSON expressions are generated from static keys.
             params.extend([category, category])
 
         query += " ORDER BY name ASC LIMIT ? OFFSET ?"

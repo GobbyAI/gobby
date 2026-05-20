@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.events.completion_registry import CompletionEventRegistry
@@ -115,6 +116,59 @@ def _register_agent_workflow(
     return instance_manager
 
 
+def _register_qa_reviewer_workflow(
+    db: LocalDatabase,
+    *,
+    session_id: str = "agent-session",
+) -> WorkflowInstanceManager:
+    _create_session(db, session_id)
+    manager = LocalWorkflowDefinitionManager(db)
+    instance_manager = WorkflowInstanceManager(db)
+    agent_path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/agents/qa-reviewer.yaml"
+    )
+    agent = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
+    workflow_name = "qa-reviewer-steps"
+    workflow_data = {
+        "name": workflow_name,
+        "version": "1.0",
+        "enabled": True,
+        "variables": agent["step_variables"],
+        "steps": agent["steps"],
+        "exit_condition": "current_step == 'terminate'",
+    }
+
+    manager.create(
+        name=workflow_name,
+        definition_json=json.dumps(workflow_data),
+        workflow_type="workflow",
+        priority=100,
+        enabled=True,
+    )
+    variables = dict(agent["step_variables"])
+    variables.update(
+        {
+            "task_claimed": True,
+            "required_skills_loaded": True,
+            "review_complete": False,
+        }
+    )
+    instance_manager.save_instance(
+        WorkflowInstance(
+            id=f"inst-{session_id}-{workflow_name}",
+            session_id=session_id,
+            workflow_name=workflow_name,
+            enabled=True,
+            priority=100,
+            current_step="review",
+            step_entered_at=datetime.now(UTC),
+            variables=variables,
+        )
+    )
+    return instance_manager
+
+
 def _after_tool_event(
     *,
     session_id: str = "agent-session",
@@ -131,7 +185,7 @@ def _after_tool_event(
     }
     if tool_arguments is not None:
         tool_input["arguments"] = tool_arguments
-    data = {
+    data: dict[str, object] = {
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": tool_input,
     }
@@ -371,6 +425,43 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_qa_reviewer_stale_get_task_result_transitions_to_terminate(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_qa_reviewer_workflow(db)
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {}
+
+        response = await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="get_task",
+                tool_output={
+                    "success": True,
+                    "result": {
+                        "state": {
+                            "is_closed": False,
+                            "current_stage": {
+                                "name": "merge",
+                                "state": "in_progress",
+                            },
+                        }
+                    },
+                },
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "qa-reviewer-steps")
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        assert "review -> terminate" in response.context
 
     @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(

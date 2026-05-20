@@ -378,6 +378,8 @@ class EnforcementMixin:
                         return HookResponse(decision="block", reason=reason)
 
                 if mcp_key:
+                    if event.metadata.get("_mcp_proxy_duplicate_before_tool") is True:
+                        return None
                     handler_tool_input = self._step_handler_tool_input(tool_input)
                     before_response = self._process_step_before_mcp_tool(
                         event,
@@ -728,7 +730,7 @@ class EnforcementMixin:
             return None
 
         is_native_set_variable = self._is_native_set_variable_tool(tool_name)
-        if tool_name in ("call_tool", "mcp__gobby__call_tool"):
+        if tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
             mcp_server = tool_input.get("server_name", "")
             mcp_tool_name = tool_input.get("tool_name", "")
             if not mcp_server or not mcp_tool_name:

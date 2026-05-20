@@ -28,6 +28,7 @@ class TestIsProviderError:
             "503 service unavailable",
             "502 bad gateway error",
             "500 internal server error",
+            "API Error: 529 Overloaded. This is a server-side issue, usually temporary.",
             # Rate limiting with error context
             "Error: rate limited by provider",
             "rate limit exceeded, please retry",

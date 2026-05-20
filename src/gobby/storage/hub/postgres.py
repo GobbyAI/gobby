@@ -218,10 +218,11 @@ class PostgresHubDatabase:
             for statement in _split_statements_respecting_dollar_quotes(sql):
                 if statement.strip():
                     conn.execute(statement)
-            conn.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, NOW())",
+            sql, params = _remap_placeholders_to_psycopg(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW())",
                 (BASELINE_VERSION,),
             )
+            conn.execute(sql, params)
 
     def close(self) -> None:
         self._pool.close()
@@ -326,9 +327,13 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
 
 
 def _has_baseline_version(conn: Any, version: int) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM schema_migrations WHERE version = %s LIMIT 1",
+    sql, params = _remap_placeholders_to_psycopg(
+        "SELECT 1 FROM schema_migrations WHERE version = $1 LIMIT 1",
         (version,),
+    )
+    row = conn.execute(
+        sql,
+        params,
     ).fetchone()
     return row is not None
 

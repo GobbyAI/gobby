@@ -82,6 +82,8 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return _make_git_result(0, stdout=target)
+        if args == ["rev-parse", "HEAD"]:
+            return _make_git_result(0, stdout="abc123def456\n")
         if args == ["stash", "list"]:
             stash_list_calls += 1
             return _make_git_result(0, stdout="" if stash_list_calls == 1 else "stash@{0}")
@@ -105,8 +107,8 @@ def _local_merge_side_effect(
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_success_returns_worktree_path():
-    """Successful merge returns worktree_path."""
+async def test_merge_worktree_success_returns_worktree_path_and_merge_sha():
+    """Successful merge returns worktree_path and final target merge SHA."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
@@ -126,6 +128,9 @@ async def test_merge_worktree_success_returns_worktree_path():
     assert result["worktree_path"] == "/tmp/wt"
     assert result["project_path"] == "/tmp/repo"
     assert result["merged"] is True
+    assert result["merge_sha"] == "abc123def456"
+    assert result["target_head_sha"] == "abc123def456"
+    assert result["commit_sha"] == "abc123def456"
 
 
 @pytest.mark.asyncio

@@ -91,7 +91,7 @@ class StageStateSchema:
                     max_review_rounds INTEGER,
                     artifact_refs TEXT,
                     notes TEXT,
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (task_id, stage_name)
                 )
                 """

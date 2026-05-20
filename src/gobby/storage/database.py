@@ -8,11 +8,19 @@ import re
 import sqlite3
 import threading
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
+
+from gobby.storage.hub.placeholders import (
+    params_from_indexes as _params_from_indexes,
+)
+from gobby.storage.hub.placeholders import (
+    remap_dollar_placeholders,
+    scan_dollar_placeholder_indexes,
+)
 
 # Register custom datetime adapters/converters (required since Python 3.12)
 # See: https://docs.python.org/3/library/sqlite3.html#default-adapters-and-converters-deprecated
@@ -64,6 +72,11 @@ class DatabaseProtocol(Protocol):
     """Protocol defining the database interface for storage managers."""
 
     @property
+    def dialect(self) -> Literal["sqlite", "postgres"]:
+        """Return the SQL dialect for the database backend."""
+        ...
+
+    @property
     def db_path(self) -> Any:
         """Return database path."""
         ...
@@ -81,11 +94,11 @@ class DatabaseProtocol(Protocol):
         """Execute SQL statement with multiple parameter sets."""
         ...
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Execute query and fetch one row."""
         ...
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Execute query and fetch all rows."""
         ...
 
@@ -138,6 +151,59 @@ def _default_db_path() -> Path:
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _remap_numbered_sqlite_params(
+    sql: str,
+    params: Any,
+) -> tuple[str, Any]:
+    if isinstance(params, Mapping):
+        return sql, params
+    params_tuple = tuple(params)
+    if "$" not in sql or not params_tuple:
+        return sql, params_tuple
+    new_sql, new_params, indexes = remap_dollar_placeholders(sql, params_tuple, "?")
+    if not indexes:
+        return sql, params_tuple
+    return new_sql, new_params
+
+
+def _remap_numbered_sqlite_many(
+    sql: str,
+    rows: Iterable[Any],
+) -> tuple[str, list[Any]]:
+    raw_rows = list(rows)
+    if any(isinstance(row, Mapping) for row in raw_rows):
+        return sql, raw_rows
+    materialized = [tuple(cast(Sequence[Any], row)) for row in raw_rows]
+    if "$" not in sql or not materialized:
+        return sql, materialized
+    new_sql, indexes = scan_dollar_placeholder_indexes(sql, len(materialized[0]), "?")
+    if not indexes:
+        return sql, materialized
+    return new_sql, [_params_from_indexes(row, indexes) for row in materialized]
+
+
+class _NumberedPlaceholderConnection(sqlite3.Connection):
+    """SQLite connection that accepts project-standard ``$N`` bind placeholders."""
+
+    def execute(
+        self,
+        sql: str,
+        parameters: Any = (),
+        /,
+    ) -> sqlite3.Cursor:
+        new_sql, new_params = _remap_numbered_sqlite_params(sql, parameters)
+        return super().execute(new_sql, new_params)
+
+    def executemany(
+        self,
+        sql: str,
+        parameters: Iterable[Any],
+        /,
+    ) -> sqlite3.Cursor:
+        new_sql, new_rows = _remap_numbered_sqlite_many(sql, parameters)
+        return super().executemany(new_sql, new_rows)
+
+
 class _ThreadConnectionLease:
     """Weakref-able owner for a thread-local SQLite connection.
 
@@ -157,6 +223,8 @@ class LocalDatabase:
 
     Thread-safe connection management using thread-local storage.
     """
+
+    dialect: Literal["sqlite"] = "sqlite"
 
     def __init__(self, db_path: Path | str | None = None):
         """
@@ -219,6 +287,7 @@ class LocalDatabase:
                 check_same_thread=False,
                 isolation_level=None,  # Autocommit mode
                 timeout=_SQLITE_BUSY_TIMEOUT_MS / 1000,
+                factory=_NumberedPlaceholderConnection,
             )
             conn.row_factory = sqlite3.Row
             # Enable foreign keys
@@ -273,19 +342,19 @@ class LocalDatabase:
         """Execute SQL statement with multiple parameter sets."""
         return self.connection.executemany(sql, params_list)
 
-    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Execute query and fetch one row."""
         cursor = self.execute(sql, params)
         try:
-            return cast(sqlite3.Row | None, cursor.fetchone())
+            return cast(Mapping[str, Any] | None, cursor.fetchone())
         finally:
             cursor.close()
 
-    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Execute query and fetch all rows."""
         cursor = self.execute(sql, params)
         try:
-            return cursor.fetchall()
+            return cast(list[Mapping[str, Any]], cursor.fetchall())
         finally:
             cursor.close()
 

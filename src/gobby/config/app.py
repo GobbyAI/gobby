@@ -2,7 +2,7 @@
 Configuration management for Gobby daemon.
 
 Runtime config: DB config_store + Pydantic defaults.
-Pre-DB bootstrap: ~/.gobby/bootstrap.yaml (5 settings).
+Pre-DB bootstrap: ~/.gobby/bootstrap.yaml.
 YAML export: export_config_to_yaml() for backup/migration.
 """
 
@@ -298,7 +298,8 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, database_path,
-    websocket_port, ui_port) are read from ~/.gobby/bootstrap.yaml.
+    websocket_port, ui_port, hub_backend, database_url, postgres_install_mode)
+    are read from ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -345,6 +346,26 @@ class DaemonConfig(BaseModel):
         default="~/.gobby/gobby-hub.db",
         description="Path to hub database for cross-project queries.",
     )
+    hub_backend: Literal["sqlite", "postgres"] = Field(
+        default="sqlite",
+        description="Hub database backend selected by bootstrap.yaml.",
+    )
+    database_url: str | None = Field(
+        default=None,
+        description="PostgreSQL DSN selected by bootstrap.yaml when hub_backend is postgres.",
+        exclude=True,
+    )
+    postgres_install_mode: Literal["docker", "native", "external"] | None = Field(
+        default=None,
+        description="PostgreSQL install mode recorded by gobby postgres install.",
+    )
+
+    @model_validator(mode="after")
+    def validate_postgres_backend(self) -> DaemonConfig:
+        if self.hub_backend == "postgres" and not self.database_url:
+            raise ValueError("hub_backend=postgres requires database_url")
+        return self
+
     # Sub-configs
     websocket: WebSocketSettings = Field(
         default_factory=WebSocketSettings,
@@ -796,6 +817,14 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     return config_dict
 
 
+_BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
+
+
+def _restore_bootstrap_backend_selection(config_dict: dict[str, Any], bootstrap: Any) -> None:
+    for key in _BOOTSTRAP_BACKEND_KEYS:
+        config_dict[key] = getattr(bootstrap, key)
+
+
 def load_config(
     config_file: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
@@ -806,7 +835,7 @@ def load_config(
     Load configuration with hierarchy: CLI > DB > bootstrap > Pydantic defaults.
 
     When config_store is provided (Phase 2), config is loaded from the database.
-    Otherwise reads bootstrap.yaml for the 5 pre-DB settings (Phase 1).
+    Otherwise reads bootstrap.yaml for pre-DB settings (Phase 1).
 
     Args:
         config_file: Path hint for locating bootstrap.yaml (default: ~/.gobby/)
@@ -826,7 +855,7 @@ def load_config(
         from gobby.config.bootstrap import load_bootstrap
         from gobby.storage.config_store import unflatten_config
 
-        # Layer 1: bootstrap values (ports, db_path, bind_host)
+        # Layer 1: bootstrap values (ports, db_path, bind_host, hub backend)
         bootstrap = load_bootstrap(config_file)
         config_dict: dict[str, Any] = bootstrap.to_config_dict()
 
@@ -855,6 +884,7 @@ def load_config(
                 db_dict = _resolve_config_values(db_dict, secret_resolver)
             # Deep merge: DB values override config file and bootstrap
             deep_merge(config_dict, db_dict)
+        _restore_bootstrap_backend_selection(config_dict, bootstrap)
     else:
         # Phase 1: bootstrap.yaml for pre-DB settings (database_path, ports)
         from gobby.config.bootstrap import load_bootstrap

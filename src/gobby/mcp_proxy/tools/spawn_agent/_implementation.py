@@ -52,6 +52,84 @@ def _normalize_optional_model(value: str | None) -> str | None:
     return value or None
 
 
+def _run_string_attr(run: Any, name: str) -> str | None:
+    value = getattr(run, name, None)
+    return value if isinstance(value, str) and value else None
+
+
+def _is_parent_merge_orchestrator_run(
+    run: Any,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> bool:
+    return (
+        requested_agent_name == "merge-worker"
+        and _run_string_attr(run, "agent_name") == "merge-orchestrator"
+        and _run_string_attr(run, "child_session_id") == parent_session_id
+    )
+
+
+def _active_task_spawn_blocker(
+    run_storage: Any,
+    task_id: str,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> Any | None:
+    """Return an active run that should block spawning another agent for a task."""
+    if not run_storage.has_active_run_for_task(task_id):
+        return None
+
+    active_runs: list[Any] = []
+    try:
+        maybe_runs = run_storage.list_active(task_ids=[task_id], limit=100)
+    except (AttributeError, TypeError):
+        maybe_runs = None
+    if isinstance(maybe_runs, list | tuple):
+        active_runs = list(maybe_runs)
+
+    if not active_runs:
+        active_run = run_storage.get_active_run_for_task(task_id)
+        active_runs = [active_run] if active_run is not None else []
+
+    for active_run in active_runs:
+        if _is_parent_merge_orchestrator_run(
+            active_run,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        ):
+            continue
+        return active_run
+    return None
+
+
+_MODEL_PROVIDER_PREFIXES = {
+    "anthropic": "claude",
+    "claude": "claude",
+    "google": "gemini",
+    "gemini": "gemini",
+    "openai": "codex",
+    "codex": "codex",
+    "qwen": "qwen",
+    "droid": "droid",
+}
+
+
+def _provider_prefixed_model(value: str | None) -> tuple[str, str] | None:
+    """Return provider/model from values like ``claude/sonnet-4-6``."""
+    if not value or "/" not in value:
+        return None
+    prefix, model = value.split("/", 1)
+    provider = _MODEL_PROVIDER_PREFIXES.get(prefix.strip().lower())
+    model = model.strip()
+    if not provider or not model:
+        return None
+    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-")):
+        model = f"claude-{model}"
+    return provider, model
+
+
 def _defaulted_provider(value: str | None) -> str:
     if value is None or value == "inherit":
         return "claude"
@@ -274,16 +352,31 @@ async def spawn_agent_impl(
     )
 
     provider_was_overridden = provider is not None
+    model_from_prefix = _provider_prefixed_model(_normalize_optional_model(model))
     _raw_provider: str | None = provider
+    if _raw_provider is None and model_from_prefix is not None:
+        _raw_provider = model_from_prefix[0]
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
     effective_provider = _defaulted_provider(_raw_provider)
+
+    if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
+        return {
+            "success": False,
+            "error": (
+                "model provider prefix "
+                f"'{model_from_prefix[0]}' does not match explicit provider "
+                f"'{effective_provider}'"
+            ),
+        }
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
         provider_differs_from_agent = effective_provider != _defaulted_provider(agent_body.provider)
 
-    effective_model = _normalize_optional_model(model)
+    effective_model = (
+        model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)
+    )
     if effective_model is None and agent_body and not provider_differs_from_agent:
         effective_model = _normalize_optional_model(agent_body.model)
     from gobby.llm.local_detection import is_local_agent_definition
@@ -377,6 +470,7 @@ async def spawn_agent_impl(
 
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
+    requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
@@ -424,8 +518,13 @@ async def spawn_agent_impl(
 
     # 4b. Dedup check — idempotent: return success if agent already running
     if resolved_task_id and runner.run_storage:
-        if runner.run_storage.has_active_run_for_task(resolved_task_id):
-            active_run = runner.run_storage.get_active_run_for_task(resolved_task_id)
+        active_run = _active_task_spawn_blocker(
+            runner.run_storage,
+            resolved_task_id,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+        if active_run is not None:
             return {
                 "success": True,
                 "skipped": True,
@@ -549,8 +648,7 @@ async def spawn_agent_impl(
             except Exception as e:
                 reason = str(e)
                 logger.warning(
-                    "Continuing isolated spawn after code index preflight failed "
-                    "for cwd=%s: %s",
+                    "Continuing isolated spawn after code index preflight failed for cwd=%s: %s",
                     isolation_ctx.cwd,
                     reason,
                 )
@@ -587,9 +685,7 @@ async def spawn_agent_impl(
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
     if code_index_preflight_warning is not None:
-        effective_initial_variables["code_index_preflight_warning"] = (
-            code_index_preflight_warning
-        )
+        effective_initial_variables["code_index_preflight_warning"] = code_index_preflight_warning
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills
@@ -604,7 +700,7 @@ async def spawn_agent_impl(
         effective_initial_variables["branch_name"] = isolation_ctx.branch_name
 
     # 11. Build a meaningful session title from agent name and/or task
-    agent_display_name = agent_lookup_name or (agent_body.name if agent_body else None)
+    agent_display_name = requested_agent_name
     if agent_display_name and task_title:
         spawn_title = f"{agent_display_name}: {task_title}"
     elif agent_display_name:

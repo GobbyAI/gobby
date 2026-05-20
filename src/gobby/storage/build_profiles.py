@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -127,7 +127,7 @@ class BuildProfileLoader:
                     db.executemany(
                         """
                         UPDATE build_profiles
-                           SET deleted_at = datetime('now'), updated_at = datetime('now')
+                           SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                          WHERE source = 'installed'
                            AND project_id IS NULL
                            AND name = ?
@@ -433,7 +433,7 @@ class BuildProfileManager:
         self.db.execute(
             """
             UPDATE build_profiles
-               SET deleted_at = datetime('now'), updated_at = datetime('now')
+               SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?
             """,
             (current.id,),
@@ -460,11 +460,11 @@ class BuildProfileManager:
         self._update_profile(replace(installed, id=current.id), restore_deleted=True)
 
     @classmethod
-    def row_hash(cls, row: Any) -> str:
+    def row_hash(cls, row: Mapping[str, Any]) -> str:
         return cls._hash_payload(cls._row_payload(row))
 
     @classmethod
-    def legacy_row_hash(cls, row: Any) -> str:
+    def legacy_row_hash(cls, row: Mapping[str, Any]) -> str:
         return cls._hash_payload(cls._legacy_row_payload(row))
 
     @classmethod
@@ -483,7 +483,7 @@ class BuildProfileManager:
                 id, name, display_label, description, skip_stages_json, isolation,
                 unattended, delivery_mode, delivery_target_repo, enabled, source, project_id,
                 tags_json, bundled_hash, deleted_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             self._insert_params(profile),
         )
@@ -523,7 +523,7 @@ class BuildProfileManager:
                    tags_json = ?,
                    bundled_hash = ?,
                    {deleted_assignment}
-                   updated_at = datetime('now')
+                   updated_at = CURRENT_TIMESTAMP
              WHERE id = ?
             """,  # nosec B608 - deleted_assignment is controlled by a boolean.
             (
@@ -560,7 +560,7 @@ class BuildProfileManager:
             profile.bundled_hash,
         )
 
-    def _profile_from_row(self, row: Any) -> BuildProfile:
+    def _profile_from_row(self, row: Mapping[str, Any]) -> BuildProfile:
         profile = BuildProfile(
             id=row["id"],
             name=row["name"],
@@ -628,7 +628,7 @@ class BuildProfileManager:
         }
 
     @staticmethod
-    def _row_payload(row: Any) -> dict[str, Any]:
+    def _row_payload(row: Mapping[str, Any]) -> dict[str, Any]:
         return {
             "name": row["name"],
             "display_label": row["display_label"],
@@ -643,7 +643,7 @@ class BuildProfileManager:
         }
 
     @staticmethod
-    def _legacy_row_payload(row: Any) -> dict[str, Any]:
+    def _legacy_row_payload(row: Mapping[str, Any]) -> dict[str, Any]:
         return {
             "name": row["name"],
             "display_label": row["display_label"],

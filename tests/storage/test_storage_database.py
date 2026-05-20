@@ -69,7 +69,7 @@ class TestLocalDatabase:
 
         # Insert multiple rows
         temp_db.executemany(
-            "INSERT INTO test_items (id, name) VALUES (?, ?)",
+            "INSERT INTO test_items (id, name) VALUES ($1, $2)",
             [(1, "one"), (2, "two"), (3, "three")],
         )
 
@@ -77,6 +77,37 @@ class TestLocalDatabase:
         assert len(rows) == 3
         assert rows[0]["name"] == "one"
         assert rows[2]["name"] == "three"
+
+    def test_numbered_placeholders_remap_for_local_sqlite(self, temp_db: LocalDatabase) -> None:
+        """SQLite accepts storage's author-facing $N parameter style."""
+        temp_db.execute("CREATE TABLE numbered_items (a TEXT, b TEXT)")
+        temp_db.execute("INSERT INTO numbered_items (a, b) VALUES ($2, $1)", ("left", "right"))
+
+        row = temp_db.fetchone(
+            "SELECT a, b FROM numbered_items WHERE a = $1 AND b = $2",
+            ("right", "left"),
+        )
+
+        assert row is not None
+        assert row["a"] == "right"
+        assert row["b"] == "left"
+
+    def test_numbered_placeholders_remap_for_transaction_connection(
+        self,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Raw transaction connections use the same $N remapping."""
+        temp_db.execute("CREATE TABLE numbered_tx_items (a TEXT, b TEXT)")
+
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO numbered_tx_items (a, b) VALUES ($2, $1)",
+                ("left", "right"),
+            )
+
+        row = temp_db.fetchone("SELECT a, b FROM numbered_tx_items WHERE b = $1", ("left",))
+        assert row is not None
+        assert row["a"] == "right"
 
     def test_transaction_commit(self, temp_db: LocalDatabase) -> None:
         """Test successful transaction commits."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_than_now_expr
 
 from ._constants import get_logger
 from ._helpers import _positive_rowcount, utc_now_iso
@@ -35,8 +36,14 @@ class _AgentRunCleanupMixin:
         Returns:
             Number of runs timed out.
         """
+        explicit_timeout_sql = elapsed_seconds_greater_than_expr(
+            self.db,
+            "last_activity_at",
+            "timeout_seconds",
+        )
+        default_timeout_sql = older_than_now_expr(self.db, "last_activity_at", "?", "minute")
         stale_runs = self.db.fetchall(
-            """
+            f"""
             WITH run_activity AS (
                 SELECT
                     ar.id,
@@ -58,14 +65,14 @@ class _AgentRunCleanupMixin:
             FROM run_activity
             WHERE (
                 timeout_seconds IS NOT NULL
-                AND (julianday('now') - julianday(last_activity_at)) * 86400 > timeout_seconds
+                AND {explicit_timeout_sql}
             )
             OR (
                 timeout_seconds IS NULL
-                AND datetime(last_activity_at) < datetime('now', 'utc', ? || ' minutes')
+                AND {default_timeout_sql}
             )
-            """,
-            (f"-{default_timeout_minutes}",),
+            """,  # nosec B608 - timeout expressions are selected by storage dialect.
+            (default_timeout_minutes,),
         )
 
         explicit_count = 0
@@ -109,9 +116,10 @@ class _AgentRunCleanupMixin:
     ) -> int:
         """Mark stale pending agent runs as failed."""
         now = utc_now_iso()
+        pending_timeout_sql = older_than_now_expr(self.db, "created_at", "?", "minute")
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                """
+                f"""
                 UPDATE agent_runs
                 SET status = 'error',
                     error = CASE
@@ -123,12 +131,12 @@ class _AgentRunCleanupMixin:
                 WHERE status = 'pending'
                 AND (
                     tmux_session_name IS NULL
-                    AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+                    AND {pending_timeout_sql}
                     OR tmux_session_name IS NOT NULL
-                    AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+                    AND {pending_timeout_sql}
                 )
-                """,
-                (now, now, f"-{timeout_minutes}", f"-{long_timeout_minutes}"),
+                """,  # nosec B608 - timeout expression is selected by storage dialect.
+                (now, now, timeout_minutes, long_timeout_minutes),
             )
         count = _positive_rowcount(cursor)
         if count > 0:

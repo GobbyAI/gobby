@@ -475,6 +475,115 @@ class TestDispatchBatchIsolationParity:
     """Tests that dispatch_batch forwards clone/isolation params to spawn_agent."""
 
     @pytest.mark.asyncio
+    async def test_dispatch_batch_honors_explicit_suggestion_contract(
+        self,
+        mock_runner,
+        build_agent_body,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+        prompt = "Continue active merge resolution mr-27c1a13a with merge_status."
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=build_agent_body(
+                    name="merge-worker",
+                    provider="claude",
+                    model="sonnet",
+                ),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context"
+            ) as mock_factory_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+            ) as mock_spawn_impl,
+        ):
+            mock_factory_ctx.return_value = {
+                "id": "proj-123",
+                "project_path": "/path/to/project",
+            }
+            mock_spawn_impl.return_value = {
+                "success": True,
+                "run_id": "run-merge-worker",
+                "child_session_id": "child-merge-worker",
+                "status": "pending",
+            }
+
+            result = await registry.call(
+                "dispatch_batch",
+                {
+                    "suggestions": [
+                        {
+                            "agent": "merge-worker",
+                            "task_id": "#14094",
+                            "isolation": "none",
+                            "worktree_id": "wt-347a5e",
+                            "prompt": prompt,
+                        }
+                    ],
+                    "agent": "backend-developer",
+                    "parent_session_id": "parent-789",
+                },
+            )
+
+        assert result["dispatched"] == 1
+        assert result["results"][0] == {
+            "task_ref": "#14094",
+            "run_id": "run-merge-worker",
+            "success": True,
+            "agent": "merge-worker",
+        }
+        spawn_kwargs = mock_spawn_impl.call_args.kwargs
+        assert spawn_kwargs["prompt"] == prompt
+        assert spawn_kwargs["agent_lookup_name"] == "merge-worker"
+        assert spawn_kwargs["task_id"] == "#14094"
+        assert spawn_kwargs["isolation"] == "none"
+        assert spawn_kwargs["worktree_id"] == "wt-347a5e"
+        assert spawn_kwargs["parent_session_id"] == "parent-789"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_batch_rejects_taskless_suggestions(
+        self,
+        mock_runner,
+        build_agent_body,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=build_agent_body(name="merge-worker"),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+            ) as mock_spawn_impl,
+        ):
+            result = await registry.call(
+                "dispatch_batch",
+                {
+                    "suggestions": [
+                        {
+                            "agent": "merge-worker",
+                            "prompt": "This should not spawn without a task reference.",
+                        }
+                    ],
+                    "parent_session_id": "parent-789",
+                },
+            )
+
+        assert result["dispatched"] == 0
+        assert result["results"][0]["success"] is False
+        assert "refusing to spawn an unknown task" in result["results"][0]["error"]
+        mock_spawn_impl.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_dispatch_batch_forwards_clone_params(self, mock_runner, agent_body) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

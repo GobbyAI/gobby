@@ -5,11 +5,16 @@ import os
 import tempfile
 from collections.abc import Generator, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from filelock import FileLock
+
+# Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
+# postgres_db). Tests that don't use them pay no runtime cost; the session
+# fixtures only fire on first request.
+pytest_plugins = ["tests.fixtures.postgres"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,6 +46,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
@@ -139,6 +145,37 @@ def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
     run_migrations(db)
     yield db
     db.close()
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def hub_db(
+    request: pytest.FixtureRequest,
+    temp_dir: Path,
+) -> Iterator["HubDatabase"]:
+    """Yield a migrated hub-database adapter for each backend.
+
+    Tests that work through the backend-neutral ``HubDatabase`` protocol opt
+    into both SQLite and PostgreSQL coverage by depending on this fixture
+    instead of ``temp_db``. The PostgreSQL branch delegates to ``postgres_db``
+    (from ``tests/fixtures/postgres.py``), which skips when ``DATABASE_URL``
+    is unset so suite runs outside the postgres-enabled environment short-
+    circuit cleanly.
+    """
+    backend = request.param
+    if backend == "sqlite":
+        from gobby.storage.hub.sqlite import SqliteHubDatabase
+
+        # SqliteHubDatabase pins dialect=Literal["sqlite"] (narrower than the
+        # protocol's Literal["sqlite", "postgres"]); the cast is the boundary
+        # translation between adapter precision and the protocol alphabet.
+        db = SqliteHubDatabase(str(temp_dir / "hub.db"))
+        db.apply_migrations()
+        try:
+            yield cast("HubDatabase", db)
+        finally:
+            db.close()
+        return
+    yield request.getfixturevalue("postgres_db")
 
 
 @pytest.fixture

@@ -87,6 +87,59 @@ def _call_arguments(mcp_tool: str) -> dict[str, Any]:
     return {"task_id": "#1", "description": "updated"}
 
 
+def test_pending_tool_context_matches_direct_proxy_event(
+    handler: WorkflowHookHandler,
+) -> None:
+    """The MCP proxy can identify a CLI PreToolUse it is about to re-enter."""
+    before_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": '{"conflict_id": "mc-one", "use_ai": true}',
+        },
+        "tool_use_id": "toolu-test",
+    }
+    proxy_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": {"conflict_id": "mc-one", "use_ai": True},
+        },
+    }
+    other_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": {"conflict_id": "mc-two", "use_ai": True},
+        },
+    }
+
+    handler._remember_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, before_data)
+
+    assert handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        proxy_data,
+    )
+    assert not handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        other_data,
+    )
+
+    snapshot = handler._match_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, before_data)
+    assert snapshot is not None
+    handler._forget_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, snapshot)
+    assert not handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        proxy_data,
+    )
+
+
 @pytest.mark.parametrize(
     ("mcp_tool", "schema_input"),
     [

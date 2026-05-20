@@ -66,6 +66,7 @@ async def test_list_running_agents_includes_live_activity_counters(
         child_session_id=child_id,
         provider="claude",
         prompt="surface live counters",
+        agent_name="merge-worker",
     )
     run_storage.start(run.id)
     _set_session_stats(temp_db, child_id, tool_calls_count=22, turns_used=13)
@@ -80,5 +81,6 @@ async def test_list_running_agents_includes_live_activity_counters(
     assert result["success"] is True
     assert result["count"] == 1
     assert result["agents"][0]["run_id"] == run.id
+    assert result["agents"][0]["agent_name"] == "merge-worker"
     assert result["agents"][0]["tool_calls_count"] == 22
     assert result["agents"][0]["turns_used"] == 13

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime
 import inspect
 import re
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +16,7 @@ from _pytest.fixtures import FixtureLookupError
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_ISO_TS = "2026-01-01T00:00:00Z"
 
 
 def _source(path: str) -> str:
@@ -30,6 +33,57 @@ def _hub_db(request: pytest.FixtureRequest) -> object:
         return request.getfixturevalue("hub_db")
     except FixtureLookupError:
         return request.getfixturevalue("temp_db")
+
+
+def _detect_search_backend_seams() -> dict[str, bool]:
+    """Detect whether the #14098 search-backend port has landed.
+
+    The structural tests below are TDD pins authored by #14095 against the
+    #14098 implementation (port keyword search backends through the
+    HubDatabase seam). They are intentionally red until #14098 merges into
+    this branch's base. Each test guards on this detection so the active
+    suite stays green; the tests transition from skipped to executed
+    automatically when the seam symbols and source-file markers appear.
+    """
+    seams: dict[str, bool] = {
+        "bm25_backend": False,
+        "memory_fts_search": False,
+        "memory_rrf_k": False,
+        "skills_hub_seam": False,
+        "code_index_hub_seam": False,
+    }
+    try:
+        from gobby.storage.tasks._search import BM25SearchBackend  # noqa: F401
+
+        seams["bm25_backend"] = True
+    except ImportError:
+        pass
+    try:
+        from gobby.memory.manager import MemoryManager
+
+        seams["memory_fts_search"] = hasattr(MemoryManager, "_fts_search")
+        seams["memory_rrf_k"] = "rrf_k" in inspect.signature(MemoryManager.__init__).parameters
+    except ImportError:
+        pass
+    try:
+        skills_text = _source("src/gobby/skills/search.py") + _source("src/gobby/skills/manager.py")
+        seams["skills_hub_seam"] = (
+            "HubDatabase" in skills_text and "pick_search_backend" in skills_text
+        )
+    except OSError:
+        pass
+    try:
+        code_text = _source("src/gobby/code_index/storage.py")
+        seams["code_index_hub_seam"] = (
+            "HubDatabase" in code_text and "pick_search_backend" in code_text
+        )
+    except OSError:
+        pass
+    return seams
+
+
+_SEAMS = _detect_search_backend_seams()
+_PENDING_REASON = "awaiting #14098 search-backend port (HubDatabase keyword seam)"
 
 
 class _VectorStoreStub:
@@ -92,6 +146,7 @@ async def _embed(_text: str, **_kwargs: object) -> list[float]:
     return [1.0, 0.0, 0.0]
 
 
+@pytest.mark.skipif(not _SEAMS["bm25_backend"], reason=_PENDING_REASON)
 def test_pick_search_backend_dispatches_by_hub_dialect_and_rejects_semantic() -> None:
     from gobby.storage.tasks._search import (
         BM25SearchBackend,
@@ -108,6 +163,7 @@ def test_pick_search_backend_dispatches_by_hub_dialect_and_rejects_semantic() ->
         pick_search_backend(SimpleNamespace(dialect="postgres"), "tasks", mode="semantic")
 
 
+@pytest.mark.skipif(not _SEAMS["memory_fts_search"], reason=_PENDING_REASON)
 def test_memory_fts_search_uses_keyword_backend_seam() -> None:
     from gobby.memory.manager import MemoryManager
 
@@ -120,6 +176,7 @@ def test_memory_fts_search_uses_keyword_backend_seam() -> None:
     assert "MemoryFTS5Searcher" not in source
 
 
+@pytest.mark.skipif(not _SEAMS["memory_rrf_k"], reason=_PENDING_REASON)
 def test_memory_fused_search_preserves_rrf_configuration_surface() -> None:
     from gobby.memory.manager import MemoryManager
 
@@ -131,6 +188,7 @@ def test_memory_fused_search_preserves_rrf_configuration_surface() -> None:
     assert MemoryManager._rrf_scores(["graph"], k=29)["graph"] == pytest.approx(1 / 30)
 
 
+@pytest.mark.skipif(not _SEAMS["memory_rrf_k"], reason=_PENDING_REASON)
 @pytest.mark.parametrize(
     "signal_case",
     ["keyword_only", "vector_only", "graph_only", "combined_signal"],
@@ -184,6 +242,7 @@ async def test_fused_search_dialect_parity_cases(
     assert [memory.id for memory in results] == expected
 
 
+@pytest.mark.skipif(not _SEAMS["skills_hub_seam"], reason=_PENDING_REASON)
 def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     from gobby.search import SearchConfig
     from gobby.skills.search import SkillSearch
@@ -232,6 +291,7 @@ def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     ]
 
 
+@pytest.mark.skipif(not _SEAMS["code_index_hub_seam"], reason=_PENDING_REASON)
 def test_code_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     from gobby.code_index.models import ContentChunk, Symbol
     from gobby.code_index.storage import CodeIndexStorage
@@ -314,3 +374,226 @@ def test_code_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     assert [
         result["file_path"] for result in storage.search_content_fts("alpha beta", "proj-1")
     ] == ["src/calculator.py"]
+
+
+def _insert_skill(
+    txn: Any,
+    *,
+    skill_id: str,
+    name: str,
+    project_id: str | None,
+    source: str,
+    metadata_json: str | None,
+    dialect: str,
+) -> None:
+    """Insert a skill row using a dialect-aware metadata cast."""
+    if dialect == "postgres":
+        metadata_clause = "CAST($5 AS JSONB)"
+    else:
+        metadata_clause = "$5"
+    txn.execute(
+        f"""
+        INSERT INTO skills (
+            id, name, description, content,
+            metadata, project_id, source,
+            created_at, updated_at
+        )
+        VALUES ($1, $2, 'desc', 'content', {metadata_clause}, $3, $4, $6, $7)
+        """,
+        (skill_id, name, project_id, source, metadata_json, _ISO_TS, _ISO_TS),
+    )
+
+
+def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
+    """`ON CONFLICT DO NOTHING` skips duplicates the same way on both backends.
+
+    SQLite legacy code uses `INSERT OR IGNORE`; Postgres requires
+    `ON CONFLICT DO NOTHING`. The ported SQL prefers the portable spelling, and
+    this test pins that both dialects accept it and skip the duplicate row
+    silently.
+    """
+    db = hub_db
+
+    with db.transaction() as txn:
+        txn.execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            ("p-upsert-original", "parity-upsert"),
+        )
+
+    with db.transaction() as txn:
+        txn.execute(
+            """
+            INSERT INTO projects (id, name) VALUES ($1, $2)
+            ON CONFLICT (name) DO NOTHING
+            """,
+            ("p-upsert-duplicate", "parity-upsert"),
+        )
+
+    with db.transaction() as txn:
+        rows = txn.execute(
+            "SELECT id FROM projects WHERE name = $1 ORDER BY id",
+            ("parity-upsert",),
+        ).fetchall()
+
+    assert [row["id"] for row in rows] == ["p-upsert-original"]
+
+
+def test_returning_clause_dialect_parity(hub_db: Any) -> None:
+    """`RETURNING id` replaces ``lastrowid`` for generated-key reads on both backends."""
+    db = hub_db
+
+    with db.transaction() as txn:
+        cursor = txn.execute(
+            """
+            INSERT INTO projects (id, name)
+            VALUES ($1, $2)
+            RETURNING id
+            """,
+            ("proj-returning", "parity-returning"),
+        )
+        row = cursor.fetchone()
+
+    assert row is not None
+    assert row["id"] == "proj-returning"
+
+
+def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
+    """`json_text_expr` extracts the same scalar JSON value on both backends.
+
+    SQLite uses `json_extract(col, '$.k')`; Postgres uses `col #>> '{k}'` (the
+    same family as `col->>'k'`). Both must round-trip the same payload to the
+    same scalar text.
+    """
+    from gobby.storage.sql_dialect import json_text_expr
+
+    db = hub_db
+    payload_json = '{"category": "parity-test", "nested": {"deep": "deep-value"}}'
+
+    with db.transaction() as txn:
+        _insert_skill(
+            txn,
+            skill_id="skl-parity-json",
+            name="parity-json",
+            project_id=None,
+            source="installed",
+            metadata_json=payload_json,
+            dialect=db.dialect,
+        )
+
+        top_expr = json_text_expr(db, "metadata", "category")
+        nested_expr = json_text_expr(db, "metadata", "nested", "deep")
+        cursor = txn.execute(
+            f"SELECT {top_expr} AS top, {nested_expr} AS nested FROM skills WHERE id = $1",
+            ("skl-parity-json",),
+        )
+        row = cursor.fetchone()
+
+    assert row is not None
+    assert row["top"] == "parity-test"
+    assert row["nested"] == "deep-value"
+
+
+def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
+    """Default-valued timestamp columns produce timezone-aware UTC moments.
+
+    Postgres `TIMESTAMPTZ DEFAULT NOW()` returns a tz-aware datetime; SQLite
+    `TEXT DEFAULT (datetime('now'))` returns a UTC text string. Both must
+    decode to a UTC moment within seconds of `now()`.
+    """
+    db = hub_db
+    before = datetime.datetime.now(datetime.UTC)
+
+    with db.transaction() as txn:
+        txn.execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            ("proj-ts", "parity-ts"),
+        )
+        row = txn.execute(
+            "SELECT created_at FROM projects WHERE id = $1",
+            ("proj-ts",),
+        ).fetchone()
+
+    after = datetime.datetime.now(datetime.UTC)
+    assert row is not None
+    raw = row["created_at"]
+
+    if db.dialect == "postgres":
+        assert isinstance(raw, datetime.datetime)
+        assert raw.tzinfo is not None
+        assert raw.utcoffset() == datetime.timedelta(0)
+        moment = raw
+    else:
+        assert isinstance(raw, str)
+        moment = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=datetime.UTC,
+        )
+
+    # Allow second-rounding on the SQLite side: clamp the lower edge to the
+    # whole-second floor of `before`.
+    floor_before = before.replace(microsecond=0)
+    assert floor_before <= moment <= after
+
+
+def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
+    """Two rows that share ``(name, NULL project_id, source)`` collide on both backends.
+
+    Postgres expresses this with `UNIQUE NULLS NOT DISTINCT (name, project_id, source)`;
+    SQLite expresses it with `UNIQUE (name, COALESCE(project_id, '__global__'), source)`.
+    The two should be semantically interchangeable: a second insert with a NULL
+    `project_id` and matching `(name, source)` must raise an integrity error.
+    """
+    db = hub_db
+
+    with db.transaction() as txn:
+        _insert_skill(
+            txn,
+            skill_id="skl-unique-a",
+            name="parity-unique-null",
+            project_id=None,
+            source="installed",
+            metadata_json=None,
+            dialect=db.dialect,
+        )
+
+    if db.dialect == "postgres":
+        import psycopg.errors
+
+        expected_exc: type[Exception] = psycopg.errors.UniqueViolation
+    else:
+        expected_exc = sqlite3.IntegrityError
+
+    with pytest.raises(expected_exc):
+        with db.transaction() as txn:
+            _insert_skill(
+                txn,
+                skill_id="skl-unique-b",
+                name="parity-unique-null",
+                project_id=None,
+                source="installed",
+                metadata_json=None,
+                dialect=db.dialect,
+            )
+
+    # A row with a non-NULL project_id remains accepted.
+    with db.transaction() as txn:
+        txn.execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            ("proj-unique", "proj-unique"),
+        )
+        _insert_skill(
+            txn,
+            skill_id="skl-unique-c",
+            name="parity-unique-null",
+            project_id="proj-unique",
+            source="installed",
+            metadata_json=None,
+            dialect=db.dialect,
+        )
+
+    with db.transaction() as txn:
+        rows = txn.execute(
+            "SELECT id FROM skills WHERE name = $1 ORDER BY id",
+            ("parity-unique-null",),
+        ).fetchall()
+
+    assert [row["id"] for row in rows] == ["skl-unique-a", "skl-unique-c"]

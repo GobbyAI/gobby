@@ -95,8 +95,11 @@ campaign task with `reason=already_implemented` instead.
 Produce an ordered merge plan. The ordering rubric, in priority order:
 
 1. **Recover orphans first.** Any worktree returned by `inspect_merge_state`
-   with `state != "clean"` and `can_resume=true` must be recovered or aborted
-   before scheduling fresh merges in the same worktree.
+   with `state != "clean"` and `can_resume=true` must be recovered before
+   scheduling fresh merges in the same worktree. If it exposes an
+   `active_resolution_id` with pending conflicts, continue that active
+   resolution with `merge_status` plus a `merge-worker`; do not abort solely
+   because a previous campaign recorded no progress.
 2. **Toposort by task dependencies.** If the campaign worktrees correspond to
    tasks with `blocked_by` relations, predecessors merge before dependents.
 3. **Fewest predicted conflicts against the target.** Worktrees with `clean:
@@ -118,8 +121,8 @@ For each step, decide an action:
 - `merge_subset` — when only specific paths from the worktree should land
   (the rest is exploratory or stale). Drives the `merge_subset` tool.
 - `abort` — when `inspect_merge_state` shows orphaned state that cannot be
-  resumed cleanly, or when the worktree is purely abandoned work. Drives
-  `merge_abort` then `delete_worktree`.
+  resumed cleanly, has no active resolution to continue, or when the worktree
+  is purely abandoned work. Drives `merge_abort` then `delete_worktree`.
 
 Emit the plan as a structured list into a session variable
 `merge_plan` so subsequent phases can iterate it:
@@ -149,12 +152,48 @@ Iterate the plan in order. For each step:
 2. **Dispatch.** Call `gobby-agents:spawn_agent` (or `dispatch_batch` for a
    group of independent `clean: true` steps) with `agent=merge-worker` and
    pass the `worktree_id`, `target_branch`, and source-branch info as
-   spawn-time variables. The worker handles the actual merge + AI resolution.
+   spawn-time variables. `source_branch` is always the worktree branch; never
+   use the target branch as source to "pull latest target" into the worktree.
+   If the task is a TDD red-phase test-writing task whose entry criteria,
+   review notes, or approval notes say the new tests are expected to fail before
+   implementation, do not use that expected-failing pytest command as a green
+   `verify_command`. The red pytest output is validation evidence already
+   captured by QA. For these tasks, omit `verify_command`, merge cleanly, and
+   cite the QA red evidence plus clean merge state in the report.
+   For a clean direct merge, instruct the worker to call
+   `gobby-worktrees:merge_worktree`; if the plan has a `verify_command`, include
+   it in the worker prompt and require `gobby-merge:verify_in_worktree` before
+   the worker records success. The worker records the `merge_sha` returned by
+   `merge_worktree` as the final target branch SHA only after verification
+   passes, or immediately when no verification command was supplied. Do not ask
+   a clean worker to use `merge_start`/`merge_apply` as the landing path;
+   `merge_apply` resolves the source/worktree branch and is not the final target
+   merge SHA. The worker handles the actual merge + AI resolution. When dispatching a
+   worker to continue an active resolution, keep the prompt inside the
+   merge-worker MCP surface: tell it to call `merge_status`, then
+   resolve exactly one pending conflict_id at a time with
+   `merge_resolve(conflict_id=..., use_ai=true)`, call `merge_status` again,
+   and only then continue to the next pending conflict. Once `merge_apply`
+   completes, tell it to call `merge_worktree` exactly once and record
+   `merge_worktree`'s `merge_sha`; never record the `merge_apply` SHA as the
+   final delivery SHA. Tell it not to issue multiple `merge_resolve` calls in
+   the same assistant turn or parallel tool batch. If retries/timeouts are
+   exhausted, tell it to call
+   `gobby-tasks-ops:record_merge_result` with `failure_reason` including the
+   unresolved ids/files, then terminate through its normal `end_agent_run`
+   step. Never ask the worker to use Read/Bash or synthesize manual `resolved_content`
+   from file inspection.
 3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
-   poll their session/run state via `gobby-agents` tools rather than spinning.
-4. **Verify.** Run the step's `verify_command` via
-   `gobby-merge:verify_in_worktree`. Treat exit code 0 as the gate. Capture
-   stdout/stderr in the campaign report on failure.
+   call `gobby-agents:wait_for_agent(run_id=...)` to wait for completion, then
+   call `gobby-agents:get_agent_result` only if you need to re-read the final
+   report. Do not use Bash sleep loops, tmux polling loops, or provider Monitor
+   for worker waits.
+4. **Verify.** Prefer worker-side verification: pass the step's
+   `verify_command` to the merge-worker and require it to run
+   `gobby-merge:verify_in_worktree` before `record_merge_result`. Treat exit
+   code 0 as the gate. If a legacy worker did not run verification, the
+   orchestrator must run the same command with `verify_in_worktree` before
+   reporting success. Capture stdout/stderr in the campaign report on failure.
 5. **Decide retry vs. escalate.**
    - Worker reports success + verify passes → mark step complete, move on.
    - Worker reports success + verify fails → re-dispatch the worker with the
@@ -172,8 +211,13 @@ Append a `task_lifecycle_event` per step (`merge_step_started`,
 Whenever `inspect_merge_state` shows orphaned state during pre-flight, treat
 it as a recovery action before any new dispatch:
 
-- `state == "merging"` with conflicts → call `merge_abort`, then re-survey
-  before scheduling a fresh `merge` step.
+- `state == "merging"` with conflicts and an `active_resolution_id` → call
+  `merge_status`, then dispatch a `merge-worker` to continue the pending
+  conflicts in that active resolution. The no-progress redispatch cap applies
+  only after a worker from the current orchestrator run completes and the next
+  `merge_status` is unchanged.
+- `state == "merging"` with conflicts but no resumable active resolution →
+  call `merge_abort`, then re-survey before scheduling a fresh `merge` step.
 - `state == "cherry-picking"` with conflicts → call
   `gobby-merge:merge_resolve` on each conflict, then **dispatch a
   `merge-worker` to run `git cherry-pick --continue`** in the worktree (no

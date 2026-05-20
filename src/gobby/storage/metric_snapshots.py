@@ -10,6 +10,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.sql_dialect import newer_than_now_expr, older_than_now_expr
+
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
@@ -37,11 +39,12 @@ class MetricSnapshotStorage:
 
         Returns list of {timestamp, metrics} dicts ordered by time ASC.
         """
+        recent_sql = newer_than_now_expr(self.db, "timestamp", "?", "hour")
         rows = self.db.fetchall(
-            "SELECT timestamp, metrics_json FROM metric_snapshots "
-            "WHERE timestamp >= datetime('now', ?) "
-            "ORDER BY timestamp ASC LIMIT ?",
-            (f"-{hours} hours", limit),
+            f"SELECT timestamp, metrics_json FROM metric_snapshots "
+            f"WHERE {recent_sql} "
+            f"ORDER BY timestamp ASC LIMIT ?",  # nosec B608 - cutoff expr is dialect-owned.
+            (hours, limit),
         )
         results = []
         for row in rows:
@@ -59,9 +62,10 @@ class MetricSnapshotStorage:
 
     def delete_old_snapshots(self, retention_hours: int = 24) -> int:
         """Purge snapshots older than retention period."""
+        expired_sql = older_than_now_expr(self.db, "timestamp", "?", "hour")
         cursor = self.db.execute(
-            "DELETE FROM metric_snapshots WHERE timestamp < datetime('now', ?)",
-            (f"-{retention_hours} hours",),
+            f"DELETE FROM metric_snapshots WHERE {expired_sql}",  # nosec B608
+            (retention_hours,),
         )
         return cursor.rowcount
 

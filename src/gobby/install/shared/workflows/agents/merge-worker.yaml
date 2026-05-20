@@ -9,8 +9,8 @@ description: |
 version: "3.0"
 enabled: true
 priority: 20
-provider: gemini
-model: gemini-3.1-pro-preview
+provider: claude
+model: sonnet
 reasoning_effort: high
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
@@ -25,25 +25,59 @@ instructions: |
   - If you have clone_id: use clone merge flow
 
   WORKTREE MERGE FLOW:
-  MAX_RESOLVE_RETRIES: 3 per conflict set.
+  MAX_RESOLVE_RETRIES: 3 per conflict id.
   1. Call merge_worktree with worktree_id and target_branch. Do not push.
-  2. If SUCCESS: call end_agent_run — you're done
+     merge_worktree is the authoritative final landing tool for worktree
+     delivery. Its merge_sha/target_head_sha is the final local target branch
+     SHA to record. Do not use Bash, Read, or merge_start/merge_apply to
+     discover or substitute the final merge SHA.
+  2. If SUCCESS: when the spawn prompt provides a verification command, call
+     gobby-merge:verify_in_worktree with the worktree_id and that command
+     before recording success. If verification fails, call
+     gobby-tasks-ops:record_merge_result with failure_reason. If verification
+     passes or no verification command was supplied, call
+     gobby-tasks-ops:record_merge_result with the merge_sha returned by
+     merge_worktree, then gobby-tasks-ops:close_linked_github_issue. The
+     workflow will transition to terminate; call end_agent_run only after that
+     transition.
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
-        (this resets merge_retry_count=0 for deterministic retry enforcement)
+        where source_branch is the worktree branch and target_branch is the
+        local branch being merged into. Never pass the target branch as
+        source_branch to "pull target into the worktree"; merge_start already
+        updates the worktree branch from target before applying resolutions.
+        (this resets merge_resolve_attempts=[] for deterministic retry enforcement)
      b. Check merge_status for conflict details
-     c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
-        by the exact unresolved conflict file/id set
-     d. Call merge_apply to finalize the resolved merge
-     e. Call merge_worktree again with target_branch to merge the resolved work locally
-     f. Call end_agent_run
-  4. If resolution fails, or the same conflict set reaches MAX_RESOLVE_RETRIES:
-     call merge_abort, report the conflict ids/files and retry count, then end_agent_run.
+     c. Resolve conflicts sequentially. Call merge_resolve with use_ai=true
+        for exactly one conflict_id at a time, then call merge_status before
+        attempting the next pending conflict. Never issue multiple
+        merge_resolve calls in the same assistant turn or parallel tool batch.
+        Track attempts by conflict_id. If one conflict reaches
+        MAX_RESOLVE_RETRIES, skip that conflict_id and continue with the
+        remaining conflicts.
+     d. Re-check merge_status after each attempt and before merge_apply. Call
+        merge_apply only if all conflicts are resolved. merge_apply updates
+        the source/worktree branch for the resolved content; it is not the
+        final target-branch delivery SHA.
+     e. Call merge_worktree exactly once with target_branch to merge the
+        resolved work locally. Record the merge_sha returned by merge_worktree;
+        never record the merge_apply SHA as the final delivery SHA.
+     f. Call gobby-tasks-ops:record_merge_result with that merge_sha, then
+        gobby-tasks-ops:close_linked_github_issue. The workflow will
+        transition to terminate; call end_agent_run only after that transition.
+  4. If any conflicts remain unresolved after all conflict_ids were attempted:
+     record gobby-tasks-ops:record_merge_result with failure_reason including
+     the unresolved conflict ids/files and retry counts. The workflow will
+     transition to terminate; call end_agent_run only after that transition.
+     Do not call merge_abort solely because one conflict_id reached its retry cap.
 
   CLONE MERGE FLOW:
   1. Sync the clone first: call sync_clone with clone_id
   2. Call merge_clone with clone_id and target_branch
-  3. Call end_agent_run (conflict resolution not available for clones)
+  3. Record gobby-tasks-ops:record_merge_result with merge_sha on success or
+     failure_reason on conflicts/failure. On success, also call
+     gobby-tasks-ops:close_linked_github_issue. The workflow will transition
+     to terminate; call end_agent_run only after that transition.
 
   LIFECYCLE MODEL:
   - On successful merge, call gobby-tasks-ops:record_merge_result with the
@@ -51,8 +85,14 @@ instructions: |
   - After record_merge_result succeeds, call
     gobby-tasks-ops:close_linked_github_issue with the same task id and
     merge_sha. It is idempotent and skips tasks without GitHub issue fields.
+  - When the spawn prompt provides a verification command, verification is a
+    pre-record success gate. Run gobby-merge:verify_in_worktree after
+    merge_worktree succeeds and before record_merge_result.
   - On unresolved conflict or verification failure, call
     gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
+  - Do not call end_agent_run from the merge step. First record a successful
+    or failed merge result. On success, call close_linked_github_issue. Those
+    MCP calls move the workflow to terminate; end_agent_run belongs there.
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required merge work is complete.
@@ -61,10 +101,25 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task — the coordinator handles task lifecycle.
   - Do NOT spawn other agents.
-  - Do NOT use Bash for git commands — the merge tools handle everything.
+  - Do NOT use Bash, Read, or other file-inspection tools during merge conflict
+    resolution — the merge step allows only MCP tools. `merge_status` gives
+    conflict ids/paths and `merge_resolve(use_ai=true)` hydrates the current
+    conflict content from the worktree.
+  - If `merge_resolve(use_ai=true)` times out or fails, retry that same
+    conflict_id within MAX_RESOLVE_RETRIES. Do not switch to Bash/Read or
+    blocked inspection tools. If retries are exhausted, continue the remaining
+    conflict_ids, then record unresolved ids/files with record_merge_result.
+  - Do NOT parallelize conflict resolution. For a single active resolution,
+    make one `merge_resolve(use_ai=true)` call, wait for it to complete, call
+    `merge_status`, and only then attempt the next pending conflict_id.
   - Do NOT push. Remote publication is allowed only through explicit PR delivery.
-  - Do NOT terminate or exit the agent process without calling end_agent_run.
+  - Do NOT terminate or exit the agent process without first transitioning to
+    the terminate step and then calling end_agent_run.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+
+step_variables:
+  merge_result_recorded: false
+  merge_worker_ready_to_terminate: false
 
 workflows:
   rule_selectors:
@@ -84,23 +139,51 @@ steps:
       2. Check your session variables for worktree_id or clone_id
       3. WORKTREE: call merge_worktree with worktree_id and target_branch
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
-      4. If merge succeeds with no conflicts, call end_agent_run
+      4. If merge succeeds with no conflicts and the spawn prompt provides a
+         verification command, call verify_in_worktree before record_merge_result.
+         If verification fails, record_merge_result with failure_reason. If
+         verification passes or no verification command was supplied, record the
+         merge_sha returned by merge_worktree/merge_clone with
+         record_merge_result, then call close_linked_github_issue. Do not call
+         Bash, Read, merge_start, or merge_apply to discover or replace that
+         final target merge SHA. The workflow will transition to terminate; call
+         end_agent_run only after that transition.
 
       CONFLICT RESOLUTION (worktree only):
       If merge_worktree returns has_conflicts: true:
       1. Call merge_start with worktree_id, source_branch, target_branch
-         (this sets merge_retry_count=0)
+         using the worktree branch as source_branch and the local delivery
+         branch as target_branch. If merge_start rejects a stale/reused
+         resolution or reports that source_branch does not match the worktree
+         branch, retry once with the corrected source/target pair from the
+         worktree metadata before recording failure.
+         (this sets merge_resolve_attempts=[])
       2. Check merge_status for the resolution_id to see conflict details
-      3. Call merge_resolve with use_ai=true for each conflict. Track attempts
-         by the exact unresolved conflict file/id set and stop after
-         MAX_RESOLVE_RETRIES=3 for the same set.
-      4. Call merge_apply with the resolution_id to finalize
-      5. Call merge_worktree again with target_branch to merge the resolved work locally
-      6. Call end_agent_run
+      3. Resolve conflicts sequentially: call merge_resolve with use_ai=true
+         for exactly one conflict_id, wait for it to complete, then call
+         merge_status before selecting the next pending conflict. Never issue
+         multiple merge_resolve calls in one assistant turn or parallel tool
+         batch. Track attempts by conflict_id. If one conflict_id reaches
+         MAX_RESOLVE_RETRIES=3, skip that conflict_id and continue with the
+         next pending conflict. Do not call Read, Bash, or file-inspection
+         tools to build manual resolved_content; merge_resolve(use_ai=true) is
+         the conflict content access path in this step.
+      4. Re-check merge_status after each attempt. Call merge_apply with the
+         resolution_id only when all conflicts are resolved. Treat merge_apply
+         as source/worktree branch resolution only; do not record its SHA as
+         the final delivery SHA.
+      5. Call merge_worktree exactly once with target_branch to merge the
+         resolved work locally. Record the merge_sha returned by merge_worktree.
+      6. Call record_merge_result with that merge_sha, then
+         close_linked_github_issue. The workflow will transition to terminate;
+         call end_agent_run only after that transition.
 
-      CLONE CONFLICTS: call end_agent_run (no auto-resolution for clones)
-      RESOLUTION FAILURE OR RETRY CAP: call merge_abort, report the conflict
-      ids/files that hit the cap, then end_agent_run
+      CLONE CONFLICTS: record_merge_result with failure_reason (no
+      auto-resolution for clones), then terminate.
+      RESOLUTION FAILURE OR RETRY CAP: do not call merge_abort solely because
+      one conflict_id hit the cap. Continue other conflict_ids, then report the
+      unresolved ids/files and retry counts in record_merge_result before
+      terminating.
 
       The target branch is in your spawn prompt. Defaults:
       merge_worktree uses the worktree's base_branch, merge_clone uses "main".
@@ -119,33 +202,69 @@ steps:
       - "gobby-merge:merge_resolve"
       - "gobby-merge:merge_apply"
       - "gobby-merge:merge_abort"
+      - "gobby-merge:verify_in_worktree"
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
-      - "gobby-agents:end_agent_run"
     on_mcp_success:
       - server: gobby-merge
         tool: merge_start
         action: set_variable
-        variable: merge_retry_count
-        value: 0
+        variable: merge_resolve_attempts
+        value: []
+      - server: gobby-merge
+        tool: merge_resolve
+        action: set_variable
+        variable: merge_resolve_attempts
+        value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
+      - server: gobby-tasks-ops
+        tool: record_merge_result
+        when: "bool(tool_input.get('failure_reason'))"
+        action: set_variable
+        variable: merge_worker_ready_to_terminate
+        value: true
+      - server: gobby-tasks-ops
+        tool: record_merge_result
+        when: "not bool(tool_input.get('failure_reason'))"
+        action: set_variable
+        variable: merge_result_recorded
+        value: true
+      - server: gobby-tasks-ops
+        tool: close_linked_github_issue
+        action: set_variable
+        variable: merge_worker_ready_to_terminate
+        value: true
+    on_mcp_error:
+      - server: gobby-merge
+        tool: merge_resolve
+        when: "not bool(tool_output.get('retry_later'))"
+        action: set_variable
+        variable: merge_resolve_attempts
+        value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
+      - server: gobby-tasks-ops
+        tool: close_linked_github_issue
+        when: "vars.get('merge_result_recorded') is True"
+        action: set_variable
+        variable: merge_worker_ready_to_terminate
+        value: true
     on_mcp_before:
       - server: gobby-merge
         tool: merge_resolve
         action: block
-        when: "vars.get('merge_retry_count', 0) >= 3"
+        when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
         reason: |
-          MAX_RESOLVE_RETRIES reached for merge_resolve. Call gobby-merge:merge_abort,
-          report the conflict ids/files and retry count, then call
-          gobby-agents:end_agent_run. Do not retry merge_resolve.
-      - server: gobby-merge
-        tool: merge_resolve
-        action: set_variable
-        variable: merge_retry_count
-        value: "vars.get('merge_retry_count', 0) + 1"
-    # No on_mcp_success — merge_worktree returns success:false on conflicts
-    # but on_mcp_success fires on any non-transport-error response, which
-    # would incorrectly set merge_complete=true and skip conflict resolution.
-    # Agent handles all routing via instructions instead.
+          MAX_RESOLVE_RETRIES reached for this conflict_id. Do not retry this
+          conflict_id. Skip it, continue with the next pending conflict_id, then
+          call merge_status and report any unresolved ids/files with retry
+          counts in gobby-tasks-ops:record_merge_result with failure_reason.
+          The workflow will transition to terminate. Do not call merge_abort
+          solely because one conflict_id hit the retry cap.
+    # Do not set completion directly from merge_worktree — it returns
+    # success:false on conflicts, but handler success fires on any
+    # non-transport-error response. Completion is recorded explicitly through
+    # record_merge_result/close_linked_github_issue.
+    transitions:
+      - to: terminate
+        when: "vars.merge_worker_ready_to_terminate"
 
   - name: terminate
     description: "Safety net: self-terminate by calling end_agent_run"

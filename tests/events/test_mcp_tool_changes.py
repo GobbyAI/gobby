@@ -1,4 +1,4 @@
-"""Tests for MCP tool changes: run_pipeline and wait_for_agent removal."""
+"""Tests for MCP tool changes."""
 
 from __future__ import annotations
 
@@ -69,11 +69,11 @@ class TestRunPipelineNoWait:
         )
 
 
-class TestRemovedWaitTools:
-    """Removed wait tools are no longer registered."""
+class TestWaitTools:
+    """Wait tools are scoped to agent completion, not workflow execution."""
 
-    def test_wait_for_agent_not_in_registry(self) -> None:
-        """The agents registry should not contain wait_for_agent."""
+    def test_wait_for_agent_is_in_agents_registry(self) -> None:
+        """The agents registry contains bounded agent-run waiting."""
         from unittest.mock import MagicMock
 
         from gobby.mcp_proxy.tools.agents import create_agents_registry
@@ -89,7 +89,7 @@ class TestRemovedWaitTools:
         )
 
         tool_names = [t["name"] for t in registry.list_tools()]
-        assert "wait_for_agent" not in tool_names
+        assert "wait_for_agent" in tool_names
 
     def test_wait_for_completion_not_in_workflows_registry(self) -> None:
         """The workflows registry should not contain wait_for_completion."""

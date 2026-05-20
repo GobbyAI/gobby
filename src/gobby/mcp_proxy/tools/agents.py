@@ -13,7 +13,9 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +30,26 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
 
 logger = logging.getLogger(__name__)
+
+_TERMINAL_AGENT_STATUSES = {"success", "error", "timeout", "cancelled"}
+
+
+def _agent_result_payload(run: Any) -> dict[str, Any]:
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "result": run.result,
+        "error": run.error,
+        "provider": run.provider,
+        "model": run.model,
+        "prompt": run.prompt,
+        "tool_calls_count": run.tool_calls_count,
+        "turns_used": run.turns_used,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "child_session_id": run.child_session_id,
+        "terminal_reason": run.terminal_reason,
+    }
 
 
 def _fire_synthetic_stop(
@@ -257,22 +279,55 @@ def create_agents_registry(
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
 
-        return {
-            "success": True,
-            "run_id": run.id,
-            "status": run.status,
-            "result": run.result,
-            "error": run.error,
-            "provider": run.provider,
-            "model": run.model,
-            "prompt": run.prompt,
-            "tool_calls_count": run.tool_calls_count,
-            "turns_used": run.turns_used,
-            "started_at": run.started_at,
-            "completed_at": run.completed_at,
-            "child_session_id": run.child_session_id,
-            "terminal_reason": run.terminal_reason,
-        }
+        return {"success": True, **_agent_result_payload(run)}
+
+    @registry.tool(
+        name="wait_for_agent",
+        description=(
+            "Block until an agent run reaches a terminal status or the timeout expires. "
+            "Use this instead of shell sleeps, tmux polling, or provider Monitor waits."
+        ),
+    )
+    async def wait_for_agent(
+        run_id: str,
+        timeout_seconds: float = 300.0,
+        poll_interval_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        """
+        Wait for an agent run to finish without forcing callers to spin in the terminal.
+
+        Args:
+            run_id: Agent run ID to wait for.
+            timeout_seconds: Maximum time to wait, capped at 30 minutes.
+            poll_interval_seconds: Delay between status checks, capped to a sane range.
+
+        Returns:
+            Dict with completed=true and the terminal run payload, or completed=false
+            with the latest run payload when the timeout expires.
+        """
+        timeout = max(0.0, min(float(timeout_seconds), 1800.0))
+        interval = max(0.1, min(float(poll_interval_seconds), 30.0))
+        deadline = time.monotonic() + timeout
+
+        while True:
+            run = runner.get_run(run_id)
+            if not run:
+                return {"success": False, "error": f"Agent run {run_id} not found"}
+
+            payload = _agent_result_payload(run)
+            if run.status in _TERMINAL_AGENT_STATUSES:
+                return {"success": True, "completed": True, **payload}
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "success": True,
+                    "completed": False,
+                    "timeout_seconds": timeout,
+                    **payload,
+                }
+
+            await asyncio.sleep(min(interval, remaining))
 
     @registry.tool(
         name="list_agent_runs",

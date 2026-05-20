@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +41,7 @@ class MCPServer:
     project_id: str  # Required - all servers must belong to a project
 
     @classmethod
-    def from_row(cls, row: Any) -> "MCPServer":
+    def from_row(cls, row: Mapping[str, Any]) -> "MCPServer":
         """Create MCPServer from database row."""
         return cls(
             id=row["id"],
@@ -114,7 +114,7 @@ class Tool:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> "Tool":
+    def from_row(cls, row: Mapping[str, Any]) -> "Tool":
         """Create Tool from database row."""
         return cls(
             id=row["id"],

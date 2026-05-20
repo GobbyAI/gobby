@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -23,8 +24,8 @@ CREATE TABLE IF NOT EXISTS chat_attachments (
     mime_type TEXT NOT NULL,
     size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
     local_path TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     bound_at TEXT -- Set once when an attachment is first bound to a message/session.
 );
 
@@ -58,7 +59,7 @@ AFTER UPDATE ON chat_attachments
 WHEN NEW.updated_at IS OLD.updated_at
 BEGIN
     UPDATE chat_attachments
-       SET updated_at = datetime('now')
+       SET updated_at = CURRENT_TIMESTAMP
      WHERE id = NEW.id;
 END;
 """
@@ -91,7 +92,7 @@ class ChatAttachmentRecord:
         return bool(self.conversation_id or self.message_id or self.target_session_id)
 
 
-def _row_to_record(row: sqlite3.Row) -> ChatAttachmentRecord:
+def _row_to_record(row: Mapping[str, Any]) -> ChatAttachmentRecord:
     return ChatAttachmentRecord(
         id=str(row["id"]),
         project_id=str(row["project_id"]),

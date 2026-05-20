@@ -12,6 +12,7 @@ Classes:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import threading
@@ -30,6 +31,7 @@ _AUTH_PROMPT_RE = re.compile(
     re.IGNORECASE,
 )
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
+_INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
 
 
 def _format_no_activity_error(result: Any) -> str:
@@ -43,6 +45,27 @@ def _format_no_activity_error(result: Any) -> str:
             "Check daemon-visible API/provider credentials or Claude Code login state."
         )
     return f"{_NO_ACTIVITY_ERROR} - last pane output:\n{tail}"
+
+
+def _format_incomplete_step_workflow_error(
+    workflow_name: str,
+    current_step: str | None,
+    exit_condition: str | None,
+    *,
+    eval_error: Exception | None = None,
+) -> str:
+    parts = [
+        _INCOMPLETE_STEP_WORKFLOW_ERROR,
+        f"workflow={workflow_name}",
+        f"current_step={current_step or 'unknown'}",
+    ]
+    if exit_condition:
+        parts.append(f"exit_condition={exit_condition}")
+    else:
+        parts.append("exit_condition=<none>")
+    if eval_error is not None:
+        parts.append(f"exit_condition_error={eval_error}")
+    return "; ".join(parts)
 
 
 class SessionCoordinator:
@@ -481,6 +504,25 @@ class SessionCoordinator:
             tool_calls_count = getattr(session, "tool_call_count", 0)
             turns_used = getattr(session, "turn_count", 0)
 
+            incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
+            if incomplete_workflow_error:
+                if tool_calls_count == 0 and turns_used == 0:
+                    incomplete_workflow_error = (
+                        f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
+                    )
+                self._agent_run_manager.fail(
+                    run_id=agent_run_id,
+                    error=incomplete_workflow_error,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+                self.logger.warning(
+                    f"Agent run {agent_run_id} marked as failed: "
+                    f"incomplete step workflow on session end"
+                )
+                self._notify_agent_completion(agent_run_id, "error")
+                return
+
             # Guard: agent exited cleanly but did nothing — treat as error
             if tool_calls_count == 0 and turns_used == 0:
                 self._agent_run_manager.fail(
@@ -512,11 +554,92 @@ class SessionCoordinator:
         except Exception as e:
             self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
 
-        # Release any worktrees associated with this session
+        finally:
+            # Release any worktrees associated with this session, including
+            # early exits that mark the run as failed.
+            try:
+                self.release_session_worktrees(session.id)
+            except Exception as e:
+                self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
+
+    def _incomplete_step_workflow_error(self, session_id: str) -> str | None:
+        """Return a failure reason if an active step workflow is still incomplete."""
+        if not self._agent_run_manager:
+            return None
+
+        db = getattr(self._agent_run_manager, "db", None)
+        if db is None:
+            return None
+
         try:
-            self.release_session_worktrees(session.id)
+            from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+            from gobby.workflows.definitions import WorkflowDefinition
+            from gobby.workflows.safe_evaluator import (
+                SafeExpressionEvaluator,
+                build_condition_helpers,
+            )
+            from gobby.workflows.state_manager import (
+                SessionVariableManager,
+                WorkflowInstanceManager,
+            )
+
+            instance_manager = WorkflowInstanceManager(db)
+            definition_manager = LocalWorkflowDefinitionManager(db)
+            session_variables = SessionVariableManager(db).get_variables(session_id)
+
+            for instance in instance_manager.get_active_instances(session_id):
+                if not instance.current_step:
+                    continue
+
+                variables = {**session_variables, **instance.variables}
+                if variables.get("step_workflow_complete") is True:
+                    continue
+
+                row = definition_manager.get_by_name(instance.workflow_name)
+                if not row or row.workflow_type == "pipeline":
+                    continue
+
+                definition = WorkflowDefinition(**json.loads(row.definition_json))
+                if not definition.steps:
+                    continue
+
+                if not definition.exit_condition:
+                    return _format_incomplete_step_workflow_error(
+                        instance.workflow_name,
+                        instance.current_step,
+                        definition.exit_condition,
+                    )
+
+                ctx = {
+                    "current_step": instance.current_step,
+                    "vars": variables,
+                    "variables": variables,
+                }
+                try:
+                    exit_met = SafeExpressionEvaluator(
+                        context=ctx,
+                        allowed_funcs=build_condition_helpers(context=ctx),
+                    ).evaluate(definition.exit_condition)
+                except Exception as e:
+                    return _format_incomplete_step_workflow_error(
+                        instance.workflow_name,
+                        instance.current_step,
+                        definition.exit_condition,
+                        eval_error=e,
+                    )
+
+                if not exit_met:
+                    return _format_incomplete_step_workflow_error(
+                        instance.workflow_name,
+                        instance.current_step,
+                        definition.exit_condition,
+                    )
         except Exception as e:
-            self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
+            self.logger.warning(
+                f"Failed to inspect step workflow completion for session {session_id}: {e}"
+            )
+
+        return None
 
     def _notify_agent_completion(self, run_id: str, status: str) -> None:
         """Fire completion event for an agent run (fail-open, idempotent).

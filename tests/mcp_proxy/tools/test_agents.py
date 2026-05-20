@@ -4,6 +4,7 @@ Tests for agents.py MCP tools module.
 This file tests the agent-related MCP tools:
 - spawn_agent: Spawn a subagent with isolation support
 - get_agent_result: Get agent run result
+- wait_for_agent: Wait for agent run completion
 - list_agent_runs: List agent runs for a session
 - stop_agent: Stop a running agent (DB only)
 - end_agent_run: Complete the caller's own agent run
@@ -50,6 +51,7 @@ def _make_mock_agent_run(
     run.worktree_id = kwargs.get("worktree_id")
     run.clone_id = kwargs.get("clone_id")
     run.workflow_name = kwargs.get("workflow_name")
+    run.agent_name = kwargs.get("agent_name")
     run.model = kwargs.get("model")
 
     run.to_dict.return_value = {
@@ -59,7 +61,10 @@ def _make_mock_agent_run(
         "parent_session_id": parent_session_id,
         "status": status,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "terminal_type": kwargs.get("terminal_type"),
     }
     run.to_brief.return_value = {
@@ -67,7 +72,10 @@ def _make_mock_agent_run(
         "session_id": session_id,
         "parent_session_id": parent_session_id,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "status": status,
     }
     return run
@@ -103,6 +111,7 @@ class TestCreateAgentsRegistry:
         expected_tools = [
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
+            "wait_for_agent",
             "list_agent_runs",
             "stop_agent",
             "end_agent_run",
@@ -179,6 +188,120 @@ class TestGetAgentResult:
         assert result["tool_calls_count"] == 5
         assert result["turns_used"] == 3
         assert result["child_session_id"] == "child-sess-456"
+
+
+class TestWaitForAgent:
+    """Tests for wait_for_agent MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_completed_run_returns_immediately(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "success"
+        mock_run.result = "done"
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 4
+        mock_run.turns_used = 2
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = "2026-05-20T00:01:00Z"
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+
+        assert result["success"] is True
+        assert result["completed"] is True
+        assert result["status"] == "success"
+        assert result["result"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_running_run_times_out_with_latest_status(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_wait_polls_until_run_completes(self):
+        running_run = MagicMock()
+        running_run.id = "run-123"
+        running_run.status = "running"
+        running_run.result = None
+        running_run.error = None
+        running_run.provider = "claude"
+        running_run.model = "opus"
+        running_run.prompt = "merge"
+        running_run.tool_calls_count = 1
+        running_run.turns_used = 1
+        running_run.started_at = "2026-05-20T00:00:00Z"
+        running_run.completed_at = None
+        running_run.child_session_id = "child-session"
+        running_run.terminal_reason = None
+
+        completed_run = MagicMock()
+        completed_run.id = "run-123"
+        completed_run.status = "success"
+        completed_run.result = "done"
+        completed_run.error = None
+        completed_run.provider = "claude"
+        completed_run.model = "opus"
+        completed_run.prompt = "merge"
+        completed_run.tool_calls_count = 3
+        completed_run.turns_used = 2
+        completed_run.started_at = "2026-05-20T00:00:00Z"
+        completed_run.completed_at = "2026-05-20T00:01:00Z"
+        completed_run.child_session_id = "child-session"
+        completed_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.side_effect = [running_run, completed_run]
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=5,
+                poll_interval_seconds=0.1,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is True
+        assert result["status"] == "success"
+        sleep.assert_awaited_once()
 
 
 class TestListAgentRuns:
@@ -421,6 +544,30 @@ class TestListRunningAgents:
         assert result["success"] is True
         assert result["count"] == 2
         runner.run_storage.list_by_parent.assert_called_once_with("parent-1")
+
+    @pytest.mark.asyncio
+    async def test_list_includes_agent_identity(self):
+        """List payloads expose agent identity so orchestrators can filter workers."""
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.list_by_parent.return_value = [
+            _make_mock_agent_run(
+                run_id="run-worker",
+                session_id="sess-worker",
+                parent_session_id="parent-1",
+                agent_name="merge-worker",
+                workflow_name="merge-worker",
+                model="sonnet",
+            )
+        ]
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(parent_session_id="parent-1")
+
+        assert result["agents"][0]["agent_name"] == "merge-worker"
+        assert result["agents"][0]["workflow_name"] == "merge-worker"
+        assert result["agents"][0]["model"] == "sonnet"
 
 
 class TestGetRunningAgent:

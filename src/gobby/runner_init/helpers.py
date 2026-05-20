@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -13,9 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class DatabasePathConfig(Protocol):
-    """Configuration object exposing the hub database path."""
+    """Configuration object exposing bootstrap database settings."""
 
     database_path: str
+    hub_backend: Literal["sqlite", "postgres"]
+    database_url: str | None
 
 
 def resolve_embedding_api_key(secret_store: Any, model: str) -> str | None:
@@ -76,14 +78,26 @@ def _ensure_headless_settings() -> None:
         logger.error(f"Failed to create headless settings at {_HEADLESS_SETTINGS}: {e}")
 
 
-def init_hub_database(config: DatabasePathConfig) -> LocalDatabase:
+def init_hub_database(config: DatabasePathConfig) -> Any:
     """Initialize hub database."""
+    if getattr(config, "hub_backend", "sqlite") == "postgres":
+        database_url = getattr(config, "database_url", None)
+        if not database_url:
+            raise ValueError("hub_backend=postgres requires database_url")
+
+        from gobby.storage.hub.postgres import PostgresHubDatabase
+
+        postgres_db = PostgresHubDatabase(database_url)
+        postgres_db.apply_migrations()
+        logger.info("Database: PostgreSQL hub")
+        return postgres_db
+
     hub_db_path = Path(config.database_path).expanduser()
 
     hub_db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    hub_db = LocalDatabase(hub_db_path)
-    run_migrations(hub_db)
+    sqlite_db = LocalDatabase(hub_db_path)
+    run_migrations(sqlite_db)
 
     logger.info(f"Database: {hub_db_path}")
-    return hub_db
+    return sqlite_db

@@ -8,8 +8,9 @@ Tests for MCP tools in gobby-merge server:
 - merge_abort: Cancel merge and restore state
 """
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -499,7 +500,7 @@ class TestMergeStatusTool:
 
     @pytest.mark.asyncio
     async def test_merge_status_includes_conflicts(self, merge_registry, mock_storage):
-        """merge_status includes conflict details."""
+        """merge_status includes compact conflict details by default."""
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
@@ -533,6 +534,52 @@ class TestMergeStatusTool:
         assert result["success"] is True
         assert len(result["conflicts"]) == 1
         assert result["conflicts"][0]["file_path"] == "src/test.py"
+        assert result["conflicts"][0]["has_ours_content"] is True
+        assert result["conflicts"][0]["has_theirs_content"] is True
+        assert result["conflicts"][0]["has_resolved_content"] is False
+        assert "ours_content" not in result["conflicts"][0]
+        assert "theirs_content" not in result["conflicts"][0]
+        assert "resolved_content" not in result["conflicts"][0]
+
+    @pytest.mark.asyncio
+    async def test_merge_status_can_include_conflict_content(self, merge_registry, mock_storage):
+        """merge_status can opt into full conflict content for debug/manual callers."""
+        from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+
+        mock_resolution = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = mock_resolution
+        mock_storage.list_conflicts.return_value = [
+            MergeConflict(
+                id="mc-conflict1",
+                resolution_id="mr-test123",
+                file_path="src/test.py",
+                status="resolved",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content="merged version",
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            )
+        ]
+
+        result = await merge_registry.call(
+            "merge_status",
+            {"resolution_id": "mr-test123", "include_content": True},
+        )
+
+        assert result["success"] is True
+        assert result["conflicts"][0]["ours_content"] == "our version"
+        assert result["conflicts"][0]["theirs_content"] == "their version"
+        assert result["conflicts"][0]["resolved_content"] == "merged version"
 
     @pytest.mark.asyncio
     async def test_merge_status_not_found(self, merge_registry, mock_storage):
@@ -635,6 +682,205 @@ class TestMergeResolveTool:
         assert result["success"] is True
         assert result["conflict"]["status"] == "resolved"
         mock_resolver.resolve_file.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_merge_resolve_returns_ai_failure_reason(
+        self, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve surfaces resolver failure detail to workers."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        mock_storage.get_conflict.return_value = MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/test.py",
+            status="pending",
+            ours_content="our version",
+            theirs_content="their version",
+            resolved_content=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = None
+        mock_resolver.resolve_file.return_value = ResolutionResult(
+            success=False,
+            tier=ResolutionTier.HUMAN_REVIEW,
+            conflicts=[],
+            resolved_files=[],
+            unresolved_conflicts=[],
+            needs_human_review=True,
+            failure_reason="hunk_count_mismatch:src/test.py:file_blocks=2:ai_hunks=1",
+        )
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+        )
+
+        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+
+        assert result["success"] is False
+        assert result["error"] == "AI resolution failed"
+        assert result["failure_reason"] == (
+            "hunk_count_mismatch:src/test.py:file_blocks=2:ai_hunks=1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_merge_resolve_rejects_parallel_ai_resolves_for_same_resolution(
+        self, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve fails fast instead of parallelizing one active resolution."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        conflicts = {
+            "mc-conflict1": MergeConflict(
+                id="mc-conflict1",
+                resolution_id="mr-test123",
+                file_path="src/one.py",
+                status="pending",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content=None,
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            ),
+            "mc-conflict2": MergeConflict(
+                id="mc-conflict2",
+                resolution_id="mr-test123",
+                file_path="src/two.py",
+                status="pending",
+                ours_content="our version",
+                theirs_content="their version",
+                resolved_content=None,
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            ),
+        }
+
+        mock_storage.get_conflict.side_effect = lambda conflict_id: conflicts.get(conflict_id)
+        mock_storage.get_resolution.return_value = None
+
+        async def resolve_file(**kwargs):
+            first_started.set()
+            await release_first.wait()
+            return ResolutionResult(
+                success=True,
+                tier=ResolutionTier.CONFLICT_ONLY_AI,
+                conflicts=[],
+                resolved_files=[kwargs["path"]],
+                unresolved_conflicts=[],
+                needs_human_review=False,
+                resolved_content_by_file={kwargs["path"]: "merged version"},
+            )
+
+        mock_resolver.resolve_file.side_effect = resolve_file
+        mock_storage.update_conflict.side_effect = lambda conflict_id, **kwargs: MergeConflict(
+            id=conflict_id,
+            resolution_id="mr-test123",
+            file_path=conflicts[conflict_id].file_path,
+            status=kwargs["status"],
+            ours_content="our version",
+            theirs_content="their version",
+            resolved_content=kwargs["resolved_content"],
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+        )
+
+        first = asyncio.create_task(registry.call("merge_resolve", {"conflict_id": "mc-conflict1"}))
+        await first_started.wait()
+
+        second = await registry.call("merge_resolve", {"conflict_id": "mc-conflict2"})
+        release_first.set()
+        first_result = await first
+
+        assert first_result["success"] is True
+        assert second["success"] is False
+        assert second["retry_later"] is True
+        assert second["resolution_id"] == "mr-test123"
+        assert "do not parallelize" in second["error"]
+        mock_resolver.resolve_file.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_merge_resolve_reads_current_conflict_hunks_from_worktree(
+        self, tmp_path, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve prefers current on-disk conflict markers over stale row text."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        worktree_path = tmp_path / "wt"
+        conflict_path = worktree_path / "src/test.py"
+        conflict_path.parent.mkdir(parents=True)
+        conflict_path.write_text(
+            "<<<<<<< HEAD\nours one\n=======\ntheirs one\n>>>>>>> main\n"
+            "keep\n"
+            "<<<<<<< HEAD\nours two\n=======\ntheirs two\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        worktree = MagicMock(worktree_path=str(worktree_path))
+        worktree_manager = MagicMock()
+        worktree_manager.get.return_value = worktree
+        mock_storage.get_resolution.return_value = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_conflict.return_value = MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/test.py",
+            status="pending",
+            ours_content="stale ours",
+            theirs_content="stale theirs",
+            resolved_content=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_resolver.resolve_file.return_value = ResolutionResult(
+            success=True,
+            tier=ResolutionTier.CONFLICT_ONLY_AI,
+            conflicts=[],
+            resolved_files=["src/test.py"],
+            unresolved_conflicts=[],
+            needs_human_review=False,
+            resolved_content_by_file={"src/test.py": "merged version"},
+        )
+        resolved_conflict = mock_storage.get_conflict.return_value
+        resolved_conflict.status = "resolved"
+        resolved_conflict.resolved_content = "merged version"
+        mock_storage.update_conflict.return_value = resolved_conflict
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+            worktree_manager=worktree_manager,
+        )
+
+        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+
+        assert result["success"] is True
+        hunks = mock_resolver.resolve_file.call_args.kwargs["conflict_hunks"]
+        assert len(hunks) == 2
+        assert hunks[0].ours == "ours one"
+        assert hunks[1].theirs == "theirs two"
 
     @pytest.mark.asyncio
     async def test_merge_resolve_with_manual_content(self, merge_registry, mock_storage):
@@ -899,11 +1145,20 @@ class TestMergeAbortTool:
     def mock_git_manager(self):
         """Create mock git manager."""
         git_manager = MagicMock()
-        git_manager.abort_merge = MagicMock()
+        git_manager.run_git_command = MagicMock()
         return git_manager
 
     @pytest.fixture
-    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
+    def mock_worktree_manager(self, tmp_path: Path) -> MagicMock:
+        """Create mock worktree manager."""
+        manager = MagicMock()
+        worktree = MagicMock()
+        worktree.worktree_path = str(tmp_path)
+        manager.get.return_value = worktree
+        return manager
+
+    @pytest.fixture
+    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager, mock_worktree_manager):
         """Create merge registry with mocked dependencies."""
         from gobby.mcp_proxy.tools.merge import create_merge_registry
 
@@ -911,6 +1166,7 @@ class TestMergeAbortTool:
             merge_storage=mock_storage,
             merge_resolver=mock_resolver,
             git_manager=mock_git_manager,
+            worktree_manager=mock_worktree_manager,
         )
 
     @pytest.mark.asyncio
@@ -931,11 +1187,62 @@ class TestMergeAbortTool:
         mock_storage.get_resolution.return_value = mock_resolution
         mock_storage.delete_resolution.return_value = True
 
+        def fake_run_git(args, cwd=None, timeout=None):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = (
+                "merge-head\n" if args == ["rev-parse", "-q", "--verify", "MERGE_HEAD"] else ""
+            )
+            result.stderr = ""
+            return result
+
+        mock_git_manager.run_git_command.side_effect = fake_run_git
+
         result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
 
         assert result["success"] is True
         assert "aborted" in result["message"].lower()
+        mock_git_manager.run_git_command.assert_any_call(["merge", "--abort"], cwd=ANY, timeout=30)
         mock_storage.delete_resolution.assert_called_once_with("mr-test123")
+
+    @pytest.mark.asyncio
+    async def test_merge_abort_failure_preserves_resolution(
+        self, merge_registry, mock_storage, mock_git_manager
+    ):
+        """merge_abort keeps storage when git merge --abort fails."""
+        from gobby.storage.merge_resolutions import MergeResolution
+
+        mock_resolution = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = mock_resolution
+
+        def fake_run_git(args, cwd=None, timeout=None):
+            result = MagicMock()
+            if args == ["merge", "--abort"]:
+                result.returncode = 1
+                result.stderr = "abort failed"
+                result.stdout = ""
+            else:
+                result.returncode = 0
+                result.stdout = "merge-head\n"
+                result.stderr = ""
+            return result
+
+        mock_git_manager.run_git_command.side_effect = fake_run_git
+
+        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
+
+        assert result["success"] is False
+        assert "git merge --abort failed" in result["error"]
+        mock_storage.delete_resolution.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_merge_abort_resolution_not_found(self, merge_registry, mock_storage):

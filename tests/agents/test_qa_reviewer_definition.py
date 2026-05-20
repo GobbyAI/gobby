@@ -58,6 +58,27 @@ def test_emits_review_verdict() -> None:
     } <= allowed_mcp_tools
 
 
+def test_stale_reviewers_can_terminate_after_task_already_advanced() -> None:
+    agent = _agent()
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    status_message = review_step["status_message"]
+    success_handlers = review_step.get("on_mcp_success", [])
+
+    stale_get_task_handlers = [
+        handler
+        for handler in success_handlers
+        if handler.get("server") == "gobby-tasks" and handler.get("tool") == "get_task"
+    ]
+
+    assert stale_get_task_handlers
+    assert stale_get_task_handlers[0]["variable"] == "review_complete"
+    assert "current_stage" in stale_get_task_handlers[0]["when"]
+    assert "development" in stale_get_task_handlers[0]["when"]
+    assert "needs_review" in stale_get_task_handlers[0]["when"]
+    assert "no longer at development:needs_review" in status_message
+    assert review_step["transitions"] == [{"to": "terminate", "when": "vars.review_complete"}]
+
+
 def test_escalation_is_limited_to_broken_workflow() -> None:
     agent = _agent()
     instructions = agent["instructions"]

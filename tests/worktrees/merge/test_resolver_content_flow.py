@@ -116,6 +116,36 @@ async def test_resolve_file_tier2_populates_content(
 
 
 @pytest.mark.asyncio
+async def test_resolve_file_tier2_preserves_intentional_empty_hunk(
+    resolver_with_llm: MergeResolver, tmp_path: Path
+) -> None:
+    file_path = tmp_path / "small.py"
+    file_path.write_text(
+        "before\n"
+        "<<<<<<< HEAD\nremove_me()\n=======\nremove_me()\n>>>>>>> feature\n"
+        "middle\n"
+        "<<<<<<< HEAD\nold()\n=======\nnew()\n>>>>>>> feature\n"
+        "after\n"
+    )
+
+    provider = MagicMock()
+    provider.generate_text = AsyncMock(
+        return_value="__GOBBY_EMPTY_HUNK__\n---HUNK SEPARATOR---\nnew()"
+    )
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.get_default_provider.return_value = provider
+
+    hunks = [
+        {"ours": "remove_me()", "theirs": "remove_me()"},
+        {"ours": "old()", "theirs": "new()"},
+    ]
+    result = await resolver_with_llm.resolve_file(file_path, hunks)
+
+    assert result.success is True
+    assert result.resolved_content_by_file[str(file_path)] == "before\nmiddle\nnew()\nafter\n"
+
+
+@pytest.mark.asyncio
 async def test_resolve_file_uses_worktree_path_for_relative_file(
     resolver_with_llm: MergeResolver, tmp_path: Path
 ) -> None:
@@ -146,7 +176,7 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
     # (two separator-delimited chunks), forcing Tier 3.
     file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
 
-    full_file_response = "RESOLVED FULL FILE\n"
+    full_file_response = "RESOLVED FULL FILE"
     tier2_response = "chunk1\n---HUNK SEPARATOR---\nchunk2\n"
     provider = MagicMock()
     provider.generate_text = AsyncMock(side_effect=[tier2_response, full_file_response])

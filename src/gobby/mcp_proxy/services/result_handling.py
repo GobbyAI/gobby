@@ -67,6 +67,19 @@ async def apply_before_tool_enforcement(
         tool_name=tool_name,
         arguments=arguments,
     )
+    has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
+    if callable(has_pending_context):
+        try:
+            if has_pending_context(event.source, effective_session_id, event.data):
+                event.metadata["_mcp_proxy_duplicate_before_tool"] = True
+        except Exception as exc:
+            logger.debug(
+                "Failed to check pending tool context for %s/%s: %s",
+                server_name,
+                tool_name,
+                exc,
+                exc_info=True,
+            )
     try:
         from gobby.app_context import get_app_context
 

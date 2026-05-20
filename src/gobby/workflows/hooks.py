@@ -139,6 +139,33 @@ class WorkflowHookHandler:
         return identifiers
 
     @staticmethod
+    def _tool_context_fingerprint(data: dict[str, Any]) -> str | None:
+        """Return a content fingerprint for matching direct MCP proxy re-entry."""
+        tool_name = data.get("tool_name") or data.get("toolName")
+        if not isinstance(tool_name, str) or not tool_name:
+            return None
+
+        tool_input = data.get("tool_input") or data.get("toolInput") or {}
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        tool_input = deepcopy(tool_input)
+        for arg_key in ("arguments", "args"):
+            raw_args = tool_input.get(arg_key)
+            if isinstance(raw_args, str):
+                try:
+                    parsed_args = json.loads(raw_args)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(parsed_args, dict):
+                    tool_input[arg_key] = parsed_args
+
+        try:
+            input_json = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
+        except TypeError:
+            input_json = repr(tool_input)
+        return f"{tool_name}:{input_json}"
+
+    @staticmethod
     def _needs_tool_rehydration(data: dict[str, Any]) -> bool:
         """Return True when an AFTER_TOOL event lacks usable tool context."""
         tool_name = data.get("tool_name")
@@ -183,6 +210,10 @@ class WorkflowHookHandler:
         identifiers = self._tool_context_ids(data)
         if identifiers:
             snapshot["_ids"] = identifiers
+
+        fingerprint = self._tool_context_fingerprint(data)
+        if fingerprint:
+            snapshot["_fingerprint"] = fingerprint
 
         return snapshot
 
@@ -260,6 +291,24 @@ class WorkflowHookHandler:
             for snapshot in snapshots:
                 for identifier in snapshot.get("_ids", []):
                     self._tool_context_by_id.pop((cache_key, identifier), None)
+
+    def has_pending_tool_context(
+        self,
+        source: SessionSource,
+        session_id: str,
+        data: dict[str, Any],
+    ) -> bool:
+        """Return whether a matching CLI BEFORE_TOOL context is still pending."""
+        fingerprint = self._tool_context_fingerprint(data)
+        if not fingerprint:
+            return False
+
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            return any(
+                snapshot.get("_fingerprint") == fingerprint
+                for snapshot in self._tool_contexts.get(cache_key, [])
+            )
 
     def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain BEFORE/AFTER tool parity for rule evaluation."""

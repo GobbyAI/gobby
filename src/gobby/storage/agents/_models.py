@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,7 +51,7 @@ class AgentRun:
     terminal_reason: AgentRunTerminalReason | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> AgentRun:
+    def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
         """Create AgentRun from database row."""
         is_local: bool
         if "is_local" in row.keys() and row["is_local"] is not None:
@@ -162,7 +163,10 @@ class AgentRun:
             "parent_session_id": self.parent_session_id,
             "started_at": self.started_at,
             "pid": self.pid,
+            "agent_name": self.agent_name,
+            "workflow_name": self.workflow_name,
             "provider": self.provider,
+            "model": self.model,
             "is_local": self.is_local,
             "task_id": self.task_id,
             "status": self.status,

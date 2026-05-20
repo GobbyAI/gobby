@@ -1,0 +1,242 @@
+"""Helpers for keeping merge-resolution conflict rows aligned with Git state."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+from gobby.storage.merge_resolutions import ConflictStatus
+from gobby.worktrees.merge import ConflictHunk
+from gobby.worktrees.merge.conflict_parser import extract_conflict_hunks
+
+logger = logging.getLogger(__name__)
+
+
+async def collect_git_conflicts(
+    worktree_path: str,
+    *,
+    git_manager: Any | None,
+) -> list[dict[str, Any]]:
+    """Read Git's current unmerged files and parse conflict markers from disk."""
+    if git_manager is not None:
+        result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            ["diff", "--name-only", "--diff-filter=U"],
+            cwd=worktree_path,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        conflicted_files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "diff",
+            "--name-only",
+            "--diff-filter=U",
+            cwd=worktree_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return []
+        conflicted_files = [
+            line.strip()
+            for line in stdout.decode("utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
+
+    conflicts: list[dict[str, Any]] = []
+    for file_rel_path in conflicted_files:
+        hunks = await read_conflict_hunks(worktree_path, file_rel_path)
+        conflicts.append(
+            {
+                "file": file_rel_path,
+                "hunks": hunks,
+                "worktree_path": worktree_path,
+            }
+        )
+    return conflicts
+
+
+async def read_conflict_hunks(worktree_path: str, file_path: str) -> list[Any]:
+    try:
+        content = await asyncio.to_thread(
+            (Path(worktree_path) / file_path).read_text,
+            encoding="utf-8",
+        )
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("Failed to parse conflict markers in %s: %s", file_path, exc)
+        return []
+    return list(extract_conflict_hunks(content))
+
+
+def store_missing_conflicts(
+    merge_storage: Any,
+    resolution_id: str,
+    conflicts: list[dict[str, Any]],
+    *,
+    status: str,
+) -> None:
+    existing = {
+        conflict.file_path: conflict
+        for conflict in merge_storage.list_conflicts(resolution_id=resolution_id)
+    }
+    for conflict in conflicts:
+        file_path = str(conflict.get("file") or "")
+        if not file_path:
+            continue
+        stored_conflict = existing.get(file_path)
+        if stored_conflict is not None:
+            _hydrate_existing_conflict(merge_storage, stored_conflict, conflict)
+            continue
+        try:
+            created = merge_storage.create_conflict(
+                resolution_id=resolution_id,
+                file_path=file_path,
+                ours_content=_first_hunk_content(conflict, "ours"),
+                theirs_content=_first_hunk_content(conflict, "theirs"),
+                status=status,
+            )
+            existing[file_path] = created
+        except sqlite3.IntegrityError:
+            logger.debug("Conflict row already exists for %s in %s", file_path, resolution_id)
+
+
+async def hydrate_resolution_conflicts(
+    *,
+    merge_storage: Any,
+    worktree_manager: Any | None,
+    git_manager: Any | None,
+    resolution: Any,
+) -> list[Any]:
+    if not worktree_manager:
+        return _list_conflicts(merge_storage, resolution.id)
+    worktree = worktree_manager.get(resolution.worktree_id)
+    if not worktree or not worktree.worktree_path:
+        return _list_conflicts(merge_storage, resolution.id)
+    git_conflicts = await collect_git_conflicts(worktree.worktree_path, git_manager=git_manager)
+    if git_conflicts:
+        store_missing_conflicts(
+            merge_storage,
+            resolution.id,
+            git_conflicts,
+            status=ConflictStatus.PENDING.value,
+        )
+    return _list_conflicts(merge_storage, resolution.id)
+
+
+async def normalized_status_conflicts(
+    *,
+    merge_storage: Any,
+    worktree_manager: Any | None,
+    git_manager: Any | None,
+    resolution: Any,
+    include_content: bool = False,
+) -> tuple[list[dict[str, Any]], int, int, bool]:
+    """Return merge_status conflict payloads normalized against current Git state."""
+    conflicts = _list_conflicts(merge_storage, resolution.id)
+    git_conflicts = await _git_conflicts_for_resolution(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        resolution=resolution,
+    )
+    if git_conflicts:
+        store_missing_conflicts(
+            merge_storage,
+            resolution.id,
+            git_conflicts,
+            status=ConflictStatus.PENDING.value,
+        )
+        conflicts = _list_conflicts(merge_storage, resolution.id)
+
+    unmerged_paths = {str(conflict.get("file") or "") for conflict in git_conflicts}
+    payloads: list[dict[str, Any]] = []
+    pending_count = 0
+    resolved_count = 0
+    downgraded = False
+    for conflict in conflicts:
+        item = conflict.to_dict(include_content=include_content)
+        status = str(conflict.status)
+        if conflict.file_path in unmerged_paths and conflict.resolved_content is None:
+            status = ConflictStatus.PENDING.value
+            if conflict.status != status:
+                merge_storage.update_conflict(conflict.id, status=status)
+                downgraded = True
+        item["status"] = status
+        payloads.append(item)
+        if status == ConflictStatus.PENDING.value:
+            pending_count += 1
+        elif status == ConflictStatus.RESOLVED.value:
+            resolved_count += 1
+    return payloads, pending_count, resolved_count, downgraded
+
+
+async def conflict_hunks_for_ai(conflict: Any, worktree_path: str | None) -> list[Any]:
+    if worktree_path:
+        hunks = await read_conflict_hunks(worktree_path, conflict.file_path)
+        if hunks:
+            return hunks
+    return [
+        ConflictHunk(
+            ours=conflict.ours_content or "",
+            theirs=conflict.theirs_content or "",
+            base=None,
+            start_line=1,
+            end_line=1,
+            context_before="",
+            context_after="",
+        )
+    ]
+
+
+def _first_hunk_content(conflict: dict[str, Any], attr: str) -> str | None:
+    hunks = conflict.get("hunks") or []
+    if not hunks:
+        return None
+    first = hunks[0]
+    if isinstance(first, dict):
+        value = first.get(attr)
+    else:
+        value = getattr(first, attr, None)
+    return value if isinstance(value, str) else None
+
+
+def _hydrate_existing_conflict(
+    merge_storage: Any,
+    stored_conflict: Any,
+    git_conflict: dict[str, Any],
+) -> None:
+    if stored_conflict.ours_content is not None and stored_conflict.theirs_content is not None:
+        return
+    ours_content = _first_hunk_content(git_conflict, "ours")
+    theirs_content = _first_hunk_content(git_conflict, "theirs")
+    if ours_content is None and theirs_content is None:
+        return
+    merge_storage.update_conflict(
+        stored_conflict.id,
+        ours_content=ours_content,
+        theirs_content=theirs_content,
+    )
+
+
+def _list_conflicts(merge_storage: Any, resolution_id: str) -> list[Any]:
+    return list(merge_storage.list_conflicts(resolution_id=resolution_id))
+
+
+async def _git_conflicts_for_resolution(
+    *,
+    worktree_manager: Any | None,
+    git_manager: Any | None,
+    resolution: Any,
+) -> list[dict[str, Any]]:
+    if not worktree_manager:
+        return []
+    worktree = worktree_manager.get(resolution.worktree_id)
+    if not worktree or not worktree.worktree_path:
+        return []
+    return await collect_git_conflicts(worktree.worktree_path, git_manager=git_manager)

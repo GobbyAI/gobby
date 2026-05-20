@@ -266,7 +266,7 @@ class StageStatesManager:
             cited_subtasks=cited_subtasks,
         )
 
-    def _state_from_row(self, row: Any) -> StageState:
+    def _state_from_row(self, row: Mapping[str, Any]) -> StageState:
         return self._rows.state_from_row(row)
 
     def _ensure_phase2_columns(self) -> None:

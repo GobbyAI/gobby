@@ -37,9 +37,15 @@ def _context_value(context: Mapping[str, object], name: str) -> str | None:
 def _prompt(task: object, context: Mapping[str, object], *, role: str, contract: str) -> str:
     reason = _context_value(context, "reason")
     reason_line = f"\nDispatch reason: {reason}." if reason else ""
+    failure_context = _context_value(context, "failure_context")
+    failure_block = (
+        f"\n\nPrevious failure context for this follow-up work:\n{failure_context}"
+        if failure_context
+        else ""
+    )
     return (
         f"{role} for {_task_ref(task)}: {_task_title(task)}.\n"
-        f"Follow the {contract} contract for this task.{reason_line}"
+        f"Follow the {contract} contract for this task.{reason_line}{failure_block}"
     )
 
 

@@ -298,7 +298,7 @@ class CodeIndexStorage:
             # Files that are new (not in indexed) or have changed hashes
             rows = conn.execute(
                 """
-                SELECT ch.file_path FROM _current_hashes ch
+                SELECT ch.file_path AS file_path FROM _current_hashes ch
                 LEFT JOIN code_indexed_files cf
                     ON cf.project_id = ? AND cf.file_path = ch.file_path
                 WHERE cf.file_path IS NULL OR cf.content_hash != ch.content_hash
@@ -308,7 +308,7 @@ class CodeIndexStorage:
 
             conn.execute("DROP TABLE IF EXISTS _current_hashes")
 
-        return [row[0] for row in rows]
+        return [row["file_path"] for row in rows]
 
     def get_orphan_files(self, project_id: str, current_paths: set[str]) -> list[str]:
         """Find indexed files that are no longer in the candidate set.
@@ -325,11 +325,11 @@ class CodeIndexStorage:
         """
         with self.db.transaction() as conn:
             rows = conn.execute(
-                "SELECT file_path FROM code_indexed_files WHERE project_id = ?",
+                "SELECT file_path AS file_path FROM code_indexed_files WHERE project_id = ?",
                 (project_id,),
             ).fetchall()
 
-        return [row[0] for row in rows if row[0] not in current_paths]
+        return [row["file_path"] for row in rows if row["file_path"] not in current_paths]
 
     def get_unsynced_files(self, project_id: str, limit: int = 100) -> list[IndexedFile]:
         """Get files where graph/vector sync is incomplete (graph_synced=0)."""

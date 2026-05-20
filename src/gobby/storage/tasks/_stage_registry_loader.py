@@ -160,7 +160,7 @@ class StageRegistryLoader:
                         dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
                         requires_human, is_terminal, default_max_work_attempts,
                         default_max_review_rounds, bundled_hash, deleted_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
@@ -179,7 +179,7 @@ class StageRegistryLoader:
                         default_max_review_rounds = excluded.default_max_review_rounds,
                         bundled_hash = excluded.bundled_hash,
                         deleted_at = NULL,
-                        updated_at = datetime('now')
+                        updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         entry.name,
@@ -218,7 +218,7 @@ class StageRegistryLoader:
                     db.executemany(
                         """
                         UPDATE task_stages_registry
-                           SET deleted_at = datetime('now'), updated_at = datetime('now')
+                           SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                          WHERE name = ?
                         """,
                         [(row["name"],) for row in orphaned],

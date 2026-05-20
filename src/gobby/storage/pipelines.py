@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import timestamp_plus_seconds_before_now_expr
 from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
@@ -774,16 +775,21 @@ class LocalPipelineExecutionManager:
         Returns:
             List of expired StepExecution instances.
         """
+        timeout_expired_sql = timestamp_plus_seconds_before_now_expr(
+            self.db,
+            "se.started_at",
+            "se.approval_timeout_seconds",
+        )
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT se.* FROM step_executions se
             JOIN pipeline_executions pe ON se.execution_id = pe.id
             WHERE se.status = ?
               AND se.approval_timeout_seconds IS NOT NULL
               AND se.started_at IS NOT NULL
-              AND datetime(se.started_at, '+' || se.approval_timeout_seconds || ' seconds') < datetime('now')
+              AND {timeout_expired_sql}
               AND pe.project_id = ?
-            """,
+            """,  # nosec B608 - timeout expression is selected by storage dialect.
             (StepStatus.WAITING_APPROVAL.value, self.project_id),
         )
         return [StepExecution.from_row(row) for row in rows]

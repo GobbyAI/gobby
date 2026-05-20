@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -365,6 +366,7 @@ def test_build_stop_cli_accepts_task_ref() -> None:
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build.LocalDatabase") as db_cls,
         patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build._try_daemon_build_control", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_stop_target", new=AsyncMock()) as stop_target,
     ):
@@ -376,6 +378,82 @@ def test_build_stop_cli_accepts_task_ref() -> None:
     call = stop_target.call_args
     assert call.args[0] == "#1"
     assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
+
+
+def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
+    from gobby.cli import cli
+
+    payload = {
+        "action": "resume",
+        "project_id": "project-1",
+        "root_task_id": "task-1",
+        "affected_tasks": [],
+        "agents": [],
+        "stages_reset": 0,
+        "dispatcher_tick": {
+            "scanned": 7,
+            "executed": 0,
+            "skipped": 7,
+            "reason": "services_missing:agent_runner",
+        },
+    }
+    calls: list[tuple[str, str, dict[str, object], float]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    class FakeDaemonClient:
+        def __init__(self, *, port: int, timeout: float) -> None:
+            self.port = port
+            self.timeout = timeout
+
+        def check_health(self) -> tuple[bool, dict[str, object]]:
+            return True, {}
+
+        def call_http_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            json_data: dict[str, object],
+            timeout: float,
+        ) -> FakeResponse:
+            calls.append((path, method, json_data, timeout))
+            return FakeResponse()
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.config.app.load_config", return_value=SimpleNamespace(daemon_port=1234)),
+        patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.build_resume_target", new=AsyncMock()) as resume_target,
+    ):
+        result = CliRunner().invoke(cli, ["build", "resume", "#12761"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        (
+            "/api/build/resume",
+            "POST",
+            {
+                "input_ref": "#12761",
+                "dry_run": False,
+                "force": False,
+                "yes": False,
+                "no_resume": False,
+            },
+            900.0,
+        )
+    ]
+    assert "Build resume: task-scoped" in result.output
+    assert (
+        "Dispatcher tick: scanned=7 executed=0 skipped=7 reason=services_missing:agent_runner"
+    ) in result.output
+    db_cls.assert_not_called()
+    resume_target.assert_not_called()
 
 
 def test_unbuild_cli_is_not_registered() -> None:
@@ -415,6 +493,7 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build.LocalDatabase"),
         patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build._try_daemon_build_control", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
     ):

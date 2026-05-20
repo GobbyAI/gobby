@@ -252,6 +252,15 @@ class TaskFTS5Searcher:
         )
         self._append_stage_filter(params, conditions, current_stage_state)
         limit_placeholder = self._add_param(params, limit)
+        # Normalize scores
+        ids = [str(row["id"]) for row in rows]
+        raw_scores = [float(row["rank"]) for row in rows]
+        positive = [-s for s in raw_scores]
+        max_score = max(positive) if positive else 1.0
+        if max_score == 0:
+            normalized = [0.0] * len(positive)
+        else:
+            normalized = [s / max_score for s in positive]
 
         sql = f"""
             SELECT t.id AS id, pdb.score(t.id) AS score

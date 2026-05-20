@@ -378,11 +378,34 @@ def build_context(
         build_config=build_config,
         current_stage=dispatch_rules.current_stage(task),
         db=db,
+        failure_context=_latest_failure_context(db, task.id),
         project_id=task.project_id,
         services=services,
         stage_registry=stage_registry,
         task=task,
     )
+
+
+def _latest_failure_context(db: DatabaseProtocol, task_id: str) -> str | None:
+    row = db.fetchone(
+        """
+        SELECT body
+          FROM task_comments
+         WHERE task_id = ?
+           AND author_type = 'system'
+           AND (
+               body LIKE '## Holistic QA Failure%'
+               OR body LIKE '## Holistic QA Follow-Up%'
+           )
+         ORDER BY created_at DESC
+         LIMIT 1
+        """,
+        (task_id,),
+    )
+    if row is None:
+        return None
+    body = row["body"]
+    return body if isinstance(body, str) and body else None
 
 
 def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
@@ -801,8 +824,7 @@ def _handle_spawn_failure(
                 if fresh_stage is None or fresh_stage.state != "ready":
                     raise
                 logger.info(
-                    "Dispatch spawn failure rollback already applied: "
-                    "task_id=%s stage_name=%s",
+                    "Dispatch spawn failure rollback already applied: task_id=%s stage_name=%s",
                     action.task_id,
                     stage_name,
                 )

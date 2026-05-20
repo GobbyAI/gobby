@@ -252,6 +252,63 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         return None
 
 
+def _try_daemon_build_control(
+    action: str,
+    *,
+    input_ref: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    no_resume: bool = False,
+) -> dict[str, object] | None:
+    try:
+        import httpx
+
+        from gobby.config.app import load_config
+        from gobby.utils.daemon_client import DaemonClient
+
+        config = load_config()
+        client = DaemonClient(port=config.daemon_port, timeout=5.0)
+        is_healthy, _ = client.check_health()
+        if not is_healthy:
+            return None
+        response = client.call_http_api(
+            f"/api/build/{action}",
+            method="POST",
+            json_data={
+                "input_ref": input_ref,
+                "dry_run": dry_run,
+                "force": force,
+                "yes": yes,
+                "no_resume": no_resume,
+            },
+            timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            return None
+        if response.status_code == 400:
+            raise click.ClickException(_daemon_error_message(_daemon_error_detail(response)))
+        return None
+    except click.ClickException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(
+            "Daemon build control request timed out before the dispatcher result returned. "
+            "The daemon may still be running accepted build work; local fallback was skipped. "
+            "Check progress with `gobby agents runs list --status running` or rerun "
+            f"`gobby build {action}` later."
+        ) from exc
+    except Exception:
+        logger.debug(
+            "Daemon build control request failed; falling back to local control",
+            exc_info=True,
+        )
+        return None
+
+
 def _daemon_error_detail(response: Any) -> Any:
     try:
         payload = response.json()
@@ -331,12 +388,17 @@ def _echo_target_control_result(payload: dict[str, object]) -> None:
             click.echo(f"  {reason}")
     tick = payload.get("dispatcher_tick")
     if isinstance(tick, dict):
-        click.echo(
+        line = (
             "Dispatcher tick: "
             f"scanned={tick.get('scanned', 0)} "
             f"executed={tick.get('executed', 0)} "
             f"skipped={tick.get('skipped', 0)}"
         )
+        if tick.get("cap_reached"):
+            line = f"{line} cap_reached"
+        elif tick.get("reason"):
+            line = f"{line} reason={tick['reason']}"
+        click.echo(line)
     if payload.get("dry_run"):
         click.echo("Dry run: no changes made")
 
@@ -495,6 +557,11 @@ def build_resume_command(input_ref: str | None) -> None:
 
 def _run_build_stop(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    if input_ref is not None:
+        daemon_payload = _try_daemon_build_control("stop", input_ref=input_ref)
+        if daemon_payload is not None:
+            _echo_target_control_result(daemon_payload)
+            return
     db = _open_database()
     try:
         if input_ref is None:
@@ -517,6 +584,11 @@ def _run_build_stop(input_ref: str | None = None) -> None:
 
 def _run_build_resume(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    if input_ref is not None:
+        daemon_payload = _try_daemon_build_control("resume", input_ref=input_ref)
+        if daemon_payload is not None:
+            _echo_target_control_result(daemon_payload)
+            return
     db = _open_database()
     try:
         if input_ref is None:
@@ -558,6 +630,16 @@ def _run_build_clean(
     if not _confirm_destructive("clean", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    daemon_payload = _try_daemon_build_control(
+        "clean",
+        input_ref=input_ref,
+        dry_run=dry_run,
+        force=force,
+        yes=True,
+    )
+    if daemon_payload is not None:
+        _echo_target_control_result(daemon_payload)
+        return
     db = _open_database()
     try:
         result = asyncio.run(
@@ -590,6 +672,17 @@ def _run_build_restart(
     if not _confirm_destructive("restart", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    daemon_payload = _try_daemon_build_control(
+        "restart",
+        input_ref=input_ref,
+        dry_run=dry_run,
+        force=force,
+        yes=True,
+        no_resume=no_resume,
+    )
+    if daemon_payload is not None:
+        _echo_target_control_result(daemon_payload)
+        return
     db = _open_database()
     try:
         result = asyncio.run(

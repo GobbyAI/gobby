@@ -84,6 +84,41 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
+def test_development_prompt_includes_persisted_holistic_failure_context(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import rules
+    from gobby.dispatch.dispatcher import build_context
+
+    task = _task(
+        temp_db,
+        sample_project,
+        title="Reopened leaf",
+        stage_state="in_progress",
+        assigned_agent="backend-developer",
+    )
+    temp_db.execute(
+        """
+        INSERT INTO task_comments (
+            id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+        )
+        VALUES (
+            'comment-holistic-followup', ?, NULL, 'holistic-reviewer', 'system',
+            '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', datetime('now'),
+            datetime('now')
+        )
+        """,
+        (task.id,),
+    )
+
+    action = rules.development_rule(task, build_context(temp_db, task))
+
+    assert isinstance(action, SpawnAgentAction)
+    assert "Previous failure context for this follow-up work" in action.prompt
+    assert "Fix the dialect parity suite." in action.prompt
+
+
 class _FakePipeline:
     name = "expand-task"
     enabled = True

@@ -215,7 +215,7 @@ def expansion_review_rule(task: object, context: object) -> Action | None:
         return None
     if _stage_review_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="expansion_max_review_rounds")
-    if not _has_agent(context, "expansion-qa"):
+    if not _agent_dispatchable(context, "expansion-qa"):
         return EscalateAction(task_id=_task_id(task), reason="expansion_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "expansion-qa")
 
@@ -231,6 +231,8 @@ def development_rule(task: object, context: object) -> Action | None:
     if _stage_work_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="development_max_work_attempts")
     agent_slug = _development_agent(task, stage, context)
+    if not _agent_dispatchable(context, agent_slug):
+        return EscalateAction(task_id=_task_id(task), reason="development_no_agent")
     return _spawn_stage_agent(task, stage, context, str(agent_slug))
 
 
@@ -241,7 +243,7 @@ def development_review_rule(task: object, context: object) -> Action | None:
     if _stage_review_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="development_max_review_rounds")
     reviewer_agent = _field(stage, "reviewer_agent")
-    if not reviewer_agent or not _has_agent(context, str(reviewer_agent)):
+    if not reviewer_agent or not _agent_dispatchable(context, str(reviewer_agent)):
         return EscalateAction(task_id=_task_id(task), reason="development_no_reviewer")
     return _spawn_stage_agent(task, stage, context, str(reviewer_agent))
 
@@ -258,7 +260,7 @@ def holistic_qa_rule(task: object, context: object) -> Action | None:
         return None
     if _stage_work_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_work_attempts")
-    if not _has_agent(context, "holistic-reviewer"):
+    if not _agent_dispatchable(context, "holistic-reviewer"):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "holistic-reviewer")
 
@@ -267,7 +269,7 @@ def holistic_qa_review_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
     if stage is None or _stage_review_exhausted(stage, context):
         return None
-    if not _has_agent(context, "holistic-reviewer"):
+    if not _agent_dispatchable(context, "holistic-reviewer"):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
 
@@ -409,11 +411,15 @@ def stage_agent_available(context: object, stage_name: str) -> bool:
     agent_slug = _default_agent(_field(context, "current_stage"), context, stage_name)
     if not agent_slug:
         return False
-    return _has_agent(context, str(agent_slug))
+    return _agent_dispatchable(context, str(agent_slug))
 
 
 def _has_merge_agent(context: object) -> bool:
-    return _has_agent(context, "merge-orchestrator")
+    return _agent_dispatchable(context, "merge-orchestrator")
+
+
+def _agent_dispatchable(context: object, agent_slug: str) -> bool:
+    return _has_agent(context, agent_slug) and agent_slug in PROMPT_BUILDERS
 
 
 def _has_agent(context: object, agent_slug: str) -> bool:
@@ -476,6 +482,8 @@ def _spawn_on_stage(
         return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_review_rounds")
     if state == "in_progress" and _stage_work_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_work_attempts")
+    if not _agent_dispatchable(context, agent_slug):
+        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_no_agent")
     return _spawn_stage_agent(task, stage, context, agent_slug)
 
 
@@ -698,8 +706,18 @@ def _default_agent(
 def _development_agent(task: object, stage: object, context: object) -> str:
     assigned_agent = _field(task, "assigned_agent")
     if assigned_agent:
-        return str(assigned_agent)
-    if _field(task, "category") == "docs" and _has_agent(context, "tech-writer"):
+        assigned_slug = str(assigned_agent)
+        if _agent_dispatchable(context, assigned_slug):
+            return assigned_slug
+        logger.warning(
+            "Ignoring unavailable assigned development agent; falling back",
+            extra={
+                "task_id": _task_id(task),
+                "task_ref": _task_ref(task),
+                "assigned_agent": assigned_slug,
+            },
+        )
+    if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"
     return _default_agent(stage, context) or "backend-developer"
 
@@ -791,6 +809,7 @@ def _prompt_context(context: object) -> dict[str, object]:
     return {
         "artifacts": _field(context, "artifacts"),
         "build_config": _field(context, "build_config"),
+        "failure_context": _field(context, "failure_context"),
         "reason": _field(context, "reason"),
     }
 

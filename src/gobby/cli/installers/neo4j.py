@@ -267,6 +267,7 @@ def _write_bootstrap_password(password: str, gobby_home: Path) -> bool:
         data["neo4j_password"] = password
         with open(bootstrap_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, default_flow_style=False)
+        bootstrap_path.chmod(0o600)
         return True
     except (OSError, yaml.YAMLError) as e:
         logger.warning(f"Failed to write neo4j_password to bootstrap.yaml: {e}")

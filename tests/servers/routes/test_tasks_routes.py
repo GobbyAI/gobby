@@ -959,6 +959,46 @@ class TestDeEscalateTask:
         assert response.status_code == 200
         assert response.json()["state"]["is_escalated"] is False
 
+    def test_de_escalate_can_reset_stage_attempts(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+        temp_db,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
+        temp_db.execute(
+            """
+            UPDATE task_stage_states
+               SET work_attempt_count = 4
+             WHERE task_id = ? AND stage_name = 'development'
+            """,
+            (sample_task["id"],),
+        )
+        task_manager.escalate_task(sample_task["id"], reason="development_max_work_attempts")
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/de-escalate",
+            json={
+                "decision_context": "Coordinator fixed the blocker",
+                "reset_stage_attempts": True,
+            },
+        )
+
+        assert response.status_code == 200
+        row = temp_db.fetchone(
+            """
+            SELECT state, work_attempt_count
+              FROM task_stage_states
+             WHERE task_id = ? AND stage_name = 'development'
+            """,
+            (sample_task["id"],),
+        )
+        assert row["state"] == "in_progress"
+        assert row["work_attempt_count"] == 0
+
 
 # ---------------------------------------------------------------------------
 # Comments  (GET, POST, DELETE)
