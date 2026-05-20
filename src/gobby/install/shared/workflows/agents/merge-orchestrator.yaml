@@ -82,7 +82,10 @@ instructions: |
     conflict resolution, instruct the worker to call merge_status, then
     merge_resolve(conflict_id=..., use_ai=true) for pending conflicts. Do not
     instruct merge-workers to use Read/Bash or to synthesize manual
-    resolved_content from file inspection.
+    resolved_content from file inspection. If retries are exhausted or
+    conflicts remain unresolved, instruct the worker to call
+    gobby-tasks-ops:record_merge_result with failure_reason; the merge-worker
+    workflow will transition to terminate before end_agent_run.
   - When checking for already-running merge work, list only child runs of
     this orchestrator session. Treat a run as an active worker only when
     agent_name is exactly `merge-worker`. Never wait on this orchestrator's
