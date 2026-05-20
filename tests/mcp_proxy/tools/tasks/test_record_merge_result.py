@@ -10,7 +10,11 @@ from unittest.mock import Mock
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.session_context import session_context_for_test
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -92,6 +96,44 @@ def _real_context_with_github(temp_db, github) -> SimpleNamespace:
         resolve_session_id=lambda session_ref: session_ref,
         mcp_manager=github,
     )
+
+
+def _register_session(temp_db, sample_project, external_id: str, *, agent_depth: int = 0) -> str:
+    return (
+        SessionManager(temp_db)
+        .register(
+            external_id=external_id,
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title=external_id,
+            agent_depth=agent_depth,
+        )
+        .id
+    )
+
+
+def _running_agent_run(
+    temp_db,
+    *,
+    parent_session_id: str,
+    child_session_id: str,
+    run_id: str,
+    agent_name: str,
+    task_id: str | None = None,
+) -> str:
+    runs = LocalAgentRunManager(temp_db)
+    run = runs.create(
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        provider="claude",
+        prompt=f"{agent_name} work",
+        agent_name=agent_name,
+        task_id=task_id,
+        run_id=run_id,
+    )
+    runs.start(run.id)
+    return run.id
 
 
 def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
@@ -198,6 +240,61 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
         "merge_sha": "mergeabc123",
         "merge_report_ref": "merge-report.md",
     }
+
+
+def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
+    temp_db,
+    sample_project,
+) -> None:
+    root_session_id = _register_session(temp_db, sample_project, "root")
+    orchestrator_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "merge-orchestrator-session",
+        agent_depth=1,
+    )
+    worker_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "merge-worker-session",
+        agent_depth=2,
+    )
+    task = _merge_task_in_progress(temp_db, sample_project)
+    orchestrator_run_id = _running_agent_run(
+        temp_db,
+        parent_session_id=root_session_id,
+        child_session_id=orchestrator_session_id,
+        run_id="run-parent-merge-orchestrator",
+        agent_name="merge-orchestrator",
+        task_id=task.id,
+    )
+    _running_agent_run(
+        temp_db,
+        parent_session_id=orchestrator_session_id,
+        child_session_id=worker_session_id,
+        run_id="run-child-merge-worker",
+        agent_name="merge-worker",
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+        run_id=orchestrator_run_id,
+    )
+
+    with session_context_for_test(worker_session_id):
+        result = _record_merge_result(_real_context(temp_db))(
+            task_id=task.id,
+            merge_sha="merge-child-recorded",
+            report_ref="merge-worker-report.md",
+        )
+
+    assert result["stage"]["state"] == "done"
+    assert stage_row(temp_db, task.id, "merge")["state"] == "done"
+    assert task_row(temp_db, task.id)["closed_commit_sha"] == "merge-child-recorded"
+    assert mutexes.get_mutex(task.id) is None
 
 
 def test_success_close_uses_cascade_descendants_true(temp_db, sample_project) -> None:
