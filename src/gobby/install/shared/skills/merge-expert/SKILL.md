@@ -154,6 +154,12 @@ Iterate the plan in order. For each step:
    pass the `worktree_id`, `target_branch`, and source-branch info as
    spawn-time variables. `source_branch` is always the worktree branch; never
    use the target branch as source to "pull latest target" into the worktree.
+   If the task is a TDD red-phase test-writing task whose entry criteria,
+   review notes, or approval notes say the new tests are expected to fail before
+   implementation, do not use that expected-failing pytest command as a green
+   `verify_command`. The red pytest output is validation evidence already
+   captured by QA. For these tasks, omit `verify_command`, merge cleanly, and
+   cite the QA red evidence plus clean merge state in the report.
    For a clean direct merge, instruct the worker to call
    `gobby-worktrees:merge_worktree`; if the plan has a `verify_command`, include
    it in the worker prompt and require `gobby-merge:verify_in_worktree` before

@@ -81,6 +81,12 @@ instructions: |
     recording a successful merge result when a verify command is supplied. Use
     final=true only on the last campaign-level verification. Append a lifecycle
     event per step.
+    TDD red-phase tasks are different: when the task is a test-writing task
+    whose entry criteria or review notes say the new tests are expected to
+    fail before implementation, do not pass that expected-failing pytest command
+    as a green verify command. For those tasks, merge cleanly, cite the QA red
+    evidence in the report, and verify only the merge/worktree state unless the
+    plan provides a non-red structural check.
   - For ordinary clean worktree delivery, worker prompts must instruct the
     merge-worker to call gobby-worktrees:merge_worktree with the worktree_id
     and target_branch, run verify_in_worktree before recording success when a

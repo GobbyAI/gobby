@@ -538,3 +538,15 @@ def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> N
     assert "Do not" in skill
     assert "synthesize manual `resolved_content`" in skill
     assert "Prefer worker-side verification" in skill
+
+
+def test_merge_orchestrator_does_not_green_gate_tdd_red_phase_pytest() -> None:
+    instructions = " ".join(_agent()["instructions"].split())
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
+
+    for text in (instructions, skill):
+        assert "TDD red-phase" in text
+        assert "expected-failing pytest command" in text
+        assert "do not" in text.lower()
+        assert "green" in text
+        assert "QA red evidence" in text
