@@ -241,7 +241,7 @@ def _candidate_matches_mutex_snapshot(
     mutex: RuntimeDispatchMutex,
     candidate: Task,
 ) -> bool:
-    return mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate))
+    return cast(bool, mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate)))
 
 
 def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> HeartbeatResult:
@@ -515,6 +515,10 @@ async def _execute_spawn_action(
     except DispatchSpawnFailed as exc:
         _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error=str(exc))
         return None
+    except BaseException:
+        if mutex.run_id is None:
+            mutex.release()
+        raise
     if raw_run_id:
         mutex.attach(str(raw_run_id))
         return str(raw_run_id)
@@ -548,34 +552,43 @@ async def execute_action(
     try:
         if isinstance(action, StartStageAction):
             manager = _stage_states_manager(db=db, services=services)
-            return manager.start_stage(
-                action.task_id,
-                action.stage_name,
-                by_session_id="dispatcher",
+            return cast(
+                object,
+                manager.start_stage(
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id="dispatcher",
+                ),
             )
         if isinstance(action, AdvanceStageAction):
             manager = _stage_states_manager(db=db, services=services)
             if action.method == "complete_stage":
-                return manager.complete_stage(
-                    action.task_id,
-                    action.stage_name,
-                    by_session_id=action.by_session_id,
-                    validation_override_reason=action.validation_override_reason,
+                return cast(
+                    object,
+                    manager.complete_stage(
+                        action.task_id,
+                        action.stage_name,
+                        by_session_id=action.by_session_id,
+                        validation_override_reason=action.validation_override_reason,
+                    ),
                 )
             if action.method == "approve_review":
-                return manager.approve_review(
-                    action.task_id,
-                    action.stage_name,
-                    by_session_id=action.by_session_id,
+                return cast(
+                    object,
+                    manager.approve_review(
+                        action.task_id,
+                        action.stage_name,
+                        by_session_id=action.by_session_id,
+                    ),
                 )
         if isinstance(action, AppendAuditMarkerAction):
             return append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
-            return await execute_merge_workspace(action, db=db, services=services)
+            return cast(object, await execute_merge_workspace(action, db=db, services=services))
         if isinstance(action, CreateIsolationAction):
-            return create_isolation(action, db=db, context=context)
+            return cast(object | None, create_isolation(action, db=db, context=context))
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
         mutex.release()
@@ -676,7 +689,10 @@ def _render_dispatch_inputs(
 ) -> dict[str, Any]:
     render_context = _pipeline_render_context(action, context, services)
     renderer = StepRenderer(TemplateEngine())
-    return renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context)
+    return cast(
+        dict[str, Any],
+        renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context),
+    )
 
 
 def _pipeline_render_context(
@@ -712,7 +728,7 @@ def _create_stage_pipeline_execution(
     db: DatabaseProtocol,
     services: object | None,
 ) -> str:
-    execution_id = generate_prefixed_id("pe")
+    execution_id = cast(str, generate_prefixed_id("pe"))
     session_id = getattr(services, "triggering_session_id", None)
     try:
         definition_json = cast(Any, pipeline).model_dump_json()
@@ -852,7 +868,7 @@ def allocate_expansion_run_id() -> str:
 
 
 def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
-    return storage.sweep_expired()
+    return cast(int, storage.sweep_expired())
 
 
 def create_isolation(
@@ -861,7 +877,7 @@ def create_isolation(
     db: DatabaseProtocol,
     context: object | None = None,
 ) -> TaskArtifacts | None:
-    artifacts = cast(TaskArtifacts | None, getattr(context, "artifacts", None))
+    artifacts = getattr(context, "artifacts", None)
     target_branch = action.base_branch or getattr(artifacts, "target_branch", None)
     if not target_branch:
         append_audit_marker(
@@ -932,7 +948,7 @@ def _candidate_current_stage(candidate: object | None) -> object | None:
     current_stage = _field(candidate, "current_stage")
     if current_stage is not None:
         return current_stage
-    return dispatch_rules.current_stage(candidate)
+    return cast(object | None, dispatch_rules.current_stage(candidate))
 
 
 def _stage_name(stage: object | None) -> str | None:
