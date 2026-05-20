@@ -6,6 +6,8 @@ from types import ModuleType
 
 import click
 
+from gobby.sync.export_context import in_jsonl_export_context
+
 
 def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
@@ -97,6 +99,14 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
     project_ctx = get_project_context(cwd=Path.cwd())
     raw_project_id = project_ctx.get("id") if project_ctx else None
     project_id = str(raw_project_id) if raw_project_id else None
+
+    if not output_path and not in_jsonl_export_context():
+        if not quiet:
+            click.echo(
+                "Skipping memory backup: .gobby/memories.jsonl is generated only during "
+                "remote push."
+            )
+        return
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)

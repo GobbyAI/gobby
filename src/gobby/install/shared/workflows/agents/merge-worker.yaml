@@ -26,7 +26,9 @@ instructions: |
 
   WORKTREE MERGE FLOW:
   MAX_RESOLVE_RETRIES: 3 per conflict id.
-  1. Call merge_worktree with worktree_id and target_branch. Do not push.
+  1. If the spawn prompt asks for preflight or branch metadata, stay inside the
+     merge step MCP surface. Do not use Bash/Read for metadata. Then call
+     merge_worktree with worktree_id and target_branch. Do not push.
      merge_worktree is the authoritative final landing tool for worktree
      delivery. Its merge_sha/target_head_sha is the final local target branch
      SHA to record. Do not use Bash, Read, or merge_start/merge_apply to
@@ -137,7 +139,9 @@ steps:
       FAST PATH (try first):
       1. Use progressive discovery to find the merge tools
       2. Check your session variables for worktree_id or clone_id
-      3. WORKTREE: call merge_worktree with worktree_id and target_branch
+      3. WORKTREE: if the prompt asks for preflight or branch metadata, stay
+         inside the merge step MCP surface; then call merge_worktree with
+         worktree_id and target_branch.
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
       4. If merge succeeds with no conflicts and the spawn prompt provides a
          verification command, call verify_in_worktree before record_merge_result.
@@ -193,10 +197,13 @@ steps:
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
+      - "gobby-worktrees:get_worktree"
+      - "gobby-worktrees:get_worktree_by_task"
       - "gobby-worktrees:merge_worktree"
       - "gobby-clones:merge_clone"
       - "gobby-clones:sync_clone"
       - "gobby-clones:get_clone"
+      - "gobby-merge:inspect_merge_state"
       - "gobby-merge:merge_start"
       - "gobby-merge:merge_status"
       - "gobby-merge:merge_resolve"

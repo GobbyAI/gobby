@@ -175,7 +175,23 @@ def _resolve_paths(
                 services=services,
             )
             worktree_target = storage.get_by_branch(project_id, action.target_branch)
-        if worktree_source is None or worktree_target is None:
+        if worktree_source is None:
+            raise RuntimeError("source or target worktree metadata is missing")
+        if worktree_target is None:
+            local_target = _local_target_path_if_checked_out(
+                db,
+                action.task_id,
+                action.target_branch,
+            )
+            if local_target is not None:
+                return _WorkspacePaths(
+                    worktree_source.worktree_path,
+                    str(local_target),
+                    worktree_source.branch_name,
+                    worktree_source.id,
+                    None,
+                    target_is_local=True,
+                )
             raise RuntimeError("source or target worktree metadata is missing")
         _require_integration_target(worktree_target.workspace_role)
         return _WorkspacePaths(
@@ -221,7 +237,23 @@ def _resolve_paths(
             services=services,
         )
         clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
-    if clone_source is None or clone_target is None:
+    if clone_source is None:
+        raise RuntimeError("source or target clone metadata is missing")
+    if clone_target is None:
+        local_target = _local_target_path_if_checked_out(
+            db,
+            action.task_id,
+            action.target_branch,
+        )
+        if local_target is not None:
+            return _WorkspacePaths(
+                clone_source.clone_path,
+                str(local_target),
+                clone_source.branch_name,
+                clone_source.id,
+                None,
+                target_is_local=True,
+            )
         raise RuntimeError("source or target clone metadata is missing")
     _require_integration_target(clone_target.workspace_role)
     return _WorkspacePaths(
@@ -278,9 +310,34 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
 
 
 def _ensure_clean(path: str, label: str) -> None:
-    status = _git_stdout(path, ["status", "--porcelain"])
-    if status:
+    status = _git_ok(path, ["status", "--porcelain"]).stdout
+    dirty = _non_gobby_status_lines(status)
+    if dirty:
         raise RuntimeError(f"{label} is dirty")
+
+
+def _status_path_is_gobby_only(pathspec: str) -> bool:
+    paths = [part.strip() for part in pathspec.split(" -> ")]
+    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
+
+
+def _non_gobby_status_lines(status_output: str) -> list[str]:
+    dirty: list[str] = []
+    for line in status_output.splitlines():
+        if not line:
+            continue
+        pathspec = _porcelain_pathspec(line)
+        if not _status_path_is_gobby_only(pathspec):
+            dirty.append(line)
+    return dirty
+
+
+def _porcelain_pathspec(line: str) -> str:
+    if len(line) >= 3 and line[2] == " ":
+        return line[3:]
+    if len(line) >= 2 and line[1] == " ":
+        return line[2:]
+    return line[3:] if len(line) > 3 else line
 
 
 def _is_ancestor(target_path: str, commit_sha: str) -> bool:
@@ -478,6 +535,18 @@ def _repo_path_for_task(db: DatabaseProtocol, task_id: str) -> Path:
     if project is None or not project.repo_path:
         raise RuntimeError("project repo_path is required for clone integration sync")
     return Path(project.repo_path)
+
+
+def _local_target_path_if_checked_out(
+    db: DatabaseProtocol,
+    task_id: str,
+    target_branch: str,
+) -> Path | None:
+    repo_path = _repo_path_for_task(db, task_id)
+    current = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if current == target_branch:
+        return repo_path
+    return None
 
 
 def _acquire_integration_mutex(db: DatabaseProtocol, key: str) -> bool:

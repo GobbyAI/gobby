@@ -38,8 +38,10 @@ class SearchService:
         config: MemoryConfig,
         neo4j_graph_search: bool,
         neo4j_graph_min_score: float,
+        rrf_k: int,
         neo4j_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
+        keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
@@ -50,7 +52,9 @@ class SearchService:
         self._config = config
         self._neo4j_graph_search = neo4j_graph_search
         self._neo4j_graph_min_score = neo4j_graph_min_score
+        self._rrf_k = rrf_k
         self._neo4j_rrf_k = neo4j_rrf_k
+        self._keyword_search = keyword_search
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
 
@@ -284,7 +288,7 @@ class SearchService:
         half_life: float,
         effective_min_score: float,
     ) -> list[Memory]:
-        rrf_k = self._neo4j_rrf_k
+        rrf_k = self._rrf_k
 
         vector_store = self._require_vector_store()
         qdrant_coro = vector_store.search(
@@ -500,12 +504,8 @@ class SearchService:
         project_id: str | None,
     ) -> list[str]:
         """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
-        fts_results = await self._run_sqlite(
-            self._fts_searcher_factory().search,
-            query,
-            limit,
-            project_id,
-        )
+        search = self._keyword_search or self._fts_searcher_factory().search
+        fts_results = await self._run_sqlite(search, query, limit, project_id)
         return [mem_id for mem_id, _ in fts_results]
 
     async def _fts5_fallback(
@@ -519,12 +519,8 @@ class SearchService:
         tags_none: list[str] | None,
     ) -> list[Memory]:
         """FTS5 keyword search fallback when vector search returns nothing."""
-        fts_results = await self._run_sqlite(
-            self._fts_searcher_factory().search,
-            query,
-            limit * 2,
-            project_id,
-        )
+        search = self._keyword_search or self._fts_searcher_factory().search
+        fts_results = await self._run_sqlite(search, query, limit * 2, project_id)
         if not fts_results:
             return []
 

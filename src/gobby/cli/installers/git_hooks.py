@@ -101,8 +101,8 @@ fi
 # Gobby sync — export tasks and memories before push
 # Skip for spawned agents to avoid JSONL contamination in worktrees
 if [ -z "$GOBBY_AGENT_RUN_ID" ] && command -v gobby >/dev/null 2>&1; then
-    gobby tasks sync --export --quiet 2>/dev/null || true
-    gobby memory backup --quiet 2>/dev/null || true
+    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby tasks sync --export --quiet 2>/dev/null || true
+    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby memory backup --quiet 2>/dev/null || true
 
     # Stage and amend tip commit if JSONL files changed
     JSONL_CHANGED=false

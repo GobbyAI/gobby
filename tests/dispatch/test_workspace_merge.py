@@ -7,7 +7,7 @@ import pytest
 
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
-from gobby.dispatch.workspace_merge import execute_merge_workspace
+from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -43,6 +43,15 @@ def _assert_worktree_removed(
 ) -> None:
     assert worktrees.get(worktree_id) is None
     assert not worktree_path.exists()
+
+
+async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_prefix() -> None:
+    assert _non_gobby_status_lines(" M .gobby/tasks.jsonl\n") == []
+    assert _non_gobby_status_lines("M .gobby/tasks.jsonl") == []
+    assert _non_gobby_status_lines("R  .gobby/old.json -> .gobby/new.json") == []
+    assert _non_gobby_status_lines("M src/gobby/app.py\n M .gobby/tasks.jsonl") == [
+        "M src/gobby/app.py"
+    ]
 
 
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
@@ -229,6 +238,74 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
     assert worktrees.get(dirty_source.id) is not None
     assert dirty_task_path.exists()
     assert task_manager.artifacts.get_artifacts(dirty_leaf.id).worktree_id == dirty_source.id
+
+
+async def test_execute_merge_workspace_lands_child_epic_integration_on_local_branch(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "phase-integration"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "worktree", "add", "-b", "gobby/integration/phase", str(integration_path), "main")
+    _git(integration_path, "config", "user.email", "test@example.com")
+    _git(integration_path, "config", "user.name", "Test User")
+    (integration_path / "phase.txt").write_text("phase\n")
+    _git(integration_path, "add", "phase.txt")
+    _git(integration_path, "commit", "-m", "phase work")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(project_id=project.id, title="Root", task_type="epic")
+    phase = task_manager.create_task(
+        project_id=project.id,
+        title="Phase",
+        parent_task_id=root.id,
+        task_type="epic",
+    )
+    task_manager.initialize_task_manifest(phase.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(phase.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name="gobby/integration/phase",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=phase.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        phase.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+        integration_workspace_id=integration.id,
+    )
+    (repo / ".gobby").mkdir()
+    (repo / ".gobby" / "tasks.jsonl").write_text("sync artifact\n")
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=phase.id,
+            task_ref=f"#{phase.seq_num}",
+            backend="worktree",
+            target_branch="main",
+            source_branch="gobby/integration/phase",
+            source_workspace_id=integration.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(phase.id, "merge")
+
+    assert merge_sha == _git(repo, "rev-parse", "HEAD")
+    assert (repo / "phase.txt").read_text() == "phase\n"
+    assert stage is not None
+    assert stage.state == "done"
+    assert stage.completed_commit_sha == merge_sha
+    _assert_worktree_removed(worktrees, integration.id, integration_path)
+    assert task_manager.artifacts.get_artifacts(phase.id).integration_workspace_id is None
 
 
 async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(

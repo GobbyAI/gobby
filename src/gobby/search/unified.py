@@ -31,7 +31,7 @@ from gobby.search.embeddings import (
     is_embedding_configured,
     is_embedding_reachable,
 )
-from gobby.search.fts5 import FTS5SearchBackend
+from gobby.search.keyword import KeywordAsyncSearchBackend, keyword_table_for_fts_table
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
 logger = logging.getLogger(__name__)
@@ -136,14 +136,11 @@ class UnifiedSearcher:
         return self._config
 
     def _get_keyword_backend(self) -> AsyncSearchBackend:
-        """Get or create the FTS5 keyword search backend."""
+        """Get or create the dialect-aware keyword search backend."""
         if self._keyword_backend is None:
-            self._keyword_backend = FTS5SearchBackend(
-                db=self._db,
-                fts_table=self._fts_table,
-                content_table=self._fts_content_table,
-                id_column=self._fts_id_column,
-                weights=self._fts_weights,
+            self._keyword_backend = KeywordAsyncSearchBackend(
+                self._db,
+                keyword_table_for_fts_table(self._fts_table),
             )
         return self._keyword_backend
 

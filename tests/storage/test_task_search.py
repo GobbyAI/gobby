@@ -1,5 +1,7 @@
 """Tests for task search functionality."""
 
+from typing import Any
+
 import pytest
 
 from gobby.storage.database import LocalDatabase
@@ -341,6 +343,40 @@ class TestTaskFTS5Searcher:
 
         assert stats["backend_type"] == "fts5"
         assert stats["document_count"] > 0
+
+    def test_legacy_name_aliases_dialect_aware_searcher(self) -> None:
+        """TaskFTS5Searcher remains as a compatibility alias."""
+        from gobby.storage.tasks._search import TaskFTS5Searcher, TaskSearchBackend
+
+        assert TaskFTS5Searcher is TaskSearchBackend
+
+    def test_postgres_stage_state_search_uses_live_rows(self) -> None:
+        """Postgres stage-state search normalizes fetched pg_search scores."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def __init__(self) -> None:
+                self.sql = ""
+                self.params: tuple[Any, ...] = ()
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                self.sql = sql
+                self.params = params
+                return [{"id": "task-a", "score": 4.0}, {"id": "task-b", "score": 2.0}]
+
+        db = FakePostgresDB()
+        results = TaskSearchBackend(db).search(
+            "alpha!!",
+            top_k=2,
+            current_stage_state=["ready", "in-progress"],
+        )
+
+        assert results == [("task-a", 1.0), ("task-b", 0.5)]
+        assert "pdb.score(t.id)" in db.sql
+        assert "(t.title @@@ $1 OR t.description @@@ $1)" in db.sql
+        assert db.params == ("alpha", "ready", "in_progress", 2)
 
     def test_fts5_query_sanitization(self) -> None:
         """Test FTS5 query sanitization."""

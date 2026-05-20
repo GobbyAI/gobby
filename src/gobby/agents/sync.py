@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -89,6 +90,12 @@ def get_bundled_agents_path() -> Path:
     from gobby.paths import get_install_dir
 
     return get_install_dir() / "shared" / "workflows" / "agents"
+
+
+def _refresh_step_workflow(body: AgentDefinitionBody, db: DatabaseProtocol) -> None:
+    """Refresh the generated step workflow row for agents with inline steps."""
+    if body.steps:
+        register_agent_step_workflow(body, db)
 
 
 def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
@@ -170,6 +177,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                                     restore=True,
                                 ),
                             )
+                        _refresh_step_workflow(body, db)
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -192,6 +200,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     )
                     if update_fields:
                         manager.update(existing.id, **update_fields)
+                        _refresh_step_workflow(body, db)
                         result["updated"] += 1
                         logger.debug(
                             "Updated bundled agent definition %s (%s)",
@@ -200,6 +209,8 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                         )
                         continue
 
+                if _is_sync_managed_bundled_agent(existing):
+                    _refresh_step_workflow(body, db)
                 result["skipped"] += 1
                 continue
 
@@ -213,6 +224,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                 enabled=body.enabled,
                 tags=["gobby"],
             )
+            _refresh_step_workflow(body, db)
             logger.info(f"Synced bundled agent definition: {name}")
             result["synced"] += 1
 

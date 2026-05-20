@@ -74,6 +74,7 @@ class MemoryManager:
         neo4j_database: str = "neo4j",
         neo4j_graph_search: bool = True,
         neo4j_graph_min_score: float = 0.5,
+        rrf_k: int = 60,
         neo4j_rrf_k: int = 60,
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
@@ -156,8 +157,10 @@ class MemoryManager:
             config=config,
             neo4j_graph_search=neo4j_graph_search,
             neo4j_graph_min_score=neo4j_graph_min_score,
+            rrf_k=rrf_k,
             neo4j_rrf_k=neo4j_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
+            keyword_search=self._fts_search,
             run_db=run_db,
         )
         self._crossref_service = CrossrefService(
@@ -236,6 +239,19 @@ class MemoryManager:
 
             self._fts_searcher = MemoryFTS5Searcher(self.db)
         return self._fts_searcher
+
+    def _fts_search(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """Run dialect-aware keyword search and return ranked memory IDs."""
+        from gobby.search.keyword import pick_search_backend
+
+        backend = pick_search_backend(self.db, "memories")
+        hits = backend.search(query, limit, filters={"project_id": project_id})
+        return [(hit.id, hit.score) for hit in hits]
 
     @staticmethod
     def _record_to_memory(record: MemoryRecord) -> Memory:

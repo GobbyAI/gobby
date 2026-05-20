@@ -76,10 +76,14 @@ def _get_stage_state(ctx: RegistryContext, task_id: str, stage_name: str) -> Sta
     return cast(StageState | None, getter(task_id, stage_name))
 
 
-def _existing_merge_sha(delivery: TaskDeliveryStateManager, task_id: str) -> str | None:
+def _delivery_campaign(delivery: TaskDeliveryStateManager, task_id: str) -> dict[str, Any]:
     campaign = delivery.get_state(task_id).get("campaign")
     if not isinstance(campaign, dict):
-        return None
+        return {}
+    return campaign
+
+
+def _campaign_merge_sha(campaign: dict[str, Any]) -> str | None:
     value = campaign.get("merge_sha")
     return value if isinstance(value, str) and value else None
 
@@ -89,6 +93,48 @@ def _is_completed_merge_transition(error: IllegalStageTransitionError) -> bool:
         error.stage_name == "merge"
         and error.current_state == "done"
         and error.attempted_transition == "complete_stage"
+    )
+
+
+def _is_ready_merge_transition(error: IllegalStageTransitionError) -> bool:
+    return (
+        error.stage_name == "merge"
+        and error.current_state == "ready"
+        and error.attempted_transition == "complete_stage"
+    )
+
+
+def _can_reconcile_ready_merge(
+    previous_campaign: dict[str, Any],
+    merge_sha: str,
+) -> bool:
+    state = previous_campaign.get("state")
+    previous_sha = _campaign_merge_sha(previous_campaign)
+    if state == "failed":
+        return previous_sha in (None, merge_sha)
+    if state == "merged":
+        return previous_sha == merge_sha
+    return False
+
+
+def _complete_ready_merge_stage(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    session_id: str | None,
+    merge_sha: str,
+) -> StageState:
+    ctx.task_manager.stage_states.start_stage(
+        task_id,
+        "merge",
+        by_session_id=session_id,
+        notes="Reconciling successful merge result after a prior merge attempt.",
+    )
+    return ctx.task_manager.stage_states.complete_stage(
+        task_id,
+        "merge",
+        by_session_id=session_id,
+        commit_sha=merge_sha,
     )
 
 
@@ -531,14 +577,16 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
+        previous_campaign = _delivery_campaign(delivery, resolved_id)
+        previous_state = previous_campaign.get("state")
+        previous_sha = _campaign_merge_sha(previous_campaign)
+        if previous_state == "merged" and previous_sha and previous_sha != merge_sha:
+            raise ValueError(
+                "merge stage is already recorded with a different merge_sha "
+                f"({previous_sha}); refusing to overwrite it with {merge_sha}"
+            )
         existing_stage = _get_stage_state(ctx, resolved_id, "merge")
         if existing_stage is not None and existing_stage.state == "done":
-            existing_sha = _existing_merge_sha(delivery, resolved_id)
-            if existing_sha and existing_sha != merge_sha:
-                raise ValueError(
-                    "merge stage is already done with a different merge_sha "
-                    f"({existing_sha}); refusing to overwrite it with {merge_sha}"
-                )
             delivery.record_campaign(
                 resolved_id,
                 state="merged",
@@ -561,6 +609,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 task_id=resolved_id,
                 session_id=resolved_session_id,
             )
+        reconciled_ready_merge = False
         try:
             stage = ctx.task_manager.stage_states.complete_stage(
                 resolved_id,
@@ -569,12 +618,24 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 commit_sha=merge_sha,
             )
         except IllegalStageTransitionError as exc:
-            if not _is_completed_merge_transition(exc):
+            if _is_ready_merge_transition(exc) and _can_reconcile_ready_merge(
+                previous_campaign,
+                merge_sha,
+            ):
+                stage = _complete_ready_merge_stage(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                    merge_sha=merge_sha,
+                )
+                reconciled_ready_merge = True
+            elif not _is_completed_merge_transition(exc):
                 raise
-            completed_stage = _get_stage_state(ctx, resolved_id, "merge")
-            if completed_stage is None:
-                raise
-            return _idempotent_operation_response(resolved_id, completed_stage)
+            else:
+                completed_stage = _get_stage_state(ctx, resolved_id, "merge")
+                if completed_stage is None:
+                    raise
+                return _idempotent_operation_response(resolved_id, completed_stage)
         try:
             cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
         except Exception:
@@ -583,7 +644,10 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 extra={"task_id": resolved_id, "merge_sha": merge_sha},
                 exc_info=True,
             )
-        return _operation_response(resolved_id, stage)
+        response = _operation_response(resolved_id, stage)
+        if reconciled_ready_merge:
+            response["reconciled"] = True
+        return response
 
     _register_stage_tool(
         registry,

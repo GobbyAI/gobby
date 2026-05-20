@@ -21,8 +21,8 @@ fi
 
 # Export tasks and memories, create new commit if JSONL files changed
 if command -v gobby >/dev/null 2>&1; then
-    gobby tasks sync --export --quiet 2>/dev/null || true
-    gobby memory backup --quiet 2>/dev/null || true
+    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby tasks sync --export --quiet 2>/dev/null || true
+    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby memory backup --quiet 2>/dev/null || true
 
     JSONL_CHANGED=false
     for f in .gobby/tasks.jsonl .gobby/memories.jsonl; do

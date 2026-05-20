@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
+from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,9 @@ async def memory_sync_export(
     """
     if not memory_sync_manager:
         return {"error": "Memory Sync Manager not available"}
+
+    if not in_jsonl_export_context():
+        return {"exported": {"memories": 0}, "skipped": True, "reason": "not_remote_push"}
 
     count = await memory_sync_manager.export_to_files(project_id=project_id)
     logger.info(f"Memory sync export: {count} memories exported")

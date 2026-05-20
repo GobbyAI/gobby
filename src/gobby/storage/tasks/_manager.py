@@ -91,7 +91,7 @@ from gobby.storage.tasks._queries import (
 from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
-from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._search import TaskSearchBackend
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -145,7 +145,7 @@ class LocalTaskManager(TaskDecompositionMixin):
     def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
-        self._searcher: TaskFTS5Searcher | None = None
+        self._searcher: TaskSearchBackend | None = None
         self._artifact_manager: TaskArtifactManager | None = None
         self._lifecycle_event_manager: TaskLifecycleEventManager | None = None
         self._stage_registry_manager: StageRegistryManager | None = None
@@ -873,10 +873,10 @@ class LocalTaskManager(TaskDecompositionMixin):
 
     # --- Search Methods ---
 
-    def _ensure_searcher(self) -> TaskFTS5Searcher:
+    def _ensure_searcher(self) -> TaskSearchBackend:
         """Get or create the task searcher instance."""
         if self._searcher is None:
-            self._searcher = TaskFTS5Searcher(self.db)
+            self._searcher = TaskSearchBackend(self.db)
         return self._searcher
 
     def search_tasks(

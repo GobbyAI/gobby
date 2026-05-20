@@ -30,6 +30,23 @@ def _non_gobby_status_lines(status_output: str) -> list[str]:
     return dirty
 
 
+def _worktree_path_for_branch(git_manager: Any, branch_name: str) -> str | None:
+    """Return the path where a branch is already checked out, if known."""
+    list_worktrees = getattr(git_manager, "list_worktrees", None)
+    if not callable(list_worktrees):
+        return None
+
+    try:
+        for worktree in list_worktrees():
+            if getattr(worktree, "branch", None) == branch_name:
+                path = getattr(worktree, "path", None)
+                if isinstance(path, str) and path:
+                    return path
+    except Exception as exc:
+        logger.debug("Failed to inspect git worktrees for branch %s: %s", branch_name, exc)
+    return None
+
+
 def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create a registry with worktree sync/merge tools.
 
@@ -176,6 +193,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         merge_target = raw_merge_target
         wt_path = worktree.worktree_path
         repo_path = str(resolved_git_mgr.repo_path)
+        target_worktree_path = await asyncio.to_thread(
+            _worktree_path_for_branch, resolved_git_mgr, merge_target
+        )
+        merge_cwd = target_worktree_path or repo_path
 
         target_ref_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
@@ -212,15 +233,16 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         status_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
             ["status", "--porcelain"],
-            cwd=repo_path,
+            cwd=merge_cwd,
             timeout=10,
         )
         if status_result.returncode != 0:
             return {
                 "success": False,
-                "error": f"Failed to inspect local checkout: {status_result.stderr.strip()}",
+                "error": f"Failed to inspect target checkout: {status_result.stderr.strip()}",
                 "worktree_path": wt_path,
                 "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
             }
@@ -228,10 +250,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if non_gobby_dirty:
             return {
                 "success": False,
-                "error": "Local project checkout has uncommitted non-.gobby changes",
+                "error": "Target checkout has uncommitted non-.gobby changes",
                 "dirty_files": non_gobby_dirty,
                 "worktree_path": wt_path,
                 "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
             }
@@ -239,7 +262,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         current_branch_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
             ["rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=repo_path,
+            cwd=merge_cwd,
             timeout=10,
         )
         if current_branch_result.returncode != 0:
@@ -248,10 +271,24 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "error": f"Failed to determine current branch: {current_branch_result.stderr.strip()}",
                 "worktree_path": wt_path,
                 "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
             }
         original_branch = current_branch_result.stdout.strip()
+        if target_worktree_path and original_branch != merge_target:
+            return {
+                "success": False,
+                "error": (
+                    f"Target branch '{merge_target}' is registered at "
+                    f"'{target_worktree_path}', but that checkout is on '{original_branch}'"
+                ),
+                "worktree_path": wt_path,
+                "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
+                "source_branch": effective_source,
+                "target_branch": merge_target,
+            }
         checked_out_target = original_branch == merge_target
 
         # Stash dirty .gobby/ sync files to prevent merge blocking.
@@ -259,17 +296,17 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # (same pattern as merge_clone).
         stash_created = False
         stash_list_before = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command, ["stash", "list"], cwd=repo_path, timeout=10
+            resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
         )
         stash_push = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
             ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
-            cwd=repo_path,
+            cwd=merge_cwd,
             timeout=10,
         )
         if stash_push.returncode == 0:
             stash_list_after = await asyncio.to_thread(
-                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=repo_path, timeout=10
+                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
             )
             stash_created = stash_list_after.stdout != stash_list_before.stdout
 
@@ -277,7 +314,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             """Restore stashed .gobby/ files if any were stashed."""
             if stash_created:
                 pop_result = await asyncio.to_thread(
-                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=repo_path, timeout=10
+                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=merge_cwd, timeout=10
                 )
                 if pop_result.returncode != 0:
                     logger.warning(
@@ -291,7 +328,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 resolved_git_mgr,
                 effective_source,
                 merge_target,
-                cwd=repo_path,
+                cwd=merge_cwd,
             )
 
         try:
@@ -299,7 +336,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 checkout_result = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
                     ["checkout", merge_target],
-                    cwd=repo_path,
+                    cwd=merge_cwd,
                     timeout=30,
                 )
                 if checkout_result.returncode != 0:
@@ -311,6 +348,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         ),
                         "worktree_path": wt_path,
                         "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
                         "source_branch": effective_source,
                         "target_branch": merge_target,
                     }
@@ -319,7 +357,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
                 ["merge", effective_source, "--no-edit"],
-                cwd=repo_path,
+                cwd=merge_cwd,
                 timeout=60,
             )
             auto_resolved: list[str] = []
@@ -329,20 +367,20 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
                 conflicted_files = await asyncio.to_thread(
-                    resolved_git_mgr.get_unmerged_files, cwd=repo_path
+                    resolved_git_mgr.get_unmerged_files, cwd=merge_cwd
                 )
                 if conflicted_files:
                     # Auto-resolve trivial conflicts (.gobby/*.jsonl)
                     from gobby.worktrees.merge.resolver import auto_resolve_trivial_conflicts
 
-                    remaining = await auto_resolve_trivial_conflicts(conflicted_files, repo_path)
+                    remaining = await auto_resolve_trivial_conflicts(conflicted_files, merge_cwd)
 
                     if not remaining:
                         # All conflicts were trivial — commit the merge and continue
                         commit_result = await asyncio.to_thread(
                             resolved_git_mgr.run_git_command,
                             ["commit", "--no-edit"],
-                            cwd=repo_path,
+                            cwd=merge_cwd,
                             timeout=30,
                         )
                         if commit_result.returncode != 0:
@@ -354,6 +392,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                                 ),
                                 "worktree_path": wt_path,
                                 "project_path": repo_path,
+                                "target_worktree_path": target_worktree_path,
                                 "source_branch": effective_source,
                                 "target_branch": merge_target,
                             }
@@ -367,7 +406,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         await asyncio.to_thread(
                             resolved_git_mgr.run_git_command,
                             ["merge", "--abort"],
-                            cwd=repo_path,
+                            cwd=merge_cwd,
                             timeout=10,
                         )
                         return {
@@ -378,6 +417,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                             "auto_resolved": [f for f in conflicted_files if f not in remaining],
                             "worktree_path": wt_path,
                             "project_path": repo_path,
+                            "target_worktree_path": target_worktree_path,
                             "message": (
                                 f"Merge conflicts detected in {len(remaining)} file(s) "
                                 f"({len(conflicted_files) - len(remaining)} trivial auto-resolved). "
@@ -390,7 +430,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     await asyncio.to_thread(
                         resolved_git_mgr.run_git_command,
                         ["merge", "--abort"],
-                        cwd=repo_path,
+                        cwd=merge_cwd,
                         timeout=10,
                     )
                     return {
@@ -398,6 +438,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "has_conflicts": False,
                         "worktree_path": wt_path,
                         "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
                         "error": merge_output.strip(),
                     }
 
@@ -407,7 +448,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 target_sha_result = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
                     ["rev-parse", "HEAD"],
-                    cwd=repo_path,
+                    cwd=merge_cwd,
                     timeout=10,
                 )
                 if target_sha_result.returncode != 0:
@@ -419,6 +460,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         ),
                         "worktree_path": wt_path,
                         "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
                         "source_branch": effective_source,
                         "target_branch": merge_target,
                         "merged": True,
@@ -433,6 +475,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "message": message if git_merged else "Local target branch was not updated",
                 "worktree_path": wt_path,
                 "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
                 "merged": git_merged,
@@ -450,7 +493,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 restore_branch = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
                     ["checkout", original_branch],
-                    cwd=repo_path,
+                    cwd=merge_cwd,
                     timeout=30,
                 )
                 if restore_branch.returncode != 0:

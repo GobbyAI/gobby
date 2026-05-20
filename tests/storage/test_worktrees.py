@@ -1,5 +1,6 @@
 """Tests for local worktree storage manager."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -612,6 +613,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         mock_row["merged_at"] = "2025-01-02T00:00:00+00:00"
         mock_db.fetchone.return_value = mock_row
 
+        before = datetime.now(UTC)
         worktree = manager.mark_merged("wt-123456")
 
         assert worktree is not None
@@ -619,6 +621,8 @@ class TestLocalWorktreeManagerStatusTransitions:
         call_args = mock_db.execute.call_args
         params = call_args[0][1]
         assert WorktreeStatus.MERGED.value in params
+        cleanup_after = datetime.fromisoformat(params[2])
+        assert before <= cleanup_after <= datetime.now(UTC) + timedelta(seconds=1)
 
     def test_mark_abandoned_sets_status(self, manager, mock_db, mock_row) -> None:
         """mark_abandoned sets status to abandoned."""

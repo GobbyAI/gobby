@@ -2126,7 +2126,7 @@ class TestSyncTasksCommand:
         mock_get_sync: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test sync with default behavior (both import and export)."""
+        """Test sync with default behavior imports only."""
         mock_manager = MagicMock()
         mock_get_sync.return_value = mock_manager
 
@@ -2134,7 +2134,7 @@ class TestSyncTasksCommand:
 
         assert result.exit_code == 0
         mock_manager.import_from_jsonl.assert_called_once()
-        mock_manager.export_to_jsonl.assert_called_once()
+        mock_manager.export_to_jsonl.assert_not_called()
         assert "Sync completed" in result.output
 
     @patch("gobby.cli.tasks.main.get_sync_manager")
@@ -2154,16 +2154,37 @@ class TestSyncTasksCommand:
         mock_manager.export_to_jsonl.assert_not_called()
 
     @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_export_only(
+    def test_sync_export_only_skips_outside_remote_push_context(
         self,
         mock_get_sync: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test sync with --export flag only."""
+        """Test sync with --export flag does not dirty JSONL locally."""
         mock_manager = MagicMock()
         mock_get_sync.return_value = mock_manager
 
         result = runner.invoke(cli, ["tasks", "sync", "--export"])
+
+        assert result.exit_code == 0
+        mock_manager.import_from_jsonl.assert_not_called()
+        mock_manager.export_to_jsonl.assert_not_called()
+        assert ".gobby/tasks.jsonl is generated only during remote push" in result.output
+
+    @patch("gobby.cli.tasks.main.get_sync_manager")
+    def test_sync_export_only_runs_in_remote_push_context(
+        self,
+        mock_get_sync: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test sync with --export flag in the pre-push publication context."""
+        mock_manager = MagicMock()
+        mock_get_sync.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            ["tasks", "sync", "--export"],
+            env={"GOBBY_JSONL_EXPORT_CONTEXT": "pre-push"},
+        )
 
         assert result.exit_code == 0
         mock_manager.import_from_jsonl.assert_not_called()

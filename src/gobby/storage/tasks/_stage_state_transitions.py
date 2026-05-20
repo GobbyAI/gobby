@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
@@ -163,7 +164,18 @@ class StageStateTransitions:
                     task_id,
                     f"{stage_name}_failed:{reason or 'needs_human'}",
                 )
+            self._wake_dispatcher(task_id, stage_name, verb)
             return updated
+
+    def _wake_dispatcher(self, task_id: str, stage_name: str, verb: str) -> None:
+        try:
+            wake_dispatcher_for_task_change(self.db, task_id)
+        except Exception:
+            logger.warning(
+                "dispatcher_wake_after_stage_transition_failed",
+                extra={"task_id": task_id, "stage_name": stage_name, "verb": verb},
+                exc_info=True,
+            )
 
     def reset_holistic_failure_targets(
         self,

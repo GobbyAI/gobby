@@ -340,13 +340,14 @@ class LocalWorktreeManager:
         """
         return self.update(worktree_id, status=WorktreeStatus.STALE.value)
 
-    def mark_merged(self, worktree_id: str, cleanup_days: int = 7) -> Worktree | None:
+    def mark_merged(self, worktree_id: str, cleanup_days: int = 0) -> Worktree | None:
         """
         Mark worktree as merged and schedule cleanup.
 
         Args:
             worktree_id: Worktree ID
-            cleanup_days: Days until auto-cleanup (default: 7)
+            cleanup_days: Days until auto-cleanup. Defaults to immediate cleanup because merged
+                build worktrees are already represented by the target branch and task records.
 
         Returns:
             Updated Worktree or None if not found

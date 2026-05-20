@@ -374,6 +374,57 @@ class TestMemoryStatsCommand:
         assert "Total Memories: 0" in result.output
 
 
+class TestMemoryBackupCommand:
+    """Tests for gobby memory backup command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_default_backup_skips_outside_jsonl_export_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Default tracked memories.jsonl backup is pre-push only."""
+        result = runner.invoke(cli, ["memory", "backup"])
+
+        assert result.exit_code == 0
+        assert ".gobby/memories.jsonl is generated only during remote push" in result.output
+        mock_get_manager.assert_not_called()
+        mock_backup_manager_cls.assert_not_called()
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_default_backup_runs_in_jsonl_export_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Default tracked memories.jsonl backup runs during pre-push publication."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.backup_sync.return_value = 4
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        result = runner.invoke(
+            cli,
+            ["memory", "backup"],
+            env={"GOBBY_JSONL_EXPORT_CONTEXT": "pre-push"},
+        )
+
+        assert result.exit_code == 0
+        assert "Backed up 4 memories" in result.output
+        mock_backup_manager.backup_sync.assert_called_once()
+
+
 class TestMemoryRestoreCommand:
     """Tests for gobby memory restore command."""
 

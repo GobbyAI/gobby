@@ -252,6 +252,15 @@ def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
     )
 
 
+def test_merge_orchestrator_plan_can_refresh_read_only_survey_state() -> None:
+    plan_tools = set(_step(_agent(), "plan")["allowed_mcp_tools"])
+
+    assert "gobby-merge:inspect_merge_state" in plan_tools
+    assert "gobby-merge:analyze_merge_landscape" in plan_tools
+    assert "gobby-merge:predict_conflicts" in plan_tools
+    assert "gobby-tasks-ops:get_artifacts" in plan_tools
+
+
 def test_merge_orchestrator_loads_monitoring_skill_before_agent_queries() -> None:
     agent = _agent()
     instructions = agent["instructions"]
@@ -439,6 +448,14 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: LocalDatab
     instance = manager.get_instance("agent-session", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "plan"
+
+    for mcp_key in ("gobby-merge:inspect_merge_state", "gobby-tasks-ops:get_artifacts"):
+        response = await engine.evaluate(
+            _before_mcp_tool(mcp_key),
+            session_id="agent-session",
+            variables=variables,
+        )
+        assert response.decision == "allow", mcp_key
 
     await engine.evaluate(
         _after_set_variable("merge_plan", [{"step_no": 1, "worktree_id": "wt-1"}]),
