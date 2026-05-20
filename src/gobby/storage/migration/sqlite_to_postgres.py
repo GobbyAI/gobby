@@ -37,6 +37,7 @@ from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
 _BASELINE_INSERT_RE = re.compile(r'^\s*INSERT\s+INTO\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I | re.M)
 _SEED_BEARING_TABLES: tuple[str, ...] = ()
 _IMPORT_COMPLETE_KEY = "imported_from_sqlite_at"
+_IMPORT_LOCK_KEY = "gobby_sqlite_to_postgres_import"
 _EXTERNAL_SENTINEL_MISSING = (
     "external-ownership sentinel missing -- was the database recreated or is this a "
     "different install? Re-run `gobby postgres install --mode external --dsn ...` to "
@@ -136,21 +137,23 @@ def migrate_sqlite_to_postgres(
         _apply_postgres_schema(target)
         log_path = _default_import_log_path()
         with _connect_postgres(target) as pg:
-            _assert_target_ready_for_import(source_conn, pg, emit=sink)
-            _fail_if_import_complete_marker(pg)
-            if reset_seeded_tables:
-                _reset_seed_bearing_tables(pg)
-            _drop_bm25_indexes(pg)
-            copy_result = _coerce_copy_result(
-                _copy_sqlite_rows_to_postgres(source_conn, pg, batch_size, log_path)
-            )
-            _recreate_bm25_indexes(pg)
-            reseed_identity_sequences(pg)
-            try:
-                report = validate_migration(source_conn, cast(Any, pg), emit=sink)
-            except MigrationValidationError as exc:
-                raise SqliteToPostgresMigrationError(str(exc)) from exc
-            _write_import_complete_marker(pg)
+            with pg.transaction():
+                _acquire_import_lock(pg)
+                _assert_target_ready_for_import(source_conn, pg, emit=sink)
+                _fail_if_import_complete_marker(pg)
+                if reset_seeded_tables:
+                    _reset_seed_bearing_tables(pg)
+                _drop_bm25_indexes(pg)
+                copy_result = _coerce_copy_result(
+                    _copy_sqlite_rows_to_postgres(source_conn, pg, batch_size, log_path)
+                )
+                _recreate_bm25_indexes(pg)
+                reseed_identity_sequences(pg)
+                try:
+                    report = validate_migration(source_conn, cast(Any, pg), emit=sink)
+                except MigrationValidationError as exc:
+                    raise SqliteToPostgresMigrationError(str(exc)) from exc
+                _write_import_complete_marker(pg)
 
         return {
             "rows": copy_result.rows,
@@ -300,6 +303,10 @@ def _fail_if_import_complete_marker(target: psycopg.Connection[Any]) -> None:
         )
 
 
+def _acquire_import_lock(target: psycopg.Connection[Any]) -> None:
+    target.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_IMPORT_LOCK_KEY,))
+
+
 def _reset_seed_bearing_tables(target: psycopg.Connection[Any]) -> None:
     with target.transaction():
         with target.cursor() as cur:
@@ -354,6 +361,7 @@ def _copy_sqlite_rows_to_postgres(
             )
             total_rows += row_count
             copied_tables += 1
+        target.execute("SET CONSTRAINTS ALL IMMEDIATE")
     return _CopyResult(rows=total_rows, tables=copied_tables)
 
 

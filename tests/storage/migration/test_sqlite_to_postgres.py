@@ -12,6 +12,12 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+class _FakePostgres:
+    @contextmanager
+    def transaction(self) -> Iterator[_FakePostgres]:
+        yield self
+
+
 def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -22,8 +28,8 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
     events: list[str] = []
 
     @contextmanager
-    def _postgres_context(_target: str) -> Iterator[object]:
-        yield object()
+    def _postgres_context(_target: str) -> Iterator[_FakePostgres]:
+        yield _FakePostgres()
 
     monkeypatch.setattr(
         migration,
@@ -40,6 +46,9 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         migration, "_assert_target_ready_for_import", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(migration, "_fail_if_import_complete_marker", lambda *_args: None)
+    monkeypatch.setattr(
+        migration, "_acquire_import_lock", lambda *_args, **_kwargs: events.append("lock")
+    )
     monkeypatch.setattr(migration, "_reset_seed_bearing_tables", lambda *_args: None)
     monkeypatch.setattr(migration, "_drop_bm25_indexes", lambda *_args: None)
     monkeypatch.setattr(migration, "_recreate_bm25_indexes", lambda *_args: None)
@@ -72,7 +81,7 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         dry_run=False,
     )
 
-    assert events == ["schema", "copy", "reseed", "validate", "marker"]
+    assert events == ["schema", "lock", "copy", "reseed", "validate", "marker"]
     assert result["rows"] >= 0
     assert result["tables"] >= 0
 
