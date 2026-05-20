@@ -263,7 +263,7 @@ def _check_content_hashes(
 
     for table in tables:
         source_hash = _table_hash(_sqlite_rows(source, table))
-        target_hash = _table_hash(_postgres_rows(target, table))
+        target_hash = _table_hash(_postgres_rows(target, table, _sqlite_columns(source, table)))
         if source_hash != target_hash:
             _record(
                 checks,
@@ -559,8 +559,15 @@ def _sqlite_rows(source: sqlite3.Connection, table: str) -> Sequence[Any]:
     return source.execute(f"SELECT * FROM {_quote_identifier(table)}").fetchall()
 
 
-def _postgres_rows(target: _Executable, table: str) -> Sequence[Any]:
-    return target.execute(f"SELECT * FROM {_quote_identifier(table)}").fetchall()
+def _postgres_rows(
+    target: _Executable,
+    table: str,
+    columns: set[str] | None = None,
+) -> Sequence[Any]:
+    selected = (
+        "*" if columns is None else ", ".join(_quote_identifier(column) for column in columns)
+    )
+    return target.execute(f"SELECT {selected} FROM {_quote_identifier(table)}").fetchall()
 
 
 def _postgres_max(target: _Executable, table: str, column: str) -> int | None:

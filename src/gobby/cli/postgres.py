@@ -33,6 +33,10 @@ from gobby.cli.installers.postgres import (
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, get_gobby_home
+from gobby.storage.migration.sqlite_to_postgres import (
+    SqliteToPostgresMigrationError,
+    migrate_sqlite_to_postgres,
+)
 
 _NO_ROLLBACK_ACK = "I accept no-rollback risk"
 _CAPTURE_SINK_KINDS = {"pgaudit-file", "wal-archive"}
@@ -95,6 +99,57 @@ def uninstall_cmd(remove_data: bool) -> None:
     """Uninstall PostgreSQL using the recorded install mode."""
     result = uninstall_postgres(mode=_active_install_mode(), remove_data=remove_data)
     _render_uninstall_result(result)
+
+
+@postgres_cli.command("migrate-from-sqlite")
+@click.option(
+    "--source",
+    type=click.Path(path_type=Path),
+    default=Path("~/.gobby/gobby-hub.db"),
+    show_default=True,
+    help="SQLite hub database to import.",
+)
+@click.option(
+    "--target",
+    required=True,
+    help="Target PostgreSQL DSN.",
+)
+@click.option(
+    "--batch-size",
+    type=click.IntRange(min=1),
+    default=1000,
+    show_default=True,
+    help="Rows to read from SQLite per table batch.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Run read-only preflight checks without changing the target.",
+)
+def migrate_from_sqlite(
+    source: Path,
+    target: str,
+    batch_size: int,
+    dry_run: bool,
+) -> None:
+    """Import the SQLite hub database into PostgreSQL."""
+    if _daemon_running():
+        raise click.ClickException("Stop the daemon first: gobby stop")
+
+    try:
+        result = migrate_sqlite_to_postgres(
+            source=source.expanduser(),
+            target=target,
+            batch_size=batch_size,
+            dry_run=dry_run,
+        )
+    except SqliteToPostgresMigrationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, psycopg.Error) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _render_migration_result(result)
 
 
 @postgres_cli.command("activate")
@@ -203,6 +258,22 @@ def _render_uninstall_result(result: dict[str, Any]) -> None:
 
     click.echo(f"Failed: {result.get('error', 'unknown error')}", err=True)
     sys.exit(1)
+
+
+def _render_migration_result(result: dict[str, Any]) -> None:
+    rows = int(result.get("rows", 0))
+    tables = int(result.get("tables", 0))
+    if result.get("dry_run"):
+        click.echo(f"dry-run: would import {rows} rows across {tables} tables")
+    else:
+        click.echo(f"imported {rows} rows across {tables} tables")
+
+    log_path = result.get("log_path")
+    if log_path:
+        click.echo(f"Import log: {log_path}")
+    artifact_path = result.get("validation_artifact")
+    if artifact_path:
+        click.echo(f"Validation artifact: {artifact_path}")
 
 
 def _redact_dsn(dsn: str) -> str:

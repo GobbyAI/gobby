@@ -47,7 +47,12 @@ class _PostgresRows:
             return _Result([_Row(count, count=count, row_count=count)])
         if text.lstrip().startswith("select"):
             table = _table_from_select(text)
-            return _Result([_Row(**row) for row in self.tables[table]])
+            selected = _selected_columns(text)
+            if selected is None:
+                return _Result([_Row(**row) for row in self.tables[table]])
+            return _Result(
+                [_Row(**{column: row[column] for column in selected}) for row in self.tables[table]]
+            )
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
@@ -69,6 +74,16 @@ def test_validate_migration_detects_content_mismatch_with_equal_counts() -> None
         validation.validate_migration(source, target)
 
 
+def test_validate_migration_ignores_postgres_generated_columns() -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = _sqlite_source()
+    target = _PostgresRows(
+        {"tasks": [{"id": 1, "title": "imported", "generated_search_text": "imported"}]}
+    )
+
+    validation.validate_migration(source, target)
+
+
 def _sqlite_source() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -82,3 +97,10 @@ def _table_from_select(sql: str) -> str:
     start = sql.index(marker) + len(marker)
     token = sql[start:].split()[0]
     return token.strip('"')
+
+
+def _selected_columns(sql: str) -> list[str] | None:
+    selected = sql.split(" from ", 1)[0].removeprefix("select").strip()
+    if selected == "*":
+        return None
+    return [column.strip().strip('"') for column in selected.split(",")]
