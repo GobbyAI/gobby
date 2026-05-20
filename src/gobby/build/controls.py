@@ -262,7 +262,7 @@ def cleanup_successful_merge_artifacts(
     active_agents = _active_agents(db, [task.id for task in tasks])
     artifacts_to_delete = _defer_active_agent_artifacts(artifacts, active_agents)
 
-    _delete_artifacts(db, cleanup_project_id, artifacts_to_delete, force=False)
+    _delete_artifacts(db, cleanup_project_id, artifacts_to_delete, force=True)
     if any(artifact.deferred for artifact in artifacts):
         _branches_deleted = 0
         branch_errors: list[str] = []
