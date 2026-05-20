@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import subprocess  # nosec B404 # fixed git status argv on local worktree paths.
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.agents.kill import kill_agent
 from gobby.build.branch_cleanup import (
@@ -262,7 +263,13 @@ def cleanup_successful_merge_artifacts(
     active_agents = _active_agents(db, [task.id for task in tasks])
     artifacts_to_delete = _defer_active_agent_artifacts(artifacts, active_agents)
 
-    _delete_artifacts(db, cleanup_project_id, artifacts_to_delete, force=True)
+    _delete_artifacts(
+        db,
+        cleanup_project_id,
+        artifacts_to_delete,
+        force=True,
+        preserve_dirty_worktrees=True,
+    )
     if any(artifact.deferred for artifact in artifacts):
         _branches_deleted = 0
         branch_errors: list[str] = []
@@ -420,7 +427,7 @@ def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
 
 
 def _active_agents(db: DatabaseProtocol, task_ids: list[str]) -> list[AgentRun]:
-    return LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
+    return cast(list[AgentRun], LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000))
 
 
 def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
@@ -499,7 +506,7 @@ def _clear_stale_dispatch_mutexes(
 ) -> int:
     mutexes = TaskDispatchMutexManager(db)
     resolved_now = now or datetime.now(UTC)
-    cleared = mutexes.sweep_expired(now=resolved_now)
+    cleared = int(mutexes.sweep_expired(now=resolved_now))
     active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
     for task_id in task_ids:
         mutex = mutexes.get_mutex(task_id)
@@ -539,7 +546,7 @@ def _parse_mutex_timestamp(value: str | None) -> datetime | None:
 
 def _clear_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
     mutexes = TaskDispatchMutexManager(db)
-    cleared = mutexes.sweep_expired()
+    cleared = int(mutexes.sweep_expired())
     for task_id in task_ids:
         if mutexes.force_release(task_id):
             cleared += 1
@@ -890,6 +897,7 @@ def _delete_artifacts(
     artifacts: list[BuildArtifactSummary],
     *,
     force: bool,
+    preserve_dirty_worktrees: bool = False,
 ) -> None:
     project_path = _project_path(db, project_id)
     worktree_git = WorktreeGitManager(project_path)
@@ -902,6 +910,9 @@ def _delete_artifacts(
         try:
             path = Path(artifact.path)
             if artifact.family == "worktree":
+                if preserve_dirty_worktrees and _worktree_has_non_gobby_changes(path):
+                    artifact.deferred = True
+                    continue
                 if path.exists():
                     worktree_result = worktree_git.delete_worktree(path, force=force)
                     if not worktree_result.success:
@@ -931,6 +942,38 @@ def _delete_artifacts(
             artifact.deleted = True
         except Exception as exc:
             artifact.error = str(exc)
+
+
+def _worktree_has_non_gobby_changes(path: Path) -> bool:
+    if not path.exists():
+        return False
+    result = subprocess.run(  # nosec B603 # fixed git argv on local worktree path.
+        ["git", "-C", str(path), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        return True
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        pathspec = _porcelain_pathspec(line)
+        paths = [part.strip() for part in pathspec.split(" -> ")]
+        if any(
+            path_item != ".gobby" and not path_item.startswith(".gobby/") for path_item in paths
+        ):
+            return True
+    return False
+
+
+def _porcelain_pathspec(line: str) -> str:
+    if len(line) >= 3 and line[2] == " ":
+        return line[3:]
+    if len(line) >= 2 and line[1] == " ":
+        return line[2:]
+    return line[3:] if len(line) > 3 else line
 
 
 def _project_path(db: DatabaseProtocol, project_id: str) -> Path:
