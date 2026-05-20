@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
@@ -221,13 +222,13 @@ class _WorkspaceServices:
             if existing is None:
                 raise BuildWorkspaceError("integration worktree metadata is missing; clean/restart")
             self._validate_record(existing, branch_name=branch_name, backend="worktree")
-            _ensure_clean_git_dir(existing.worktree_path)
+            _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
             return existing
 
         existing = self.worktree_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
             self._validate_record(existing, branch_name=branch_name, backend="worktree")
-            _ensure_clean_git_dir(existing.worktree_path)
+            _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
             return existing
 
         unmanaged = self._find_unmanaged_worktree(branch_name)
@@ -235,9 +236,9 @@ class _WorkspaceServices:
             stored = self.worktree_storage.get_by_path(unmanaged.path)
             if stored is not None:
                 self._validate_record(stored, branch_name=branch_name, backend="worktree")
-                _ensure_clean_git_dir(stored.worktree_path)
+                _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
                 return stored
-            _ensure_clean_git_dir(unmanaged.path)
+            _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
             return self.worktree_storage.create(
                 project_id=self.project_id,
                 branch_name=branch_name,
@@ -258,6 +259,7 @@ class _WorkspaceServices:
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)
+        _refresh_clean_git_dir(path, branch_name, base_branch)
         return self.worktree_storage.create(
             project_id=self.project_id,
             branch_name=branch_name,
@@ -279,13 +281,21 @@ class _WorkspaceServices:
             if existing is None:
                 raise BuildWorkspaceError("integration clone metadata is missing; clean/restart")
             self._validate_record(existing, branch_name=branch_name, backend="clone")
-            _ensure_clean_git_dir(existing.clone_path)
+            _refresh_clean_git_dir(
+                existing.clone_path,
+                branch_name,
+                _clone_base_ref(existing.clone_path, base_branch),
+            )
             return existing
 
         existing = self.clone_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
             self._validate_record(existing, branch_name=branch_name, backend="clone")
-            _ensure_clean_git_dir(existing.clone_path)
+            _refresh_clean_git_dir(
+                existing.clone_path,
+                branch_name,
+                _clone_base_ref(existing.clone_path, base_branch),
+            )
             return existing
 
         _ensure_source_branch(self.repo_path, branch_name=branch_name, base_branch=base_branch)
@@ -299,6 +309,7 @@ class _WorkspaceServices:
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)
+        _refresh_clean_git_dir(path, branch_name, _clone_base_ref(path, base_branch))
         return self.clone_storage.create(
             project_id=self.project_id,
             branch_name=branch_name,
@@ -481,7 +492,62 @@ def _ensure_source_branch(repo_path: Path, *, branch_name: str, base_branch: str
         raise BuildWorkspaceError(f"failed to create integration branch {branch_name}: {detail}")
 
 
-def _ensure_clean_git_dir(path: str) -> None:
+def _refresh_clean_git_dir(path: str | Path, branch_name: str, base_ref: str) -> None:
+    workspace = Path(path)
+    _ensure_clean_git_dir(workspace)
+    current = _git(workspace, ["branch", "--show-current"], timeout=10)
+    if current.returncode != 0:
+        detail = current.stderr.strip() or current.stdout.strip()
+        raise BuildWorkspaceError(f"failed to inspect integration branch {workspace}: {detail}")
+    if current.stdout.strip() != branch_name:
+        raise BuildWorkspaceError(
+            f"integration workspace branch mismatch: {current.stdout.strip()} != {branch_name}"
+        )
+
+    if _is_ancestor(workspace, base_ref, "HEAD"):
+        return
+    if _is_ancestor(workspace, "HEAD", base_ref):
+        result = _git(workspace, ["merge", "--ff-only", base_ref], timeout=60)
+    else:
+        result = _git(
+            workspace,
+            ["merge", "--no-edit", base_ref],
+            timeout=60,
+            env={"GOBBY_MERGE": "1"},
+        )
+    if result.returncode != 0:
+        _git(workspace, ["merge", "--abort"], timeout=30)
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise BuildWorkspaceError(
+            f"failed to refresh integration workspace {workspace} from {base_ref}: {detail}"
+        )
+    _ensure_clean_git_dir(workspace)
+
+
+def _is_ancestor(repo_path: Path, ancestor: str, descendant: str) -> bool:
+    result = _git(
+        repo_path,
+        ["merge-base", "--is-ancestor", ancestor, descendant],
+        timeout=30,
+    )
+    return result.returncode == 0
+
+
+def _clone_base_ref(path: str | Path, base_branch: str) -> str:
+    workspace = Path(path)
+    fetch = _git(
+        workspace,
+        ["fetch", "origin", f"{base_branch}:refs/remotes/origin/{base_branch}"],
+        timeout=60,
+    )
+    if fetch.returncode == 0:
+        remote_ref = f"origin/{base_branch}"
+        if _git(workspace, ["rev-parse", "--verify", remote_ref], timeout=10).returncode == 0:
+            return remote_ref
+    return base_branch
+
+
+def _ensure_clean_git_dir(path: str | Path) -> None:
     result = _git(Path(path), ["status", "--porcelain"], timeout=10)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
@@ -490,12 +556,19 @@ def _ensure_clean_git_dir(path: str) -> None:
         raise BuildWorkspaceError(f"integration workspace is dirty; clean/restart: {path}")
 
 
-def _git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+def _git(
+    repo_path: Path,
+    args: list[str],
+    *,
+    timeout: int,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # nosec B603 # git args are fixed by callers.
         ["git", *args],
         cwd=repo_path,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env={**os.environ, **env} if env is not None else None,
         check=False,
     )

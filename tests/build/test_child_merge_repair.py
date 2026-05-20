@@ -8,7 +8,7 @@ import pytest
 from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.options import BuildOptions
 from gobby.build.service import build
-from gobby.build.workspaces import _integration_branch
+from gobby.build.workspaces import _integration_branch, ensure_epic_integration_workspaces
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -110,3 +110,54 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
     assert parent_artifacts.integration_workspace_id == adopted.id
     assert task_manager.stage_states.list_for_task(sibling.id) == []
     assert task_manager.get_task(sibling.id).allow_automation is False
+
+
+def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+
+    _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=integration.id,
+        target_branch="main",
+    )
+
+    (repo / "after-child-merge.txt").write_text("landed on target\n")
+    _git(repo, "add", "after-child-merge.txt")
+    _git(repo, "commit", "-m", "land child merge on target")
+    target_head = _git(repo, "rev-parse", "main")
+
+    assert _git(integration_path, "rev-parse", "HEAD") != target_head
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    assert _git(integration_path, "rev-parse", "HEAD") == target_head
+    assert (integration_path / "after-child-merge.txt").read_text() == "landed on target\n"
