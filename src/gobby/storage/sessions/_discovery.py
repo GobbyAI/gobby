@@ -8,11 +8,11 @@ from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
 
 class _DiscoveryMixin:

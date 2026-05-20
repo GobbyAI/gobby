@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SpanStorage:
     """Storage manager for OpenTelemetry spans in SQLite."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def save_span(self, span_data: dict[str, Any]) -> None:

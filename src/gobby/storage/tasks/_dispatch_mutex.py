@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def _coerce_timestamp(value: datetime | str | None) -> str:
 class TaskDispatchMutexManager:
     """CRUD wrapper for the high-churn task dispatch mutex table."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def ensure_table(self) -> None:
@@ -103,7 +103,7 @@ class TaskDispatchMutexManager:
             datetime.fromisoformat(now_iso) + timedelta(seconds=ttl_seconds)
         )
 
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
             row = conn.execute(
                 "SELECT lease_until, lease_holder FROM task_dispatch_mutex WHERE task_id = ?",
                 (task_id,),
@@ -187,16 +187,16 @@ class TaskDispatchMutexManager:
             return cursor.rowcount
 
 
-def get_mutex(db: DatabaseProtocol, task_id: str) -> DispatchMutex | None:
+def get_mutex(db: HubDatabase, task_id: str) -> DispatchMutex | None:
     return TaskDispatchMutexManager(db).get_mutex(task_id)
 
 
-def get_mutex_by_run_id(db: DatabaseProtocol, run_id: str) -> DispatchMutex | None:
+def get_mutex_by_run_id(db: HubDatabase, run_id: str) -> DispatchMutex | None:
     return TaskDispatchMutexManager(db).get_mutex_by_run_id(run_id)
 
 
 def acquire_mutex(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     holder: str,
     kind: str,
@@ -214,21 +214,21 @@ def acquire_mutex(
     )
 
 
-def release_mutex(db: DatabaseProtocol, task_id: str, holder: str) -> bool:
+def release_mutex(db: HubDatabase, task_id: str, holder: str) -> bool:
     return TaskDispatchMutexManager(db).release_mutex(task_id, holder)
 
 
-def force_release(db: DatabaseProtocol, task_id: str) -> bool:
+def force_release(db: HubDatabase, task_id: str) -> bool:
     return TaskDispatchMutexManager(db).force_release(task_id)
 
 
-def clear_by_run_id(db: DatabaseProtocol, run_id: str) -> int:
+def clear_by_run_id(db: HubDatabase, run_id: str) -> int:
     return TaskDispatchMutexManager(db).clear_by_run_id(run_id)
 
 
-def attach_run_id(db: DatabaseProtocol, mutex_id: str, run_id: str) -> bool:
+def attach_run_id(db: HubDatabase, mutex_id: str, run_id: str) -> bool:
     return TaskDispatchMutexManager(db).attach_run_id(mutex_id, run_id)
 
 
-def sweep_expired(db: DatabaseProtocol, *, now: datetime | str | None = None) -> int:
+def sweep_expired(db: HubDatabase, *, now: datetime | str | None = None) -> int:
     return TaskDispatchMutexManager(db).sweep_expired(now=now)

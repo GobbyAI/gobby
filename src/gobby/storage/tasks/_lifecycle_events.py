@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 # Reason recorded by ``gobby build`` (see gobby.build.lifecycle._record_build_event).
 # This is the durable, append-only signal that automation was ever started for a
@@ -41,7 +41,7 @@ class TaskLifecycleEvent:
 class TaskLifecycleEventManager:
     """Append-only lifecycle event audit storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def ensure_table(self) -> None:
@@ -187,7 +187,7 @@ class TaskLifecycleEventManager:
 
 
 def record_lifecycle_event(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     from_state: str | None,
     to_state: str,
@@ -211,7 +211,7 @@ def record_lifecycle_event(
 
 
 def list_lifecycle_events(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     limit: int | None = None,

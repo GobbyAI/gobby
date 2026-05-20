@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -43,7 +43,7 @@ class StageRegistryEntry:
 
 
 class StageRegistryManager:
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
         self._ensure_phase2_columns()
 

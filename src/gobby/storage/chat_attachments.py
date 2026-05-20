@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Transaction
 
 CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (
@@ -111,7 +110,7 @@ def _row_to_record(row: Mapping[str, Any]) -> ChatAttachmentRecord:
 
 
 def _fetch_attachment(
-    conn: sqlite3.Connection,
+    conn: Transaction,
     attachment_id: str,
 ) -> ChatAttachmentRecord | None:
     row = conn.execute(
@@ -149,7 +148,7 @@ def to_api_dict(record: ChatAttachmentRecord) -> dict[str, Any]:
 
 
 def create_attachment(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str,
     draft_id: str | None,
@@ -188,13 +187,13 @@ def create_attachment(
     return record
 
 
-def get_attachment(db: DatabaseProtocol, attachment_id: str) -> ChatAttachmentRecord | None:
+def get_attachment(db: HubDatabase, attachment_id: str) -> ChatAttachmentRecord | None:
     with db.transaction() as conn:
         return _fetch_attachment(conn, attachment_id)
 
 
 def get_attachments_by_ids(
-    db: DatabaseProtocol, attachment_ids: list[str]
+    db: HubDatabase, attachment_ids: list[str]
 ) -> list[ChatAttachmentRecord]:
     if not attachment_ids:
         return []
@@ -235,7 +234,7 @@ def _binding_conflict_error(
 
 
 def bind_attachments(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     attachment_ids: list[str],
     *,
     conversation_id: str | None = None,
@@ -247,7 +246,7 @@ def bind_attachments(
 
     unique_ids = list(dict.fromkeys(attachment_ids))
     now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         placeholders = ",".join("?" for _ in unique_ids)
         rows = conn.execute(
             f"""
@@ -301,10 +300,8 @@ def bind_attachments(
     return [updated_by_id[attachment_id] for attachment_id in unique_ids]
 
 
-def delete_unbound_attachment(
-    db: DatabaseProtocol, attachment_id: str
-) -> ChatAttachmentRecord | None:
-    with db.transaction_immediate() as conn:
+def delete_unbound_attachment(db: HubDatabase, attachment_id: str) -> ChatAttachmentRecord | None:
+    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         row = conn.execute(
             """
             DELETE FROM chat_attachments
@@ -327,7 +324,7 @@ def delete_unbound_attachment(
 
 
 def delete_stale_unbound_attachments(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     cutoff: datetime | str,
     limit: int = 500,
@@ -335,7 +332,7 @@ def delete_stale_unbound_attachments(
     """Delete never-bound queued uploads older than ``cutoff`` and return their records."""
     cutoff_value = cutoff.isoformat() if isinstance(cutoff, datetime) else cutoff
     bounded_limit = max(1, int(limit))
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         rows = conn.execute(
             """
             DELETE FROM chat_attachments
@@ -359,7 +356,7 @@ def delete_stale_unbound_attachments(
 
 
 def delete_attachments_for_conversations(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     conversation_ids: list[str],
 ) -> list[ChatAttachmentRecord]:
     """Delete attachment metadata tied to conversations or their chat messages."""
@@ -368,7 +365,7 @@ def delete_attachments_for_conversations(
         return []
 
     placeholders = ",".join("?" for _ in unique_ids)
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         rows = conn.execute(
             f"""
             SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,

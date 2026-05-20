@@ -9,7 +9,7 @@ This module provides query operations for listing and filtering tasks:
 
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
@@ -114,7 +114,7 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 
 
 def list_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
@@ -229,7 +229,7 @@ def list_tasks(
 
 
 def list_ready_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     priority: int | None = None,
     task_type: str | None = None,
@@ -324,7 +324,7 @@ def list_ready_tasks(
 
 
 def list_blocked_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     parent_task_id: str | None = None,
     limit: int = 50,

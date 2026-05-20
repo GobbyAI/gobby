@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ class Clone:
 class LocalCloneManager:
     """Manager for local clone storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db
 

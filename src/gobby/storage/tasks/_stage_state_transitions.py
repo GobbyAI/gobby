@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class StageStateTransitions:
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         events: TaskLifecycleEventManager,
         rows: StageStateRows,
         mutexes: StageStateMutexFactory,

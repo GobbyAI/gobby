@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._cleanup import _AgentRunCleanupMixin
 from ._lifecycle import _AgentRunLifecycleMixin
@@ -20,8 +20,8 @@ class LocalAgentRunManager(
 ):
     """Manager for agent run storage operations."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db

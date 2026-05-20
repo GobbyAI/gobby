@@ -13,7 +13,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol, LocalDatabase
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 from gobby.storage.sql_dialect import is_postgres, json_text_expr
 
@@ -129,7 +130,7 @@ class InterSessionMessageManager:
     enabling agent coordination and parent-child communication.
     """
 
-    def __init__(self, db: LocalDatabase | DatabaseProtocol) -> None:
+    def __init__(self, db: LocalDatabase | HubDatabase) -> None:
         """Initialize the message manager.
 
         Args:

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def _as_bool(value: Any) -> bool | None:
 class TaskDeliveryStateManager:
     """Persistence helper for PR/merge delivery state."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def record_campaign(self, task_id: str, **fields: Any) -> dict[str, Any]:

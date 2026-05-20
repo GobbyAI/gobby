@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 __all__ = [
@@ -217,7 +217,7 @@ class LocalPromptManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         dev_mode: bool = False,
         notifier: PromptChangeNotifier | None = None,
     ) -> None:

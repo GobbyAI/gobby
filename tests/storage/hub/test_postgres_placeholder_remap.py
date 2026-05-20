@@ -23,7 +23,15 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
     transaction_immediate = inspect.signature(module.PostgresHubDatabase.transaction_immediate)
     assert list(transaction_immediate.parameters) == ["self", "lock"]
 
-    for method in ("apply_migrations", "close"):
+    for method in (
+        "execute",
+        "executemany",
+        "fetchone",
+        "fetchall",
+        "safe_update",
+        "apply_migrations",
+        "close",
+    ):
         assert hasattr(module.PostgresHubDatabase, method), method
 
 

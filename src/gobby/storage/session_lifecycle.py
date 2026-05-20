@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] 
 )
 
 
-def _build_empty_session_prune_reference_guards(db: DatabaseProtocol) -> tuple[str, ...]:
+def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, ...]:
     """Return guard clauses for retained session references present in this schema."""
     guards: list[str] = []
 
@@ -52,7 +52,7 @@ def _build_empty_session_prune_reference_guards(db: DatabaseProtocol) -> tuple[s
     return tuple(guards)
 
 
-def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
+def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.
 
@@ -87,7 +87,7 @@ def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
     return count
 
 
-def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int = 30) -> int:
+def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
     """
     Expire handoff_ready sessions that were never picked up by a child session.
 
@@ -118,7 +118,7 @@ def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int 
     return count
 
 
-def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 30) -> int:
+def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
     """
     Mark active sessions as paused if they've been inactive for too long.
 
@@ -148,7 +148,7 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     return count
 
 
-def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
+def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
     """
     Fast-expire sessions that never received any messages.
 
@@ -180,7 +180,7 @@ def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
     return count
 
 
-def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
+def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     """
     Hard-delete expired sessions that never received any messages.
 

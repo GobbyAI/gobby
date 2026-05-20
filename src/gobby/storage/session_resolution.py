@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import uuid
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
-def resolve_session_reference(db: DatabaseProtocol, ref: str, project_id: str | None = None) -> str:
+def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None = None) -> str:
     """
     Resolve a session reference to a UUID.
 

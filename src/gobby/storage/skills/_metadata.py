@@ -13,7 +13,7 @@ from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ _UNSET: Any = object()
 
 
 class _SkillMetadataHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _notify_change(
         self,
@@ -39,10 +39,10 @@ class _SkillMetadataHost(Protocol):
 class SkillMetadataMixin:
     """Mixin providing skill metadata CRUD operations.
 
-    Requires ``self.db`` (DatabaseProtocol) and ``self._notify_change()``.
+    Requires ``self.db`` (HubDatabase) and ``self._notify_change()``.
     """
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
