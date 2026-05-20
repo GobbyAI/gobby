@@ -310,7 +310,7 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
 
 
 def _ensure_clean(path: str, label: str) -> None:
-    status = _git_stdout(path, ["status", "--porcelain"])
+    status = _git_ok(path, ["status", "--porcelain"]).stdout
     dirty = _non_gobby_status_lines(status)
     if dirty:
         raise RuntimeError(f"{label} is dirty")
@@ -326,10 +326,18 @@ def _non_gobby_status_lines(status_output: str) -> list[str]:
     for line in status_output.splitlines():
         if not line:
             continue
-        pathspec = line[3:] if len(line) > 3 else line
+        pathspec = _porcelain_pathspec(line)
         if not _status_path_is_gobby_only(pathspec):
             dirty.append(line)
     return dirty
+
+
+def _porcelain_pathspec(line: str) -> str:
+    if len(line) >= 3 and line[2] == " ":
+        return line[3:]
+    if len(line) >= 2 and line[1] == " ":
+        return line[2:]
+    return line[3:] if len(line) > 3 else line
 
 
 def _is_ancestor(target_path: str, commit_sha: str) -> bool:

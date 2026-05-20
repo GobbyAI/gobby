@@ -7,7 +7,7 @@ import pytest
 
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
-from gobby.dispatch.workspace_merge import execute_merge_workspace
+from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -43,6 +43,15 @@ def _assert_worktree_removed(
 ) -> None:
     assert worktrees.get(worktree_id) is None
     assert not worktree_path.exists()
+
+
+async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_prefix() -> None:
+    assert _non_gobby_status_lines(" M .gobby/tasks.jsonl\n") == []
+    assert _non_gobby_status_lines("M .gobby/tasks.jsonl") == []
+    assert _non_gobby_status_lines("R  .gobby/old.json -> .gobby/new.json") == []
+    assert _non_gobby_status_lines("M src/gobby/app.py\n M .gobby/tasks.jsonl") == [
+        "M src/gobby/app.py"
+    ]
 
 
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
