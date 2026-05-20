@@ -64,6 +64,15 @@ class MergeStorageProtocol(Protocol):
         offset: int = 0,
     ) -> list[Any]: ...
 
+    def create_conflict(
+        self,
+        resolution_id: str,
+        file_path: str,
+        ours_content: str | None = None,
+        theirs_content: str | None = None,
+        status: str = "pending",
+    ) -> Any: ...
+
 
 def _git(
     git_manager: WorktreeGitManager,
@@ -620,6 +629,23 @@ def _active_merge_resolution_payload(
 
     unmerged = set(conflicted_files)
     conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
+    missing_paths = sorted(unmerged - {conflict.file_path for conflict in conflicts})
+    for file_path in missing_paths:
+        try:
+            merge_storage.create_conflict(
+                resolution_id=resolution.id,
+                file_path=file_path,
+                status="pending",
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to hydrate merge conflict row for %s in %s: %s",
+                file_path,
+                resolution.id,
+                exc,
+            )
+    if missing_paths:
+        conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
     payload.update(
         {
             "active_resolution_id": resolution.id,

@@ -637,6 +637,76 @@ class TestMergeResolveTool:
         mock_resolver.resolve_file.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_merge_resolve_reads_current_conflict_hunks_from_worktree(
+        self, tmp_path, mock_storage, mock_resolver, mock_git_manager
+    ):
+        """merge_resolve prefers current on-disk conflict markers over stale row text."""
+        from gobby.mcp_proxy.tools.merge import create_merge_registry
+        from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
+        from gobby.worktrees.merge import ResolutionResult, ResolutionTier
+
+        worktree_path = tmp_path / "wt"
+        conflict_path = worktree_path / "src/test.py"
+        conflict_path.parent.mkdir(parents=True)
+        conflict_path.write_text(
+            "<<<<<<< HEAD\nours one\n=======\ntheirs one\n>>>>>>> main\n"
+            "keep\n"
+            "<<<<<<< HEAD\nours two\n=======\ntheirs two\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        worktree = MagicMock(worktree_path=str(worktree_path))
+        worktree_manager = MagicMock()
+        worktree_manager.get.return_value = worktree
+        mock_storage.get_resolution.return_value = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_conflict.return_value = MergeConflict(
+            id="mc-conflict1",
+            resolution_id="mr-test123",
+            file_path="src/test.py",
+            status="pending",
+            ours_content="stale ours",
+            theirs_content="stale theirs",
+            resolved_content=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_resolver.resolve_file.return_value = ResolutionResult(
+            success=True,
+            tier=ResolutionTier.CONFLICT_ONLY_AI,
+            conflicts=[],
+            resolved_files=["src/test.py"],
+            unresolved_conflicts=[],
+            needs_human_review=False,
+            resolved_content_by_file={"src/test.py": "merged version"},
+        )
+        resolved_conflict = mock_storage.get_conflict.return_value
+        resolved_conflict.status = "resolved"
+        resolved_conflict.resolved_content = "merged version"
+        mock_storage.update_conflict.return_value = resolved_conflict
+        registry = create_merge_registry(
+            merge_storage=mock_storage,
+            merge_resolver=mock_resolver,
+            git_manager=mock_git_manager,
+            worktree_manager=worktree_manager,
+        )
+
+        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+
+        assert result["success"] is True
+        hunks = mock_resolver.resolve_file.call_args.kwargs["conflict_hunks"]
+        assert len(hunks) == 2
+        assert hunks[0].ours == "ours one"
+        assert hunks[1].theirs == "theirs two"
+
+    @pytest.mark.asyncio
     async def test_merge_resolve_with_manual_content(self, merge_registry, mock_storage):
         """merge_resolve accepts manual resolved content."""
         from gobby.storage.merge_resolutions import MergeConflict

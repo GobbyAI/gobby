@@ -27,6 +27,12 @@ from urllib.parse import urlparse
 import httpx
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.merge_conflict_hydration import (
+    collect_git_conflicts,
+    conflict_hunks_for_ai,
+    hydrate_resolution_conflicts,
+    store_missing_conflicts,
+)
 from gobby.mcp_proxy.tools.merge_git_state import (
     merge_head_exists,
     resolved_reuse_error,
@@ -500,6 +506,12 @@ def create_merge_registry(
                 target_branch=target_branch,
                 force_tier=force_tier,
             )
+            git_conflicts = await collect_git_conflicts(worktree_path, git_manager=git_manager)
+            if git_conflicts and (result.success or not result.conflicts):
+                result.success = False
+                result.conflicts = git_conflicts
+                result.unresolved_conflicts = git_conflicts
+                result.needs_human_review = True
 
             tier_used = _GIT_NO_FF_TIER if result.success and no_ff_requested else result.tier.value
             merge_storage.update_resolution(
@@ -508,15 +520,12 @@ def create_merge_registry(
                 tier_used=tier_used if result.success else None,
             )
 
-            for conflict in result.conflicts:
-                file_path = conflict.get("file", "")
-                merge_storage.create_conflict(
-                    resolution_id=resolution.id,
-                    file_path=file_path,
-                    ours_content=conflict.get("ours_content"),
-                    theirs_content=conflict.get("theirs_content"),
-                    status="pending" if not result.success else "resolved",
-                )
+            store_missing_conflicts(
+                merge_storage,
+                resolution.id,
+                result.conflicts,
+                status="pending" if not result.success else "resolved",
+            )
 
             return {
                 "success": result.success,
@@ -555,6 +564,13 @@ def create_merge_registry(
             return {"success": False, "error": f"Resolution '{resolution_id}' not found"}
 
         conflicts = merge_storage.list_conflicts(resolution_id=resolution_id)
+        if resolution.status == "pending" and not conflicts:
+            conflicts = await hydrate_resolution_conflicts(
+                merge_storage=merge_storage,
+                worktree_manager=worktree_manager,
+                git_manager=git_manager,
+                resolution=resolution,
+            )
 
         return {
             "success": True,
@@ -606,32 +622,15 @@ def create_merge_registry(
                 }
 
             if use_ai:
-                # Use AI resolver
-                from gobby.worktrees.merge import ConflictHunk
-
-                # Create hunk from conflict data
-                hunks = [
-                    ConflictHunk(
-                        ours=conflict.ours_content or "",
-                        theirs=conflict.theirs_content or "",
-                        base=None,
-                        start_line=1,
-                        end_line=1,
-                        context_before="",
-                        context_after="",
-                    )
-                ]
-
                 worktree_path = None
                 resolution = merge_storage.get_resolution(conflict.resolution_id)
                 if resolution and worktree_manager:
                     worktree = worktree_manager.get(resolution.worktree_id)
                     if worktree and worktree.worktree_path:
                         worktree_path = worktree.worktree_path
-
                 result = await merge_resolver.resolve_file(
                     path=conflict.file_path,
-                    conflict_hunks=hunks,
+                    conflict_hunks=await conflict_hunks_for_ai(conflict, worktree_path),
                     worktree_path=worktree_path,
                 )
 

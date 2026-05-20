@@ -251,6 +251,54 @@ async def test_merge_start_refreshes_stale_resolved_resolution(
 
 
 @pytest.mark.asyncio
+async def test_pending_resolution_without_rows_hydrates_current_git_conflicts(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/hydrate-missing-conflicts"
+    _init_repo(repo)
+    (repo / "shared.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-m", "add shared")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    (worktree_path / "shared.py").write_text("value = 'feature'\n", encoding="utf-8")
+    _git(worktree_path, "add", "shared.py")
+    _git(worktree_path, "commit", "-m", "feature shared")
+    _commit_on_main(repo, "shared.py", "value = 'main'\n", update_origin=False)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merge.returncode != 0
+
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    resolution = merge_storage.create_resolution(
+        worktree_id=worktree.id,
+        source_branch=branch,
+        target_branch="main",
+        status="pending",
+    )
+
+    inspected = await registry.call("inspect_merge_state", {"worktree_id": worktree.id})
+    assert inspected["state"] == "merging"
+    assert inspected["active_resolution_id"] == resolution.id
+    assert inspected["conflicts"][0]["file_path"] == "shared.py"
+    assert inspected["conflicts"][0]["status"] == "pending"
+
+    status = await registry.call("merge_status", {"resolution_id": resolution.id})
+    assert status["pending_count"] == 1
+    assert status["conflicts"][0]["file_path"] == "shared.py"
+    stored = merge_storage.list_conflicts(resolution_id=resolution.id)
+    assert len(stored) == 1
+
+
+@pytest.mark.asyncio
 async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
