@@ -87,8 +87,10 @@ def _execute_merge_workspace_sync(
         try:
             _ensure_branch(paths.source_path, source_branch, "source")
             _ensure_branch(paths.target_path, action.target_branch, "target")
-            _ensure_clean(paths.target_path, "target integration workspace")
             source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
+            _ensure_target_merge_safe(
+                paths.target_path, source_commit, "target integration workspace"
+            )
             if _is_ancestor(paths.target_path, source_commit):
                 _complete_merge_stage(db, action.task_id, source_commit)
                 _mark_source_merged(action, db=db, source_id=paths.source_id)
@@ -320,16 +322,31 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
         raise RuntimeError(f"{label} workspace branch mismatch: {current} != {expected}")
 
 
-def _ensure_clean(path: str, label: str) -> None:
+def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None:
     status = _git_ok(path, ["status", "--porcelain"]).stdout
-    dirty = _non_gobby_status_lines(status)
-    if dirty:
-        raise RuntimeError(f"{label} is dirty")
+    dirty_paths = _non_gobby_dirty_paths(status)
+    if not dirty_paths:
+        return
+    incoming_paths = set(
+        _git_stdout(path, ["diff", "--name-only", "HEAD", source_commit]).splitlines()
+    )
+    overlapping = sorted(dirty_paths & incoming_paths)
+    if overlapping:
+        joined = ", ".join(overlapping)
+        raise RuntimeError(f"{label} dirty paths overlap merge: {joined}")
 
 
 def _status_path_is_gobby_only(pathspec: str) -> bool:
     paths = [part.strip() for part in pathspec.split(" -> ")]
     return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
+
+
+def _non_gobby_dirty_paths(status_output: str) -> set[str]:
+    paths: set[str] = set()
+    for line in _non_gobby_status_lines(status_output):
+        pathspec = _porcelain_pathspec(line)
+        paths.update(part.strip() for part in pathspec.split(" -> ") if part.strip())
+    return paths
 
 
 def _non_gobby_status_lines(status_output: str) -> list[str]:

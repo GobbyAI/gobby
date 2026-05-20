@@ -520,7 +520,7 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
     assert task_path.exists()
 
 
-async def test_execute_merge_workspace_fails_stage_when_registered_target_is_dirty(
+async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
     temp_db: LocalDatabase,
     tmp_path: Path,
 ) -> None:
@@ -586,12 +586,86 @@ async def test_execute_merge_workspace_fails_stage_when_registered_target_is_dir
     )
 
     stage = task_manager.stage_states.get(leaf.id, "merge")
+    assert merge_sha == _git(integration_path, "rev-parse", "HEAD")
+    assert stage is not None
+    assert stage.state == "done"
+    assert (integration_path / "dirty.txt").read_text() == "dirty\n"
+    _assert_worktree_removed(worktrees, source.id, task_path)
+
+
+async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_merge(
+    temp_db: LocalDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    (integration_path / "feature.txt").write_text("dirty local feature\n")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(leaf.id, "merge")
     updated = task_manager.get_task(leaf.id)
     assert merge_sha is None
     assert stage is not None
     assert stage.state == "ready"
     assert (
-        "### Workspace merge failed\n\nworkspace_merge_failed:target integration workspace is dirty"
+        "### Workspace merge failed\n\n"
+        "workspace_merge_failed:target integration workspace dirty paths overlap merge: feature.txt"
     ) in (updated.description or "")
     assert worktrees.get(source.id) is not None
     assert task_path.exists()
