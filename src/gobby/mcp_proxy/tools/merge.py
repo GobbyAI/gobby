@@ -732,10 +732,33 @@ def create_merge_registry(
             return {"success": False, "error": "Cannot abort: merge is already resolved"}
 
         try:
-            # Abort git merge if in progress
-            if git_manager:
-                # Would run git merge --abort
-                pass
+            if not git_manager or not worktree_manager:
+                return {
+                    "success": False,
+                    "error": "git_manager or worktree_manager not configured",
+                }
+
+            worktree = worktree_manager.get(resolution.worktree_id)
+            if not worktree or not worktree.worktree_path:
+                return {
+                    "success": False,
+                    "error": (f"Worktree '{resolution.worktree_id}' not found or has no path"),
+                }
+
+            wt_path = worktree.worktree_path
+            if await merge_head_exists(git_manager, wt_path):
+                abort_result = await asyncio.to_thread(
+                    git_manager.run_git_command,
+                    ["merge", "--abort"],
+                    cwd=wt_path,
+                    timeout=30,
+                )
+                if abort_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": f"git merge --abort failed: {git_output(abort_result)}",
+                        "resolution_id": resolution_id,
+                    }
 
             # Delete resolution and associated conflicts (cascade)
             deleted = merge_storage.delete_resolution(resolution_id)

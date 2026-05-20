@@ -500,3 +500,38 @@ async def test_no_ff_strategy_bypasses_reuse_and_creates_merge_commit(
     assert result["merge_sha"] != feature_sha
     assert _git(repo, "rev-parse", "main^2") == feature_sha
     assert _git(repo, "rev-list", "--count", "main") == "3"
+
+
+@pytest.mark.asyncio
+async def test_merge_abort_clears_git_merge_before_deleting_resolution(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/abort-active"
+    _init_repo(repo)
+    (repo / "shared.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-m", "add shared")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    (worktree_path / "shared.py").write_text("value = 'feature'\n", encoding="utf-8")
+    _git(worktree_path, "add", "shared.py")
+    _git(worktree_path, "commit", "-m", "feature shared")
+    _commit_on_main(repo, "shared.py", "value = 'main'\n", update_origin=False)
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    started = await registry.call(
+        "merge_start",
+        {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
+    )
+    assert started["success"] is False
+    assert _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+
+    result = await registry.call("merge_abort", {"resolution_id": started["resolution_id"]})
+
+    assert result["success"] is True
+    assert merge_storage.get_resolution(started["resolution_id"]) is None
+    assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    assert not _git(worktree_path, "diff", "--name-only", "--diff-filter=U")
+    assert (worktree_path / "shared.py").read_text(encoding="utf-8") == "value = 'feature'\n"

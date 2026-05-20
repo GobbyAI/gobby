@@ -10,7 +10,7 @@ Tests for MCP tools in gobby-merge server:
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -1145,11 +1145,20 @@ class TestMergeAbortTool:
     def mock_git_manager(self):
         """Create mock git manager."""
         git_manager = MagicMock()
-        git_manager.abort_merge = MagicMock()
+        git_manager.run_git_command = MagicMock()
         return git_manager
 
     @pytest.fixture
-    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
+    def mock_worktree_manager(self, tmp_path: Path) -> MagicMock:
+        """Create mock worktree manager."""
+        manager = MagicMock()
+        worktree = MagicMock()
+        worktree.worktree_path = str(tmp_path)
+        manager.get.return_value = worktree
+        return manager
+
+    @pytest.fixture
+    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager, mock_worktree_manager):
         """Create merge registry with mocked dependencies."""
         from gobby.mcp_proxy.tools.merge import create_merge_registry
 
@@ -1157,6 +1166,7 @@ class TestMergeAbortTool:
             merge_storage=mock_storage,
             merge_resolver=mock_resolver,
             git_manager=mock_git_manager,
+            worktree_manager=mock_worktree_manager,
         )
 
     @pytest.mark.asyncio
@@ -1177,11 +1187,62 @@ class TestMergeAbortTool:
         mock_storage.get_resolution.return_value = mock_resolution
         mock_storage.delete_resolution.return_value = True
 
+        def fake_run_git(args, cwd=None, timeout=None):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = (
+                "merge-head\n" if args == ["rev-parse", "-q", "--verify", "MERGE_HEAD"] else ""
+            )
+            result.stderr = ""
+            return result
+
+        mock_git_manager.run_git_command.side_effect = fake_run_git
+
         result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
 
         assert result["success"] is True
         assert "aborted" in result["message"].lower()
+        mock_git_manager.run_git_command.assert_any_call(["merge", "--abort"], cwd=ANY, timeout=30)
         mock_storage.delete_resolution.assert_called_once_with("mr-test123")
+
+    @pytest.mark.asyncio
+    async def test_merge_abort_failure_preserves_resolution(
+        self, merge_registry, mock_storage, mock_git_manager
+    ):
+        """merge_abort keeps storage when git merge --abort fails."""
+        from gobby.storage.merge_resolutions import MergeResolution
+
+        mock_resolution = MergeResolution(
+            id="mr-test123",
+            worktree_id="wt-abc",
+            source_branch="feature/test",
+            target_branch="main",
+            status="pending",
+            tier_used=None,
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        mock_storage.get_resolution.return_value = mock_resolution
+
+        def fake_run_git(args, cwd=None, timeout=None):
+            result = MagicMock()
+            if args == ["merge", "--abort"]:
+                result.returncode = 1
+                result.stderr = "abort failed"
+                result.stdout = ""
+            else:
+                result.returncode = 0
+                result.stdout = "merge-head\n"
+                result.stderr = ""
+            return result
+
+        mock_git_manager.run_git_command.side_effect = fake_run_git
+
+        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
+
+        assert result["success"] is False
+        assert "git merge --abort failed" in result["error"]
+        mock_storage.delete_resolution.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_merge_abort_resolution_not_found(self, merge_registry, mock_storage):
