@@ -297,6 +297,47 @@ def test_development_work_rule_allows_first_counted_attempt_at_cap() -> None:
     assert action.agent_slug == "backend-developer"
 
 
+def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(_task_at("development", "in_progress", assigned_agent="test-architect"))
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+    assert "Follow the developer agent contract" in action.prompt
+    assert "default.yaml agent" not in action.prompt
+
+
+def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at("development", "in_progress", assigned_agent="custom-agent"),
+        _context(
+            agents=_agents(
+                **{
+                    "custom-agent": SimpleNamespace(name="custom-agent", enabled=True),
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+
+
+def test_development_rule_escalates_when_no_dispatchable_fallback_agent() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at("development", "in_progress", assigned_agent="test-architect"),
+        _context(agents=_agents(**{"backend-developer": None})),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "development_no_agent"
+
+
 def test_expansion_review_rule_escalates_when_review_cap_reached() -> None:
     from gobby.dispatch.actions import EscalateAction
 
