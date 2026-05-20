@@ -297,6 +297,18 @@ async def test_pending_resolution_without_rows_hydrates_current_git_conflicts(
     stored = merge_storage.list_conflicts(resolution_id=resolution.id)
     assert len(stored) == 1
 
+    merge_storage.update_conflict(stored[0].id, status="resolved")
+    merge_storage.update_resolution(resolution.id, status="resolved", tier_used="full_file_ai")
+
+    normalized = await registry.call("merge_status", {"resolution_id": resolution.id})
+
+    assert normalized["pending_count"] == 1
+    assert normalized["resolved_count"] == 0
+    assert normalized["conflicts"][0]["status"] == "pending"
+    assert normalized["resolution"]["status"] == "pending"
+    assert merge_storage.get_conflict(stored[0].id).status == "pending"
+    assert merge_storage.get_resolution(resolution.id).status == "pending"
+
 
 @pytest.mark.asyncio
 async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:

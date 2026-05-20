@@ -125,6 +125,51 @@ async def hydrate_resolution_conflicts(
     return _list_conflicts(merge_storage, resolution.id)
 
 
+async def normalized_status_conflicts(
+    *,
+    merge_storage: Any,
+    worktree_manager: Any | None,
+    git_manager: Any | None,
+    resolution: Any,
+) -> tuple[list[dict[str, Any]], int, int, bool]:
+    """Return merge_status conflict payloads normalized against current Git state."""
+    conflicts = _list_conflicts(merge_storage, resolution.id)
+    git_conflicts = await _git_conflicts_for_resolution(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        resolution=resolution,
+    )
+    if git_conflicts:
+        store_missing_conflicts(
+            merge_storage,
+            resolution.id,
+            git_conflicts,
+            status=ConflictStatus.PENDING.value,
+        )
+        conflicts = _list_conflicts(merge_storage, resolution.id)
+
+    unmerged_paths = {str(conflict.get("file") or "") for conflict in git_conflicts}
+    payloads: list[dict[str, Any]] = []
+    pending_count = 0
+    resolved_count = 0
+    downgraded = False
+    for conflict in conflicts:
+        item = conflict.to_dict()
+        status = str(conflict.status)
+        if conflict.file_path in unmerged_paths and conflict.resolved_content is None:
+            status = ConflictStatus.PENDING.value
+            if conflict.status != status:
+                merge_storage.update_conflict(conflict.id, status=status)
+                downgraded = True
+        item["status"] = status
+        payloads.append(item)
+        if status == ConflictStatus.PENDING.value:
+            pending_count += 1
+        elif status == ConflictStatus.RESOLVED.value:
+            resolved_count += 1
+    return payloads, pending_count, resolved_count, downgraded
+
+
 async def conflict_hunks_for_ai(conflict: Any, worktree_path: str | None) -> list[Any]:
     if worktree_path:
         hunks = await read_conflict_hunks(worktree_path, conflict.file_path)
@@ -157,3 +202,17 @@ def _first_hunk_content(conflict: dict[str, Any], attr: str) -> str | None:
 
 def _list_conflicts(merge_storage: Any, resolution_id: str) -> list[Any]:
     return list(merge_storage.list_conflicts(resolution_id=resolution_id))
+
+
+async def _git_conflicts_for_resolution(
+    *,
+    worktree_manager: Any | None,
+    git_manager: Any | None,
+    resolution: Any,
+) -> list[dict[str, Any]]:
+    if not worktree_manager:
+        return []
+    worktree = worktree_manager.get(resolution.worktree_id)
+    if not worktree or not worktree.worktree_path:
+        return []
+    return await collect_git_conflicts(worktree.worktree_path, git_manager=git_manager)

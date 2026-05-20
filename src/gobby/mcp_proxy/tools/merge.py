@@ -1,16 +1,4 @@
-"""
-Internal MCP tools for Gobby Merge Resolution.
-
-Exposes functionality for:
-- Starting merge operations with AI-powered resolution
-- Getting merge status and conflict details
-- Resolving individual conflicts
-- Applying resolved merges
-- Aborting merge operations
-
-These tools are registered with the InternalToolRegistry and accessed
-via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
-"""
+"""Internal MCP tools for Gobby merge resolution."""
 
 from __future__ import annotations
 
@@ -30,7 +18,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_conflict_hydration import (
     collect_git_conflicts,
     conflict_hunks_for_ai,
-    hydrate_resolution_conflicts,
+    normalized_status_conflicts,
     store_missing_conflicts,
 )
 from gobby.mcp_proxy.tools.merge_git_state import (
@@ -49,7 +37,6 @@ if TYPE_CHECKING:
     from gobby.worktrees.merge import MergeResolver
 
 logger = logging.getLogger(__name__)
-
 _GITHUB_TOKEN_ENV_NAMES = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
@@ -563,21 +550,29 @@ def create_merge_registry(
         if not resolution:
             return {"success": False, "error": f"Resolution '{resolution_id}' not found"}
 
-        conflicts = merge_storage.list_conflicts(resolution_id=resolution_id)
-        if resolution.status == "pending" and not conflicts:
-            conflicts = await hydrate_resolution_conflicts(
-                merge_storage=merge_storage,
-                worktree_manager=worktree_manager,
-                git_manager=git_manager,
-                resolution=resolution,
+        (
+            conflict_payloads,
+            pending_count,
+            resolved_count,
+            downgraded,
+        ) = await normalized_status_conflicts(
+            merge_storage=merge_storage,
+            worktree_manager=worktree_manager,
+            git_manager=git_manager,
+            resolution=resolution,
+        )
+        if (downgraded or pending_count) and resolution.status == "resolved":
+            resolution = (
+                merge_storage.update_resolution(resolution_id=resolution_id, status="pending")
+                or resolution
             )
 
         return {
             "success": True,
             "resolution": resolution.to_dict(),
-            "conflicts": [c.to_dict() for c in conflicts],
-            "pending_count": sum(1 for c in conflicts if c.status == "pending"),
-            "resolved_count": sum(1 for c in conflicts if c.status == "resolved"),
+            "conflicts": conflict_payloads,
+            "pending_count": pending_count,
+            "resolved_count": resolved_count,
         }
 
     @registry.tool(
