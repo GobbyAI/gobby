@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.sql_dialect import older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -361,12 +362,13 @@ class WorkflowAuditManager:
             Number of entries deleted.
         """
         try:
+            cutoff_sql = older_than_now_expr(self.db, "timestamp", "?", "day")
             cursor = self.db.execute(
-                """
+                f"""
                 DELETE FROM workflow_audit_log
-                WHERE datetime(timestamp) < datetime('now', ? || ' days')
-                """,
-                (f"-{days}",),
+                WHERE {cutoff_sql}
+                """,  # nosec B608 - cutoff expression is selected by storage dialect.
+                (days,),
             )
             return cursor.rowcount
         except Exception as e:

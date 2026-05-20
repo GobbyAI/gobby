@@ -208,10 +208,10 @@ class TaskArtifactManager:
                 INSERT INTO task_artifacts (
                     task_id, {", ".join(columns)}, updated_at
                 )
-                VALUES (?, {placeholders}, datetime('now'))
+                VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
                 ON CONFLICT(task_id) DO UPDATE SET
                     {update_clause},
-                    updated_at = datetime('now')
+                    updated_at = CURRENT_TIMESTAMP
                 """,  # nosec B608 # columns are validated static allowlist values.
                 tuple(params),
             )

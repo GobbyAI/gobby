@@ -50,7 +50,7 @@ class _UsageMixin:
             usage_cache_read_tokens = ?,
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
-            updated_at = datetime('now')
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """
         try:
@@ -92,7 +92,7 @@ class _UsageMixin:
             usage_cache_read_tokens = MAX(COALESCE(usage_cache_read_tokens, 0) + ?, 0),
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
-            updated_at = datetime('now')
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """
         try:

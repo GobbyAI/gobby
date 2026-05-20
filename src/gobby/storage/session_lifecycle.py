@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -62,21 +63,23 @@ def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused', 'handoff_ready')
         AND (
-            datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+            {updated_stale_sql}
             OR (
                 session_type = 'terminal'
                 AND (terminal_context IS NULL OR terminal_context = '')
-                AND datetime(created_at) < datetime('now', 'utc', ? || ' hours')
+                AND {empty_terminal_created_stale_sql}
             )
         )
-        """,
-        (f"-{timeout_hours}", f"-{timeout_hours}"),
+        """,  # nosec B608 - cutoff expressions are selected by storage dialect.
+        (timeout_hours, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -99,14 +102,15 @@ def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int 
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status = 'handoff_ready'
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' minutes')
-        """,
-        (f"-{timeout_minutes}",),
+        AND {updated_stale_sql}
+        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        (timeout_minutes,),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -128,14 +132,15 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     Returns:
         Number of sessions paused.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
         SET status = 'paused'
         WHERE status = 'active'
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' minutes')
-        """,
-        (f"-{timeout_minutes}",),
+        AND {updated_stale_sql}
+        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        (timeout_minutes,),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -158,15 +163,16 @@ def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused')
         AND COALESCE(message_count, 0) = 0
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
-        """,
-        (f"-{timeout_hours}",),
+        AND {updated_stale_sql}
+        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        (timeout_hours,),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -189,14 +195,13 @@ def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
     Returns:
         Number of sessions deleted.
     """
-    params = (f"-{min_age_hours}",)
-    # Compare the raw SQLite datetime text so prune-specific indexes on
-    # updated_at can participate in the candidate scan.
-    base_where = """
+    params = (min_age_hours,)
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    base_where = f"""
         status = 'expired'
         AND COALESCE(message_count, 0) = 0
-        AND updated_at < datetime('now', 'utc', ? || ' hours')
-    """
+        AND {updated_stale_sql}
+    """  # nosec B608 - cutoff expression is selected by storage dialect.
     row = db.fetchone(
         f"""
         SELECT COUNT(*) AS count

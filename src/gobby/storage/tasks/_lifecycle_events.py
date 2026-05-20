@@ -56,7 +56,7 @@ class TaskLifecycleEventManager:
                     to_state TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     by_actor TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )

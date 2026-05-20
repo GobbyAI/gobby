@@ -58,7 +58,7 @@ class TaskDispatchMutexManager:
                     lease_holder TEXT,
                     run_id TEXT,
                     action_kind TEXT,
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )

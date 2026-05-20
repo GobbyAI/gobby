@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.storage.sql_dialect import newer_than_now_expr
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
@@ -163,11 +164,12 @@ class _DiscoveryMixin:
         Returns:
             Session object or None
         """
+        updated_recent_sql = newer_than_now_expr(self.db, "updated_at", "?", "minute")
         query = (
             "SELECT * FROM sessions WHERE machine_id = ? AND status = ? AND project_id = ?"
-            " AND datetime(updated_at) >= datetime('now', 'utc', ? || ' minutes')"
+            f" AND {updated_recent_sql}"
         )
-        params: list[Any] = [machine_id, status, project_id, f"-{max_age_minutes}"]
+        params: list[Any] = [machine_id, status, project_id, max_age_minutes]
 
         if source:
             query += " AND source = ?"

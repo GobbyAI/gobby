@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
+from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
@@ -576,10 +577,12 @@ class SkillMetadataMixin:
         # Filter by category using JSON extraction in SQL to avoid under-filled results
         # Check both top-level $.category and nested $.skillport.category
         if category:
-            query += """ AND (
-                json_extract(metadata, '$.category') = ?
-                OR json_extract(metadata, '$.skillport.category') = ?
-            )"""
+            category_sql = json_text_expr(self.db, "metadata", "category")
+            skillport_category_sql = json_text_expr(self.db, "metadata", "skillport", "category")
+            query += f""" AND (
+                {category_sql} = ?
+                OR {skillport_category_sql} = ?
+            )"""  # nosec B608 - JSON expressions are generated from static keys.
             params.extend([category, category])
 
         query += " ORDER BY name ASC LIMIT ? OFFSET ?"
