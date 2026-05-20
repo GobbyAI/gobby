@@ -371,6 +371,62 @@ async def test_merge_status_rehydrates_existing_stale_conflict_content(
 
 
 @pytest.mark.asyncio
+async def test_merge_apply_commits_active_merge_with_legacy_inverted_resolution(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/legacy-inverted-active"
+    _init_repo(repo)
+    (repo / "shared.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-m", "add shared")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    (worktree_path / "shared.py").write_text("value = 'feature'\n", encoding="utf-8")
+    _git(worktree_path, "add", "shared.py")
+    _git(worktree_path, "commit", "-m", "feature shared")
+    main_sha = _commit_on_main(repo, "shared.py", "value = 'main'\n", update_origin=False)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merge.returncode != 0
+
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    resolution = merge_storage.create_resolution(
+        worktree_id=worktree.id,
+        source_branch="origin/main",
+        target_branch=branch,
+        status="pending",
+    )
+    conflict = merge_storage.create_conflict(
+        resolution_id=resolution.id,
+        file_path="shared.py",
+        ours_content="value = 'feature'",
+        theirs_content="value = 'main'",
+    )
+    merge_storage.update_conflict(
+        conflict.id,
+        status="resolved",
+        resolved_content="value = 'resolved'\n",
+    )
+
+    result = await registry.call("merge_apply", {"resolution_id": resolution.id})
+
+    assert result["success"] is True
+    assert result["direct_merge"] is False
+    assert (worktree_path / "shared.py").read_text(encoding="utf-8") == "value = 'resolved'\n"
+    assert _git(worktree_path, "merge-base", "--is-ancestor", main_sha, "HEAD") == ""
+    assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    assert merge_storage.get_resolution(resolution.id).status == "resolved"
+
+
+@pytest.mark.asyncio
 async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

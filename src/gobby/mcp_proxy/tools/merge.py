@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.merge_conflict_hydration import (
     store_missing_conflicts,
 )
 from gobby.mcp_proxy.tools.merge_git_state import (
+    current_branch,
     merge_head_exists,
     resolved_reuse_error,
     rev_parse_head,
@@ -570,19 +571,32 @@ def create_merge_registry(
                     "error": (f"Worktree '{resolution.worktree_id}' not found or has no path"),
                 }
             wt_path = worktree.worktree_path
-            validation_error = await source_branch_validation_error(
-                git_manager=git_manager,
-                worktree_path=wt_path,
-                worktree_branch=(
-                    getattr(worktree, "branch_name", None)
-                    if isinstance(getattr(worktree, "branch_name", None), str)
-                    else None
-                ),
-                source_branch=resolution.source_branch,
-                target_branch=resolution.target_branch,
+            worktree_branch = (
+                getattr(worktree, "branch_name", None)
+                if isinstance(getattr(worktree, "branch_name", None), str)
+                else None
             )
-            if validation_error:
-                return {"success": False, "error": validation_error}
+            merge_in_progress = await merge_head_exists(git_manager, wt_path)
+            if merge_in_progress:
+                branch = await current_branch(git_manager, wt_path)
+                if worktree_branch and branch and branch != worktree_branch:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Cannot apply active merge: current branch "
+                            f"'{branch}' does not match worktree branch '{worktree_branch}'"
+                        ),
+                    }
+            else:
+                validation_error = await source_branch_validation_error(
+                    git_manager=git_manager,
+                    worktree_path=wt_path,
+                    worktree_branch=worktree_branch,
+                    source_branch=resolution.source_branch,
+                    target_branch=resolution.target_branch,
+                )
+                if validation_error:
+                    return {"success": False, "error": validation_error}
 
             written: list[str] = []
             for conflict in conflicts:
@@ -625,7 +639,6 @@ def create_merge_registry(
                     "unmerged_files": unmerged,
                 }
 
-            merge_in_progress = await merge_head_exists(git_manager, wt_path)
             if not merge_in_progress:
                 if written:
                     return {
