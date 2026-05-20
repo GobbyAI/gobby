@@ -3,6 +3,7 @@
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import newer_than_now_expr
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -199,12 +200,11 @@ def count_closed_since(
     Returns:
         Count of recently closed tasks
     """
+    closed_recent_sql = newer_than_now_expr(db, "closed_at", "?", "hour")
     query = (
-        "SELECT COUNT(*) as count FROM tasks "
-        "WHERE closed_at IS NOT NULL "
-        "AND closed_at >= datetime('now', ?)"
+        f"SELECT COUNT(*) as count FROM tasks WHERE closed_at IS NOT NULL AND {closed_recent_sql}"
     )
-    params: list[Any] = [f"-{hours} hours"]
+    params: list[Any] = [hours]
 
     if project_id:
         query += " AND project_id = ?"

@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol, LocalDatabase
 
+from gobby.storage.sql_dialect import is_postgres, json_text_expr
+
 MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
     "all": "all",
     "inbox": "inbox",
@@ -237,20 +239,24 @@ class InterSessionMessageManager:
         completion_id: str,
     ) -> bool:
         """Return True when a completion notification already exists."""
+        completion_id_sql = json_text_expr(self.db, "metadata_json", "completion_id")
+        run_id_sql = json_text_expr(self.db, "metadata_json", "run_id")
+        execution_id_sql = json_text_expr(self.db, "metadata_json", "execution_id")
+        json_valid_sql = "" if is_postgres(self.db) else "AND json_valid(metadata_json)"
         row = self.db.fetchone(
-            """
+            f"""
             SELECT 1 FROM inter_session_messages
             WHERE to_session = ?
               AND message_type = ?
               AND metadata_json IS NOT NULL
-              AND json_valid(metadata_json)
+              {json_valid_sql}
               AND (
-                json_extract(metadata_json, '$.completion_id') = ?
-                OR json_extract(metadata_json, '$.run_id') = ?
-                OR json_extract(metadata_json, '$.execution_id') = ?
+                {completion_id_sql} = ?
+                OR {run_id_sql} = ?
+                OR {execution_id_sql} = ?
               )
             LIMIT 1
-            """,
+            """,  # nosec B608 - JSON expressions are generated from static keys.
             (to_session, message_type, completion_id, completion_id, completion_id),
         )
         return row is not None

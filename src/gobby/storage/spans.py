@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
+from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,10 +78,8 @@ class SpanStorage:
         params: list[Any] = []
 
         if project_id:
-            conditions.append(
-                "(json_extract(attributes_json, '$.project_id') = ? "
-                "OR json_extract(attributes_json, '$.project_id') IS NULL)"
-            )
+            project_id_sql = json_text_expr(self.db, "attributes_json", "project_id")
+            conditions.append(f"({project_id_sql} = ? OR {project_id_sql} IS NULL)")
             params.append(project_id)
         if status:
             conditions.append("status = ?")
@@ -118,11 +118,12 @@ class SpanStorage:
         self, session_id: str, limit: int = 50, offset: int = 0
     ) -> list[dict[str, Any]]:
         """Retrieve traces that have a matching session_id in their attributes."""
-        query = """
+        session_id_sql = json_text_expr(self.db, "attributes_json", "session_id")
+        query = f"""
         WITH SessionTraces AS (
             SELECT trace_id, MAX(start_time_ns) as last_activity
             FROM spans
-            WHERE json_extract(attributes_json, '$.session_id') = ?
+            WHERE {session_id_sql} = ?
             GROUP BY trace_id
             ORDER BY last_activity DESC
             LIMIT ? OFFSET ?
@@ -138,24 +139,26 @@ class SpanStorage:
         JOIN SessionTraces st ON r.trace_id = st.trace_id
         WHERE r.rn = 1
         ORDER BY st.last_activity DESC
-        """
+        """  # nosec B608 - JSON expression is generated from a static key.
         rows = self.db.fetchall(query, (session_id, limit, offset))
         return [self._row_to_dict(row) for row in rows]
 
     def get_trace_count_by_session(self, session_id: str) -> int:
         """Get the total number of distinct traces for a session."""
-        query = """
+        session_id_sql = json_text_expr(self.db, "attributes_json", "session_id")
+        query = f"""
         SELECT COUNT(DISTINCT trace_id) as count
         FROM spans
-        WHERE json_extract(attributes_json, '$.session_id') = ?
-        """
+        WHERE {session_id_sql} = ?
+        """  # nosec B608 - JSON expression is generated from a static key.
         row = self.db.fetchone(query, (session_id,))
         return row["count"] if row else 0
 
     def delete_old_spans(self, retention_days: int = 7) -> int:
         """Delete spans older than the specified retention period."""
-        query = "DELETE FROM spans WHERE created_at < datetime('now', ?)"
-        cursor = self.db.execute(query, (f"-{retention_days} days",))
+        cutoff_sql = older_than_now_expr(self.db, "created_at", "?", "day")
+        query = f"DELETE FROM spans WHERE {cutoff_sql}"  # nosec B608
+        cursor = self.db.execute(query, (retention_days,))
         return cursor.rowcount
 
     def get_span_count(self) -> int:

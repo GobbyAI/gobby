@@ -38,12 +38,12 @@ CREATE TABLE IF NOT EXISTS bin_update_state (
     target TEXT,
     last_status TEXT NOT NULL CHECK (last_status IN ({_STATUS_SQL})),
     last_error TEXT,
-    checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     installed_at TEXT,
     source_url TEXT,
     is_dev INTEGER NOT NULL DEFAULT 0 CHECK (is_dev IN (0, 1)),
     floor_drift INTEGER NOT NULL DEFAULT 0 CHECK (floor_drift IN (0, 1)),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -142,7 +142,7 @@ class BinUpdateStateStore:
                 floor_drift,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(tool_name) DO UPDATE SET
                 installed_version = excluded.installed_version,
                 floor_version = excluded.floor_version,

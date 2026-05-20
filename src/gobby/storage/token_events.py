@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from gobby.sessions.model_family import normalize_model
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import is_postgres, newer_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,22 @@ def canonicalize_event_timestamp(value: datetime | str | None) -> str:
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _bucket_expression(granularity: TimeSeriesGranularity) -> str:
+def _bucket_expression(db: object, granularity: TimeSeriesGranularity) -> str:
+    if is_postgres(db):
+        event_at_utc = "event_at AT TIME ZONE 'UTC'"
+        if granularity == "30m":
+            return (
+                "to_char("
+                f"date_trunc('hour', {event_at_utc}) + "
+                f"CASE WHEN EXTRACT(MINUTE FROM {event_at_utc}) < 30 "
+                "THEN INTERVAL '0 minutes' ELSE INTERVAL '30 minutes' END, "
+                '\'YYYY-MM-DD"T"HH24:MI:SS"Z"\''
+                ")"
+            )
+        if granularity == "1d":
+            return f"to_char(date_trunc('day', {event_at_utc}), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+        return f"to_char(date_trunc('hour', {event_at_utc}), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+
     if granularity == "30m":
         return (
             "CASE "
@@ -364,7 +380,7 @@ class TokenEventStore:
             raise ValueError(f"Unsupported granularity: {granularity}")
 
         where_sql, params = self._window_where(hours=hours, project_id=project_id)
-        bucket_expr = _bucket_expression(granularity)
+        bucket_expr = _bucket_expression(self.db, granularity)
         rows = self.db.fetchall(
             f"""
             SELECT
@@ -397,11 +413,11 @@ class TokenEventStore:
         params: list[Any] = []
 
         if hours is not None and hours > 0:
-            clauses.append("AND event_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)")
-            params.append(f"-{hours} hours")
+            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '?', 'hour')}")
+            params.append(hours)
         elif days is not None and days > 0:
-            clauses.append("AND event_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)")
-            params.append(f"-{days} days")
+            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '?', 'day')}")
+            params.append(days)
 
         if project_id:
             clauses.append("AND project_id = ?")

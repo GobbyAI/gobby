@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import newer_than_now_expr
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -173,12 +174,13 @@ class LocalMemoryManager:
         # source_id proximity dedup: if the same session created a very similar
         # memory within the last 60 seconds, treat it as a duplicate
         if source_session_id:
+            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "?", "second")
             recent = self.db.fetchone(
-                """SELECT id, content FROM memories
+                f"""SELECT id, content FROM memories
                    WHERE source_session_id = ?
-                     AND created_at > datetime('now', '-60 seconds')
+                     AND {recent_cutoff_sql}
                    ORDER BY created_at DESC LIMIT 1""",
-                (source_session_id,),
+                (source_session_id, 60),
             )
             if recent and normalized_content[:100] == str(recent["content"]).strip()[:100]:
                 return self.get_memory(recent["id"])

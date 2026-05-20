@@ -801,8 +801,7 @@ def _handle_spawn_failure(
                 if fresh_stage is None or fresh_stage.state != "ready":
                     raise
                 logger.info(
-                    "Dispatch spawn failure rollback already applied: "
-                    "task_id=%s stage_name=%s",
+                    "Dispatch spawn failure rollback already applied: task_id=%s stage_name=%s",
                     action.task_id,
                     stage_name,
                 )

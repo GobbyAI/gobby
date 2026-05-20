@@ -127,7 +127,7 @@ class BuildProfileLoader:
                     db.executemany(
                         """
                         UPDATE build_profiles
-                           SET deleted_at = datetime('now'), updated_at = datetime('now')
+                           SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                          WHERE source = 'installed'
                            AND project_id IS NULL
                            AND name = ?
@@ -433,7 +433,7 @@ class BuildProfileManager:
         self.db.execute(
             """
             UPDATE build_profiles
-               SET deleted_at = datetime('now'), updated_at = datetime('now')
+               SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?
             """,
             (current.id,),
@@ -483,7 +483,7 @@ class BuildProfileManager:
                 id, name, display_label, description, skip_stages_json, isolation,
                 unattended, delivery_mode, delivery_target_repo, enabled, source, project_id,
                 tags_json, bundled_hash, deleted_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             self._insert_params(profile),
         )
@@ -523,7 +523,7 @@ class BuildProfileManager:
                    tags_json = ?,
                    bundled_hash = ?,
                    {deleted_assignment}
-                   updated_at = datetime('now')
+                   updated_at = CURRENT_TIMESTAMP
              WHERE id = ?
             """,  # nosec B608 - deleted_assignment is controlled by a boolean.
             (
