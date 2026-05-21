@@ -7,6 +7,17 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — gcode
+
+### Changed
+
+#### gcode
+
+- **PostgreSQL hub runtime cutover** — `gcode` now uses the migrated Gobby PostgreSQL hub as its source of truth instead of a local SQLite/FTS index. It reads `~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the hub DSN from `database_url_ref` or inline `database_url`. Normal index/search commands still do not require the Gobby daemon process, but they do require the migrated hub schema and `pg_search` BM25 indexes. (#158)
+- **Externally managed schema contract** — `gcode` now validates the Gobby-owned hub tables, `pg_search` extension, and required BM25 indexes at runtime rather than creating or migrating schema. This keeps the CLI non-destructive to daemon-managed PostgreSQL state. (#158)
+- **Keyring v4 credential lookup** — `database_url_ref` resolution now uses `keyring` 4 with `keyring-core` store-backed entry construction for OS keyring reads. This bumps the `gobby-code` Rust floor to 1.88, matching the upstream keyring v4 requirement. (#159)
+- **Bundled code-index skill refresh** — the packaged `gcode` skill copy now tracks the installed Gobby code-index instructions, including exact symbol lookup and freshness guidance. (#156, #157)
+
 ## [0.7.0] — gcode
 
 ### Added
