@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from gobby.storage.hub.postgres import _PRE_BASELINE_INFRA_TABLES
 from gobby.storage.migration.reseed import discover_identity_sequences, expected_sequence_state
-from gobby.storage.migrations import BASELINE_VERSION
+from gobby.storage.migration.schema import validate_sqlite_source_schema
 
 _POSTGRES_ONLY_TABLES: frozenset[str] = _PRE_BASELINE_INFRA_TABLES | frozenset(
     {"gobby_migration_state", "schema_migrations"}
@@ -199,19 +199,8 @@ def _check_source_schema_baseline(
     source: sqlite3.Connection,
     checks: list[ValidationCheckResult],
 ) -> None:
-    version = _sqlite_schema_version(source)
-    if version is None:
-        _record(checks, "schema baseline", False, "SQLite schema baseline missing")
-        return
-    if version != BASELINE_VERSION:
-        _record(
-            checks,
-            "schema baseline",
-            False,
-            f"SQLite schema baseline mismatch: expected {BASELINE_VERSION}, found {version}",
-        )
-        return
-    _record(checks, "schema baseline", True, f"SQLite schema baseline v{version}")
+    result = validate_sqlite_source_schema(source)
+    _record(checks, "schema baseline", result.ok, result.message)
 
 
 def _check_table_mapping(
@@ -524,21 +513,6 @@ def _sqlite_application_tables(source: sqlite3.Connection) -> set[str]:
             continue
         tables.add(name)
     return tables
-
-
-def _sqlite_schema_version(source: sqlite3.Connection) -> int | None:
-    for table in ("schema_migrations", "schema_version"):
-        try:
-            row = source.execute(
-                f"SELECT MAX(version) AS version FROM {_quote_identifier(table)}"
-            ).fetchone()
-        except sqlite3.Error:
-            continue
-        if row is None:
-            continue
-        version = _row_value(row, "version")
-        return int(version) if version is not None else None
-    return None
 
 
 def _postgres_tables(target: _Executable) -> set[str]:

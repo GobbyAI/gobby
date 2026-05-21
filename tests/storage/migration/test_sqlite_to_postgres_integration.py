@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import psycopg
@@ -86,9 +87,11 @@ def test_migrate_sqlite_to_postgres_real_target_preserves_dry_run_and_imports_on
 
 
 def test_validate_migration_uses_real_bm25_catalog_for_empty_source(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     postgres_schema: str,
 ) -> None:
+    _allow_minimal_source_schema(monkeypatch)
     _require_pg_search(postgres_schema)
     source = _sqlite_tasks_source()
     with _connect_to_schema(postgres_schema) as conn:
@@ -104,9 +107,11 @@ def test_validate_migration_uses_real_bm25_catalog_for_empty_source(
 
 
 def test_validate_migration_fails_when_real_bm25_index_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     postgres_schema: str,
 ) -> None:
+    _allow_minimal_source_schema(monkeypatch)
     _require_pg_search(postgres_schema)
     source = _sqlite_tasks_source()
     with _connect_to_schema(postgres_schema) as conn:
@@ -121,6 +126,13 @@ def _target_url(schema: str) -> str:
     base_url = os.environ["DATABASE_URL"]
     separator = "&" if "?" in base_url else "?"
     return f"{base_url}{separator}options=-csearch_path%3D{schema}"
+
+
+def _allow_minimal_source_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.storage.migration.validation.validate_sqlite_source_schema",
+        lambda _source: SimpleNamespace(ok=True, message="SQLite schema baseline test bypass"),
+    )
 
 
 def _initialize_postgres_target(target_url: str) -> None:
