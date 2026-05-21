@@ -49,6 +49,7 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.telemetry.config import TelemetrySettings
+from tests.config.fake_keyring import FakeKeyring, install_fake_keyring
 
 pytestmark = pytest.mark.unit
 
@@ -701,19 +702,7 @@ class TestLoadConfig:
     ) -> None:
         """DB config cannot override bootstrap-level hub backend selection."""
 
-        class FakeKeyring:
-            def __init__(self) -> None:
-                self.passwords: dict[tuple[str, str], str] = {}
-
-            def set_password(self, service: str, username: str, password: str) -> None:
-                self.passwords[(service, username)] = password
-
-            def get_password(self, service: str, username: str) -> str | None:
-                return self.passwords.get((service, username))
-
-        from gobby.config import bootstrap as bootstrap_module
-
-        monkeypatch.setattr(bootstrap_module, "keyring", FakeKeyring())
+        install_fake_keyring(monkeypatch, FakeKeyring())
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,

@@ -54,8 +54,8 @@ class SkillMetadataMixin:
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            row = conn.execute(query, params).fetchone()
-            return cast(Mapping[str, Any] | None, row)
+            row: Mapping[str, Any] | None = conn.execute(query, params).fetchone()
+            return row
 
     def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Run a read query in a new transaction.
@@ -64,8 +64,8 @@ class SkillMetadataMixin:
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            rows = conn.execute(query, params).fetchall()
-            return cast(list[Mapping[str, Any]], rows)
+            rows: list[Mapping[str, Any]] = conn.execute(query, params).fetchall()
+            return rows
 
     def create_skill(
         self,

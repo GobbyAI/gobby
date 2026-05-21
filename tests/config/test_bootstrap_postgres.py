@@ -2,44 +2,25 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
+from tests.config.fake_keyring import (
+    DATABASE_URL_KEY,
+    DATABASE_URL_REF,
+    KEYRING_SERVICE,
+    FakeKeyring,
+    install_fake_keyring,
+)
+
 pytestmark = pytest.mark.unit
-
-KEYRING_SERVICE = "gobby"
-DATABASE_URL_KEY = "postgres_database_url"
-DATABASE_URL_REF = f"keyring:{KEYRING_SERVICE}:{DATABASE_URL_KEY}"
-
-
-class FakeKeyring:
-    def __init__(self, initial: dict[tuple[str, str], str] | None = None) -> None:
-        self.passwords = dict(initial or {})
-        self.get_calls: list[tuple[str, str]] = []
-        self.set_calls: list[tuple[str, str, str]] = []
-
-    def get_password(self, service: str, username: str) -> str | None:
-        self.get_calls.append((service, username))
-        return self.passwords.get((service, username))
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self.set_calls.append((service, username, password))
-        self.passwords[(service, username)] = password
 
 
 def _write_bootstrap(path: Path, content: str, mode: int = 0o600) -> None:
     path.write_text(content)
     path.chmod(mode)
-
-
-def _install_fake_keyring(monkeypatch: pytest.MonkeyPatch, fake_keyring: FakeKeyring) -> None:
-    from gobby.config import bootstrap as bootstrap_module
-
-    monkeypatch.setitem(sys.modules, "keyring", fake_keyring)
-    monkeypatch.setattr(bootstrap_module, "keyring", fake_keyring, raising=False)
 
 
 def test_bootstrap_defaults_to_sqlite_backend(temp_dir: Path) -> None:
@@ -58,7 +39,7 @@ def test_bootstrap_migrates_plaintext_postgres_url_to_keyring(
     from gobby.config.bootstrap import load_bootstrap
 
     fake_keyring = FakeKeyring()
-    _install_fake_keyring(monkeypatch, fake_keyring)
+    install_fake_keyring(monkeypatch, fake_keyring)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     _write_bootstrap(
@@ -90,7 +71,7 @@ def test_bootstrap_loads_postgres_url_from_keyring_ref(
 
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     fake_keyring = FakeKeyring({(KEYRING_SERVICE, DATABASE_URL_KEY): database_url})
-    _install_fake_keyring(monkeypatch, fake_keyring)
+    install_fake_keyring(monkeypatch, fake_keyring)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
@@ -115,7 +96,7 @@ def test_write_postgres_defaults_stores_database_url_ref(
 
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     fake_keyring = FakeKeyring()
-    _install_fake_keyring(monkeypatch, fake_keyring)
+    install_fake_keyring(monkeypatch, fake_keyring)
 
     write_postgres_defaults(
         gobby_home=temp_dir,
@@ -139,7 +120,7 @@ def test_postgres_keyring_ref_requires_stored_database_url(
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     fake_keyring = FakeKeyring()
-    _install_fake_keyring(monkeypatch, fake_keyring)
+    install_fake_keyring(monkeypatch, fake_keyring)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
