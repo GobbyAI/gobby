@@ -152,7 +152,10 @@ intact.
 
    `deactivate` updates `hub_backend=sqlite` and writes a bootstrap backup. The
    pre-cutover SQLite database is untouched, so no restore is needed when the
-   rollback occurs inside the validation window.
+   rollback occurs inside the validation window. The PostgreSQL DSN remains in
+   the OS keyring as `keyring:gobby:postgres_database_url`; leave
+   `bootstrap.yaml` as a keyring reference and do not add a plaintext
+   `database_url`.
 
 2. Start the daemon:
 
@@ -187,4 +190,7 @@ intact.
 
 This rollback path is only for the validation window. If the window closes
 without rollback, a later rollback requires a reverse migration from PostgreSQL
-to SQLite. That reverse migration is out of scope for this runbook.
+to SQLite. The keyring-backed DSN remains required until that reverse migration
+is complete; deleting the keyring entry or writing a plaintext fallback to
+`bootstrap.yaml` is not a supported steady-state rollback path. That reverse
+migration is out of scope for this runbook.

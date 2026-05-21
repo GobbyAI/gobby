@@ -11,8 +11,9 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
+    from gobby.storage.session_tasks import SessionTaskManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
-    from gobby.tasks.session_tasks import SessionTaskManager
 
     from .engine import RuleEngine
 
@@ -87,10 +88,12 @@ class WorkflowHookHandler:
         enabled: bool = True,
         rule_engine: "RuleEngine | None" = None,
         task_manager: "LocalTaskManager | None" = None,
+        session_manager: "SessionManager | None" = None,
         session_task_manager: "SessionTaskManager | None" = None,
     ):
         self.rule_engine = rule_engine
         self._task_manager = task_manager
+        self._session_manager = session_manager
         self._session_task_manager = session_task_manager
         self._loop = loop
         self.timeout = timeout if timeout > 0 else None
@@ -463,6 +466,8 @@ class WorkflowHookHandler:
                 variables,
                 session_id,
                 task_manager=self._task_manager,
+                session_manager=self._session_manager,
+                session_task_manager=self._session_task_manager,
             )
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)

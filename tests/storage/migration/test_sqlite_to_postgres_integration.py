@@ -13,11 +13,11 @@ import pytest
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from gobby.storage.database import LocalDatabase
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.hub.sqlite import SqliteHubDatabase
 from gobby.storage.migration.sqlite_to_postgres import migrate_sqlite_to_postgres
 from gobby.storage.migration.validation import MigrationValidationError, validate_migration
-from gobby.storage.migrations import BASELINE_VERSION
+from gobby.storage.migrations import BASELINE_VERSION, run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -145,9 +145,9 @@ def _initialize_postgres_target(target_url: str) -> None:
 
 def _sqlite_hub_source(tmp_path: Path) -> Path:
     source = tmp_path / "gobby-hub.db"
-    db = SqliteHubDatabase(str(source))
+    db = LocalDatabase(source)
     try:
-        db.apply_migrations()
+        run_migrations(db)
         db.execute(
             """
             INSERT INTO config_store (key, value, source, is_secret, updated_at)

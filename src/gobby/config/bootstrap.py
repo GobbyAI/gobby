@@ -2,28 +2,39 @@
 
 These settings are needed before the database is available:
 database_path, daemon_port, bind_host, websocket_port, ui_port, neo4j_password,
-hub_backend, database_url, postgres_install_mode.
+hub_backend, database_url_ref, postgres_install_mode.
 
 All other configuration is managed via the DB (config_store) + Pydantic defaults.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import yaml
+from .bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 
 logger = logging.getLogger(__name__)
 
 # Default bootstrap file location
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
+POSTGRES_DATABASE_URL_KEYRING_SERVICE = "gobby"
+POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
+POSTGRES_DATABASE_URL_REF = (
+    f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
+)
 
 HubBackend = Literal["sqlite", "postgres"]
 PostgresInstallMode = Literal["docker", "native", "external"]
+
+try:
+    keyring: Any | None = importlib.import_module("keyring")
+except ImportError:
+    keyring = None
 
 
 class BootstrapConfigError(Exception):
@@ -93,14 +104,25 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
     try:
         if bootstrap_path.name == "bootstrap.yaml":
             _validate_bootstrap_file_permissions(bootstrap_path)
-        with open(bootstrap_path) as f:
-            data = yaml.safe_load(f)
+        data = read_bootstrap_yaml(bootstrap_path)
 
         if not isinstance(data, dict):
             return BootstrapConfig()
 
         hub_backend = _parse_hub_backend(data.get("hub_backend", "sqlite"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
+        database_url_ref = _parse_optional_str(data.get("database_url_ref"), "database_url_ref")
+        if database_url:
+            data.pop("database_url", None)
+            data["database_url_ref"] = store_postgres_database_url(database_url)
+            try:
+                write_bootstrap_yaml(bootstrap_path, data)
+            except Exception as exc:
+                raise BootstrapConfigError(
+                    "failed to rewrite bootstrap.yaml with database_url_ref"
+                ) from exc
+        elif database_url_ref:
+            database_url = resolve_postgres_database_url_ref(database_url_ref)
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
         if hub_backend == "postgres" and not database_url:
             raise BootstrapConfigError("hub_backend=postgres requires database_url")
@@ -160,3 +182,53 @@ def _validate_bootstrap_file_permissions(path: Path) -> None:
             f"bootstrap.yaml permissions must be 0600 (owner read/write only): "
             f"{path} has {mode:#04o}"
         )
+
+
+def store_postgres_database_url(database_url: str) -> str:
+    """Store the bootstrap PostgreSQL DSN in the OS keyring."""
+    try:
+        _keyring().set_password(
+            POSTGRES_DATABASE_URL_KEYRING_SERVICE,
+            POSTGRES_DATABASE_URL_KEYRING_USERNAME,
+            database_url,
+        )
+    except Exception as exc:
+        raise BootstrapConfigError(
+            f"failed to store database_url in OS keyring entry {POSTGRES_DATABASE_URL_REF}"
+        ) from exc
+    return POSTGRES_DATABASE_URL_REF
+
+
+def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
+    """Resolve the bootstrap PostgreSQL DSN from the OS keyring."""
+    service, username = _parse_postgres_database_url_ref(database_url_ref)
+    try:
+        database_url = _keyring().get_password(service, username)
+    except Exception as exc:
+        raise BootstrapConfigError(
+            f"failed to read database_url from OS keyring entry {database_url_ref}"
+        ) from exc
+    if not database_url:
+        raise BootstrapConfigError(f"database_url_ref keyring entry {database_url_ref} is missing")
+    return str(database_url)
+
+
+def _keyring() -> Any:
+    if keyring is None:
+        raise BootstrapConfigError(
+            f"keyring package is required for database_url_ref {POSTGRES_DATABASE_URL_REF}"
+        )
+    return keyring
+
+
+def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
+    parts = database_url_ref.split(":", 2)
+    if len(parts) != 3 or parts[0] != "keyring" or not parts[1] or not parts[2]:
+        raise BootstrapConfigError("database_url_ref must use keyring:gobby:postgres_database_url")
+    service, username = parts[1], parts[2]
+    if (
+        service != POSTGRES_DATABASE_URL_KEYRING_SERVICE
+        or username != POSTGRES_DATABASE_URL_KEYRING_USERNAME
+    ):
+        raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_REF}")
+    return service, username

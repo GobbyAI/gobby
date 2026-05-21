@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.agents.constants import UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import (
     SpawnRequest,
@@ -201,7 +202,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -247,7 +251,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -291,7 +298,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -342,7 +352,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -484,7 +497,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-xyz",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -514,6 +530,8 @@ class TestExecuteSpawn:
             assert command[command.index("--disable") + 1] == "guardian_approval"
             assert "--sandbox" in command
             assert "workspace-write" in command
+            assert "--add-dir" in command
+            assert command[command.index("--add-dir") + 1] == "/tmp/gobby/uv-cache/gobby-sess-123"
             assert "--full-auto" not in command
             prompt_arg = command[-1]
             # Sandbox args must appear before the final prompt argv entry, which
@@ -582,7 +600,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -637,7 +658,10 @@ class TestExecuteSpawnSandbox:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -666,15 +690,19 @@ class TestExecuteSpawnSandbox:
                 "gobby.agents.sandbox.ClaudeSandboxResolver",
                 return_value=mock_resolver,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
         ):
             result = await execute_spawn(request)
 
             # Verify sandbox was resolved and env vars passed to spawn
             mock_resolver.resolve.assert_called_once()
+            resolved_config = mock_resolver.resolve.call_args.args[0]
+            assert "/tmp/gobby/uv-cache/child-session-id" in resolved_config.extra_write_paths
             mock_spawner.spawn.assert_called_once()
             call_kwargs = mock_spawner.spawn.call_args.kwargs
             assert "env" in call_kwargs
             assert "SEATBELT_PROFILE" in call_kwargs["env"]
+            assert call_kwargs["env"][UV_CACHE_DIR] == "/tmp/gobby/uv-cache/child-session-id"
             # Command should include sandbox args
             command = call_kwargs.get("command")
             assert "--dangerously-skip-permissions" in command
@@ -801,7 +829,10 @@ class TestExecuteSpawnSandbox:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -840,6 +871,7 @@ class TestExecuteSpawnSandbox:
             assert command[command.index("--include-directories") + 1] == str(
                 Path("/tmp/gobby-gemini-git").resolve(strict=False)
             )
+            assert str(Path("/tmp/gobby/uv-cache/gobby-sess-123").resolve(strict=False)) in command
             assert command[-1] == request.prompt
             assert command.index("-s") < len(command) - 1
             assert command.index("--include-directories") < len(command) - 1

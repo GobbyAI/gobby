@@ -14,6 +14,11 @@ def _protocol_module():
     return importlib.import_module("gobby.storage.hub.protocol")
 
 
+def test_sqlite_hub_adapter_module_is_removed() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("gobby.storage.hub.sqlite")
+
+
 def test_protocol_exports_backend_neutral_surface() -> None:
     module = _protocol_module()
 

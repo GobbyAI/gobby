@@ -49,6 +49,7 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.telemetry.config import TelemetrySettings
+from tests.config.fake_keyring import FakeKeyring, install_fake_keyring
 
 pytestmark = pytest.mark.unit
 
@@ -697,10 +698,11 @@ class TestLoadConfig:
         assert config.cron.check_interval_seconds == 60
 
     def test_load_config_preserves_bootstrap_backend_selection_over_db(
-        self, temp_dir: Path
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """DB config cannot override bootstrap-level hub backend selection."""
 
+        install_fake_keyring(monkeypatch, FakeKeyring())
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,

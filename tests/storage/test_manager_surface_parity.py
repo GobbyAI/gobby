@@ -18,20 +18,24 @@ from gobby.storage.hub.protocol import (
     TaskSubtreeCascade,
     WebChatSessionBootstrap,
 )
-from gobby.storage.hub.sqlite import SqliteHubDatabase
 from gobby.storage.tasks._crud import cascade_build_state_to_subtree
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(params=["sqlite"] + (["postgres"] if os.getenv("GOBBY_POSTGRES_TEST_DSN") else []))
-def hub_db(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[object]:
-    if request.param == "postgres":
-        from gobby.storage.hub.postgres import PostgresHubDatabase
+def _postgres_hub_or_skip() -> object:
+    dsn = os.getenv("GOBBY_POSTGRES_TEST_DSN")
+    if not dsn:
+        pytest.skip("PostgreSQL DSN required for hub runtime surface tests")
 
-        db = PostgresHubDatabase(os.environ["GOBBY_POSTGRES_TEST_DSN"])
-    else:
-        db = SqliteHubDatabase(str(tmp_path / "hub.db"))
+    from gobby.storage.hub.postgres import PostgresHubDatabase
+
+    return PostgresHubDatabase(dsn)
+
+
+@pytest.fixture(params=["postgres"])
+def hub_db() -> Iterator[object]:
+    db = _postgres_hub_or_skip()
     try:
         yield db
     finally:
@@ -96,31 +100,28 @@ def test_ambient_transaction_groups_convenience_calls(hub_db: object) -> None:
     assert db.fetchall("SELECT id FROM ambient_items ORDER BY id") == []
 
 
-def test_ambient_transaction_isolated_per_adapter(tmp_path: Path) -> None:
-    sqlite_db = SqliteHubDatabase(str(tmp_path / "sqlite.db"))
-    other_db = SqliteHubDatabase(str(tmp_path / "other.db"))
+def test_ambient_transaction_isolated_per_adapter() -> None:
+    primary_db = _postgres_hub_or_skip()
+    other_db = _postgres_hub_or_skip()
     try:
-        sqlite_db.execute("CREATE TABLE ambient_items (id INTEGER PRIMARY KEY)")
+        primary_db.execute("CREATE TABLE ambient_items (id INTEGER PRIMARY KEY)")
         other_db.execute("CREATE TABLE ambient_items (id INTEGER PRIMARY KEY)")
 
         with pytest.raises(RuntimeError, match="rollback"):
-            with sqlite_db.transaction():
-                sqlite_db.execute("INSERT INTO ambient_items (id) VALUES ($1)", (1,))
+            with primary_db.transaction():
+                primary_db.execute("INSERT INTO ambient_items (id) VALUES ($1)", (1,))
                 other_db.execute("INSERT INTO ambient_items (id) VALUES ($1)", (2,))
                 raise RuntimeError("rollback")
 
-        assert sqlite_db.fetchall("SELECT id FROM ambient_items") == []
+        assert primary_db.fetchall("SELECT id FROM ambient_items") == []
         assert other_db.fetchall("SELECT id FROM ambient_items") == [{"id": 2}]
     finally:
-        sqlite_db.close()
+        primary_db.close()
         other_db.close()
 
 
-def test_subtree_cascade_serializes_overlapping_subtrees(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = SqliteHubDatabase(str(tmp_path / "cascade.db"))
+def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _postgres_hub_or_skip()
     seen_locks: list[object] = []
     original_transaction_immediate = db.transaction_immediate
 
@@ -192,8 +193,8 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
         db.close()
 
 
-def test_nested_lock_target_acquires_both_lookup_branch(tmp_path: Path) -> None:
-    db = SqliteHubDatabase(str(tmp_path / "lookup.db"))
+def test_nested_lock_target_acquires_both_lookup_branch() -> None:
+    db = _postgres_hub_or_skip()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     registration_lock = SessionRegistration("ext", "machine", "codex", "project", "web_chat")
     try:
@@ -204,8 +205,8 @@ def test_nested_lock_target_acquires_both_lookup_branch(tmp_path: Path) -> None:
         db.close()
 
 
-def test_nested_lock_target_acquires_both_recovery_branch(tmp_path: Path) -> None:
-    db = SqliteHubDatabase(str(tmp_path / "recovery.db"))
+def test_nested_lock_target_acquires_both_recovery_branch() -> None:
+    db = _postgres_hub_or_skip()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     recovery_lock = SessionRecoveryByProject(project_id="project")
     try:
@@ -216,8 +217,8 @@ def test_nested_lock_target_acquires_both_recovery_branch(tmp_path: Path) -> Non
         db.close()
 
 
-def test_nested_lock_target_out_of_order_priority_raises(tmp_path: Path) -> None:
-    db = SqliteHubDatabase(str(tmp_path / "order.db"))
+def test_nested_lock_target_out_of_order_priority_raises() -> None:
+    db = _postgres_hub_or_skip()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     try:
         with db.transaction_immediate(web_lock):
@@ -232,8 +233,8 @@ def test_nested_lock_target_out_of_order_priority_raises(tmp_path: Path) -> None
     assert "WebChatSessionBootstrap" in message
 
 
-def test_transaction_immediate_inside_non_immediate_transaction_raises(tmp_path: Path) -> None:
-    db = SqliteHubDatabase(str(tmp_path / "mixed.db"))
+def test_transaction_immediate_inside_non_immediate_transaction_raises() -> None:
+    db = _postgres_hub_or_skip()
     try:
         with db.transaction():
             with pytest.raises(RuntimeError, match="non-immediate"):

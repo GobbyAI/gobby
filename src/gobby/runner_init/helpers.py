@@ -6,16 +6,12 @@ import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
-
 logger = logging.getLogger(__name__)
 
 
 class DatabasePathConfig(Protocol):
     """Configuration object exposing bootstrap database settings."""
 
-    database_path: str
     hub_backend: Literal["sqlite", "postgres"]
     database_url: str | None
 
@@ -79,25 +75,18 @@ def _ensure_headless_settings() -> None:
 
 
 def init_hub_database(config: DatabasePathConfig) -> Any:
-    """Initialize hub database."""
-    if getattr(config, "hub_backend", "sqlite") == "postgres":
-        database_url = getattr(config, "database_url", None)
-        if not database_url:
-            raise ValueError("hub_backend=postgres requires database_url")
+    """Initialize the runtime hub database."""
+    if getattr(config, "hub_backend", "sqlite") == "sqlite":
+        logger.warning("hub_backend=sqlite is no longer supported; configure PostgreSQL instead")
+        raise ValueError("hub_backend=sqlite is no longer supported")
 
-        from gobby.storage.hub.postgres import PostgresHubDatabase
+    database_url = getattr(config, "database_url", None)
+    if not database_url:
+        raise ValueError("hub_backend=postgres requires database_url")
 
-        postgres_db = PostgresHubDatabase(database_url)
-        postgres_db.apply_migrations()
-        logger.info("Database: PostgreSQL hub")
-        return postgres_db
+    from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    hub_db_path = Path(config.database_path).expanduser()
-
-    hub_db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    sqlite_db = LocalDatabase(hub_db_path)
-    run_migrations(sqlite_db)
-
-    logger.info(f"Database: {hub_db_path}")
-    return sqlite_db
+    postgres_db = PostgresHubDatabase(database_url)
+    postgres_db.apply_migrations()
+    logger.info("Database: PostgreSQL hub")
+    return postgres_db

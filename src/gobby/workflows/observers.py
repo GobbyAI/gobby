@@ -11,12 +11,17 @@ from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
-from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, is_task_actively_claimed
+from gobby.tasks.state_semantics import (
+    ACTIVE_STAGE_STATES,
+    get_claimed_session_id,
+    is_task_actively_claimed,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
+    from gobby.storage.session_tasks import SessionTaskManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
-    from gobby.tasks.session_tasks import SessionTaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +552,8 @@ def reconcile_claimed_tasks(
     variables: dict[str, Any],
     session_id: str,
     task_manager: "LocalTaskManager | None" = None,
+    session_manager: "SessionManager | None" = None,
+    session_task_manager: "SessionTaskManager | None" = None,
 ) -> None:
     """Reconcile claimed_tasks against DB, then derive task_claimed from it.
 
@@ -581,6 +588,16 @@ def reconcile_claimed_tasks(
                 task = None
 
             if not is_task_actively_claimed(task, session_id):
+                if _preserve_lineage_claim(
+                    task,
+                    task_uuid,
+                    ref,
+                    session_id,
+                    task_manager,
+                    session_manager,
+                    session_task_manager,
+                ):
+                    continue
                 pruned.append(f"{ref}({task_uuid[:8]})")
                 del claimed_tasks[task_uuid]
 
@@ -609,6 +626,102 @@ def reconcile_claimed_tasks(
     # Single source of truth: dict drives boolean
     variables["claimed_tasks"] = claimed_tasks
     variables["task_claimed"] = bool(claimed_tasks)
+
+
+def _preserve_lineage_claim(
+    task: Any,
+    task_uuid: str,
+    ref: str,
+    session_id: str,
+    task_manager: "LocalTaskManager",
+    session_manager: "SessionManager | None",
+    session_task_manager: "SessionTaskManager | None",
+) -> bool:
+    owner_session_id = get_claimed_session_id(task)
+    if not owner_session_id or not is_task_actively_claimed(task, owner_session_id):
+        return False
+    if not _sessions_share_lineage(session_manager, owner_session_id, session_id):
+        return False
+
+    try:
+        task_manager.claim_task(
+            task_uuid,
+            session_id=session_id,
+            force=owner_session_id != session_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "Session %s: reconcile — preserved %s(%s) but failed to repair owner from %s: %s",
+            session_id,
+            ref,
+            task_uuid[:8],
+            owner_session_id,
+            e,
+        )
+    else:
+        logger.info(
+            "Session %s: reconcile — repaired lineage claim %s(%s) from %s",
+            session_id,
+            ref,
+            task_uuid[:8],
+            owner_session_id,
+        )
+
+    if session_task_manager:
+        try:
+            session_task_manager.link_task(session_id, task_uuid, "claimed")
+        except Exception as e:
+            logger.debug(
+                "Session %s: failed to link preserved claim %s(%s): %s",
+                session_id,
+                ref,
+                task_uuid[:8],
+                e,
+            )
+    return True
+
+
+def _sessions_share_lineage(
+    session_manager: "SessionManager | None",
+    owner_session_id: str,
+    session_id: str,
+) -> bool:
+    if owner_session_id == session_id:
+        return True
+    if session_manager is None:
+        return False
+
+    is_ancestor = getattr(session_manager, "is_ancestor", None)
+    if callable(is_ancestor):
+        try:
+            owner_is_ancestor = is_ancestor(owner_session_id, session_id)
+            session_is_ancestor = is_ancestor(session_id, owner_session_id)
+            if owner_is_ancestor is True or session_is_ancestor is True:
+                return True
+        except Exception as e:
+            logger.debug(
+                "Failed to compare session lineage for %s and %s: %s",
+                owner_session_id,
+                session_id,
+                e,
+            )
+
+    try:
+        current_session = session_manager.get(session_id)
+        owner_session = session_manager.get(owner_session_id)
+    except Exception as e:
+        logger.debug(
+            "Failed to load sessions for lineage comparison %s/%s: %s",
+            owner_session_id,
+            session_id,
+            e,
+        )
+        return False
+
+    return (
+        getattr(current_session, "parent_session_id", None) == owner_session_id
+        or getattr(owner_session, "parent_session_id", None) == session_id
+    )
 
 
 def detect_mcp_call(event: "HookEvent", variables: dict[str, Any], session_id: str) -> None:

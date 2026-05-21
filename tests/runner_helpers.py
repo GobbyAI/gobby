@@ -19,8 +19,8 @@ def set_mock_default(obj: MagicMock, name: str, default):
 def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     """Populate runner tests with scalar defaults so background tasks stay deterministic."""
     config.bind_host = "localhost"
-    config.hub_backend = "sqlite"
-    config.database_url = None
+    config.hub_backend = "postgres"
+    config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     config.postgres_install_mode = None
 
     if getattr(config, "websocket", None) is None:
@@ -95,8 +95,7 @@ def create_base_patches(
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
         patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
-        patch("gobby.runner_init.helpers.LocalDatabase"),
-        patch("gobby.runner_init.helpers.run_migrations"),
+        patch("gobby.storage.hub.postgres.PostgresHubDatabase"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),
         patch("gobby.runner_init.storage.LocalTaskManager"),
         patch("gobby.runner_init.storage.SessionTaskManager"),

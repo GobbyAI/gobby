@@ -1,7 +1,7 @@
-"""Task search module using dialect-aware keyword backends.
+"""Task search module using the PostgreSQL keyword backend.
 
-Provides full-text search for tasks using SQLite FTS5 or PostgreSQL pg_search
-BM25 through the hub database seam.
+Provides full-text search for tasks using PostgreSQL pg_search BM25 through
+the hub database seam.
 """
 
 from __future__ import annotations
@@ -12,12 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.search.keyword import (
     BM25SearchBackend,
-    FTS5SearchBackend,
     KeywordSearchBackend,
     SearchHit,
     SearchMode,
     fetch_all,
-    normalize_fts5_scores,
     normalize_positive_scores,
     pick_search_backend,
     placeholder,
@@ -32,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BM25SearchBackend",
-    "FTS5SearchBackend",
     "KeywordSearchBackend",
     "SearchHit",
     "SearchMode",
@@ -56,7 +53,7 @@ def search_tasks(
     category: str | None = None,
     min_score: float = 0.0,
 ) -> list[tuple[str, float]]:
-    """Search tasks through the dialect-aware keyword searcher."""
+    """Search tasks through the keyword searcher."""
     return TaskSearchBackend(db).search(
         query,
         top_k=top_k,
@@ -90,7 +87,7 @@ class _TaskSearchFilters:
 
 
 class TaskSearchBackend:
-    """Dialect-aware keyword search for tasks.
+    """Keyword search for tasks.
 
     Uses the shared keyword backend for normal filters. Stage-state filtering
     needs a task-specific query because the current stage is derived from
@@ -166,63 +163,12 @@ class TaskSearchBackend:
         stage_state = filters.current_stage_state
         if stage_state is None:
             return []
-        if getattr(self._db, "dialect", "sqlite") == "postgres":
-            return self._search_postgres_with_stage_state(
-                query=query,
-                limit=limit,
-                filters=filters,
-                current_stage_state=stage_state,
-            )
-        return self._search_sqlite_with_stage_state(
+        return self._search_postgres_with_stage_state(
             query=query,
             limit=limit,
             filters=filters,
             current_stage_state=stage_state,
         )
-
-    def _search_sqlite_with_stage_state(
-        self,
-        *,
-        query: str,
-        limit: int,
-        filters: _TaskSearchFilters,
-        current_stage_state: str | list[str],
-    ) -> list[SearchHit]:
-        from gobby.search.fts5 import sanitize_fts_query
-
-        fts_query = sanitize_fts_query(query)
-        if not fts_query:
-            return []
-
-        params: list[Any] = []
-        conditions = [f"tasks_fts MATCH {self._add_param(params, fts_query)}"]
-        self._append_common_filters(
-            params=params,
-            conditions=conditions,
-            filters=filters,
-        )
-        self._append_stage_filter(params, conditions, current_stage_state)
-        limit_placeholder = self._add_param(params, limit)
-
-        sql = f"""
-            SELECT t.id AS id,
-                   bm25(tasks_fts, 10.0, 5.0, 2.0, 1.0, 2.0) AS score
-              FROM tasks_fts fts
-              JOIN tasks t ON t.rowid = fts.rowid
-             WHERE {" AND ".join(conditions)}
-             ORDER BY score ASC, id ASC
-             LIMIT {limit_placeholder}
-        """
-        try:
-            rows = fetch_all(self._db, sql, params)
-        except Exception as e:
-            logger.warning(f"FTS5 task search failed: {e}")
-            return []
-        scores = normalize_fts5_scores([float(row_value(row, "score")) for row in rows])
-        return [
-            SearchHit(id=str(row_value(row, "id")), score=score)
-            for row, score in zip(rows, scores, strict=False)
-        ]
 
     def _search_postgres_with_stage_state(
         self,
@@ -339,24 +285,10 @@ class TaskSearchBackend:
         return placeholder(self._db, len(params))
 
     def reindex(self) -> dict[str, Any]:
-        """Rebuild the FTS5 index from the tasks table.
+        """Return task search backend statistics.
 
-        Useful for repair — normally triggers keep the index in sync.
-
-        Returns:
-            Dict with index statistics.
+        PostgreSQL pg_search indexes are maintained by the database extension.
         """
-        if getattr(self._db, "dialect", "sqlite") != "sqlite":
-            return self.get_stats()
-        try:
-            self._db.execute("DELETE FROM tasks_fts")
-            self._db.execute("""
-                INSERT INTO tasks_fts(rowid, title, description, labels, task_type, category)
-                SELECT rowid, title, description, labels, task_type, category FROM tasks
-            """)
-        except Exception as e:
-            logger.error(f"Failed to reindex tasks_fts: {e}")
-
         return self.get_stats()
 
     def get_stats(self) -> dict[str, Any]:
