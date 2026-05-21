@@ -174,8 +174,9 @@ class HookManagerFactory:
         if session_manager is not None:
             if database is not None and database is not session_manager.db:
                 raise ValueError("database and session_manager.db must reference the same object")
-            database = session_manager.db
-        database = cast(LocalDatabase, database or cls._create_database(config))
+            resolved_database = cast(LocalDatabase, session_manager.db)
+        else:
+            resolved_database = cast(LocalDatabase, database or cls._create_database(config))
         daemon_client = DaemonClient(
             host=daemon_host,
             port=daemon_port,
@@ -186,21 +187,21 @@ class HookManagerFactory:
 
         # Create storage layer
         storage = cls._create_storage(
-            database,
+            resolved_database,
             logger=hook_logger,
             config=config,
             session_manager=session_manager,
         )
 
         # Initialize autonomous components
-        autonomous = cls._create_autonomous(database)
+        autonomous = cls._create_autonomous(resolved_database)
 
         # Initialize memory system
-        mem_manager = cls._create_memory(database, config)
+        mem_manager = cls._create_memory(resolved_database, config)
 
         # Initialize workflow engine
         workflow_components = cls._create_workflow_engine(
-            database,
+            resolved_database,
             config,
             llm_service,
             transcript_processor,
@@ -262,7 +263,7 @@ class HookManagerFactory:
 
         return HookManagerComponents(
             config=config,
-            database=database,
+            database=resolved_database,
             daemon_client=daemon_client,
             transcript_processor=transcript_processor,
             session_task_manager=storage.session_task,
@@ -528,6 +529,7 @@ class HookManagerFactory:
             enabled=workflow_enabled,
             rule_engine=rule_engine,
             task_manager=storage.task,
+            session_manager=storage.session,
             session_task_manager=storage.session_task,
         )
         return _WorkflowComponents(
