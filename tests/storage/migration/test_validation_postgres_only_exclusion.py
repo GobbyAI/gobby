@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gobby.storage.hub.postgres import _PRE_BASELINE_INFRA_TABLES
+from gobby.storage.migrations import BASELINE_VERSION
 
 pytestmark = pytest.mark.unit
 
@@ -69,8 +71,13 @@ class _PostgresFixture:
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
-def test_pgaudit_probe_excluded_unknown_table_fails() -> None:
+def test_pgaudit_probe_excluded_unknown_table_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     validation = importlib.import_module("gobby.storage.migration.validation")
+    monkeypatch.setattr(
+        validation,
+        "validate_sqlite_source_schema",
+        lambda _source: SimpleNamespace(ok=True, message="SQLite schema baseline test bypass"),
+    )
     source = _sqlite_source()
     target = _PostgresFixture(
         application_tables={"tasks": [{"id": 1, "title": "imported"}]},
@@ -99,6 +106,8 @@ def test_pgaudit_probe_excluded_unknown_table_fails() -> None:
 def _sqlite_source() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (BASELINE_VERSION,))
     conn.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
     conn.execute("INSERT INTO tasks (id, title) VALUES (1, 'imported')")
     return conn

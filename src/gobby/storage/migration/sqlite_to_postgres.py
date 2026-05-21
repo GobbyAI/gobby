@@ -22,6 +22,7 @@ from psycopg.rows import dict_row
 from gobby.config.postgres_bootstrap import active_install_mode
 from gobby.storage.hub.postgres import PostgresHubDatabase, _classify_baseline_state
 from gobby.storage.migration.reseed import reseed_identity_sequences
+from gobby.storage.migration.schema import validate_sqlite_source_schema
 from gobby.storage.migration.validation import (
     _BM25_INDEXES,
     _POSTGRES_ONLY_TABLES,
@@ -30,10 +31,9 @@ from gobby.storage.migration.validation import (
     _postgres_tables,
     _sqlite_application_tables,
     _sqlite_count,
-    _sqlite_schema_version,
     validate_migration,
 )
-from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
+from gobby.storage.migrations import MigrationUnsupportedError
 
 _BASELINE_INSERT_RE = re.compile(r'^\s*INSERT\s+INTO\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I | re.M)
 _IMPORT_COMPLETE_KEY = "imported_from_sqlite_at"
@@ -226,15 +226,13 @@ def _migration_result(
 
 def _assert_source_schema_supported(source: sqlite3.Connection) -> None:
     try:
-        version = _sqlite_schema_version(source)
+        result = validate_sqlite_source_schema(source)
     except sqlite3.Error as exc:
         raise SqliteToPostgresMigrationError(
             "SQLite source is not a readable Gobby database"
         ) from exc
-    if version != BASELINE_VERSION:
-        raise SqliteToPostgresMigrationError(
-            f"SQLite source schema baseline mismatch: expected {BASELINE_VERSION}, found {version}"
-        )
+    if not result.ok:
+        raise SqliteToPostgresMigrationError(result.message)
 
 
 def _run_target_read_only_preflight(

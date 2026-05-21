@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from gobby.storage.hub.postgres import _PRE_BASELINE_INFRA_TABLES
 from gobby.storage.migration.reseed import discover_identity_sequences, expected_sequence_state
-from gobby.storage.migrations import BASELINE_VERSION
+from gobby.storage.migration.schema import validate_sqlite_source_schema
 
 _POSTGRES_ONLY_TABLES: frozenset[str] = _PRE_BASELINE_INFRA_TABLES | frozenset(
     {"gobby_migration_state", "schema_migrations"}
@@ -44,6 +44,9 @@ _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
     }
 )
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 class _Result(Protocol):
@@ -196,19 +199,8 @@ def _check_source_schema_baseline(
     source: sqlite3.Connection,
     checks: list[ValidationCheckResult],
 ) -> None:
-    version = _sqlite_schema_version(source)
-    if version is None:
-        _record(checks, "schema baseline", True, "schema baseline skipped: no version table")
-        return
-    if version != BASELINE_VERSION:
-        _record(
-            checks,
-            "schema baseline",
-            False,
-            f"SQLite schema baseline mismatch: expected {BASELINE_VERSION}, found {version}",
-        )
-        return
-    _record(checks, "schema baseline", True, f"SQLite schema baseline v{version}")
+    result = validate_sqlite_source_schema(source)
+    _record(checks, "schema baseline", result.ok, result.message)
 
 
 def _check_table_mapping(
@@ -523,21 +515,6 @@ def _sqlite_application_tables(source: sqlite3.Connection) -> set[str]:
     return tables
 
 
-def _sqlite_schema_version(source: sqlite3.Connection) -> int | None:
-    for table in ("schema_migrations", "schema_version"):
-        try:
-            row = source.execute(
-                f"SELECT MAX(version) AS version FROM {_quote_identifier(table)}"
-            ).fetchone()
-        except sqlite3.Error:
-            continue
-        if row is None:
-            continue
-        version = _row_value(row, "version")
-        return int(version) if version is not None else None
-    return None
-
-
 def _postgres_tables(target: _Executable) -> set[str]:
     rows = target.execute(
         "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename"
@@ -768,7 +745,9 @@ def _row_to_dict(row: Any) -> dict[str, object]:
 def _jsonable(value: Any) -> object:
     if isinstance(value, bool):
         return int(value)
-    if isinstance(value, datetime | date):
+    if isinstance(value, datetime):
+        return _canonical_datetime(value)
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
@@ -776,6 +755,8 @@ def _jsonable(value: Any) -> object:
         return {"__bytes__": bytes(value).hex()}
     if isinstance(value, str):
         stripped = value.strip()
+        if timestamp := _canonical_datetime_string(stripped):
+            return timestamp
         if stripped.startswith(("{", "[")):
             try:
                 return _jsonable(json.loads(stripped))
@@ -787,6 +768,22 @@ def _jsonable(value: Any) -> object:
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
         return [_jsonable(item) for item in value]
     return value
+
+
+def _canonical_datetime(value: datetime) -> str:
+    return value.replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _canonical_datetime_string(value: str) -> str | None:
+    if not _TIMESTAMP_RE.match(value):
+        return None
+    normalized = value.replace(" ", "T")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return _canonical_datetime(datetime.fromisoformat(normalized))
+    except ValueError:
+        return None
 
 
 def _catalog_available(target: _Executable) -> bool:
