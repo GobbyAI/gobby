@@ -72,13 +72,6 @@ _DB_CONNECTION_WARNING_THRESHOLD = 32
 class DatabaseProtocol(HubDatabase, Protocol):
     """Protocol defining the database interface for storage managers."""
 
-    dialect: Literal["sqlite", "postgres"]
-
-    @property
-    def dialect(self) -> Literal["sqlite", "postgres"]:
-        """Return the SQL dialect for the database backend."""
-        ...
-
     @property
     def db_path(self) -> Any:
         """Return database path."""
@@ -236,15 +229,12 @@ class _ThreadConnectionLease:
 
 
 class LocalDatabase:
-    dialect: Literal["sqlite", "postgres"] = "sqlite"
-
-    """
-    SQLite database manager with connection pooling.
+    """SQLite database manager with connection pooling.
 
     Thread-safe connection management using thread-local storage.
     """
 
-    dialect: Literal["sqlite"] = "sqlite"
+    dialect: Literal["sqlite", "postgres"] = "sqlite"
 
     def __init__(self, db_path: Path | str | None = None):
         """
@@ -387,7 +377,8 @@ class LocalDatabase:
         """Execute query and fetch all rows."""
         cursor = self.connection.execute(sql, params)
         try:
-            return cast(list[Row], cursor.fetchall())
+            rows: list[Row] = list(cursor.fetchall())
+            return rows
         finally:
             cursor.close()
 
@@ -401,7 +392,8 @@ class LocalDatabase:
         """Return the current SQLite schema version recorded in schema_version."""
         from gobby.storage.migrations import get_current_version
 
-        return get_current_version(self)
+        version: int = get_current_version(self)
+        return version
 
     def migrations_needed(self) -> bool:
         """Return whether this database needs schema migration work.
@@ -411,7 +403,8 @@ class LocalDatabase:
         """
         from gobby.storage.migrations import migrations_needed
 
-        return migrations_needed(self)
+        needed: bool = migrations_needed(self)
+        return needed
 
     def safe_update(
         self,

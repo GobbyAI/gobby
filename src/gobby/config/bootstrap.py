@@ -12,12 +12,11 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import yaml
+from .bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +104,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
     try:
         if bootstrap_path.name == "bootstrap.yaml":
             _validate_bootstrap_file_permissions(bootstrap_path)
-        with open(bootstrap_path) as f:
-            data = yaml.safe_load(f)
+        data = read_bootstrap_yaml(bootstrap_path)
 
         if not isinstance(data, dict):
             return BootstrapConfig()
@@ -118,7 +116,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
             data.pop("database_url", None)
             data["database_url_ref"] = store_postgres_database_url(database_url)
             try:
-                _write_bootstrap_yaml(bootstrap_path, data)
+                write_bootstrap_yaml(bootstrap_path, data)
             except Exception as exc:
                 raise BootstrapConfigError(
                     "failed to rewrite bootstrap.yaml with database_url_ref"
@@ -234,25 +232,3 @@ def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
     ):
         raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_REF}")
     return service, username
-
-
-def _write_bootstrap_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-        text=True,
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as file:
-            yaml.safe_dump(data, file, default_flow_style=False, sort_keys=False)
-            file.flush()
-            os.fsync(file.fileno())
-        tmp_path.chmod(0o600)
-        os.replace(tmp_path, path)
-        path.chmod(0o600)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
