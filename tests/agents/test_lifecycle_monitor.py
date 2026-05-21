@@ -23,6 +23,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_states import StageManifestSpec
 
 pytestmark = pytest.mark.unit
 
@@ -89,6 +91,60 @@ def _make_terminal_run(
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
+
+
+def _make_dispatched_stage_run(
+    *,
+    agent_run_manager: LocalAgentRunManager,
+    task_manager: LocalTaskManager,
+    temp_db: LocalDatabase,
+    sample_project: dict,
+    parent_session_id: str,
+    child_session_id: str,
+    run_id: str,
+    tmux_session_name: str,
+    provider: str = "codex",
+) -> tuple[Any, AgentRun, TaskDispatchMutexManager]:
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title=f"Dispatched {run_id}",
+        claimed_by_session_id=child_session_id,
+    )
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        [StageManifestSpec(stage_name="development", position=0)],
+        by_session_id="dispatcher",
+    )
+    task_manager.stage_states.start_stage(
+        task.id,
+        "development",
+        by_session_id="dispatcher",
+    )
+
+    run = agent_run_manager.create(
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        claimed_session_id=child_session_id,
+        provider=provider,
+        prompt="test",
+        run_id=run_id,
+        task_id=task.id,
+    )
+    agent_run_manager.start(run.id)
+    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+
+    mutexes = TaskDispatchMutexManager(temp_db)
+    mutexes.ensure_table()
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        run_id=run.id,
+    )
+    return task, stored_run, mutexes
 
 
 def _make_autonomous_run(
@@ -1527,6 +1583,70 @@ class TestCheckProviderStallsKillsAgent:
         assert "rate limit" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_provider_stall_resets_stage_and_releases_dispatch_mutex(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Provider stall recovery must not leave a task stage stuck in progress."""
+        child = session_manager.register(
+            external_id="child-provider-stall",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-stall-stage-reset",
+            tmux_session_name="gobby-stall-stage-reset",
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="Provider connection timed out while starting\n",
+            ),
+            patch.object(
+                monitor._tmux,
+                "kill_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await monitor.check_provider_stalls()
+            state = monitor._stall_classifier._states.get(run.id)
+            assert state is not None
+            state.last_check_at = time.monotonic() - 35
+            stalled = await monitor.check_provider_stalls()
+
+        assert stalled == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+
+    @pytest.mark.asyncio
     async def test_stall_error_matches_provider_pattern(
         self,
         monitor: AgentLifecycleMonitor,
@@ -1629,6 +1749,65 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
         assert "connection timed out" in (updated.error or "").lower()
         assert "never initialized" in (updated.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_initialization_timeout_resets_stage_and_releases_dispatch_mutex(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Provider startup timeout must return the task to dispatchable state."""
+        child = session_manager.register(
+            external_id="child-init-timeout-stage",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-init-timeout-stage",
+            tmux_session_name="gobby-init-timeout-stage",
+        )
+
+        backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
+        agent_run_manager.db.execute(
+            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            (backdated, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+        ):
+            killed = await monitor.check_initialization_timeout()
+
+        assert killed == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
 
     @pytest.mark.asyncio
     async def test_skips_initialized_agent(

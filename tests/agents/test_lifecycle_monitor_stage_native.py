@@ -31,6 +31,7 @@ def test_recover_stale_claims_uses_projected_stage_state() -> None:
 def test_recover_in_progress_failure_releases_claim_without_status_open() -> None:
     source = _recovery_source()
 
+    assert "fail_stage" in source
     assert "release_task_claim" in source
     assert "dispatch_failure_count" in source
     assert "status='open'" not in source
