@@ -218,21 +218,22 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
         _restore_bootstrap(backup_path)
         raise
 
-    click.echo("hub_backend set to postgres. To roll back:")
-    click.echo("  gobby stop && gobby postgres deactivate && gobby start")
+    click.echo("hub_backend set to postgres. PostgreSQL is the only supported runtime backend.")
+    click.echo(
+        "Rollback requires validation-window export artifacts; SQLite runtime deactivation is unsupported."
+    )
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
 
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
-    """Deactivate PostgreSQL and return the hub runtime backend to SQLite."""
-    if _daemon_running():
-        raise click.ClickException("Stop the daemon first: gobby stop")
-    backup_path = _backup_bootstrap()
-    _set_bootstrap_field("hub_backend", "sqlite")
-    click.echo("hub_backend set to sqlite.")
-    click.echo(f"Bootstrap backup: {backup_path}")
+    """Deprecated guard for the removed SQLite runtime rollback path."""
+    raise click.ClickException(
+        "PostgreSQL deactivation to SQLite is no longer supported. "
+        "hub_backend=sqlite cannot start under the Phase 7 runtime; keep PostgreSQL "
+        "configured and use the rollback runbook to export validation-window writes."
+    )
 
 
 def _render_install_result(result: dict[str, Any]) -> None:
