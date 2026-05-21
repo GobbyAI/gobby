@@ -91,7 +91,7 @@ class SchemaHashManager:
         Initialize the schema hash manager.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database adapter for persistence
         """
         self.db = db
 

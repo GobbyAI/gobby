@@ -23,7 +23,7 @@ from gobby.storage.config_store import flatten_config, unflatten_config
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def create_config_registry(
     config: DaemonConfig,
     config_store: ConfigStore,
     config_setter: Callable[[DaemonConfig], None],
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> InternalToolRegistry:
     """
     Create a config tool registry for reading/writing daemon configuration.

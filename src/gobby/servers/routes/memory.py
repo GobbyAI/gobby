@@ -429,7 +429,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     async def reconcile_memory_stores(
         dry_run: bool = Query(False, description="Report orphans without deleting"),
     ) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with SQLite source of truth."""
+        """Reconcile Qdrant and Neo4j with the hub database source of truth."""
         try:
             return cast(
                 dict[str, Any], await server.memory_manager.reconcile_stores(dry_run=dry_run)

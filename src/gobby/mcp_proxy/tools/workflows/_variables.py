@@ -79,7 +79,7 @@ def set_variable(
 
     Args:
         session_manager: SessionManager instance
-        db: LocalDatabase instance
+        db: Hub database adapter
         name: Variable name (e.g., "session_epic", "is_worktree")
         value: Variable value (string, number, boolean, or null)
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
@@ -154,7 +154,7 @@ def get_variable(
 
     Args:
         session_manager: SessionManager instance
-        db: LocalDatabase instance
+        db: Hub database adapter
         name: Variable name to get (if None, returns all variables)
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
         workflow: Optional workflow name to scope the read to

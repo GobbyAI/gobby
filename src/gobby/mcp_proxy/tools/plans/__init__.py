@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
 
 
 def create_plan_registry(
-    db: DatabaseProtocol, *, default_project_id: str | None = None
+    db: HubDatabase, *, default_project_id: str | None = None
 ) -> InternalToolRegistry:
     """Create the gobby-plans registry."""
 
@@ -265,7 +265,7 @@ def create_plan_registry(
 
 
 def _resolve_project_id(
-    db: DatabaseProtocol, project: str | None, default_project_id: str | None
+    db: HubDatabase, project: str | None, default_project_id: str | None
 ) -> str:
     project_id = _optional_project_id(db, project, default_project_id)
     if project_id is None:
@@ -274,7 +274,7 @@ def _resolve_project_id(
 
 
 def _optional_project_id(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project: str | None,
     default_project_id: str | None,
 ) -> str | None:

@@ -1,7 +1,7 @@
 """Durable pending interaction manager for web chat approval flows.
 
 Coordinates tool approvals, plan approvals, and ask-user questions with
-in-memory waiters backed by SQLite persistence. Replaces the bifurcated
+in-memory waiters backed by hub database persistence. Replaces the bifurcated
 approval state (pending_plan_path + in-memory asyncio.Event).
 """
 
@@ -16,9 +16,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+def _is_unique_constraint_error(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    return getattr(exc, "sqlstate", None) == "23505"
 
 
 @dataclass
@@ -51,7 +57,7 @@ class PendingInteractionManager:
 
     def __init__(
         self,
-        db: LocalDatabase | DatabaseProtocol,
+        db: HubDatabase,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._db = db
@@ -60,7 +66,7 @@ class PendingInteractionManager:
         self._results: dict[str, dict[str, Any]] = {}
         self._timeouts: dict[str, asyncio.Task[None]] = {}
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_database(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -89,7 +95,7 @@ class PendingInteractionManager:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                await self._run_sqlite(
+                await self._run_database(
                     self._insert_pending,
                     interaction_id,
                     session_id,
@@ -100,7 +106,9 @@ class PendingInteractionManager:
                     timeout_seconds,
                 )
                 break
-            except sqlite3.IntegrityError:
+            except Exception as exc:
+                if not _is_unique_constraint_error(exc):
+                    raise
                 if attempt < max_retries - 1:
                     await self.supersede(session_id, kind)
                     await asyncio.sleep(0.05 * (attempt + 1))
@@ -165,7 +173,7 @@ class PendingInteractionManager:
     ) -> bool:
         """Set decision, wake waiter, update DB. Returns False if expired/missing."""
         # Update DB
-        updated = await self._run_sqlite(
+        updated = await self._run_database(
             self._resolve_pending,
             interaction_id,
             decision,
@@ -205,7 +213,7 @@ class PendingInteractionManager:
 
     async def expire(self, interaction_id: str) -> None:
         """Mark expired in DB, wake waiter with timeout decision."""
-        await self._run_sqlite(self._expire_pending, interaction_id)
+        await self._run_database(self._expire_pending, interaction_id)
 
         # Cancel timeout task (may already be the one calling us)
         timeout_task = self._timeouts.pop(interaction_id, None)
@@ -233,7 +241,7 @@ class PendingInteractionManager:
 
         Only the latest non-expired per (session_id, kind) is returned.
         """
-        rows = await self._run_sqlite(
+        rows = await self._run_database(
             self._db.fetchall,
             """SELECT id, kind, provider, tool_name, payload_json, timeout_seconds
                FROM pending_interactions
@@ -264,7 +272,7 @@ class PendingInteractionManager:
 
     async def count_pending(self, session_id: str) -> int:
         """Count pending interactions for a session (rate limiting)."""
-        row = await self._run_sqlite(
+        row = await self._run_database(
             self._db.fetchone,
             "SELECT COUNT(*) as cnt FROM pending_interactions WHERE session_id = ? AND status = 'pending'",
             (session_id,),
@@ -284,7 +292,7 @@ class PendingInteractionManager:
 
     async def supersede(self, session_id: str, kind: str) -> None:
         """Expire any existing pending interaction of same (session_id, kind)."""
-        rows = await self._run_sqlite(
+        rows = await self._run_database(
             self._db.fetchall,
             "SELECT id FROM pending_interactions WHERE session_id = ? AND kind = ? AND status = 'pending'",
             (session_id, kind),
@@ -294,7 +302,7 @@ class PendingInteractionManager:
 
     async def expire_all_pending(self) -> None:
         """Mark all pending rows as expired. Called on daemon startup (fail-closed)."""
-        await self._run_sqlite(self._expire_all_pending)
+        await self._run_database(self._expire_all_pending)
 
         # Clear any orphaned in-memory state
         for event in self._waiters.values():

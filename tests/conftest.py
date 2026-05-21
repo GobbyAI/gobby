@@ -147,6 +147,48 @@ def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
     db.close()
 
 
+class NonLocalHubDatabase:
+    """HubDatabase proxy that is deliberately not a LocalDatabase instance."""
+
+    dialect = "postgres"
+
+    def __init__(self, inner: "HubDatabase") -> None:
+        self._inner = inner
+
+    def transaction(self) -> Any:
+        return self._inner.transaction()
+
+    def transaction_immediate(self, lock: Any | None = None) -> Any:
+        return self._inner.transaction_immediate(lock)
+
+    def execute(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.execute(sql, params)
+
+    def executemany(self, sql: str, rows: Any) -> Any:
+        return self._inner.executemany(sql, rows)
+
+    def fetchone(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.fetchone(sql, params)
+
+    def fetchall(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.fetchall(sql, params)
+
+    def safe_update(self, table: str, values: Any, where: str, where_params: Any = ()) -> Any:
+        return self._inner.safe_update(table, values, where, where_params)
+
+    def apply_migrations(self) -> None:
+        self._inner.apply_migrations()
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+@pytest.fixture
+def non_local_hub_db(hub_db: "HubDatabase") -> NonLocalHubDatabase:
+    """Wrap hub_db in an adapter that fails LocalDatabase isinstance checks."""
+    return NonLocalHubDatabase(hub_db)
+
+
 @pytest.fixture(params=["postgres"])
 def hub_db(
     request: pytest.FixtureRequest,

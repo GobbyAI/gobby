@@ -8,11 +8,11 @@ from typing import Any
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.build_profiles import BuildProfileManager, BuildProfileSource
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def create_profiles_registry(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     default_project_id: str | None = None,
 ) -> InternalToolRegistry:

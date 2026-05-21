@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psutil
@@ -377,17 +378,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         except Exception:
             pass
 
-        # Database size
-        db_size_bytes: int | None = None
-        try:
-            from gobby.cli.utils import get_gobby_home as _ghome
-
-            db_path = _ghome() / "gobby-hub.db"
-            if db_path.exists():
-                db_size_bytes = db_path.stat().st_size
-        except Exception:
-            pass
-
         # Last shutdown source
         last_shutdown: str | None = None
         try:
@@ -428,12 +418,22 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 logger.warning(f"Failed to get provider model catalog status: {e}")
 
         database_status: dict[str, Any] = {}
+        db_size_bytes: int | None = None
         db = getattr(server.services, "database", None)
         if db is not None:
+            database_status["backend"] = getattr(db, "dialect", None)
             connection_count = getattr(db, "connection_count", None)
             database_status["connection_count"] = (
                 connection_count if isinstance(connection_count, int) else None
             )
+            db_path = getattr(db, "db_path", None)
+            try:
+                if db_path is not None:
+                    resolved_db_path = Path(db_path).expanduser()
+                    if resolved_db_path.exists():
+                        db_size_bytes = resolved_db_path.stat().st_size
+            except Exception:
+                pass
         executor_stats = server.services.db_executor_stats()
         if executor_stats is not None:
             database_status["executor"] = executor_stats

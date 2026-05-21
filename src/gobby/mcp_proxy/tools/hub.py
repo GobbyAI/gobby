@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 __all__ = ["create_hub_registry"]
 
@@ -77,14 +76,13 @@ def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_hub_registry(
-    hub_db_path: Path,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> InternalToolRegistry:
     """
     Create a hub query tool registry with cross-project tools.
 
     Args:
-        hub_db_path: Path to the hub database file
+        db: Active daemon hub database adapter.
 
     Returns:
         InternalToolRegistry with hub query tools registered
@@ -94,19 +92,7 @@ def create_hub_registry(
         description="Hub (cross-project) queries and system info - get_machine_id, list_all_projects (for cross-project task creation), list_cross_project_tasks, list_cross_project_sessions, hub_stats",
     )
 
-    resolved_hub_db_path = hub_db_path.expanduser().resolve()
-
-    def _get_hub_db() -> tuple[DatabaseProtocol | None, bool]:
-        """Get hub database connection if it exists."""
-        if not resolved_hub_db_path.exists():
-            return None, False
-        if db is not None:
-            db_path = getattr(db, "db_path", None)
-            if db_path is not None and Path(db_path).expanduser().resolve() == resolved_hub_db_path:
-                return db, False
-        return LocalDatabase(resolved_hub_db_path), True
-
-    async def _run_sqlite(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         from gobby.app_context import get_app_context
 
         app_context = get_app_context()
@@ -115,14 +101,12 @@ def create_hub_registry(
         return await asyncio.to_thread(func, *args, **kwargs)
 
     async def _run_with_hub_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        hub_db, owned = _get_hub_db()
-        if hub_db is None:
-            return None
-        try:
-            return await _run_sqlite(func, hub_db, *args, **kwargs)
-        finally:
-            if owned:
-                hub_db.close()
+        if db is None:
+            raise RuntimeError("Hub database not available")
+        return await _run_db(func, db, *args, **kwargs)
+
+    def _hub_db_unavailable() -> dict[str, Any]:
+        return {"success": False, "error": "Hub database not available"}
 
     @registry.tool(
         name="get_machine_id",
@@ -167,12 +151,12 @@ def create_hub_registry(
         Args:
             include_system: Include system projects (_orphaned, _migrated, _personal, _global)
         """
-        if not resolved_hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
+        if db is None:
+            return _hub_db_unavailable()
 
         try:
 
-            def _query_projects(hub_db: DatabaseProtocol) -> list[Any]:
+            def _query_projects(hub_db: HubDatabase) -> list[Any]:
                 return hub_db.fetchall(
                     """
                 SELECT p.id, p.name, p.repo_path,
@@ -224,8 +208,8 @@ def create_hub_registry(
             state: Optional projected state filter (ready, closed, in_progress, needs_review)
             limit: Maximum number of tasks to return (default 50)
         """
-        if not resolved_hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
+        if db is None:
+            return _hub_db_unavailable()
 
         try:
             where_clause = ""
@@ -236,14 +220,14 @@ def create_hub_registry(
             else:
                 params = (limit,)
 
-            def _query_tasks(hub_db: DatabaseProtocol) -> list[Any]:
+            def _query_tasks(hub_db: HubDatabase) -> list[Any]:
                 return hub_db.fetchall(
                     f"""
                 SELECT t.id, t.project_id, t.title, t.task_type, t.priority,
                        t.created_at, t.updated_at, t.assignee, t.claimed_by_session_id,
                        t.closed_at, t.closed_reason, t.closed_in_session_id,
                        t.closed_commit_sha, t.escalated_at, t.escalation_reason,
-                       COALESCE(t.is_escalated, 0) as is_escalated,
+                       COALESCE(t.is_escalated, false) as is_escalated,
                        current_stage.stage_name as current_stage_name,
                        current_stage.state as current_stage_state,
                        current_stage.review_policy as current_stage_review_policy,
@@ -306,12 +290,12 @@ def create_hub_registry(
         Args:
             limit: Maximum number of sessions to return (default 20)
         """
-        if not resolved_hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
+        if db is None:
+            return _hub_db_unavailable()
 
         try:
 
-            def _query_sessions(hub_db: DatabaseProtocol) -> list[Any]:
+            def _query_sessions(hub_db: HubDatabase) -> list[Any]:
                 return hub_db.fetchall(
                     """
                 SELECT id, project_id, source, status, machine_id, created_at, updated_at
@@ -356,10 +340,10 @@ def create_hub_registry(
 
         Returns counts of projects, tasks, sessions, memories, etc.
         """
-        if not resolved_hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
+        if db is None:
+            return _hub_db_unavailable()
 
-        def _collect_stats(db: DatabaseProtocol) -> dict[str, Any]:
+        def _collect_stats(db: HubDatabase) -> dict[str, Any]:
             stats: dict[str, Any] = {}
 
             project_count_result = db.fetchone(

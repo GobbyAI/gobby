@@ -1,6 +1,6 @@
 """Authentication store for web UI sessions.
 
-Manages auth sessions in SQLite for cookie-based login.
+Manages auth sessions in the hub database for cookie-based login.
 Passwords are encrypted via Fernet in the secrets table (same as API keys).
 Sessions are random tokens with expiry.
 """
@@ -19,7 +19,7 @@ REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 
 
 class AuthStore:
-    """Manages auth sessions in SQLite."""
+    """Manages auth sessions in the hub database."""
 
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
