@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
 import os
 import re
 import threading
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Literal, cast
 
 import psycopg
@@ -20,7 +22,9 @@ from gobby.storage.hub.placeholders import (
 )
 from gobby.storage.hub.placeholders import (
     remap_dollar_placeholders,
+    remap_qmark_placeholders,
     scan_dollar_placeholder_indexes,
+    scan_qmark_placeholder_indexes,
 )
 from gobby.storage.hub.protocol import (
     ChatAttachmentMutation,
@@ -71,14 +75,70 @@ _BaselineState = Literal[
     "corrupt_partial",
 ]
 _PLACEHOLDER_SCAN_CACHE = threading.local()
+_BOOLEAN_COLUMNS: frozenset[str] = frozenset(
+    {
+        "allow_automation",
+        "always_apply",
+        "context_injected",
+        "enabled",
+        "floor_drift",
+        "graph_processed",
+        "graph_synced",
+        "had_edits",
+        "is_dev",
+        "is_escalated",
+        "is_high_value",
+        "is_local",
+        "is_secret",
+        "is_system",
+        "is_terminal",
+        "pr_required",
+        "reasoning_required",
+        "remember_me",
+        "requires_human",
+        "sandbox_enabled",
+        "success",
+        "transcript_processed",
+        "unattended",
+        "vectors_synced",
+        "webhook_enabled",
+    }
+)
+_BOOLEAN_COLUMN_ALTERNATION = "|".join(sorted(_BOOLEAN_COLUMNS, key=len, reverse=True))
+_BOOLEAN_LITERAL_RE = re.compile(
+    rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
+    r"\s*=\s*(?P<value>[01])\b"
+)
+_BOOLEAN_COALESCE_RE = re.compile(
+    r"COALESCE\(\s*"
+    rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
+    r"\s*,\s*(?P<default>[01])\s*\)\s*=\s*(?P<value>[01])\b"
+)
+_BOOLEAN_PARAM_COMPARISON_RE = re.compile(
+    rf"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b"
+    r"\s*(?:=|IS)\s*%s\b"
+)
+_INSERT_VALUES_RE = re.compile(
+    r"\bINSERT\s+INTO\s+(?:\"?[A-Za-z_][A-Za-z0-9_]*\"?\.)?\"?[A-Za-z_][A-Za-z0-9_]*\"?"
+    r"\s*\((?P<columns>.*?)\)\s*VALUES\s*\((?P<values>.*?)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_NULL_TEST_PARAM_RE = re.compile(r"%s\s+IS(?P<not>\s+NOT)?\s+NULL", re.IGNORECASE)
 
 
 def _remap_placeholders_to_psycopg(
     sql: str,
     params: Sequence[Any],
 ) -> tuple[str, tuple[Any, ...]]:
-    """Translate top-level ``$N`` placeholders to psycopg ``%s`` placeholders."""
-    new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
+    """Translate top-level hub placeholders to psycopg ``%s`` placeholders."""
+    sql = _rewrite_sqlite_boolean_literals(sql)
+    if params and "?" in sql and "$" not in sql:
+        new_sql, new_params, indexes = remap_qmark_placeholders(sql, params, "%s")
+    else:
+        new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
+    new_sql = _cast_null_test_placeholders(new_sql)
+    new_params = _coerce_boolean_params(new_sql, new_params)
+    new_sql = _escape_literal_percent_for_psycopg(new_sql)
     _cache_param_permutation(sql, len(params), indexes)
     return new_sql, new_params
 
@@ -122,6 +182,8 @@ def _cached_param_permutation(sql: str, param_count: int) -> tuple[int, ...] | N
 
 
 def _scan_placeholder_indexes(sql: str, param_count: int) -> tuple[str, tuple[int, ...]]:
+    if param_count and "?" in sql and "$" not in sql:
+        return scan_qmark_placeholder_indexes(sql, param_count, "%s")
     return scan_dollar_placeholder_indexes(sql, param_count, "%s")
 
 
@@ -130,8 +192,245 @@ def _prepare_params(
     params: Sequence[Any] | Mapping[str, Any],
 ) -> tuple[str, Sequence[Any] | Mapping[str, Any]]:
     if isinstance(params, Mapping):
-        return sql, params
+        new_sql = _cast_null_test_placeholders(_rewrite_sqlite_boolean_literals(sql))
+        return _escape_literal_percent_for_psycopg(new_sql), params
     return _remap_placeholders_to_psycopg(sql, params)
+
+
+def _escape_literal_percent_for_psycopg(sql: str) -> str:
+    """Escape literal percent signs while preserving psycopg placeholders."""
+    out: list[str] = []
+    i = 0
+    n = len(sql)
+    while i < n:
+        char = sql[i]
+        if char != "%":
+            out.append(char)
+            i += 1
+            continue
+        if i + 1 < n and sql[i + 1] in {"s", "b", "t", "%"}:
+            out.append(sql[i : i + 2])
+            i += 2
+            continue
+        if i + 1 < n and sql[i + 1] == "(":
+            end = sql.find(")", i + 2)
+            if end >= 0 and end + 1 < n and sql[end + 1] in {"s", "b", "t"}:
+                out.append(sql[i : end + 2])
+                i = end + 2
+                continue
+        out.append("%%")
+        i += 1
+    return "".join(out)
+
+
+def _rewrite_sqlite_boolean_literals(sql: str) -> str:
+    """Translate SQLite-style boolean integer predicates for Postgres boolean columns."""
+    out: list[str] = []
+    segment_start = 0
+    i = 0
+    n = len(sql)
+    while i < n:
+        if sql[i] == "-" and i + 1 < n and sql[i + 1] == "-":
+            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
+            end = sql.find("\n", i)
+            end = n if end < 0 else end
+            out.append(sql[i:end])
+            i = end
+            segment_start = i
+            continue
+        if sql[i] == "/" and i + 1 < n and sql[i + 1] == "*":
+            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
+            i = _copy_block_comment_segment(sql, i, out)
+            segment_start = i
+            continue
+        if sql[i] == "'":
+            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
+            i = _copy_quoted_segment(sql, i, "'", out)
+            segment_start = i
+            continue
+        if sql[i] == '"':
+            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
+            i = _copy_quoted_segment(sql, i, '"', out)
+            segment_start = i
+            continue
+        if sql[i] == "$":
+            end = _dollar_quote_end(sql, i)
+            if end is not None:
+                i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
+                out.append(sql[i:end])
+                i = end
+                segment_start = i
+                continue
+        i += 1
+
+    _copy_rewritten_plain_segment(sql, segment_start, n, out)
+    return "".join(out)
+
+
+def _copy_rewritten_plain_segment(sql: str, start: int, end: int, out: list[str]) -> int:
+    if end > start:
+        out.append(_rewrite_boolean_literals_in_plain_sql(sql[start:end]))
+    return end
+
+
+def _rewrite_boolean_literals_in_plain_sql(sql: str) -> str:
+    """Rewrite boolean integer predicates in a SQL segment with no strings/comments."""
+
+    def replace_coalesce(match: re.Match[str]) -> str:
+        default = "TRUE" if match.group("default") == "1" else "FALSE"
+        value = "TRUE" if match.group("value") == "1" else "FALSE"
+        return f"COALESCE({match.group('column')}, {default}) = {value}"
+
+    def replace(match: re.Match[str]) -> str:
+        literal = "TRUE" if match.group("value") == "1" else "FALSE"
+        return f"{match.group('column')} = {literal}"
+
+    return _BOOLEAN_LITERAL_RE.sub(replace, _BOOLEAN_COALESCE_RE.sub(replace_coalesce, sql))
+
+
+def _copy_block_comment_segment(sql: str, start: int, out: list[str]) -> int:
+    end = sql.find("*/", start + 2)
+    end = len(sql) if end < 0 else end + 2
+    out.append(sql[start:end])
+    return end
+
+
+def _copy_quoted_segment(sql: str, start: int, quote: str, out: list[str]) -> int:
+    i = start + 1
+    n = len(sql)
+    while i < n:
+        if sql[i] == quote:
+            if i + 1 < n and sql[i + 1] == quote:
+                i += 2
+                continue
+            i += 1
+            out.append(sql[start:i])
+            return i
+        i += 1
+    out.append(sql[start:n])
+    return n
+
+
+def _dollar_quote_end(sql: str, start: int) -> int | None:
+    tag_end = start + 1
+    n = len(sql)
+    while tag_end < n and (sql[tag_end].isalnum() or sql[tag_end] == "_"):
+        tag_end += 1
+    if tag_end >= n or sql[tag_end] != "$":
+        return None
+    tag = sql[start : tag_end + 1]
+    close = sql.find(tag, tag_end + 1)
+    if close < 0:
+        return None
+    return close + len(tag)
+
+
+def _cast_null_test_placeholders(sql: str) -> str:
+    """Give bare ``%s IS NULL`` checks a type so Postgres can plan NULL params."""
+
+    def replace(match: re.Match[str]) -> str:
+        not_part = match.group("not") or ""
+        return f"%s::text IS{not_part} NULL"
+
+    return _NULL_TEST_PARAM_RE.sub(replace, sql)
+
+
+def _coerce_boolean_params(sql: str, params: tuple[Any, ...]) -> tuple[Any, ...]:
+    if not params:
+        return params
+
+    coerced = list(params)
+    for index in _boolean_param_indexes(sql):
+        if index < len(coerced):
+            coerced[index] = _coerce_boolean_param(coerced[index])
+    return tuple(coerced)
+
+
+def _coerce_boolean_param(value: Any) -> Any:
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    return value
+
+
+def _boolean_param_indexes(sql: str) -> set[int]:
+    indexes: set[int] = set()
+    for match in _BOOLEAN_PARAM_COMPARISON_RE.finditer(sql):
+        index = _placeholder_index_at(sql, match.end() - 2)
+        if index is not None:
+            indexes.add(index)
+    indexes.update(_insert_boolean_param_indexes(sql))
+    return indexes
+
+
+def _placeholder_index_at(sql: str, placeholder_start: int) -> int | None:
+    seen = 0
+    for match in re.finditer(r"%s", sql):
+        if match.start() == placeholder_start:
+            return seen
+        seen += 1
+    return None
+
+
+def _insert_boolean_param_indexes(sql: str) -> set[int]:
+    indexes: set[int] = set()
+    for match in _INSERT_VALUES_RE.finditer(sql):
+        columns = _split_top_level_csv(match.group("columns"))
+        values = _split_top_level_csv(match.group("values"))
+        if len(columns) != len(values):
+            continue
+        value_start = match.start("values")
+        offset = 0
+        for column, value in zip(columns, values, strict=True):
+            raw_column = _unquote_identifier(column)
+            token = value.strip()
+            token_start = sql.find(value, value_start + offset)
+            if token_start >= 0:
+                offset = token_start - value_start + len(value)
+            if raw_column not in _BOOLEAN_COLUMNS or token != "%s" or token_start < 0:
+                continue
+            index = _placeholder_index_at(sql, token_start + value.index("%s"))
+            if index is not None:
+                indexes.add(index)
+    return indexes
+
+
+def _split_top_level_csv(text: str) -> list[str]:
+    items: list[str] = []
+    start = 0
+    depth = 0
+    quote: str | None = None
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if quote:
+            if char == quote:
+                if i + 1 < len(text) and text[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(text[start:i].strip())
+            start = i + 1
+        i += 1
+    items.append(text[start:].strip())
+    return items
+
+
+def _unquote_identifier(text: str) -> str:
+    text = text.strip()
+    if "." in text:
+        text = text.rsplit(".", 1)[1]
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        return text[1:-1].replace('""', '"')
+    return text
 
 
 class PostgresHubDatabase:
@@ -158,7 +457,7 @@ class PostgresHubDatabase:
             yield txn
 
     @contextmanager
-    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
+    def transaction_immediate(self, lock: LockTarget | None = None) -> Iterator[Transaction]:
         with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
             yield txn
 
@@ -169,8 +468,6 @@ class PostgresHubDatabase:
         immediate: bool,
         lock: LockTarget | None,
     ) -> Iterator[Transaction]:
-        if immediate and lock is None:
-            raise TypeError("transaction_immediate() requires a LockTarget")
         with self._transaction_context(is_immediate=immediate, initial_lock=lock) as txn:
             yield txn
 
@@ -333,7 +630,10 @@ class _PostgresTransaction:
             first,
         )
         permuted_rows = [first_permuted]
-        permuted_rows.extend(_params_from_indexes(row, permutation) for row in materialized[1:])
+        permuted_rows.extend(
+            _coerce_boolean_params(new_sql, _params_from_indexes(row, permutation))
+            for row in materialized[1:]
+        )
         driver_executemany = getattr(self._conn, "executemany", None)
         if callable(driver_executemany):
             driver_executemany(new_sql, permuted_rows)
@@ -388,12 +688,16 @@ class _PostgresCursor:
     def fetchone(self) -> Row | None:
         if self._cursor is None:
             return None
-        return cast(Row | None, self._cursor.fetchone())
+        return _normalize_row(cast(Row | None, self._cursor.fetchone()))
 
     def fetchall(self) -> list[Row]:
         if self._cursor is None:
             return []
-        return list(cast(Sequence[Row], self._cursor.fetchall()))
+        return [
+            row
+            for row in (_normalize_row(row) for row in cast(Sequence[Row], self._cursor.fetchall()))
+            if row is not None
+        ]
 
     @property
     def rowcount(self) -> int:
@@ -404,6 +708,22 @@ class _PostgresCursor:
     @property
     def lastrowid(self) -> int | None:
         return None
+
+
+def _normalize_row(row: Row | None) -> Row | None:
+    if row is None:
+        return None
+    if isinstance(row, Mapping):
+        return cast(Row, {str(key): _normalize_value(value) for key, value in row.items()})
+    return row
+
+
+def _normalize_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict | list):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
 
 
 class _PostgresSavepoint:
@@ -480,6 +800,15 @@ def _build_safe_update(
 
     update_params: list[Any] = []
     set_clauses: list[str] = []
+    if "?" in where and "$" not in where:
+        for column, value in values.items():
+            _validate_identifier(column)
+            set_clauses.append(f"{column} = ?")
+            update_params.append(value)
+
+        sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
+        return sql, (*update_params, *where_params)
+
     for index, (column, value) in enumerate(values.items(), start=1):
         _validate_identifier(column)
         set_clauses.append(f"{column} = ${index}")

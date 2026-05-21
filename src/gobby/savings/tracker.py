@@ -6,6 +6,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.sql_dialect import newer_than_now_expr
+
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
@@ -91,7 +93,7 @@ class SavingsTracker:
 
     def get_summary(self, days: int = 1, project_id: str | None = None) -> dict[str, Any]:
         """Get savings summary for the specified time window."""
-        params: list[Any] = [f"-{days} days"]
+        params: list[Any] = [days]
 
         project_filter = ""
         if project_id:
@@ -103,6 +105,7 @@ class SavingsTracker:
         cat_filter = f"AND category IN ({cat_placeholders})"
         cat_params = list(VALID_CATEGORIES)
 
+        window_sql = newer_than_now_expr(self.db, "created_at", "?", "day")
         rows = self.db.fetchall(
             f"SELECT category, "
             f"SUM(original_tokens) as original_tokens, "
@@ -110,7 +113,7 @@ class SavingsTracker:
             f"SUM(tokens_saved) as tokens_saved, "
             f"COUNT(*) as event_count "
             f"FROM savings_ledger "
-            f"WHERE created_at >= datetime('now', ?) {project_filter} {cat_filter} "
+            f"WHERE {window_sql} {project_filter} {cat_filter} "
             f"GROUP BY category",
             tuple(params + cat_params),
         )

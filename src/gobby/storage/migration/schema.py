@@ -8,14 +8,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.migrations import BASELINE_VERSION
-
-_EXPECTED_SQLITE_SCHEMA_FINGERPRINTS = (
-    # Legacy v260 source with schema_migrations bookkeeping.
-    "fbe2914e66ab5d608c8ffc38638a761874fb5a19ff6e76f8bae9447871002269",
-    # Legacy v260 source with schema_version bookkeeping.
-    "2868b075dfd8258def472aa2912d8231e02b198834406a5be73961fc74fd4933",
-)
+from gobby.storage.migration.tables import sqlite_application_tables
+from gobby.storage.migrations import BASELINE_VERSION, _sqlite_baseline_sql
 
 
 @dataclass(frozen=True)
@@ -44,10 +38,21 @@ def validate_sqlite_source_schema(source: sqlite3.Connection) -> SqliteSchemaVal
             fingerprint,
             expected,
         )
-    if fingerprint not in expected:
+    if fingerprint not in expected and not _migration_table_set_matches_baseline(source):
         return SqliteSchemaValidation(
             False,
             "SQLite schema fingerprint mismatch: source schema drifted from supported baseline",
+            version,
+            fingerprint,
+            expected,
+        )
+    if fingerprint not in expected:
+        return SqliteSchemaValidation(
+            True,
+            (
+                f"SQLite schema baseline v{version} table set ok; raw DDL fingerprint differs "
+                "from flattened baseline"
+            ),
             version,
             fingerprint,
             expected,
@@ -78,7 +83,42 @@ def sqlite_schema_fingerprint(source: sqlite3.Connection) -> str:
 
 
 def expected_sqlite_schema_fingerprints() -> tuple[str, ...]:
-    return _EXPECTED_SQLITE_SCHEMA_FINGERPRINTS
+    return tuple(_baseline_fingerprint(table) for table in ("schema_migrations", "schema_version"))
+
+
+def _baseline_fingerprint(version_table: str) -> str:
+    conn = _baseline_connection(version_table)
+    try:
+        return sqlite_schema_fingerprint(conn)
+    finally:
+        conn.close()
+
+
+def _migration_table_set_matches_baseline(source: sqlite3.Connection) -> bool:
+    source_tables = sqlite_application_tables(source)
+    return source_tables in expected_sqlite_migration_table_sets()
+
+
+@cache
+def expected_sqlite_migration_table_sets() -> frozenset[frozenset[str]]:
+    return frozenset(
+        _baseline_table_set(table) for table in ("schema_migrations", "schema_version")
+    )
+
+
+def _baseline_table_set(version_table: str) -> frozenset[str]:
+    conn = _baseline_connection(version_table)
+    try:
+        return frozenset(sqlite_application_tables(conn))
+    finally:
+        conn.close()
+
+
+def _baseline_connection(version_table: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_sqlite_baseline_sql(version_table))
+    return conn
 
 
 def _sqlite_schema_objects(source: sqlite3.Connection) -> list[tuple[str, str, str, str]]:

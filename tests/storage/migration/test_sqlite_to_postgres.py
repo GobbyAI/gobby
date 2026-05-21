@@ -16,9 +16,43 @@ pytestmark = pytest.mark.unit
 
 
 class _FakePostgres:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self._events = events
+        self.transaction_depth = 0
+        self.transaction_entries = 0
+
     @contextmanager
     def transaction(self) -> Iterator[_FakePostgres]:
-        yield self
+        self.transaction_entries += 1
+        if self._events is not None:
+            self._events.append("transaction.begin")
+        self.transaction_depth += 1
+        try:
+            yield self
+        finally:
+            self.transaction_depth -= 1
+            if self._events is not None:
+                self._events.append("transaction.commit")
+
+    def execute(self, statement: object, params: object = ()) -> SimpleNamespace:
+        _ = params
+        text = str(statement)
+        if self._events is not None and text.startswith("SET CONSTRAINTS"):
+            self._events.append(text)
+        if self._events is not None and text.startswith("INSERT INTO gobby_migration_state"):
+            assert self.transaction_depth == 1
+            self._events.append("marker-insert")
+        return SimpleNamespace(fetchone=lambda: None)
+
+
+class _ColumnTarget:
+    def __init__(self, columns: set[str]) -> None:
+        self.columns = columns
+
+    def execute(self, statement: object, params: object = ()) -> SimpleNamespace:
+        _ = statement, params
+        rows = [{"column_name": column} for column in self.columns]
+        return SimpleNamespace(fetchall=lambda: rows)
 
 
 def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
@@ -32,7 +66,11 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
 
     @contextmanager
     def _postgres_context(_target: str) -> Iterator[_FakePostgres]:
-        yield _FakePostgres()
+        yield _FakePostgres(events)
+
+    def _record_locked(target: Any, event: str) -> None:
+        assert target.transaction_depth == 1
+        events.append(event)
 
     monkeypatch.setattr(
         migration,
@@ -46,37 +84,63 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
     )
     monkeypatch.setattr(migration, "_apply_postgres_schema", lambda *_args: None)
     monkeypatch.setattr(
-        migration, "_assert_target_ready_for_import", lambda *_args, **_kwargs: None
+        migration,
+        "_assert_target_ready_for_import",
+        lambda _source, target, **_kwargs: _record_locked(target, "ready"),
     )
-    monkeypatch.setattr(migration, "_fail_if_import_complete_marker", lambda *_args: None)
     monkeypatch.setattr(
-        migration, "_acquire_import_lock", lambda *_args, **_kwargs: events.append("lock")
+        migration,
+        "_fail_if_import_complete_marker",
+        lambda target: _record_locked(target, "marker-check"),
     )
-    monkeypatch.setattr(migration, "_reset_seed_bearing_tables", lambda *_args: None)
-    monkeypatch.setattr(migration, "_drop_bm25_indexes", lambda *_args: None)
-    monkeypatch.setattr(migration, "_recreate_bm25_indexes", lambda *_args: None)
+    monkeypatch.setattr(
+        migration,
+        "_acquire_import_lock",
+        lambda target: _record_locked(target, "lock"),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_reset_seed_bearing_tables",
+        lambda target: _record_locked(target, "reset"),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_drop_bm25_indexes",
+        lambda target: _record_locked(target, "drop"),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_recreate_bm25_indexes",
+        lambda target: _record_locked(target, "recreate"),
+    )
     monkeypatch.setattr(migration, "_default_import_log_path", lambda: tmp_path / "import.log")
+
+    def _copy_with_outer_transaction(
+        _source: sqlite3.Connection,
+        target: Any,
+        _batch_size: int,
+        _log_path: Path,
+        **kwargs: Any,
+    ) -> Any:
+        assert kwargs == {"manage_transaction": False}
+        assert target.transaction_depth == 1
+        return _record_copy(migration, events)
+
     monkeypatch.setattr(
         migration,
         "_copy_sqlite_rows_to_postgres",
-        lambda *_args, **_kwargs: _record_copy(migration, events),
+        _copy_with_outer_transaction,
     )
     monkeypatch.setattr(
         migration,
         "reseed_identity_sequences",
-        lambda *_args, **_kwargs: events.append("reseed"),
+        lambda target: _record_locked(target, "reseed"),
     )
     monkeypatch.setattr(
         migration,
         "validate_migration",
-        lambda *_args, **_kwargs: _record_validation(events),
+        lambda _source, target, **_kwargs: _record_locked_validation(events, target),
     )
-    monkeypatch.setattr(
-        migration,
-        "_write_import_complete_marker",
-        lambda *_args, **_kwargs: events.append("marker"),
-    )
-
     result = migration.migrate_sqlite_to_postgres(
         source=source,
         target="postgresql://gobby:secret@example.com/gobby",
@@ -84,7 +148,23 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         dry_run=False,
     )
 
-    assert events == ["schema", "copy", "reseed", "validate", "marker"]
+    assert events == [
+        "schema",
+        "transaction.begin",
+        "lock",
+        "ready",
+        "marker-check",
+        "reset",
+        "drop",
+        "SET CONSTRAINTS ALL DEFERRED",
+        "copy",
+        "SET CONSTRAINTS ALL IMMEDIATE",
+        "recreate",
+        "reseed",
+        "validate",
+        "marker-insert",
+        "transaction.commit",
+    ]
     assert result["rows"] == 3
     assert result["tables"] == 2
     assert result["dry_run"] is False
@@ -156,6 +236,86 @@ def test_migrate_sqlite_to_postgres_dry_run_is_read_only(
     assert result["validation_artifact"] is None
 
 
+def test_migrate_sqlite_to_postgres_dry_run_uses_baseline_for_fresh_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = tmp_path / "gobby-hub.db"
+    source.write_bytes(b"sqlite fixture")
+    observed: dict[str, set[str] | None] = {}
+
+    @contextmanager
+    def _postgres_context(_target: str) -> Iterator[object]:
+        yield object()
+
+    def _mapping_preflight(
+        _source: sqlite3.Connection,
+        _target: object,
+        *,
+        target_tables: set[str] | None,
+        emit: object,
+    ) -> dict[str, int]:
+        _ = emit
+        observed["target_tables"] = target_tables
+        return {"tasks": 2}
+
+    monkeypatch.setattr(migration, "_assert_source_schema_supported", lambda *_args: None)
+    monkeypatch.setattr(migration, "_connect_postgres", _postgres_context)
+    monkeypatch.setattr(migration, "active_install_mode", lambda: "docker")
+    monkeypatch.setattr(
+        migration,
+        "_run_target_read_only_preflight",
+        lambda *_args, **_kwargs: "fresh_with_install_infra",
+    )
+    monkeypatch.setattr(migration, "_run_table_mapping_preflight", _mapping_preflight)
+
+    result = migration.migrate_sqlite_to_postgres(
+        source=source,
+        target="postgresql://gobby:secret@example.com/gobby",
+        dry_run=True,
+    )
+
+    assert result["dry_run"] is True
+    assert observed["target_tables"] is not None
+    assert "tasks" in observed["target_tables"]
+    assert "auth_sessions" not in observed["target_tables"]
+
+
+def test_copy_can_run_inside_existing_import_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = sqlite3.connect(":memory:")
+    events: list[str] = []
+    target = _FakePostgres(events)
+
+    monkeypatch.setattr(migration, "_sqlite_application_tables", lambda _source: {"child"})
+    monkeypatch.setattr(
+        migration, "_dependency_ordered_tables", lambda _source, _tables: ("child",)
+    )
+    monkeypatch.setattr(migration, "_copy_columns", lambda *_args: ("id", "parent_id"))
+    monkeypatch.setattr(migration, "_copy_table", lambda *_args: 1)
+    monkeypatch.setattr(migration, "_write_import_log", lambda *_args: None)
+
+    try:
+        result = migration._copy_sqlite_rows_to_postgres(
+            source,
+            target,
+            100,
+            tmp_path / "import.log",
+            manage_transaction=False,
+        )
+    finally:
+        source.close()
+
+    assert result.rows == 1
+    assert result.tables == 1
+    assert target.transaction_entries == 0
+    assert events == []
+
+
 def test_seed_bearing_tables_follow_postgres_baseline() -> None:
     migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
 
@@ -178,6 +338,119 @@ def test_assert_source_schema_supported_rejects_same_version_schema_drift() -> N
         migration._assert_source_schema_supported(source)
 
 
+def test_assert_source_schema_supported_accepts_ignored_runtime_tables() -> None:
+    schema = importlib.import_module("gobby.storage.migration.schema")
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = schema._baseline_connection("schema_version")
+    source.row_factory = sqlite3.Row
+    source.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+    source.execute(
+        """
+        CREATE TABLE pending_approvals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+
+    try:
+        migration._assert_source_schema_supported(source)
+    finally:
+        source.close()
+
+
+def test_copy_columns_ignores_known_legacy_source_columns() -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute(
+        """
+        CREATE TABLE workflow_states (
+            session_id TEXT PRIMARY KEY,
+            workflow_name TEXT NOT NULL,
+            step TEXT NOT NULL,
+            current_task_index INTEGER,
+            task_list TEXT
+        )
+        """
+    )
+    target = _ColumnTarget({"session_id", "workflow_name", "step"})
+
+    try:
+        columns = migration._copy_columns(source, target, "workflow_states")
+    finally:
+        source.close()
+
+    assert columns == ("session_id", "workflow_name", "step")
+
+
+def test_epoch_timestamp_strings_are_normalized_for_copy_and_validation() -> None:
+    values = importlib.import_module("gobby.storage.migration.values")
+    validation = importlib.import_module("gobby.storage.migration.validation")
+
+    normalized = values.normalize_timestamp_like_value("created_at", "1775144511")
+
+    assert normalized == "2026-04-02T15:41:51+00:00"
+    assert values.normalize_timestamp_like_value("id", "1775144511") == "1775144511"
+    assert validation._row_to_dict({"created_at": "1775144511"}) == {
+        "created_at": "2026-04-02T15:41:51"
+    }
+
+
+def test_import_repairs_stale_sqlite_foreign_key_edges() -> None:
+    tables = importlib.import_module("gobby.storage.migration.tables")
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.executescript(
+        """
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
+        CREATE TABLE tools (
+            id TEXT PRIMARY KEY,
+            mcp_server_id TEXT NOT NULL,
+            name TEXT NOT NULL
+        );
+        CREATE TABLE sessions (id TEXT PRIMARY KEY);
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            parent_task_id TEXT,
+            created_in_session_id TEXT
+        );
+        INSERT INTO mcp_servers (id) VALUES ('server-ok');
+        INSERT INTO tools (id, mcp_server_id, name) VALUES
+            ('tool-ok', 'server-ok', 'ok'),
+            ('tool-orphan', 'server-missing', 'missing');
+        INSERT INTO tasks (id, parent_task_id, created_in_session_id) VALUES
+            ('task-1', 'task-missing', 'session-missing');
+        """
+    )
+
+    try:
+        assert validation._sqlite_count(source, "tools") == 1
+        assert (
+            tables.repair_orphan_reference_value(
+                source,
+                table="tasks",
+                column="parent_task_id",
+                value="task-missing",
+                cache={},
+            )
+            is None
+        )
+        assert validation._sqlite_rows(source, "tasks") == [
+            {
+                "id": "task-1",
+                "parent_task_id": None,
+                "created_in_session_id": None,
+            }
+        ]
+    finally:
+        source.close()
+
+
 def _record_copy(migration: Any, events: list[str]) -> Any:
     events.append("copy")
     return migration._CopyResult(rows=3, tables=2)
@@ -186,3 +459,8 @@ def _record_copy(migration: Any, events: list[str]) -> Any:
 def _record_validation(events: list[str]) -> SimpleNamespace:
     events.append("validate")
     return SimpleNamespace(artifact_path=None)
+
+
+def _record_locked_validation(events: list[str], target: Any) -> SimpleNamespace:
+    assert target.transaction_depth == 1
+    return _record_validation(events)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from datetime import UTC, datetime
 
 import pytest
 
@@ -104,6 +105,33 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
         ),
         ('SELECT "$1", $1 FROM t', ("a",), 'SELECT "$1", %s FROM t', ("a",)),
         ("SELECT foo$1, $1 FROM t", ("a",), "SELECT foo$1, %s FROM t", ("a",)),
+        (
+            "SELECT * FROM task_stages_registry WHERE name = ?",
+            ("dev",),
+            "SELECT * FROM task_stages_registry WHERE name = %s",
+            ("dev",),
+        ),
+        (
+            "SELECT * FROM workflow_definitions WHERE name = ? AND project_id IS ?",
+            ("dev", None),
+            "SELECT * FROM workflow_definitions WHERE name = %s AND project_id IS %s",
+            ("dev", None),
+        ),
+        (
+            "SELECT '?' AS literal WHERE name = ?",
+            ("dev",),
+            "SELECT '?' AS literal WHERE name = %s",
+            ("dev",),
+        ),
+        ("/* ? */ SELECT ?", ("dev",), "/* ? */ SELECT %s", ("dev",)),
+        (
+            "SELECT body FROM task_comments WHERE task_id = ? "
+            "AND body LIKE '## Holistic QA Failure%'",
+            ("task-1",),
+            "SELECT body FROM task_comments WHERE task_id = %s "
+            "AND body LIKE '## Holistic QA Failure%%'",
+            ("task-1",),
+        ),
     ],
 )
 def test_remap_placeholders_to_psycopg(sql, params, expected_sql, expected_params) -> None:
@@ -129,6 +157,18 @@ def test_remap_placeholders_to_psycopg_rejects_unterminated_dollar_quote() -> No
         module._remap_placeholders_to_psycopg("SELECT $body$not closed", ())
 
 
+def test_prepare_params_escapes_literal_percent_without_touching_named_placeholders() -> None:
+    module = _postgres_module()
+
+    sql, params = module._prepare_params(
+        "SELECT %(value)s WHERE body LIKE 'prefix%' AND title = %(title)s",
+        {"value": 1, "title": "demo"},
+    )
+
+    assert sql == "SELECT %(value)s WHERE body LIKE 'prefix%%' AND title = %(title)s"
+    assert params == {"value": 1, "title": "demo"}
+
+
 class _FakePostgresConnection:
     def __init__(self) -> None:
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
@@ -150,6 +190,159 @@ def test_postgres_transaction_execute_remaps_before_driver_call() -> None:
     tx.execute("SELECT $2, $1, '$3'", ("one", "two", "literal"))
 
     assert conn.execute_calls == [("SELECT %s, %s, '$3'", ("two", "one"))]
+
+
+def test_postgres_transaction_execute_remaps_qmark_before_driver_call() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("SELECT * FROM task_stages_registry WHERE name = ?", ("dev",))
+
+    assert conn.execute_calls == [("SELECT * FROM task_stages_registry WHERE name = %s", ("dev",))]
+
+
+def test_postgres_transaction_execute_rewrites_sqlite_boolean_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM mcp_servers WHERE enabled = 1 AND graph_synced=0 AND source = 'enabled = 1'"
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM mcp_servers WHERE enabled = TRUE "
+            "AND graph_synced = FALSE AND source = 'enabled = 1'",
+            (),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_rewrites_boolean_assignment_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = ?", ("file-1",))
+
+    assert conn.execute_calls == [
+        (
+            "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
+            ("file-1",),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_rewrites_sqlite_boolean_coalesce_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, 0) = 0 "
+        "OR COALESCE(tasks.allow_automation, 1) = 1"
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, FALSE) = FALSE "
+            "OR COALESCE(tasks.allow_automation, TRUE) = TRUE",
+            (),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_filter_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM workflow_definitions WHERE name = ? AND enabled = ?",
+        ("rule", 1),
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM workflow_definitions WHERE name = %s AND enabled = %s",
+            ("rule", True),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_update_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("UPDATE workflow_definitions SET enabled = ? WHERE id = ?", (0, "wf-1"))
+
+    assert conn.execute_calls == [
+        ("UPDATE workflow_definitions SET enabled = %s WHERE id = %s", (False, "wf-1"))
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_insert_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "INSERT INTO workflow_definitions (id, enabled, name) VALUES (?, ?, ?)",
+        ("wf-1", 1, "rule"),
+    )
+
+    assert conn.execute_calls == [
+        (
+            "INSERT INTO workflow_definitions (id, enabled, name) VALUES (%s, %s, %s)",
+            ("wf-1", True, "rule"),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_casts_null_test_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("SELECT * FROM pipeline_executions WHERE (? IS NULL OR status = ?)", (None, None))
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM pipeline_executions WHERE (%s::text IS NULL OR status = %s)",
+            (None, None),
+        )
+    ]
+
+
+def test_postgres_safe_update_keeps_qmark_where_style_consistent() -> None:
+    module = _postgres_module()
+
+    assert module._build_safe_update(
+        "sessions",
+        {"message_count": 3, "turn_count": 2},
+        "id = ?",
+        ("session-1",),
+    ) == (
+        "UPDATE sessions SET message_count = ?, turn_count = ? WHERE id = ?",
+        (3, 2, "session-1"),
+    )
+
+
+def test_postgres_safe_update_shifts_dollar_where_style() -> None:
+    module = _postgres_module()
+
+    assert module._build_safe_update(
+        "sessions",
+        {"message_count": 3, "turn_count": 2},
+        "id = $1",
+        ("session-1",),
+    ) == (
+        "UPDATE sessions SET message_count = $1, turn_count = $2 WHERE id = $3",
+        (3, 2, "session-1"),
+    )
 
 
 def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) -> None:
@@ -184,6 +377,41 @@ def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) 
     ]
 
 
+def test_postgres_transaction_executemany_reuses_qmark_rewrite() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+    tx.executemany(
+        "INSERT INTO remap_rows (a, b) VALUES (?, ?)",
+        [("left", "right"), ("first", "second")],
+    )
+
+    assert conn.executemany_calls == [
+        (
+            "INSERT INTO remap_rows (a, b) VALUES (%s, %s)",
+            [("left", "right"), ("first", "second")],
+        )
+    ]
+
+
+def test_postgres_transaction_executemany_coerces_boolean_rows() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+    tx.executemany(
+        "INSERT INTO task_stages_registry (name, requires_human, is_terminal) VALUES (?, ?, ?)",
+        [("dev", 0, 1), ("merge", 1, 0)],
+    )
+
+    assert conn.executemany_calls == [
+        (
+            "INSERT INTO task_stages_registry (name, requires_human, is_terminal) "
+            "VALUES (%s, %s, %s)",
+            [("dev", False, True), ("merge", True, False)],
+        )
+    ]
+
+
 def test_postgres_transaction_executemany_empty_rows_skips_driver_and_remapper(monkeypatch) -> None:
     module = _postgres_module()
 
@@ -208,3 +436,55 @@ def test_postgres_transaction_executemany_rejects_first_row_out_of_range() -> No
         tx.executemany("INSERT INTO remap_rows (a) VALUES ($2)", [("only",)])
 
     assert conn.executemany_calls == []
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+        self.rowcount = len(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+def test_postgres_cursor_normalizes_jsonb_values_to_sqlite_contract() -> None:
+    module = _postgres_module()
+    cursor = module._PostgresCursor(
+        _FakeResult(
+            [
+                {
+                    "name": "profile",
+                    "skip_stages_json": ["merge", "qa"],
+                    "metadata_json": {"b": 2, "a": 1},
+                }
+            ]
+        )
+    )
+
+    assert cursor.fetchone() == {
+        "name": "profile",
+        "skip_stages_json": '["merge","qa"]',
+        "metadata_json": '{"a":1,"b":2}',
+    }
+
+
+def test_postgres_cursor_normalizes_datetime_values_to_sqlite_contract() -> None:
+    module = _postgres_module()
+    cursor = module._PostgresCursor(
+        _FakeResult(
+            [
+                {
+                    "id": "cron",
+                    "last_run_at": datetime(2026, 5, 21, 5, 30, tzinfo=UTC),
+                }
+            ]
+        )
+    )
+
+    assert cursor.fetchone() == {
+        "id": "cron",
+        "last_run_at": "2026-05-21T05:30:00+00:00",
+    }

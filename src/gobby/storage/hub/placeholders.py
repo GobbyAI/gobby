@@ -20,6 +20,16 @@ def remap_dollar_placeholders(
     return new_sql, params_from_indexes(params, indexes), indexes
 
 
+def remap_qmark_placeholders(
+    sql: str,
+    params: Sequence[Any],
+    replacement: str,
+) -> tuple[str, tuple[Any, ...], tuple[int, ...]]:
+    """Rewrite top-level qmark placeholders and return remapped params."""
+    new_sql, indexes = scan_qmark_placeholder_indexes(sql, len(params), replacement)
+    return new_sql, params_from_indexes(params, indexes), indexes
+
+
 def scan_dollar_placeholder_indexes(
     sql: str,
     param_count: int,
@@ -64,6 +74,62 @@ def scan_dollar_placeholder_indexes(
             if remapped is not None:
                 i = remapped
                 continue
+
+        out.append(char)
+        i += 1
+
+    return "".join(out), tuple(indexes)
+
+
+def scan_qmark_placeholder_indexes(
+    sql: str,
+    param_count: int,
+    replacement: str,
+) -> tuple[str, tuple[int, ...]]:
+    out: list[str] = []
+    indexes: list[int] = []
+    i = 0
+    n = len(sql)
+
+    while i < n:
+        char = sql[i]
+
+        if char == "-" and i + 1 < n and sql[i + 1] == "-":
+            end = sql.find("\n", i)
+            end = n if end < 0 else end
+            out.append(sql[i:end])
+            i = end
+            continue
+
+        if char == "/" and i + 1 < n and sql[i + 1] == "*":
+            i = _copy_block_comment(sql, i, out)
+            continue
+
+        if char == "'":
+            i = _copy_single_quoted_string(sql, i, out)
+            continue
+
+        if char == '"':
+            i = _copy_double_quoted_identifier(sql, i, out)
+            continue
+
+        if char == "$":
+            copied = _try_copy_dollar_quote(sql, i, out)
+            if copied is not None:
+                i = copied
+                continue
+
+        if char == "?":
+            index = len(indexes)
+            if index >= param_count:
+                raise ValueError(
+                    "qmark placeholder has no matching param "
+                    f"(query references {param_count} params total)"
+                )
+            out.append(replacement)
+            indexes.append(index)
+            i += 1
+            continue
 
         out.append(char)
         i += 1
@@ -157,14 +223,9 @@ def _try_remap_dollar_token(
     while tag_end < n and _is_identifier_continuation(sql[tag_end]):
         tag_end += 1
 
-    if tag_end < n and sql[tag_end] == "$":
-        tag = sql[start : tag_end + 1]
-        close = sql.find(tag, tag_end + 1)
-        if close < 0:
-            raise ValueError(f"unterminated dollar-quote tag {tag!r}")
-        end = close + len(tag)
-        out.append(sql[start:end])
-        return end
+    copied = _try_copy_dollar_quote(sql, start, out)
+    if copied is not None:
+        return copied
 
     digits = sql[start + 1 : tag_end]
     if digits and digits.isdigit():
@@ -177,6 +238,24 @@ def _try_remap_dollar_token(
         out.append(replacement)
         indexes.append(index - 1)
         return tag_end
+
+    return None
+
+
+def _try_copy_dollar_quote(sql: str, start: int, out: list[str]) -> int | None:
+    tag_end = start + 1
+    n = len(sql)
+    while tag_end < n and _is_identifier_continuation(sql[tag_end]):
+        tag_end += 1
+
+    if tag_end < n and sql[tag_end] == "$":
+        tag = sql[start : tag_end + 1]
+        close = sql.find(tag, tag_end + 1)
+        if close < 0:
+            raise ValueError(f"unterminated dollar-quote tag {tag!r}")
+        end = close + len(tag)
+        out.append(sql[start:end])
+        return end
 
     return None
 

@@ -17,19 +17,18 @@ from typing import Any, Protocol
 from gobby.storage.hub.postgres import _PRE_BASELINE_INFRA_TABLES
 from gobby.storage.migration.reseed import discover_identity_sequences, expected_sequence_state
 from gobby.storage.migration.schema import validate_sqlite_source_schema
+from gobby.storage.migration.tables import (
+    IGNORED_MIGRATION_TABLES,
+    is_sqlite_fts_table,
+    repair_orphan_reference_value,
+    row_value,
+    sqlite_application_tables,
+    sqlite_import_where_clause,
+)
+from gobby.storage.migration.values import normalize_timestamp_like_value
 
 _POSTGRES_ONLY_TABLES: frozenset[str] = _PRE_BASELINE_INFRA_TABLES | frozenset(
     {"gobby_migration_state", "schema_migrations"}
-)
-_SQLITE_BOOKKEEPING_TABLES: frozenset[str] = frozenset({"schema_version", "schema_migrations"})
-_SQLITE_FTS_TABLES: frozenset[str] = frozenset(
-    {
-        "tasks_fts",
-        "memories_fts",
-        "code_symbols_fts",
-        "code_content_fts",
-        "skills_fts",
-    }
 )
 _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
     {
@@ -39,7 +38,6 @@ _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
         "config_store",
         "code_symbols",
         "agent_runs",
-        "metrics_events",
         "workflow_audit_log",
     }
 )
@@ -156,7 +154,7 @@ def validate_migration(
     checks: list[ValidationCheckResult] = []
     source_tables = _sqlite_application_tables(source)
     target_tables = _postgres_tables(target)
-    target_comparison_tables = target_tables - _POSTGRES_ONLY_TABLES
+    target_comparison_tables = _postgres_comparison_tables(target_tables)
     comparison_tables = source_tables & target_comparison_tables
 
     _check_source_schema_baseline(source, checks)
@@ -391,7 +389,12 @@ def _check_bm25_indexes(
         query = _sample_search_query(source, spec.table, spec.source_sample_columns)
         hits = _bm25_smoke_hits(target, spec, query)
         reads = _bm25_index_reads(target, spec.index_name)
-        if hits <= 0 or reads <= 0:
+        if not query:
+            verdicts.append(
+                {"table": spec.table, "state": "no-sample-query", "index": spec.index_name}
+            )
+            continue
+        if hits <= 0:
             failures.append(
                 {
                     "table": spec.table,
@@ -469,7 +472,8 @@ def _check_unique_constraints(target: _Executable, checks: list[ValidationCheckR
 
 
 def _check_not_null_constraints(target: _Executable, checks: list[ValidationCheckResult]) -> None:
-    rows = _catalog_rows(target, _NOT_NULL_SQL, tuple(sorted(_POSTGRES_ONLY_TABLES)))
+    excluded = _POSTGRES_ONLY_TABLES | IGNORED_MIGRATION_TABLES
+    rows = _catalog_rows(target, _NOT_NULL_SQL, (sorted(excluded),))
     if rows is None:
         _record(checks, "not null", True, "NOT NULL constraints skipped: no catalog")
         return
@@ -497,22 +501,11 @@ def _check_not_null_constraints(target: _Executable, checks: list[ValidationChec
 
 
 def _sqlite_application_tables(source: sqlite3.Connection) -> set[str]:
-    rows = source.execute(
-        """
-        SELECT name, sql
-          FROM sqlite_master
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-        """
-    ).fetchall()
-    tables: set[str] = set()
-    for row in rows:
-        name = str(_row_value(row, "name"))
-        ddl = str(_row_value(row, "sql") or "")
-        if name in _SQLITE_BOOKKEEPING_TABLES or _is_sqlite_fts_table(name, ddl):
-            continue
-        tables.add(name)
-    return tables
+    return sqlite_application_tables(source)
+
+
+def _postgres_comparison_tables(target_tables: set[str]) -> set[str]:
+    return target_tables - _POSTGRES_ONLY_TABLES - IGNORED_MIGRATION_TABLES
 
 
 def _postgres_tables(target: _Executable) -> set[str]:
@@ -523,7 +516,10 @@ def _postgres_tables(target: _Executable) -> set[str]:
 
 
 def _sqlite_count(source: sqlite3.Connection, table: str) -> int:
-    row = source.execute(f"SELECT COUNT(*) AS row_count FROM {_quote_identifier(table)}").fetchone()
+    row = source.execute(
+        f"SELECT COUNT(*) AS row_count FROM {_quote_identifier(table)} "
+        f"WHERE {sqlite_import_where_clause(table)}"
+    ).fetchone()
     return int(_row_value(row, "row_count"))
 
 
@@ -533,7 +529,27 @@ def _postgres_count(target: _Executable, table: str) -> int:
 
 
 def _sqlite_rows(source: sqlite3.Connection, table: str) -> Sequence[Any]:
-    return source.execute(f"SELECT * FROM {_quote_identifier(table)}").fetchall()
+    rows = source.execute(
+        f"SELECT * FROM {_quote_identifier(table)} WHERE {sqlite_import_where_clause(table)}"
+    ).fetchall()
+    return [_repair_sqlite_row(source, table, row) for row in rows]
+
+
+def _repair_sqlite_row(source: sqlite3.Connection, table: str, row: Any) -> Any:
+    keys = getattr(row, "keys", None)
+    if not callable(keys):
+        return row
+    cache: dict[tuple[str, str], bool] = {}
+    return {
+        str(key): repair_orphan_reference_value(
+            source,
+            table=table,
+            column=str(key),
+            value=row[key],
+            cache=cache,
+        )
+        for key in keys()
+    }
 
 
 def _postgres_rows(
@@ -699,19 +715,24 @@ def _sample_search_query(
     if not selected_columns:
         return ""
     column_sql = ", ".join(_quote_identifier(column) for column in selected_columns)
-    row = source.execute(f"SELECT {column_sql} FROM {_quote_identifier(table)} LIMIT 1").fetchone()
-    if row is None:
-        return ""
-
-    pieces = [
-        str(_jsonable(_row_value(row, column))).strip()
+    nonempty = " OR ".join(
+        f"{_quote_identifier(column)} IS NOT NULL AND {_quote_identifier(column)} <> ''"
         for column in selected_columns
-        if _row_value(row, column) not in (None, "")
-    ]
-    tokens = " ".join(pieces).split()
-    if not tokens:
-        return ""
-    return _sanitize_pg_search_query(tokens[0])
+    )
+    rows = source.execute(
+        f"SELECT {column_sql} FROM {_quote_identifier(table)} WHERE {nonempty} LIMIT 100"
+    ).fetchall()
+    for row in rows:
+        pieces = [
+            str(_jsonable(_row_value(row, column))).strip()
+            for column in selected_columns
+            if _row_value(row, column) not in (None, "")
+        ]
+        for token in " ".join(pieces).split():
+            query = _sanitize_pg_search_query(token)
+            if query:
+                return query
+    return ""
 
 
 def _sqlite_columns(source: sqlite3.Connection, table: str) -> set[str]:
@@ -733,13 +754,17 @@ def _table_hash(rows: Sequence[Any]) -> str:
 
 def _row_to_dict(row: Any) -> dict[str, object]:
     if isinstance(row, Mapping):
-        return {str(key): _jsonable(value) for key, value in row.items()}
+        return {str(key): _jsonable_for_column(str(key), value) for key, value in row.items()}
     keys = getattr(row, "keys", None)
     if callable(keys):
-        return {str(key): _jsonable(row[key]) for key in keys()}
+        return {str(key): _jsonable_for_column(str(key), row[key]) for key in keys()}
     if isinstance(row, Sequence) and not isinstance(row, str | bytes | bytearray):
         return {str(index): _jsonable(value) for index, value in enumerate(row)}
     return {"value": _jsonable(row)}
+
+
+def _jsonable_for_column(column: str, value: Any) -> object:
+    return _jsonable(normalize_timestamp_like_value(column, value))
 
 
 def _jsonable(value: Any) -> object:
@@ -816,20 +841,11 @@ def _string_sequence(value: Any) -> tuple[str, ...]:
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:
-    if row is None:
-        return None
-    try:
-        return row[key]
-    except (KeyError, TypeError, IndexError):
-        return row[index]
+    return row_value(row, key, index)
 
 
 def _is_sqlite_fts_table(name: str, ddl: str) -> bool:
-    if name in _SQLITE_FTS_TABLES:
-        return True
-    if any(name.startswith(f"{fts_table}_") for fts_table in _SQLITE_FTS_TABLES):
-        return True
-    return "USING fts5" in ddl
+    return is_sqlite_fts_table(name, ddl)
 
 
 def _record(

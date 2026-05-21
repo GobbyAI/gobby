@@ -179,7 +179,7 @@ class LocalMCPManager:
                 env = excluded.env,
                 headers = excluded.headers,
                 enabled = excluded.enabled,
-                description = COALESCE(excluded.description, description),
+                description = COALESCE(excluded.description, mcp_servers.description),
                 updated_at = excluded.updated_at
             """,
             (

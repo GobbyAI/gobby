@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.storage.sql_dialect import is_postgres, older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
     # into a parameterized call (PRAGMA does not accept bound parameters
     # for identifiers anyway).
     for table_name, columns in _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS:
-        rows = db.fetchall(f"PRAGMA table_info({table_name})")
+        rows = _table_column_rows(db, table_name)
         if not rows:
             continue
 
@@ -52,6 +52,20 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
     return tuple(guards)
 
 
+def _table_column_rows(db: HubDatabase, table_name: str) -> list[dict[str, object]]:
+    if is_postgres(db):
+        return db.fetchall(
+            """
+            SELECT column_name AS name
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+            """,
+            (table_name,),
+        )
+    return db.fetchall(f"PRAGMA table_info({table_name})")
+
+
 def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.
@@ -65,6 +79,11 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
+    empty_terminal_context_sql = (
+        "terminal_context IS NULL"
+        if is_postgres(db)
+        else "(terminal_context IS NULL OR terminal_context = '')"
+    )
     cursor = db.execute(
         f"""
         UPDATE sessions
@@ -74,7 +93,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
             {updated_stale_sql}
             OR (
                 session_type = 'terminal'
-                AND (terminal_context IS NULL OR terminal_context = '')
+                AND {empty_terminal_context_sql}
                 AND {empty_terminal_created_stale_sql}
             )
         )

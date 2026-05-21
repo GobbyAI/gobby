@@ -6,6 +6,7 @@ import pytest
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_lifecycle import _build_empty_session_prune_reference_guards
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -21,6 +22,31 @@ def project_id(temp_db: LocalDatabase) -> str:
 def session_mgr(temp_db: LocalDatabase) -> SessionManager:
     """Create the canonical storage SessionManager under test."""
     return SessionManager(temp_db)
+
+
+class _PostgresColumnCaptureDb:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+    def fetchall(self, query: str, params: tuple[object, ...] = ()) -> list[dict[str, str]]:
+        self.queries.append((query, params))
+        if params == ("sessions",):
+            return [{"name": "parent_session_id"}]
+        return []
+
+
+def test_empty_session_prune_reference_guards_use_postgres_information_schema() -> None:
+    db = _PostgresColumnCaptureDb()
+
+    guards = _build_empty_session_prune_reference_guards(db)  # type: ignore[arg-type]
+
+    assert any("information_schema.columns" in query for query, _params in db.queries)
+    assert not any("PRAGMA" in query for query, _params in db.queries)
+    assert guards == (
+        "NOT EXISTS (SELECT 1 FROM sessions ref WHERE ref.parent_session_id = sessions.id)",
+    )
 
 
 def test_expire_stale_sessions_expires_old_untracked_terminal_session(

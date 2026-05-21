@@ -113,7 +113,7 @@ def register_lifecycle_routes(
                             errors.append(f"Session {sid} not found")
                             continue
                         server.session_manager.db.execute(
-                            "UPDATE sessions SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
+                            "UPDATE sessions SET project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                             (target_project_id, sid),
                         )
                         moved_ids.append(sid)

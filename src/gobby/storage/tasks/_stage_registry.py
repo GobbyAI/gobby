@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -317,7 +318,7 @@ class StageRegistryManager:
                     conn.execute(sql)
 
     def _columns(self, table_name: str) -> set[str]:
-        return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
+        return table_column_names(self.db, table_name)
 
     @staticmethod
     def _row_value(row: Mapping[str, Any], column: str) -> Any:

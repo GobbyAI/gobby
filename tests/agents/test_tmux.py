@@ -628,7 +628,7 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
-            patch("gobby.agents.tmux.spawner.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)

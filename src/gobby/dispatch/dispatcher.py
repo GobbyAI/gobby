@@ -38,6 +38,7 @@ from gobby.dispatch.spawn import (
     spawn_agent,
 )
 from gobby.dispatch.workspace_merge import execute_merge_workspace
+from gobby.dispatch.write_set_guard import DispatchWriteSetGuard, WriteSetOverlap
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
@@ -144,6 +145,7 @@ async def run_heartbeat(
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = list_automation_candidates(resolved_db, project_id=project_id)
+    write_set_guard = DispatchWriteSetGuard.load(resolved_db, project_id=project_id)
     result = HeartbeatResult(scanned=len(candidates))
 
     for candidate in candidates:
@@ -192,14 +194,24 @@ async def run_heartbeat(
             if action is None:
                 result = _release_and_skip(mutex, result)
                 continue
+            if write_set_guard.action_reserves_write_set(action, current):
+                overlap = write_set_guard.conflict_for(action.task_id)
+                if overlap is not None:
+                    _log_write_set_overlap(overlap)
+                    result = _release_and_skip(mutex, result)
+                    continue
 
-            await _execute_action(
+            action_result = await _execute_action(
                 action,
                 mutex=mutex,
                 db=resolved_db,
                 context=context,
                 services=services,
             )
+            if action_result is not None and write_set_guard.action_reserves_write_set(
+                action, current
+            ):
+                write_set_guard.reserve(action.task_id)
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
         except (TypeError, AttributeError, sqlite3.DatabaseError):
             mutex.release()
@@ -226,6 +238,18 @@ async def run_heartbeat(
     return result
 
 
+def _log_write_set_overlap(overlap: WriteSetOverlap) -> None:
+    logger.info(
+        "Dispatcher skipped overlapping write-set task",
+        extra={
+            "task_id": overlap.task_id,
+            "blocking_task_ids": overlap.blocking_task_ids,
+            "file_paths": overlap.file_paths[:10],
+            "file_count": len(overlap.file_paths),
+        },
+    )
+
+
 def _candidate_for_stage_snapshot(
     candidate: Task,
     *,
@@ -241,7 +265,7 @@ def _candidate_matches_mutex_snapshot(
     mutex: RuntimeDispatchMutex,
     candidate: Task,
 ) -> bool:
-    return cast(bool, mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate)))
+    return mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate))
 
 
 def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> HeartbeatResult:
@@ -689,10 +713,7 @@ def _render_dispatch_inputs(
 ) -> dict[str, Any]:
     render_context = _pipeline_render_context(action, context, services)
     renderer = StepRenderer(TemplateEngine())
-    return cast(
-        dict[str, Any],
-        renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context),
-    )
+    return renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context)
 
 
 def _pipeline_render_context(
@@ -728,7 +749,7 @@ def _create_stage_pipeline_execution(
     db: DatabaseProtocol,
     services: object | None,
 ) -> str:
-    execution_id = cast(str, generate_prefixed_id("pe"))
+    execution_id = generate_prefixed_id("pe")
     session_id = getattr(services, "triggering_session_id", None)
     try:
         definition_json = cast(Any, pipeline).model_dump_json()
@@ -743,7 +764,7 @@ def _create_stage_pipeline_execution(
                 id, pipeline_name, project_id, status, inputs_json, session_id,
                 definition_json, created_at, updated_at
             )
-            SELECT ?, ?, project_id, 'pending', ?, ?, ?, datetime('now'), datetime('now')
+            SELECT ?, ?, project_id, 'pending', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
               FROM tasks
              WHERE id = ?
             """,
@@ -761,7 +782,7 @@ def _create_stage_pipeline_execution(
             UPDATE task_dispatch_mutex
                SET run_id = ?,
                    action_kind = ?,
-                   updated_at = datetime('now')
+                   updated_at = CURRENT_TIMESTAMP
              WHERE task_id = ?
             """,
             (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),
@@ -868,7 +889,7 @@ def allocate_expansion_run_id() -> str:
 
 
 def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
-    return cast(int, storage.sweep_expired())
+    return storage.sweep_expired()
 
 
 def create_isolation(
@@ -948,7 +969,7 @@ def _candidate_current_stage(candidate: object | None) -> object | None:
     current_stage = _field(candidate, "current_stage")
     if current_stage is not None:
         return current_stage
-    return cast(object | None, dispatch_rules.current_stage(candidate))
+    return dispatch_rules.current_stage(candidate)
 
 
 def _stage_name(stage: object | None) -> str | None:

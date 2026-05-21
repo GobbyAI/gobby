@@ -663,6 +663,25 @@ class TestDaemonProxy:
                     timeout=300.0,
                 )
 
+    @pytest.mark.asyncio
+    async def test_call_tool_proxies_when_timeout_config_load_fails(self):
+        """call_tool should not fail just because optional timeout config is unavailable."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config", side_effect=ValueError("bad config")):
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                await proxy.call_tool("gobby-tasks", "get_task", {"task_id": "#1"})
+
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-tasks/tools/get_task",
+                    json={"task_id": "#1"},
+                    timeout=30.0,
+                )
+
 
 class TestDaemonProxyMethods:
     """Tests for DaemonProxy specific methods."""

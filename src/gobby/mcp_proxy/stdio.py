@@ -264,16 +264,20 @@ class DaemonProxy:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
 
-        # Tool-specific timeouts
-        config = load_config()
+        # Tool-specific timeouts. Proxying should still work if the local MCP
+        # stdio process cannot load bootstrap config; only timeout overrides are optional.
+        try:
+            config = load_config()
+            tool_timeouts = config.mcp_client_proxy.tool_timeouts
+        except Exception as exc:
+            logger.warning(f"Failed to load config for MCP tool timeout overrides: {exc}")
+            tool_timeouts = {}
+
         # Default to standard timeout
         timeout = 30.0
         # Check for tool-specific override in config
-        if (
-            config.mcp_client_proxy.tool_timeouts
-            and tool_name in config.mcp_client_proxy.tool_timeouts
-        ):
-            timeout = config.mcp_client_proxy.tool_timeouts[tool_name]
+        if tool_timeouts and tool_name in tool_timeouts:
+            timeout = tool_timeouts[tool_name]
         # Fallback for LLM-based task tools if not explicit in config
         elif tool_name in LLM_TASK_TOOLS:
             timeout = 300.0

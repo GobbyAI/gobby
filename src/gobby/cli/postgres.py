@@ -6,12 +6,15 @@ import asyncio
 import getpass
 import json
 import os
+import shlex
 import shutil
+import subprocess  # nosec B404 # subprocess needed for Docker pgAudit readback probes
 import sys
-import tempfile
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlparse
 
 import click
 import psycopg
@@ -21,6 +24,7 @@ from gobby.cli.installers.postgres import (
     DEFAULT_POSTGRES_PORT,
     _active_install_mode,
     _docker_database_url,
+    _extension_present,
     _external_ownership_status,
     _migration_complete,
     _preload_libraries,
@@ -41,6 +45,9 @@ from gobby.storage.migration.sqlite_to_postgres import (
 _NO_ROLLBACK_ACK = "I accept no-rollback risk"
 _CAPTURE_SINK_KINDS = {"pgaudit-file", "wal-archive"}
 _TICKET_CAPTURE_KINDS = {"pgaudit-managed", "pgaudit-file", "wal-archive", "none"}
+_PGAUDIT_CONTAINER = "gobby-postgres"
+_PGAUDIT_LOG_DIR = "/var/log/pgaudit"
+_WAL_ARCHIVE_SLOT_KEYS = ("slot_name", "slot", "replication_slot")
 
 
 @click.group("postgres")
@@ -360,7 +367,11 @@ def _require_ownership_sentinel_or_fail() -> None:
 
 
 def _probe_pgaudit_or_fail() -> dict[str, Any]:
+    probe_token = f"gobby-pgaudit-probe-{uuid.uuid4().hex}"
     with _postgres_connection() as conn:
+        if not _extension_present(conn, "pgaudit"):
+            raise click.ClickException("pgAudit extension is not installed in PostgreSQL.")
+
         preload_libraries = _preload_libraries(conn)
         if "pgaudit" not in preload_libraries:
             raise click.ClickException("pgAudit is not loaded in shared_preload_libraries.")
@@ -371,15 +382,27 @@ def _probe_pgaudit_or_fail() -> dict[str, Any]:
         if not ({"write", "all"} & log_tokens):
             raise click.ClickException("pgAudit must be configured with pgaudit.log=write.")
 
-        conn.execute("CREATE TEMP TABLE gobby_pgaudit_probe (id integer)")
-        conn.execute("INSERT INTO gobby_pgaudit_probe (id) VALUES (1)")
-        conn.execute("DROP TABLE gobby_pgaudit_probe")
+        try:
+            row = conn.execute(
+                f"/* {probe_token} */ "
+                "UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 "
+                "RETURNING last_probed_at"
+            ).fetchone()
+            conn.commit()
+        except psycopg.Error as exc:
+            raise click.ClickException(f"pgAudit write probe failed: {exc}") from exc
+        if row is None:
+            raise click.ClickException("pgAudit probe table _pgaudit_probe is missing seed row.")
+
+    log_probe = _probe_docker_pgaudit_log_or_fail(probe_token)
 
     return {
         "extension": "pgaudit",
         "shared_preload_libraries": preload_libraries,
         "pgaudit_log": pgaudit_log,
         "write_probe": "ok",
+        "audit_file": log_probe["audit_file"],
+        "audit_readback": log_probe["audit_readback"],
     }
 
 
@@ -388,18 +411,12 @@ def _probe_capture_sink_or_fail(kind: str, location: str) -> dict[str, Any]:
         path = Path(location).expanduser()
         if not path.is_absolute():
             raise click.ClickException("pgaudit-file capture sink must be an absolute path.")
-        if path.exists():
-            if path.is_dir():
-                raise click.ClickException("pgaudit-file capture sink must be a file path.")
-            with path.open("a", encoding="utf-8"):
-                pass
-        else:
-            parent = path.parent
-            if not parent.exists() or not parent.is_dir():
-                raise click.ClickException(
-                    "pgaudit-file capture sink parent directory does not exist."
-                )
-            _probe_directory_writable(parent)
+        if not path.exists():
+            raise click.ClickException("pgaudit-file capture sink must already exist.")
+        if path.is_dir():
+            raise click.ClickException("pgaudit-file capture sink must be a file path.")
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("")
         return {
             "kind": kind,
             "capture_value": str(path),
@@ -407,26 +424,90 @@ def _probe_capture_sink_or_fail(kind: str, location: str) -> dict[str, Any]:
         }
 
     if kind == "wal-archive":
-        if not location.strip():
-            raise click.ClickException("wal-archive capture sink requires a location.")
+        slot_name = _wal_archive_slot_name(location)
+        try:
+            with _postgres_connection() as conn:
+                row = conn.execute(
+                    "SELECT slot_name FROM pg_replication_slots WHERE slot_name = %s",
+                    (slot_name,),
+                ).fetchone()
+        except psycopg.Error as exc:
+            raise click.ClickException(
+                f"Unable to verify wal-archive replication slot {slot_name!r}: {exc}"
+            ) from exc
+        if row is None:
+            raise click.ClickException(
+                f"wal-archive capture sink replication slot {slot_name!r} was not found."
+            )
         return {
             "kind": kind,
             "capture_value": location,
-            "operator_declared": True,
+            "replication_slot": slot_name,
         }
 
     raise click.ClickException(f"Unknown capture-sink type {kind!r}.")
 
 
-def _probe_directory_writable(directory: Path) -> None:
-    handle, probe_path = tempfile.mkstemp(
-        prefix=".gobby-capture-probe-",
-        suffix=".tmp",
-        dir=directory,
-        text=True,
-    )
-    os.close(handle)
-    Path(probe_path).unlink(missing_ok=True)
+def _probe_docker_pgaudit_log_or_fail(probe_token: str) -> dict[str, str]:
+    token_arg = shlex.quote(probe_token)
+    script = f"""
+set -eu
+test -d {_PGAUDIT_LOG_DIR}
+audit_file="$(find {_PGAUDIT_LOG_DIR} -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)"
+test -n "$audit_file"
+test "$(stat -c '%U %a' "$audit_file")" = "postgres 640"
+audit_line="$(grep -E 'LOG:  AUDIT: SESSION,.*UPDATE' "$audit_file" | grep -F {token_arg} | tail -n1)"
+test -n "$audit_line"
+printf '%s\\n%s\\n' "$audit_file" "$audit_line"
+""".strip()
+    try:
+        result = subprocess.run(  # nosec B603 B607 # fixed Docker exec command
+            ["docker", "exec", _PGAUDIT_CONTAINER, "sh", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        raise click.ClickException(f"Unable to read pgAudit Docker log: {exc}") from exc
+
+    if result.returncode != 0:
+        detail = (
+            result.stderr or result.stdout or f"docker exec exited {result.returncode}"
+        ).strip()
+        raise click.ClickException(f"pgAudit log readback probe failed: {detail}")
+
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) < 2:
+        raise click.ClickException("pgAudit log readback probe did not return an AUDIT line.")
+    return {"audit_file": lines[0], "audit_readback": lines[1]}
+
+
+def _wal_archive_slot_name(location: str) -> str:
+    value = location.strip()
+    if not value:
+        raise click.ClickException("wal-archive capture sink requires a location.")
+
+    parsed = urlparse(value)
+    if parsed.scheme:
+        query = parse_qs(parsed.query)
+        for key in _WAL_ARCHIVE_SLOT_KEYS:
+            slot_values = query.get(key)
+            if slot_values and slot_values[0].strip():
+                return slot_values[0].strip()
+        raise click.ClickException(
+            "wal-archive capture sink DSN must include slot_name, slot, or replication_slot."
+        )
+
+    if "=" in value:
+        for token in value.replace(";", " ").split():
+            key, separator, raw_slot = token.partition("=")
+            if separator and key in _WAL_ARCHIVE_SLOT_KEYS and raw_slot.strip():
+                return raw_slot.strip()
+        raise click.ClickException(
+            "wal-archive capture sink spec must include slot_name, slot, or replication_slot."
+        )
+
+    return value
 
 
 def _parse_capture_sink(capture_sink: str) -> tuple[str, str]:

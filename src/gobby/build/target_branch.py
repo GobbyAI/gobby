@@ -111,12 +111,12 @@ def _cascade_target_branch_to_subtree(
                 JOIN subtree parent ON child.parent_task_id = parent.id
             )
             INSERT INTO task_artifacts (task_id, target_branch, updated_at)
-            SELECT id, ?, datetime('now')
+            SELECT id, ?, CURRENT_TIMESTAMP
             FROM subtree
             WHERE id IS NOT NULL
             ON CONFLICT(task_id) DO UPDATE SET
                 target_branch = excluded.target_branch,
-                updated_at = datetime('now')
+                updated_at = CURRENT_TIMESTAMP
             """,
             (epic_id, target_branch),
         )

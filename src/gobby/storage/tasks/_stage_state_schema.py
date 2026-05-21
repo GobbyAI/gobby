@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import re
-
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import is_postgres, table_column_names
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_utils import _now
-
-_SQLITE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class StageStateSchema:
@@ -18,8 +15,12 @@ class StageStateSchema:
 
     def ensure_phase2_columns(self) -> None:
         columns = self.columns("task_stage_states")
-        table_sql = self.db.fetchone(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='task_stage_states'"
+        table_sql = (
+            None
+            if is_postgres(self.db)
+            else self.db.fetchone(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='task_stage_states'"
+            )
         )
         if "attempt_count" in columns or (
             table_sql is not None and "needs_review" not in str(table_sql["sql"])
@@ -153,9 +154,4 @@ class StageStateSchema:
             )
 
     def columns(self, table_name: str) -> set[str]:
-        if not _SQLITE_IDENTIFIER_RE.fullmatch(table_name):
-            raise ValueError(f"Invalid table name: {table_name!r}")
-        return {
-            row["name"]
-            for row in self.db.fetchall(f"PRAGMA table_info({table_name})")  # nosec B608
-        }
+        return table_column_names(self.db, table_name)

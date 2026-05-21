@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, TaskSubtreeCascade
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -549,7 +550,7 @@ def update_task(
     updates: list[str] = []
     params: list[Any] = []
     now = datetime.now(UTC).isoformat()
-    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
+    task_columns = table_column_names(db, "tasks")
 
     if title is not UNSET:
         updates.append("title = ?")

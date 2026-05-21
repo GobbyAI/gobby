@@ -550,7 +550,7 @@ class CodeIndexStorage:
                     total_symbols=excluded.total_symbols,
                     last_indexed_at=excluded.last_indexed_at,
                     index_duration_ms=excluded.index_duration_ms,
-                    updated_at=datetime('now')
+                    updated_at=CURRENT_TIMESTAMP
                 """,
                 (
                     project.id,

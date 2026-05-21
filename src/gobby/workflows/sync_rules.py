@@ -17,6 +17,7 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -79,13 +80,16 @@ def sync_bundled_rules(
     rules_paths = get_bundled_rules_paths() if rules_path is None else [rules_path]
 
     # Repair rows where workflow_type was silently changed from 'rule'
+    event_expr = json_text_expr(db, "definition_json", "event")
+    effect_expr = json_text_expr(db, "definition_json", "effect")
+    effects_expr = json_text_expr(db, "definition_json", "effects")
     repaired = db.execute(
         "UPDATE workflow_definitions "
-        "SET workflow_type = 'rule', updated_at = datetime('now') "
+        "SET workflow_type = 'rule', updated_at = CURRENT_TIMESTAMP "
         "WHERE workflow_type != 'rule' "
-        "  AND json_extract(definition_json, '$.event') IS NOT NULL "
-        "  AND (json_extract(definition_json, '$.effect') IS NOT NULL "
-        "       OR json_extract(definition_json, '$.effects') IS NOT NULL)",
+        f"  AND {event_expr} IS NOT NULL "
+        f"  AND ({effect_expr} IS NOT NULL "
+        f"       OR {effects_expr} IS NOT NULL)",
     ).rowcount
     if repaired:
         logger.info(f"Repaired {repaired} rows with incorrect workflow_type (should be 'rule')")
