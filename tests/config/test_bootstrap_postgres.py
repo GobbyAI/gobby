@@ -108,6 +108,31 @@ def test_bootstrap_loads_postgres_url_from_keyring_ref(
     assert "database_url" not in yaml.safe_load(bootstrap_file.read_text())
 
 
+def test_write_postgres_defaults_stores_database_url_ref(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
+
+    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    fake_keyring = FakeKeyring()
+    _install_fake_keyring(monkeypatch, fake_keyring)
+
+    write_postgres_defaults(
+        gobby_home=temp_dir,
+        mode="docker",
+        database_url=database_url,
+    )
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert persisted["hub_backend"] == "sqlite"
+    assert "database_url" not in persisted
+    assert persisted["database_url_ref"] == DATABASE_URL_REF
+    assert persisted["postgres_install_mode"] == "docker"
+    assert fake_keyring.set_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY, database_url)]
+    assert read_bootstrap_database_url(temp_dir) == database_url
+
+
 def test_postgres_keyring_ref_requires_stored_database_url(
     temp_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

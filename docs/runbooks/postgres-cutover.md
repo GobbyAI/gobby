@@ -97,6 +97,32 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    - Confirm validation-window write capture is configured for the activation
      mode.
 
+## Bootstrap Credential Storage
+
+`gobby postgres install` stores the PostgreSQL DSN in the OS keyring and writes
+only this reference to `~/.gobby/bootstrap.yaml`:
+
+```yaml
+database_url_ref: keyring:gobby:postgres_database_url
+```
+
+Do not paste a plaintext `database_url` into `bootstrap.yaml` during the
+overlap window. Startup migrates an existing plaintext `database_url` into that
+keyring entry and rewrites the file with mode `0600`; startup fails when
+`bootstrap.yaml` has broader permissions or the referenced keyring value is
+missing.
+
+During the validation-window rollback path, `gobby postgres deactivate` flips
+`hub_backend` back to `sqlite` and leaves the keyring-backed DSN available for a
+future retry. If the keyring entry was deleted, recreate it by rerunning the
+matching `gobby postgres install --mode ... --dsn ...` command while the daemon
+is stopped.
+
+After the validation window closes, the steady-state PostgreSQL runtime still
+uses the same keyring reference. A later rollback requires a reverse migration
+from PostgreSQL to SQLite and a valid keyring entry until the reverse migration
+is complete; there is no supported plaintext bootstrap fallback.
+
 ## Validation Capture
 
 Docker mode uses the pgAudit log managed by the Gobby PostgreSQL image. The

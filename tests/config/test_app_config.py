@@ -697,10 +697,23 @@ class TestLoadConfig:
         assert config.cron.check_interval_seconds == 60
 
     def test_load_config_preserves_bootstrap_backend_selection_over_db(
-        self, temp_dir: Path
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """DB config cannot override bootstrap-level hub backend selection."""
 
+        class FakeKeyring:
+            def __init__(self) -> None:
+                self.passwords: dict[tuple[str, str], str] = {}
+
+            def set_password(self, service: str, username: str, password: str) -> None:
+                self.passwords[(service, username)] = password
+
+            def get_password(self, service: str, username: str) -> str | None:
+                return self.passwords.get((service, username))
+
+        from gobby.config import bootstrap as bootstrap_module
+
+        monkeypatch.setattr(bootstrap_module, "keyring", FakeKeyring())
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
