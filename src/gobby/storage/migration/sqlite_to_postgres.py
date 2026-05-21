@@ -191,19 +191,29 @@ def _copy_validate_and_mark(
     reset_seeded_tables: bool,
     emit: Callable[[str], None],
 ) -> tuple[_CopyResult, Path | None]:
-    _assert_target_ready_for_import(source, target, emit=emit)
-    _fail_if_import_complete_marker(target)
-    if reset_seeded_tables:
-        _reset_seed_bearing_tables(target)
-    _drop_bm25_indexes(target)
-    copy_result = _copy_sqlite_rows_to_postgres(source, target, batch_size, log_path)
-    _recreate_bm25_indexes(target)
-    reseed_identity_sequences(target)
-    try:
-        report = validate_migration(source, cast(Any, target), emit=emit)
-    except MigrationValidationError as exc:
-        raise SqliteToPostgresMigrationError(str(exc)) from exc
-    _write_import_complete_marker(target)
+    with target.transaction():
+        _acquire_import_lock(target)
+        _assert_target_ready_for_import(source, target, emit=emit)
+        _fail_if_import_complete_marker(target)
+        if reset_seeded_tables:
+            _reset_seed_bearing_tables(target)
+        _drop_bm25_indexes(target)
+        target.execute("SET CONSTRAINTS ALL DEFERRED")
+        copy_result = _copy_sqlite_rows_to_postgres(
+            source,
+            target,
+            batch_size,
+            log_path,
+            manage_transaction=False,
+        )
+        target.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        _recreate_bm25_indexes(target)
+        reseed_identity_sequences(target)
+        try:
+            report = validate_migration(source, cast(Any, target), emit=emit)
+        except MigrationValidationError as exc:
+            raise SqliteToPostgresMigrationError(str(exc)) from exc
+        _write_import_complete_marker(target)
     return copy_result, report.artifact_path
 
 
@@ -360,39 +370,49 @@ def _acquire_import_lock(target: psycopg.Connection[Any]) -> None:
 
 
 def _reset_seed_bearing_tables(target: psycopg.Connection[Any]) -> None:
-    with target.transaction():
-        with target.cursor() as cur:
-            for table in _seed_bearing_tables():
-                cur.execute(
-                    sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(sql.Identifier(table))
-                )
+    with target.cursor() as cur:
+        for table in _seed_bearing_tables():
+            cur.execute(
+                sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(sql.Identifier(table))
+            )
 
 
 def _drop_bm25_indexes(target: psycopg.Connection[Any]) -> None:
-    with target.transaction():
-        with target.cursor() as cur:
-            for spec in _BM25_INDEXES:
-                cur.execute(
-                    sql.SQL("DROP INDEX IF EXISTS {}").format(sql.Identifier(spec.index_name))
-                )
+    with target.cursor() as cur:
+        for spec in _BM25_INDEXES:
+            cur.execute(sql.SQL("DROP INDEX IF EXISTS {}").format(sql.Identifier(spec.index_name)))
 
 
 def _recreate_bm25_indexes(target: psycopg.Connection[Any]) -> None:
-    with target.transaction():
-        with target.cursor() as cur:
-            for spec in _BM25_INDEXES:
-                cur.execute(
-                    sql.SQL("CREATE INDEX {} ON {} USING bm25 ({}) WITH (key_field='id')").format(
-                        sql.Identifier(spec.index_name),
-                        sql.Identifier(spec.table),
-                        sql.SQL(", ").join(
-                            sql.Identifier(column) for column in spec.indexed_columns
-                        ),
-                    )
+    with target.cursor() as cur:
+        for spec in _BM25_INDEXES:
+            cur.execute(
+                sql.SQL("CREATE INDEX {} ON {} USING bm25 ({}) WITH (key_field='id')").format(
+                    sql.Identifier(spec.index_name),
+                    sql.Identifier(spec.table),
+                    sql.SQL(", ").join(sql.Identifier(column) for column in spec.indexed_columns),
                 )
+            )
 
 
 def _copy_sqlite_rows_to_postgres(
+    source: sqlite3.Connection,
+    target: psycopg.Connection[Any],
+    batch_size: int,
+    log_path: Path,
+    *,
+    manage_transaction: bool = True,
+) -> _CopyResult:
+    if manage_transaction:
+        with target.transaction():
+            target.execute("SET CONSTRAINTS ALL DEFERRED")
+            result = _copy_sqlite_rows_to_postgres_rows(source, target, batch_size, log_path)
+            target.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        return result
+    return _copy_sqlite_rows_to_postgres_rows(source, target, batch_size, log_path)
+
+
+def _copy_sqlite_rows_to_postgres_rows(
     source: sqlite3.Connection,
     target: psycopg.Connection[Any],
     batch_size: int,
@@ -401,19 +421,16 @@ def _copy_sqlite_rows_to_postgres(
     tables = _dependency_ordered_tables(source, _sqlite_application_tables(source))
     total_rows = 0
     copied_tables = 0
-    with target.transaction():
-        target.execute("SET CONSTRAINTS ALL DEFERRED")
-        for table in tables:
-            columns = _copy_columns(source, target, table)
-            _write_import_log(log_path, {"event": "table_copy_start", "table": table})
-            row_count = _copy_table(source, target, table, columns, batch_size)
-            _write_import_log(
-                log_path,
-                {"event": "table_copy_end", "table": table, "rows": row_count},
-            )
-            total_rows += row_count
-            copied_tables += 1
-        target.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    for table in tables:
+        columns = _copy_columns(source, target, table)
+        _write_import_log(log_path, {"event": "table_copy_start", "table": table})
+        row_count = _copy_table(source, target, table, columns, batch_size)
+        _write_import_log(
+            log_path,
+            {"event": "table_copy_end", "table": table, "rows": row_count},
+        )
+        total_rows += row_count
+        copied_tables += 1
     return _CopyResult(rows=total_rows, tables=copied_tables)
 
 

@@ -16,9 +16,26 @@ pytestmark = pytest.mark.unit
 
 
 class _FakePostgres:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self._events = events
+        self.transaction_entries = 0
+
     @contextmanager
     def transaction(self) -> Iterator[_FakePostgres]:
-        yield self
+        self.transaction_entries += 1
+        if self._events is not None:
+            self._events.append("transaction.begin")
+        try:
+            yield self
+        finally:
+            if self._events is not None:
+                self._events.append("transaction.commit")
+
+    def execute(self, statement: object, params: object = ()) -> SimpleNamespace:
+        _ = params
+        if self._events is not None and str(statement).startswith("SET CONSTRAINTS"):
+            self._events.append(str(statement))
+        return SimpleNamespace(fetchone=lambda: None)
 
 
 def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
@@ -32,7 +49,7 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
 
     @contextmanager
     def _postgres_context(_target: str) -> Iterator[_FakePostgres]:
-        yield _FakePostgres()
+        yield _FakePostgres(events)
 
     monkeypatch.setattr(
         migration,
@@ -46,20 +63,41 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
     )
     monkeypatch.setattr(migration, "_apply_postgres_schema", lambda *_args: None)
     monkeypatch.setattr(
-        migration, "_assert_target_ready_for_import", lambda *_args, **_kwargs: None
+        migration,
+        "_assert_target_ready_for_import",
+        lambda *_args, **_kwargs: events.append("ready"),
     )
-    monkeypatch.setattr(migration, "_fail_if_import_complete_marker", lambda *_args: None)
+    monkeypatch.setattr(
+        migration,
+        "_fail_if_import_complete_marker",
+        lambda *_args, **_kwargs: events.append("marker-check"),
+    )
     monkeypatch.setattr(
         migration, "_acquire_import_lock", lambda *_args, **_kwargs: events.append("lock")
     )
-    monkeypatch.setattr(migration, "_reset_seed_bearing_tables", lambda *_args: None)
-    monkeypatch.setattr(migration, "_drop_bm25_indexes", lambda *_args: None)
-    monkeypatch.setattr(migration, "_recreate_bm25_indexes", lambda *_args: None)
+    monkeypatch.setattr(
+        migration,
+        "_reset_seed_bearing_tables",
+        lambda *_args, **_kwargs: events.append("reset"),
+    )
+    monkeypatch.setattr(
+        migration, "_drop_bm25_indexes", lambda *_args, **_kwargs: events.append("drop")
+    )
+    monkeypatch.setattr(
+        migration,
+        "_recreate_bm25_indexes",
+        lambda *_args, **_kwargs: events.append("recreate"),
+    )
     monkeypatch.setattr(migration, "_default_import_log_path", lambda: tmp_path / "import.log")
+
+    def _copy_with_outer_transaction(*_args: Any, **kwargs: Any) -> Any:
+        assert kwargs == {"manage_transaction": False}
+        return _record_copy(migration, events)
+
     monkeypatch.setattr(
         migration,
         "_copy_sqlite_rows_to_postgres",
-        lambda *_args, **_kwargs: _record_copy(migration, events),
+        _copy_with_outer_transaction,
     )
     monkeypatch.setattr(
         migration,
@@ -84,7 +122,23 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         dry_run=False,
     )
 
-    assert events == ["schema", "copy", "reseed", "validate", "marker"]
+    assert events == [
+        "schema",
+        "transaction.begin",
+        "lock",
+        "ready",
+        "marker-check",
+        "reset",
+        "drop",
+        "SET CONSTRAINTS ALL DEFERRED",
+        "copy",
+        "SET CONSTRAINTS ALL IMMEDIATE",
+        "recreate",
+        "reseed",
+        "validate",
+        "marker",
+        "transaction.commit",
+    ]
     assert result["rows"] == 3
     assert result["tables"] == 2
     assert result["dry_run"] is False
@@ -154,6 +208,40 @@ def test_migrate_sqlite_to_postgres_dry_run_is_read_only(
     assert result["tables"] == 1
     assert result["log_path"] is None
     assert result["validation_artifact"] is None
+
+
+def test_copy_can_run_inside_existing_import_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = sqlite3.connect(":memory:")
+    events: list[str] = []
+    target = _FakePostgres(events)
+
+    monkeypatch.setattr(migration, "_sqlite_application_tables", lambda _source: {"child"})
+    monkeypatch.setattr(
+        migration, "_dependency_ordered_tables", lambda _source, _tables: ("child",)
+    )
+    monkeypatch.setattr(migration, "_copy_columns", lambda *_args: ("id", "parent_id"))
+    monkeypatch.setattr(migration, "_copy_table", lambda *_args: 1)
+    monkeypatch.setattr(migration, "_write_import_log", lambda *_args: None)
+
+    try:
+        result = migration._copy_sqlite_rows_to_postgres(
+            source,
+            target,
+            100,
+            tmp_path / "import.log",
+            manage_transaction=False,
+        )
+    finally:
+        source.close()
+
+    assert result.rows == 1
+    assert result.tables == 1
+    assert target.transaction_entries == 0
+    assert events == []
 
 
 def test_seed_bearing_tables_follow_postgres_baseline() -> None:
