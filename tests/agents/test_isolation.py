@@ -22,6 +22,7 @@ from gobby.agents.isolation import (
     generate_branch_name,
     get_isolation_handler,
     provider_mcp_config_error,
+    repair_isolation_environment,
 )
 
 pytestmark = pytest.mark.unit
@@ -144,6 +145,28 @@ class TestEnsureIsolationCodeIndex:
         ):
             with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
                 await ensure_isolation_code_index(str(tmp_path))
+
+
+class TestRepairIsolationEnvironment:
+    """Tests for shared isolated workspace repair."""
+
+    @pytest.mark.asyncio
+    async def test_preseeds_python_environment(self, tmp_path: Path) -> None:
+        with (
+            patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+            patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
+            patch(
+                "gobby.agents.isolation.preseed_isolated_python_environment", new=AsyncMock()
+            ) as preseed,
+            patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        ):
+            await repair_isolation_environment(
+                main_repo_path="/main/repo",
+                isolated_path=str(tmp_path),
+                provider="codex",
+            )
+
+        preseed.assert_awaited_once_with(str(tmp_path))
 
 
 class TestSpawnConfig:

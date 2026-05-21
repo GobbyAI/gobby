@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
+from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
@@ -600,6 +601,13 @@ async def repair_isolation_environment(
         main_repo_path,
         isolated_path,
     )
+    seed_result = await preseed_isolated_python_environment(isolated_path)
+    if seed_result.attempted and not seed_result.success:
+        logger.warning(
+            "Failed to pre-seed isolated Python environment for %s: %s",
+            isolated_path,
+            seed_result.error,
+        )
     await _patch_mcp_config_for_isolation(
         main_repo_path=main_repo_path,
         isolated_path=isolated_path,
