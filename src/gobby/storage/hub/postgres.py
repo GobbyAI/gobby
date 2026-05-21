@@ -759,6 +759,15 @@ def _build_safe_update(
 
     update_params: list[Any] = []
     set_clauses: list[str] = []
+    if "?" in where and "$" not in where:
+        for column, value in values.items():
+            _validate_identifier(column)
+            set_clauses.append(f"{column} = ?")
+            update_params.append(value)
+
+        sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
+        return sql, (*update_params, *where_params)
+
     for index, (column, value) in enumerate(values.items(), start=1):
         _validate_identifier(column)
         set_clauses.append(f"{column} = ${index}")

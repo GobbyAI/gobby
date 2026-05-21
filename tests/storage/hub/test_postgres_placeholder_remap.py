@@ -277,6 +277,34 @@ def test_postgres_transaction_execute_casts_null_test_params() -> None:
     ]
 
 
+def test_postgres_safe_update_keeps_qmark_where_style_consistent() -> None:
+    module = _postgres_module()
+
+    assert module._build_safe_update(
+        "sessions",
+        {"message_count": 3, "turn_count": 2},
+        "id = ?",
+        ("session-1",),
+    ) == (
+        "UPDATE sessions SET message_count = ?, turn_count = ? WHERE id = ?",
+        (3, 2, "session-1"),
+    )
+
+
+def test_postgres_safe_update_shifts_dollar_where_style() -> None:
+    module = _postgres_module()
+
+    assert module._build_safe_update(
+        "sessions",
+        {"message_count": 3, "turn_count": 2},
+        "id = $1",
+        ("session-1",),
+    ) == (
+        "UPDATE sessions SET message_count = $1, turn_count = $2 WHERE id = $3",
+        (3, 2, "session-1"),
+    )
+
+
 def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) -> None:
     module = _postgres_module()
     calls: list[tuple[str, tuple[object, ...]]] = []
