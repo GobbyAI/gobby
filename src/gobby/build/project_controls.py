@@ -76,18 +76,18 @@ def _record_project_build_event(
     by_actor: str,
 ) -> BuildLifecycleEvent:
     created_at = datetime.now(UTC).isoformat()
-    event_id: int | None = None
     with db.transaction() as conn:
-        cursor = conn.execute(
+        row = conn.execute(
             """
             INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (project_id, event, reason, by_actor, created_at),
-        )
-        event_id = cursor.lastrowid
-    if event_id is None:
-        raise RuntimeError("PostgreSQL hub did not return a project lifecycle event id")
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Database did not return a project lifecycle event id")
+    event_id = int(row["id"])
     return BuildLifecycleEvent(
         id=event_id,
         project_id=project_id,

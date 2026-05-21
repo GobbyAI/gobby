@@ -84,7 +84,8 @@ def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
 
     assert "pg_isready" in test_command
     assert "pg_extension" in test_command
-    assert "extname=$$pgaudit$$" in test_command
+    assert "extname='pgaudit'" in test_command
+    assert "extname=$pgaudit$" not in test_command
     assert "SHOW pgaudit.log" in test_command
     assert "/var/log/pgaudit" in test_command
     assert "pgaudit-*.log" in test_command
