@@ -6,8 +6,7 @@ import sys
 import click
 
 from gobby.config.app import load_config
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 
@@ -34,8 +33,16 @@ def check_tasks_enabled() -> None:
 
 def get_task_manager() -> LocalTaskManager:
     """Get initialized task manager."""
-    db = LocalDatabase()
-    run_migrations(db)
+    config = load_config()
+    if config.hub_backend != "postgres":
+        raise click.ClickException(
+            "SQLite task storage is no longer supported. "
+            "Run `gobby postgres migrate-from-sqlite` and activate PostgreSQL."
+        )
+    if not config.database_url:
+        raise click.ClickException("hub_backend=postgres requires database_url")
+    db = PostgresHubDatabase(config.database_url)
+    db.apply_migrations()
     return LocalTaskManager(db)
 
 
