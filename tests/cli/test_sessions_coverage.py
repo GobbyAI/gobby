@@ -68,12 +68,13 @@ def _make_session(**overrides: Any) -> Session:
 
 
 class TestManagerCreation:
-    @patch("gobby.cli.sessions.LocalDatabase")
+    @patch("gobby.cli.sessions.open_runtime_hub_database")
     @patch("gobby.cli.sessions.SessionManager")
     def test_get_session_manager(self, mock_mgr_cls: MagicMock, mock_db: MagicMock) -> None:
         from gobby.cli.sessions import get_session_manager
 
         result = get_session_manager()
+        mock_db.assert_called_once_with(apply_migrations=False)
         mock_mgr_cls.assert_called_once()
         assert result == mock_mgr_cls.return_value
 

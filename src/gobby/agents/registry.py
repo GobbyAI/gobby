@@ -352,10 +352,10 @@ class RunningAgentRegistry:
         # Get session terminal context
         ctx: dict[str, Any] = {}
         try:
-            from gobby.storage.database import LocalDatabase
+            from gobby.storage.hub.runtime import open_runtime_hub_database
             from gobby.storage.sessions import SessionManager
 
-            db = LocalDatabase()
+            db = open_runtime_hub_database(apply_migrations=False)
             session_mgr = SessionManager(db)
             session = session_mgr.get(agent.session_id)
             if session and session.terminal_context:
@@ -496,10 +496,10 @@ class RunningAgentRegistry:
             # Strategy 1: Check session's terminal_context (Claude hooks)
             # Only used when agent.pid is not set (e.g., daemon restart lost PID)
             try:
-                from gobby.storage.database import LocalDatabase
+                from gobby.storage.hub.runtime import open_runtime_hub_database
                 from gobby.storage.sessions import SessionManager
 
-                db = LocalDatabase()
+                db = open_runtime_hub_database(apply_migrations=False)
                 session_mgr = SessionManager(db)
                 session = session_mgr.get(agent.session_id)
                 if session and session.terminal_context:

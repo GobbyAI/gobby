@@ -27,8 +27,7 @@ from gobby.build import (
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import Isolation, StageCapOverride
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 from .utils import resolve_project_ref
 
@@ -403,15 +402,11 @@ def _echo_target_control_result(payload: dict[str, object]) -> None:
         click.echo("Dry run: no changes made")
 
 
-def _open_database() -> LocalDatabase:
-    """Open the hub database and apply pending migrations before build storage use."""
-    db = LocalDatabase()
-    try:
-        run_migrations(db)
-    except Exception:
-        db.close()
-        raise
-    return db
+def _open_database() -> HubDatabase:
+    """Open the active hub database before build storage use."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(apply_migrations=False)
 
 
 @click.command("build")

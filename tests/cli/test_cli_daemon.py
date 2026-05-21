@@ -226,7 +226,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
 
             assert result.exit_code == 0
-            assert "Local storage initialized" in result.output
+            assert "PostgreSQL hub initialized" in result.output
             mock_init_storage.assert_called_once()
             mock_popen.assert_called_once()
 

@@ -13,8 +13,7 @@ import click
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.consumer_sweep import run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.tasks.expansion._validate import validate_plan_file
 
@@ -187,11 +186,10 @@ def review_runs_command(planning_task_ref: str) -> None:
     )
 
 
-def _open_db() -> LocalDatabase:
-    db = LocalDatabase()
-    if db.migrations_needed():
-        run_migrations(db)
-    return db
+def _open_db() -> HubDatabase:
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(apply_migrations=False)
 
 
 def _validate_plan_for_cli(
@@ -211,7 +209,7 @@ def _validate_plan_for_cli(
     except (OSError, PlanParseError) as exc:
         return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
 
-    db: LocalDatabase | None = None
+    db: HubDatabase | None = None
     code_index: _CliCodeIndexContext | None = None
     if project_id:
         db = _open_db()

@@ -654,7 +654,14 @@ class TestRunEmbeddingInstallOverrides:
 class TestOpenAIKeyLookup:
     """OpenAI key lookup should only suppress expected storage failures."""
 
-    @patch("gobby.storage.database.LocalDatabase", side_effect=RuntimeError("bug"))
-    def test_runtime_error_propagates(self, mock_database: MagicMock) -> None:
-        with pytest.raises(RuntimeError, match="bug"):
-            _get_openai_key(no_interactive=True, results={})
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    def test_runtime_hub_error_skips_noninteractive(self, mock_database: MagicMock) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_openai_key(no_interactive=True, results=results)
+
+        assert key is None
+        assert results["embedding"] == {
+            "success": False,
+            "error": "OpenAI API key not available",
+        }

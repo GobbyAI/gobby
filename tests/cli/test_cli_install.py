@@ -31,6 +31,8 @@ def _mock_ext_services_and_prompts():
     with (
         patch("gobby.cli.install._run_qdrant_install"),
         patch("gobby.cli.install._run_neo4j_install"),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.install.SecretStore"),
         patch(
             "gobby.cli._install_prompts._prompt_api_keys",
             return_value={"stored": 0, "already_configured": 0, "env_found": 0},

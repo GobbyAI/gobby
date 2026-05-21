@@ -4,7 +4,8 @@ compact text block with optional grouping and session column."""
 from collections.abc import Callable
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import serialize_task_state
 
@@ -32,7 +33,7 @@ def format_task_list(
     tree_prefixes: dict[str, tuple[str, bool]] | None = None,
     group_by: str | None = None,
     term_width: int | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> str:
     """Render a list of tasks as one compact block.
 
@@ -53,8 +54,8 @@ def format_task_list(
         group_by: ``"project"``, ``"stage"``, or ``None``.
         term_width: Terminal width override (for tests). Defaults to the live
             terminal size.
-        db: Optional database handle for batch lookups. A fresh
-            :class:`LocalDatabase` is opened (and closed) if not supplied.
+        db: Optional database handle for batch lookups. A fresh active hub
+            handle is opened (and closed) if not supplied.
 
     Returns:
         A newline-joined block, ready to pass to :func:`click.echo`.
@@ -83,7 +84,7 @@ def format_task_list(
             if pid:
                 project_ids.add(pid)
 
-    owner_db: DatabaseProtocol = db or LocalDatabase()
+    owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
         session_ref_map = _resolve_session_refs(session_ids, db=owner_db)
         project_name_map: dict[str, str] = {}

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 from wcwidth import wcswidth
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import serialize_task_state
 
@@ -208,9 +209,7 @@ def _get_term_width(default: int = 100) -> int:
         return default
 
 
-def _resolve_session_refs(
-    session_ids: set[str], db: DatabaseProtocol | None = None
-) -> dict[str, str]:
+def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) -> dict[str, str]:
     """Batch-resolve ``session_id`` UUIDs to their ``#seq_num`` refs.
 
     Returns a map ``{uuid: "#N"}``. Missing rows are omitted (callers fall back
@@ -218,7 +217,7 @@ def _resolve_session_refs(
     """
     if not session_ids:
         return {}
-    owner_db: DatabaseProtocol = db or LocalDatabase()
+    owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
         placeholders = ",".join("?" * len(session_ids))
         rows = owner_db.fetchall(
@@ -234,13 +233,11 @@ def _resolve_session_refs(
             owner_db.close()
 
 
-def _resolve_project_names(
-    project_ids: set[str], db: DatabaseProtocol | None = None
-) -> dict[str, str]:
+def _resolve_project_names(project_ids: set[str], db: HubDatabase | None = None) -> dict[str, str]:
     """Batch-resolve ``project_id`` UUIDs to project names."""
     if not project_ids:
         return {}
-    owner_db: DatabaseProtocol = db or LocalDatabase()
+    owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
         placeholders = ",".join("?" * len(project_ids))
         rows = owner_db.fetchall(

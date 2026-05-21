@@ -7,7 +7,7 @@ import logging
 import subprocess  # nosec B404 # git subprocess results are mediated by WorktreeGitManager.
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,10 @@ def _run_git(
     cwd: str | Path | None = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess[str]:
-    return git_manager.run_git_command(args, cwd=cwd, timeout=timeout)
+    return cast(
+        subprocess.CompletedProcess[str],
+        git_manager.run_git_command(args, cwd=cwd, timeout=timeout),
+    )
 
 
 def _detail(result: subprocess.CompletedProcess[str]) -> str:

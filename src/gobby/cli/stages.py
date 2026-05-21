@@ -8,15 +8,14 @@ from typing import Any
 
 import click
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import StageRegistryManager
 
 
-def _open_manager() -> tuple[LocalDatabase, StageRegistryManager]:
-    db = LocalDatabase()
+def _open_manager() -> tuple[HubDatabase, StageRegistryManager]:
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
-        run_migrations(db)
         return db, StageRegistryManager(db)
     except Exception:
         db.close()

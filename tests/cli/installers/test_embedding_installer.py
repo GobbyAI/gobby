@@ -497,7 +497,7 @@ class TestPersistEmbeddingConfig:
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_persists_embeddings_namespace_only(
         self,
@@ -538,11 +538,11 @@ class TestPersistEmbeddingConfig:
         # No duplicate namespaces
         assert not any(k.startswith("search.") for k in entries)
         assert not any(k.startswith("mcp_client_proxy.") for k in entries)
-        mock_db.__exit__.assert_called_once()
+        mock_db.close.assert_called_once()
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_none_provider_clears_endpoints(
         self,
@@ -571,13 +571,13 @@ class TestPersistEmbeddingConfig:
             "embeddings.api_base": None,
             "embeddings.dim": 0,
         }
-        mock_db.__exit__.assert_called_once()
-        assert mock_db.__exit__.call_count == 1
-        assert mock_db.__exit__.call_args is not None
+        mock_db.close.assert_called_once()
+        assert mock_db.close.call_count == 1
+        assert mock_db.close.call_args is not None
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_openai_key_stored_in_secrets(
         self,
@@ -611,11 +611,11 @@ class TestPersistEmbeddingConfig:
         assert call_kwargs["name"] == "openai_api_key"
         assert call_kwargs["plaintext_value"] == "sk-xxx"
         assert call_kwargs["category"] == "llm"
-        mock_db.__exit__.assert_called_once()
+        mock_db.close.assert_called_once()
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_openai_provider_uses_unified_namespace(
         self,
@@ -650,9 +650,9 @@ class TestPersistEmbeddingConfig:
             "embeddings.api_base": None,
             "embeddings.dim": 1536,
         }
-        mock_db.__exit__.assert_called_once()
-        assert mock_db.__exit__.call_count == 1
-        assert mock_db.__exit__.call_args is not None
+        mock_db.close.assert_called_once()
+        assert mock_db.close.call_count == 1
+        assert mock_db.close.call_args is not None
 
 
 class TestHealthCheck:

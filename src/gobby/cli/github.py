@@ -12,7 +12,7 @@ import click
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.mcp_proxy.manager import MCPClientManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github import GitHubSyncService
@@ -25,7 +25,7 @@ def get_github_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectM
     """Get dependencies for GitHub commands."""
     from pathlib import Path
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
     mcp_manager = MCPClientManager()

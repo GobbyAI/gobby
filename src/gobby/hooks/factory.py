@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.autonomous.progress_tracker import ProgressTracker
@@ -25,7 +24,7 @@ from gobby.memory.manager import MemoryManager
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -83,7 +82,7 @@ class HookManagerComponents:
     """All subsystem instances created by HookManagerFactory."""
 
     config: Any  # DaemonConfig | None
-    database: LocalDatabase
+    database: HubDatabase
     daemon_client: DaemonClient
     transcript_processor: ClaudeTranscriptParser
     session_task_manager: SessionTaskManager
@@ -130,7 +129,7 @@ class HookManagerFactory:
         completion_registry: Any | None,
         get_machine_id: Callable[[], str],
         resolve_project_id: Callable[[str | None, str | None], str],
-        database: DatabaseProtocol | None = None,
+        database: HubDatabase | None = None,
         session_manager: SessionManager | None = None,
         code_index_trigger: Any | None = None,
     ) -> HookManagerComponents:
@@ -174,9 +173,9 @@ class HookManagerFactory:
         if session_manager is not None:
             if database is not None and database is not session_manager.db:
                 raise ValueError("database and session_manager.db must reference the same object")
-            resolved_database = cast(LocalDatabase, session_manager.db)
+            resolved_database = session_manager.db
         else:
-            resolved_database = cast(LocalDatabase, database or cls._create_database(config))
+            resolved_database = database or cls._create_database(config)
         daemon_client = DaemonClient(
             host=daemon_host,
             port=daemon_port,
@@ -395,15 +394,15 @@ class HookManagerFactory:
         return dispatcher
 
     @staticmethod
-    def _create_database(config: Any | None) -> LocalDatabase:
-        if config and config.database_path:
-            db_path = Path(config.database_path).expanduser()
-            return LocalDatabase(db_path)
-        return LocalDatabase()
+    def _create_database(config: Any | None) -> HubDatabase:
+        _ = config
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        return open_runtime_hub_database(apply_migrations=False)
 
     @staticmethod
     def _create_storage(
-        database: LocalDatabase,
+        database: HubDatabase,
         *,
         logger: logging.Logger,
         config: Any | None,
@@ -421,7 +420,7 @@ class HookManagerFactory:
         )
 
     @staticmethod
-    def _create_autonomous(database: LocalDatabase) -> _Autonomous:
+    def _create_autonomous(database: HubDatabase) -> _Autonomous:
         progress_tracker = ProgressTracker(database)
         return _Autonomous(
             stop_registry=StopRegistry(database),
@@ -430,7 +429,7 @@ class HookManagerFactory:
         )
 
     @staticmethod
-    def _create_memory(database: LocalDatabase, config: Any | None) -> MemoryManager:
+    def _create_memory(database: HubDatabase, config: Any | None) -> MemoryManager:
         memory_config = config.memory if config and hasattr(config, "memory") else None
         if not memory_config:
             from gobby.config.persistence import MemoryConfig
@@ -451,7 +450,7 @@ class HookManagerFactory:
 
     @staticmethod
     def _create_workflow_engine(
-        database: LocalDatabase,
+        database: HubDatabase,
         config: Any | None,
         llm_service: LLMService | None,
         transcript_processor: Any,

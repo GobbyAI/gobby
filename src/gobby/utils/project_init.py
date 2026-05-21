@@ -214,8 +214,7 @@ def initialize_project(
     Raises:
         Exception: If project creation fails.
     """
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.projects import LocalProjectManager
     from gobby.utils.git import get_github_url as detect_github_url
     from gobby.utils.project_context import get_project_context
@@ -253,9 +252,8 @@ def initialize_project(
     if not github_url:
         github_url = detect_github_url(cwd)
 
-    # Initialize database and run migrations
-    db = LocalDatabase()
-    run_migrations(db)
+    # Initialize database
+    db = open_runtime_hub_database(apply_migrations=False)
     project_manager = LocalProjectManager(db)
 
     # Auto-detect verification commands

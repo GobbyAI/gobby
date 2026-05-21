@@ -37,7 +37,7 @@ def write_postgres_defaults(
     database_url: str,
 ) -> None:
     def _apply(data: dict[str, Any]) -> None:
-        data["hub_backend"] = "sqlite"
+        data["hub_backend"] = "postgres"
         data.pop("database_url", None)
         data["database_url_ref"] = store_postgres_database_url(database_url)
         data["postgres_install_mode"] = mode

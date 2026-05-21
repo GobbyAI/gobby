@@ -105,54 +105,55 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
 
         gobby memory fix-null-project             # Apply fixes
     """
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.sessions import SessionManager
 
-    memory_module = _facade()
-    db = memory_module.LocalDatabase()
-    session_mgr = SessionManager(db)
+    with runtime_hub_database(apply_migrations=False) as db:
+        session_mgr = SessionManager(db)
 
-    rows = db.fetchall(
-        """
-        SELECT id, content, source_session_id
-        FROM memories
-        WHERE project_id IS NULL AND source_type IN ('session', 'agent') AND source_session_id IS NOT NULL
-        """,
-        (),
-    )
+        rows = db.fetchall(
+            """
+            SELECT id, content, source_session_id
+            FROM memories
+            WHERE project_id IS NULL AND source_type IN ('session', 'agent') AND source_session_id IS NOT NULL
+            """,
+            (),
+        )
 
-    if not rows:
-        click.echo("No memories with NULL project_id from sessions found.")
-        return
+        if not rows:
+            click.echo("No memories with NULL project_id from sessions found.")
+            return
 
-    click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
+        click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
 
-    fixed = 0
-    for row in rows:
-        memory_id = row["id"]
-        session_id = row["source_session_id"]
-        content_preview = row["content"][:50] if row["content"] else ""
+        fixed = 0
+        for row in rows:
+            memory_id = row["id"]
+            session_id = row["source_session_id"]
+            content_preview = row["content"][:50] if row["content"] else ""
 
-        session = session_mgr.get(session_id)
-        if session and session.project_id:
-            if dry_run:
-                click.echo(
-                    f"  Would fix {memory_id[:12]}: set project_id={session.project_id[:12]}"
-                )
-                click.echo(f"    Content: {content_preview}...")
-                fixed += 1
-            else:
-                with db.transaction() as conn:
-                    conn.execute(
-                        "UPDATE memories SET project_id = ? WHERE id = ?",
-                        (session.project_id, memory_id),
+            session = session_mgr.get(session_id)
+            if session and session.project_id:
+                if dry_run:
+                    click.echo(
+                        f"  Would fix {memory_id[:12]}: set project_id={session.project_id[:12]}"
                     )
-                fixed += 1
-        elif dry_run:
-            click.echo(
-                f"  Cannot fix {memory_id[:12]}: session {session_id} not found or has no project_id"
-            )
+                    click.echo(f"    Content: {content_preview}...")
+                    fixed += 1
+                else:
+                    with db.transaction() as conn:
+                        conn.execute(
+                            "UPDATE memories SET project_id = ? WHERE id = ?",
+                            (session.project_id, memory_id),
+                        )
+                    fixed += 1
+            elif dry_run:
+                click.echo(
+                    f"  Cannot fix {memory_id[:12]}: "
+                    f"session {session_id} not found or has no project_id"
+                )
 
-    if dry_run:
-        click.echo(f"\nWould fix {fixed} memories. Run without --dry-run to apply.")
-    else:
-        click.echo(f"Fixed {fixed} memories with project_id from their source sessions.")
+        if dry_run:
+            click.echo(f"\nWould fix {fixed} memories. Run without --dry-run to apply.")
+        else:
+            click.echo(f"Fixed {fixed} memories with project_id from their source sessions.")

@@ -10,16 +10,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def sync_manager(temp_db):
-    tm = LocalTaskManager(temp_db)
+def sync_manager(hub_db):
+    tm = LocalTaskManager(hub_db)
     return TaskSyncManager(tm, export_path=".gobby/tasks.jsonl")
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_from_github_issues(sync_manager, temp_db):
+async def test_import_from_github_issues(sync_manager, hub_db):
     # Setup project with matching URL
-    temp_db.execute(
+    hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (?, ?, ?, ?)",
         ("proj-123", "/tmp/test", "Test Project", "https://github.com/owner/repo"),
     )
@@ -53,7 +53,7 @@ async def test_import_from_github_issues(sync_manager, temp_db):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_project_id_resolution(sync_manager, temp_db):
+async def test_import_project_id_resolution(sync_manager, hub_db):
     """
     Test that import_from_github_issues correctly resolves the project_id
     from the database based on the repo URL, without needing claude_agent_sdk.
@@ -61,7 +61,7 @@ async def test_import_project_id_resolution(sync_manager, temp_db):
     # Setup: Insert a project with a known GitHub URL
     repo_url = "https://github.com/test/resolution"
     expected_project_id = "proj-resolution-test"
-    temp_db.execute(
+    hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (?, ?, ?, ?)",
         (expected_project_id, "/tmp/resolution", "Resolution Project", repo_url),
     )
@@ -93,5 +93,5 @@ async def test_import_project_id_resolution(sync_manager, temp_db):
     assert result["count"] == 1
 
     # Verify the task was created with the correct project_id
-    row = temp_db.fetchone("SELECT project_id FROM tasks WHERE id = ?", ("gh-101",))
+    row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = ?", ("gh-101",))
     assert row["project_id"] == expected_project_id

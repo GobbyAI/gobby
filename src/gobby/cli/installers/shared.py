@@ -22,7 +22,7 @@ from gobby.cli.installers.hook_commands import config_contains_gobby_hook
 from gobby.cli.utils import get_install_dir
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ def _copy_docs(source: Path, target: Path, installed: dict[str, list[str]]) -> N
 
 
 def sync_bundled_content_to_db(
-    db: "DatabaseProtocol",
+    db: "HubDatabase",
     skip_types: set[str] | None = None,
 ) -> dict[str, Any]:
     """Sync all bundled content (skills, prompts, rules, agents, workflows) to the database.
@@ -287,7 +287,7 @@ def sync_bundled_content_to_db(
     return result
 
 
-def _sync_user_templates_to_db(db: "DatabaseProtocol") -> int:
+def _sync_user_templates_to_db(db: "HubDatabase") -> int:
     """Sync user-created templates from project and global directories.
 
     Reads YAML files from .gobby/workflows/<type>/ (project) and

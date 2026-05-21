@@ -29,10 +29,10 @@ def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
 
 @pytest.fixture
 def patched_deps():
-    """Patch SecretStore, LocalDatabase, and load_full_config_from_db at import sites."""
+    """Patch SecretStore, runtime hub open, and load_full_config_from_db."""
     with (
         patch("gobby.cli.utils.load_full_config_from_db") as mock_load,
-        patch("gobby.storage.database.LocalDatabase") as mock_db_cls,
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database") as mock_db_cls,
         patch("gobby.storage.secrets.SecretStore") as mock_store_cls,
     ):
         mock_db = MagicMock()
@@ -197,8 +197,8 @@ class TestPromptHubApiKeys:
             "unresolved": [],
         }
 
-    def test_db_opens_resolved_config_path_not_default(self, patched_deps) -> None:
-        """LocalDatabase must open the resolved config's database_path, not the default ~/.gobby/gobby-hub.db."""
+    def test_opens_runtime_hub_without_sqlite_path(self, patched_deps) -> None:
+        """Prompt setup opens the active runtime hub instead of a configured SQLite path."""
         config = MagicMock()
         config.database_path = "/custom/path/to.db"
         config.skills = SkillsConfig(hubs={})
@@ -206,10 +206,7 @@ class TestPromptHubApiKeys:
 
         _prompt_hub_api_keys(no_interactive=False)
 
-        # LocalDatabase was constructed with the expanded custom path, not called with no args.
-        assert patched_deps["db_cls"].called
-        called_path = patched_deps["db_cls"].call_args.args[0]
-        assert str(called_path) == "/custom/path/to.db"
+        patched_deps["db_cls"].assert_called_once_with(apply_migrations=False)
 
     def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
@@ -345,7 +342,9 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch(
+                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+            ) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -378,8 +377,7 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        expected_path = Path(config.database_path).expanduser()
-        mock_db_cls.assert_called_once_with(expected_path)
+        mock_db_cls.assert_called_once_with(apply_migrations=False)
         mock_store_cls.assert_called_once_with(db)
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -406,7 +404,9 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch(
+                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+            ) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -444,8 +444,7 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        expected_path = Path(config.database_path).expanduser()
-        mock_db_cls.assert_called_once_with(expected_path)
+        mock_db_cls.assert_called_once_with(apply_migrations=False)
         mock_store_cls.assert_called_once_with(db)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"

@@ -166,16 +166,16 @@ def _get_openai_key(
     """
     openai_api_key: str | None = None
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.secrets import SecretStore
 
-        with LocalDatabase() as db:
+        with runtime_hub_database(apply_migrations=False) as db:
             secrets = SecretStore(db)
             if secrets.exists("openai_api_key"):
                 existing = secrets.get("openai_api_key")
                 openai_api_key = existing
                 click.echo("Using existing OpenAI API key from secrets")
-    except (ImportError, OSError, sqlite3.Error) as e:
+    except (ImportError, OSError, RuntimeError, sqlite3.Error) as e:
         logger.warning("Failed to read existing openai_api_key: %s", e, exc_info=True)
 
     if openai_api_key:

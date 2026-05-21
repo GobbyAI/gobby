@@ -263,7 +263,7 @@ def test_show_messages(mock_session_manager, mock_resolve_session) -> None:
 
 @pytest.mark.integration
 @patch("gobby.storage.projects.LocalProjectManager")
-@patch("gobby.cli.sessions.LocalDatabase")
+@patch("gobby.cli.sessions.open_runtime_hub_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
 @patch("pathlib.Path.exists")
@@ -347,7 +347,7 @@ def test_create_handoff(
 
 @pytest.mark.integration
 @patch("gobby.storage.projects.LocalProjectManager")
-@patch("gobby.cli.sessions.LocalDatabase")
+@patch("gobby.cli.sessions.open_runtime_hub_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
 @patch("pathlib.Path.exists")
@@ -594,7 +594,7 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         patch("pathlib.Path.exists", return_value=True),
         patch("gobby.sessions.analyzer.TranscriptAnalyzer") as mock_analyzer,
         patch("subprocess.run"),
-        patch("gobby.cli.sessions.LocalDatabase"),
+        patch("gobby.cli.sessions.open_runtime_hub_database"),
         patch("gobby.storage.projects.LocalProjectManager"),
     ):
         # Mock file reading

@@ -6,7 +6,6 @@ This module tests the shared utility functions used across CLI commands.
 import logging
 import os
 import signal
-import socket
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -106,42 +105,42 @@ class TestResolveProjectRef:
             result = resolve_project_ref(None)
             assert result is None
 
-    def test_uuid_lookup(self, temp_db) -> None:
+    def test_uuid_lookup(self, hub_db) -> None:
         """Test direct UUID lookup."""
         # Create a project
         from gobby.storage.projects import LocalProjectManager
 
-        manager = LocalProjectManager(temp_db)
+        manager = LocalProjectManager(hub_db)
         project = manager.create(name="test-proj", repo_path="/tmp/test")
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):  # Don't actually close
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):  # Don't actually close
                 result = resolve_project_ref(project.id)
                 assert result == project.id
 
-    def test_name_lookup(self, temp_db) -> None:
+    def test_name_lookup(self, hub_db) -> None:
         """Test project name lookup."""
         from gobby.storage.projects import LocalProjectManager
 
-        manager = LocalProjectManager(temp_db)
+        manager = LocalProjectManager(hub_db)
         project = manager.create(name="my-named-project", repo_path="/tmp/test")
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = resolve_project_ref("my-named-project")
                 assert result == project.id
 
-    def test_not_found_returns_none(self, temp_db) -> None:
+    def test_not_found_returns_none(self, hub_db) -> None:
         """Test project not found returns None when exit_on_not_found=False."""
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = resolve_project_ref("nonexistent-project", exit_on_not_found=False)
                 assert result is None
 
-    def test_not_found_exits(self, temp_db) -> None:
+    def test_not_found_exits(self, hub_db) -> None:
         """Test project not found exits when exit_on_not_found=True."""
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 with pytest.raises(SystemExit):
                     resolve_project_ref("nonexistent-project", exit_on_not_found=True)
 
@@ -154,17 +153,17 @@ class TestResolveProjectRef:
 class TestGetActiveSessionId:
     """Tests for get_active_session_id function."""
 
-    def test_with_active_session(self, temp_db) -> None:
+    def test_with_active_session(self, hub_db) -> None:
         """Test finding an active session."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         # Create a project first
-        proj_manager = LocalProjectManager(temp_db)
+        proj_manager = LocalProjectManager(hub_db)
         project = proj_manager.create(name="test-proj", repo_path="/tmp/test")
 
         # Create an active session using register method
-        session_manager = SessionManager(temp_db)
+        session_manager = SessionManager(hub_db)
         session = session_manager.register(
             source="test",
             external_id="ext-123",
@@ -172,12 +171,12 @@ class TestGetActiveSessionId:
             project_id=project.id,
         )
 
-        result = get_active_session_id(temp_db)
+        result = get_active_session_id(hub_db)
         assert result == session.id
 
-    def test_no_active_session(self, temp_db) -> None:
+    def test_no_active_session(self, hub_db) -> None:
         """Test no active session returns None."""
-        result = get_active_session_id(temp_db)
+        result = get_active_session_id(hub_db)
         assert result is None
 
     def test_creates_db_when_not_provided(self) -> None:
@@ -185,7 +184,7 @@ class TestGetActiveSessionId:
         mock_db = MagicMock()
         mock_db.fetchone.return_value = None
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=mock_db):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db):
             result = get_active_session_id()
             assert result is None
             mock_db.close.assert_called_once()
@@ -199,15 +198,15 @@ class TestGetActiveSessionId:
 class TestResolveSessionId:
     """Tests for resolve_session_id function."""
 
-    def test_resolves_active_session(self, temp_db) -> None:
+    def test_resolves_active_session(self, hub_db) -> None:
         """Test resolving to active session when no ref provided."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
-        proj_manager = LocalProjectManager(temp_db)
+        proj_manager = LocalProjectManager(hub_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = SessionManager(temp_db)
+        session_manager = SessionManager(hub_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -215,28 +214,28 @@ class TestResolveSessionId:
             project_id=project.id,
         )
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = resolve_session_id(None)
                 assert result == session.id
 
-    def test_no_active_session_raises(self, temp_db) -> None:
+    def test_no_active_session_raises(self, hub_db) -> None:
         """Test ClickException when no active session."""
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 with pytest.raises(click.ClickException) as exc_info:
                     resolve_session_id(None)
                 assert "No active session found" in str(exc_info.value)
 
-    def test_resolves_session_reference(self, temp_db) -> None:
+    def test_resolves_session_reference(self, hub_db) -> None:
         """Test resolving a specific session reference."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
-        proj_manager = LocalProjectManager(temp_db)
+        proj_manager = LocalProjectManager(hub_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = SessionManager(temp_db)
+        session_manager = SessionManager(hub_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -244,20 +243,20 @@ class TestResolveSessionId:
             project_id=project.id,
         )
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = resolve_session_id(session.id)
                 assert result == session.id
 
-    def test_resolves_seq_num_with_project_context(self, temp_db) -> None:
+    def test_resolves_seq_num_with_project_context(self, hub_db) -> None:
         """Test resolving #N format using project context."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
-        proj_manager = LocalProjectManager(temp_db)
+        proj_manager = LocalProjectManager(hub_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = SessionManager(temp_db)
+        session_manager = SessionManager(hub_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -266,24 +265,24 @@ class TestResolveSessionId:
         )
 
         # Mock project context to return the project ID
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 with patch("gobby.cli.utils.get_project_context") as mock_ctx:
                     mock_ctx.return_value = {"id": project.id}
                     # Session should have seq_num=1 (first in project)
                     result = resolve_session_id("#1")
                     assert result == session.id
 
-    def test_resolves_seq_num_with_explicit_project_id(self, temp_db) -> None:
+    def test_resolves_seq_num_with_explicit_project_id(self, hub_db) -> None:
         """Test resolving #N format with explicit project_id parameter."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
-        proj_manager = LocalProjectManager(temp_db)
+        proj_manager = LocalProjectManager(hub_db)
         project1 = proj_manager.create(name="project1", repo_path="/tmp/p1")
         project2 = proj_manager.create(name="project2", repo_path="/tmp/p2")
 
-        session_manager = SessionManager(temp_db)
+        session_manager = SessionManager(hub_db)
         session1 = session_manager.register(
             source="test", external_id="ext-1", machine_id="m-1", project_id=project1.id
         )
@@ -292,8 +291,8 @@ class TestResolveSessionId:
         )
 
         # Both sessions are #1 in their respective projects
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 # Resolve #1 in project1
                 result1 = resolve_session_id("#1", project_id=project1.id)
                 assert result1 == session1.id
@@ -311,24 +310,24 @@ class TestResolveSessionId:
 class TestListProjectNames:
     """Tests for list_project_names function."""
 
-    def test_lists_all_project_names(self, temp_db) -> None:
+    def test_lists_all_project_names(self, hub_db) -> None:
         """Test listing all project names."""
         from gobby.storage.projects import LocalProjectManager
 
-        manager = LocalProjectManager(temp_db)
+        manager = LocalProjectManager(hub_db)
         manager.create(name="project-alpha", repo_path="/tmp/alpha")
         manager.create(name="project-beta", repo_path="/tmp/beta")
 
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = list_project_names()
                 assert "project-alpha" in result
                 assert "project-beta" in result
 
-    def test_returns_list(self, temp_db) -> None:
+    def test_returns_list(self, hub_db) -> None:
         """Test that list_project_names returns a list."""
-        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
-            with patch.object(temp_db, "close"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+            with patch.object(hub_db, "close"):
                 result = list_project_names()
                 assert isinstance(result, list)
 
@@ -411,19 +410,15 @@ class TestIsPortAvailable:
         # We can't guarantee this port is available, but it's likely
         assert isinstance(result, bool)
 
-    def test_unavailable_port(self) -> None:
+    @patch("socket.socket")
+    def test_unavailable_port(self, mock_socket: MagicMock) -> None:
         """Test that an occupied port is not available."""
-        # Bind to a port
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("localhost", 0))
-        sock.listen(1)
-        port = sock.getsockname()[1]
+        mock_sock = mock_socket.return_value
+        mock_sock.bind.side_effect = OSError("address in use")
 
-        try:
-            result = is_port_available(port)
-            assert result is False
-        finally:
-            sock.close()
+        result = is_port_available(60887)
+        assert result is False
+        mock_sock.close.assert_called_once_with()
 
 
 # ==============================================================================
@@ -519,7 +514,11 @@ class TestKillAllGobbyDaemons:
                 with patch("gobby.cli.utils.load_config") as mock_config:
                     mock_config.return_value = MagicMock(daemon_port=60887)
                     mock_config.return_value.websocket.port = 60888
-                    result = kill_all_gobby_daemons()
+                    with patch("psutil.Process") as mock_proc_cls:
+                        parent_proc = MagicMock()
+                        parent_proc.parent.return_value = None
+                        mock_proc_cls.return_value = parent_proc
+                        result = kill_all_gobby_daemons()
                     assert result == 0
 
     def test_finds_and_kills_daemon(self) -> None:
@@ -681,23 +680,15 @@ class TestInitLocalStorage:
 
     def test_creates_database(self, temp_dir: Path) -> None:
         """Test that database is created and migrations run."""
-        db_path = temp_dir / "gobby-hub.db"
+        mock_db = MagicMock()
 
-        mock_config = MagicMock()
-        mock_config.database_path = str(db_path)
+        with patch(
+            "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db
+        ) as mock_open:
+            result = init_local_storage()
 
-        with patch("gobby.cli.utils.load_config", return_value=mock_config):
-            with patch("gobby.storage.migrations.run_migrations") as mock_migrations:
-                with patch("gobby.storage.database.LocalDatabase") as mock_db_class:
-                    mock_db = MagicMock()
-                    mock_db_class.return_value = mock_db
-                    init_local_storage()
-                    mock_db_class.assert_called_once_with(db_path)
-                    assert mock_db_class.call_count == 1
-                    assert mock_db_class.call_args is not None
-                    mock_migrations.assert_called_once_with(mock_db)
-                    assert mock_migrations.call_count == 1
-                    assert mock_migrations.call_args is not None
+        assert result is mock_db
+        mock_open.assert_called_once_with()
 
 
 # ==============================================================================
