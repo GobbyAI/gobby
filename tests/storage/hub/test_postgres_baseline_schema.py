@@ -91,6 +91,21 @@ def test_postgres_baseline_declares_migration_and_cutover_tables() -> None:
     )
 
 
+def test_postgres_baseline_preserves_nanosecond_span_ranges() -> None:
+    sql = _schema_text()
+
+    _assert_matches(
+        sql,
+        r"CREATE\s+TABLE\s+spans\s*\([^;]*start_time_ns\s+BIGINT\s+NOT\s+NULL",
+        "span start_time_ns stores Unix nanoseconds and must use BIGINT",
+    )
+    _assert_matches(
+        sql,
+        r"CREATE\s+TABLE\s+spans\s*\([^;]*end_time_ns\s+BIGINT",
+        "span end_time_ns stores Unix nanoseconds and must use BIGINT",
+    )
+
+
 def test_postgres_baseline_declares_foreign_keys_deferrable() -> None:
     sql = _schema_text()
 
