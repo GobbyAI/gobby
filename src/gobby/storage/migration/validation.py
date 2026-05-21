@@ -23,6 +23,7 @@ from gobby.storage.migration.tables import (
     row_value,
     sqlite_application_tables,
 )
+from gobby.storage.migration.values import normalize_timestamp_like_value
 
 _POSTGRES_ONLY_TABLES: frozenset[str] = _PRE_BASELINE_INFRA_TABLES | frozenset(
     {"gobby_migration_state", "schema_migrations"}
@@ -719,13 +720,17 @@ def _table_hash(rows: Sequence[Any]) -> str:
 
 def _row_to_dict(row: Any) -> dict[str, object]:
     if isinstance(row, Mapping):
-        return {str(key): _jsonable(value) for key, value in row.items()}
+        return {str(key): _jsonable_for_column(str(key), value) for key, value in row.items()}
     keys = getattr(row, "keys", None)
     if callable(keys):
-        return {str(key): _jsonable(row[key]) for key in keys()}
+        return {str(key): _jsonable_for_column(str(key), row[key]) for key in keys()}
     if isinstance(row, Sequence) and not isinstance(row, str | bytes | bytearray):
         return {str(index): _jsonable(value) for index, value in enumerate(row)}
     return {"value": _jsonable(row)}
+
+
+def _jsonable_for_column(column: str, value: Any) -> object:
+    return _jsonable(normalize_timestamp_like_value(column, value))
 
 
 def _jsonable(value: Any) -> object:

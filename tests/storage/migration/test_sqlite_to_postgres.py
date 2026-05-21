@@ -387,6 +387,19 @@ def test_copy_columns_ignores_known_legacy_source_columns() -> None:
     assert columns == ("session_id", "workflow_name", "step")
 
 
+def test_epoch_timestamp_strings_are_normalized_for_copy_and_validation() -> None:
+    values = importlib.import_module("gobby.storage.migration.values")
+    validation = importlib.import_module("gobby.storage.migration.validation")
+
+    normalized = values.normalize_timestamp_like_value("created_at", "1775144511")
+
+    assert normalized == "2026-04-02T15:41:51+00:00"
+    assert values.normalize_timestamp_like_value("id", "1775144511") == "1775144511"
+    assert validation._row_to_dict({"created_at": "1775144511"}) == {
+        "created_at": "2026-04-02T15:41:51"
+    }
+
+
 def _record_copy(migration: Any, events: list[str]) -> Any:
     events.append("copy")
     return migration._CopyResult(rows=3, tables=2)

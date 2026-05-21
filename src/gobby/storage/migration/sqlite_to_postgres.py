@@ -33,6 +33,7 @@ from gobby.storage.migration.validation import (
     _sqlite_count,
     validate_migration,
 )
+from gobby.storage.migration.values import normalize_timestamp_like_value
 from gobby.storage.migrations import MigrationUnsupportedError
 
 _BASELINE_INSERT_RE = re.compile(r'^\s*INSERT\s+INTO\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I | re.M)
@@ -492,7 +493,12 @@ def _copy_table(
             with pg_cursor.copy(copy_query) as copy:
                 while batch := source_cursor.fetchmany(batch_size):
                     for row in batch:
-                        copy.write_row(tuple(row[column] for column in columns))
+                        copy.write_row(
+                            tuple(
+                                normalize_timestamp_like_value(column, row[column])
+                                for column in columns
+                            )
+                        )
                         count += 1
     return count
 
