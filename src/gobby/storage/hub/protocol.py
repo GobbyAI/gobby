@@ -211,7 +211,10 @@ class HubDatabase(Protocol):
         """Open a transaction and yield a backend-neutral executor."""
         ...
 
-    def transaction_immediate(self, lock: LockTarget) -> AbstractContextManager[Transaction]:
+    def transaction_immediate(
+        self,
+        lock: LockTarget | None = None,
+    ) -> AbstractContextManager[Transaction]:
         """Open a write-intent transaction for a typed lock target."""
         ...
 

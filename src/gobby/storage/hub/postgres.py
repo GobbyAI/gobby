@@ -166,7 +166,7 @@ class PostgresHubDatabase:
             yield txn
 
     @contextmanager
-    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
+    def transaction_immediate(self, lock: LockTarget | None = None) -> Iterator[Transaction]:
         with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
             yield txn
 
@@ -177,8 +177,6 @@ class PostgresHubDatabase:
         immediate: bool,
         lock: LockTarget | None,
     ) -> Iterator[Transaction]:
-        if immediate and lock is None:
-            raise TypeError("transaction_immediate() requires a LockTarget")
         with self._transaction_context(is_immediate=immediate, initial_lock=lock) as txn:
             yield txn
 
