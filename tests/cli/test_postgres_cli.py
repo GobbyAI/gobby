@@ -248,8 +248,8 @@ def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
     assert payload["verification"]["probe_detail"]["audit_file"] == "/var/log/pgaudit/pgaudit.log"
     assert "AUDIT: SESSION" in payload["verification"]["probe_detail"]["audit_readback"]
     assert "_path" not in payload
-    assert "PostgreSQL is the only supported runtime backend." in result.output
-    assert "SQLite runtime deactivation is unsupported." in result.output
+    assert "PostgreSQL is now the required hub runtime." in result.output
+    assert "docs/runbooks/postgres-rollback.md" in result.output
     assert "gobby postgres deactivate" not in result.output
     assert "Validation-window deadline:" in result.output
 
@@ -479,7 +479,7 @@ def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
     assert _read_bootstrap(tmp_path)["hub_backend"] == "sqlite"
 
 
-def test_postgres_deactivate_refuses_to_reenable_sqlite_runtime(
+def test_postgres_deactivate_rejects_sqlite_runtime_rollback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -495,7 +495,8 @@ def test_postgres_deactivate_refuses_to_reenable_sqlite_runtime(
     assert result.exit_code != 0
     assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
     assert not list(tmp_path.glob("bootstrap.yaml.*.bak"))
-    assert "PostgreSQL deactivation to SQLite is no longer supported" in result.output
+    assert "PostgreSQL is the only supported hub runtime" in result.output
+    assert "no longer writes hub_backend=sqlite" in result.output
     assert "hub_backend=sqlite cannot start" in result.output
 
 

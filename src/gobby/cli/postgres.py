@@ -218,21 +218,23 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
         _restore_bootstrap(backup_path)
         raise
 
-    click.echo("hub_backend set to postgres. PostgreSQL is the only supported runtime backend.")
-    click.echo(
-        "Rollback requires validation-window export artifacts; SQLite runtime deactivation is unsupported."
-    )
+    click.echo("hub_backend set to postgres.")
+    click.echo("PostgreSQL is now the required hub runtime.")
+    click.echo("For validation-window recovery guidance:")
+    click.echo("  docs/runbooks/postgres-rollback.md")
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
 
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
-    """Deprecated guard for the removed SQLite runtime rollback path."""
+    """Deprecated compatibility command for the removed SQLite hub runtime."""
     raise click.ClickException(
-        "PostgreSQL deactivation to SQLite is no longer supported. "
-        "hub_backend=sqlite cannot start under the Phase 7 runtime; keep PostgreSQL "
-        "configured and use the rollback runbook to export validation-window writes."
+        "PostgreSQL is the only supported hub runtime. "
+        "`gobby postgres deactivate` no longer writes hub_backend=sqlite. "
+        "hub_backend=sqlite cannot start under the Phase 7 runtime. "
+        "Use `gobby postgres migrate-from-sqlite` only for legacy imports, "
+        "and follow docs/runbooks/postgres-rollback.md for recovery exports."
     )
 
 
