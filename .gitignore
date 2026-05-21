@@ -225,6 +225,7 @@ __marimo__/
 .scripts/
 .gobby/config.yaml
 .gobby/agents/
+.gobby/bin/
 .gobby/workflows/
 .gobby/plugins/
 .gobby/prompts/

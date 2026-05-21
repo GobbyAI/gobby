@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess  # nosec B404 # fixed git argv for local exclude updates.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ _CONFIG_PROBE_TIMEOUT = 5.0
 _SEARCH_SMOKE_TIMEOUT = 10.0
 _RUNTIME_DIR_NAME = "gcode-runtime"
 _WRAPPER_RELATIVE_PATH = Path(".gobby") / "bin" / "gcode"
+_WRAPPER_EXCLUDE_PATTERN = ".gobby/bin/"
 _POSTGRES_URL_RE = re.compile(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+@", re.IGNORECASE)
 
 
@@ -125,6 +127,7 @@ def _prepare_gcode_runtime(
 
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    _exclude_generated_wrapper_from_git(workspace)
     wrapper_path.write_text(_gcode_wrapper_script(runtime_home, gcode_bin), encoding="utf-8")
     wrapper_path.chmod(0o755)
 
@@ -150,6 +153,36 @@ def _gcode_wrapper_script(runtime_home: Path, gcode_bin: Path) -> str:
         f"export GOBBY_HOME={shlex.quote(str(runtime_home))}\n"
         f'exec {shlex.quote(str(gcode_bin))} "$@"\n'
     )
+
+
+def _exclude_generated_wrapper_from_git(workspace: Path) -> None:
+    result = subprocess.run(  # nosec B603 B607 # fixed git argv on local workspace.
+        ["git", "rev-parse", "--git-path", "info/exclude"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        logger.debug("Skipping gcode wrapper Git exclude outside repository: %s", workspace)
+        return
+
+    exclude_path = workspace / result.stdout.strip()
+    try:
+        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+        patterns = {line.strip() for line in existing.splitlines()}
+        if _WRAPPER_EXCLUDE_PATTERN in patterns:
+            return
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        suffix = "" if not existing or existing.endswith("\n") else "\n"
+        exclude_path.write_text(
+            f"{existing}{suffix}{_WRAPPER_EXCLUDE_PATTERN}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.debug(
+            "Failed to update Git exclude for gcode wrapper in %s", workspace, exc_info=True
+        )
 
 
 def _prepend_path(path: Path) -> str:

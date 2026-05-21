@@ -5,6 +5,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 """
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -106,6 +107,7 @@ class TestEnsureIsolationCodeIndex:
         runtime_root = tmp_path / "runtime"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
@@ -130,6 +132,14 @@ class TestEnsureIsolationCodeIndex:
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
         assert "database_url: postgresql://gobby:secret@localhost/gobby" in bootstrap.read_text()
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert status.stdout == ""
 
     @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
