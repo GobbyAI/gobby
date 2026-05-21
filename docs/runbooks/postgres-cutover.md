@@ -114,10 +114,12 @@ missing.
 
 `gobby postgres deactivate` is retained only as a compatibility command and
 exits before writing `hub_backend=sqlite`. Phase 7 startup rejects
-`hub_backend=sqlite`; keep `hub_backend=postgres` in `bootstrap.yaml`. If the
-keyring entry was deleted, recreate it by rerunning the matching
-`gobby postgres install --mode ... --dsn ...` command while the daemon is
-stopped.
+`hub_backend=sqlite`; keep `hub_backend=postgres` in `bootstrap.yaml`.
+`gobby postgres uninstall` is service cleanup, not a rollback path to SQLite.
+Before restarting the daemon after uninstalling a PostgreSQL service, preserve or
+recreate a valid PostgreSQL `database_url_ref` / `database_url` bootstrap entry.
+If the keyring entry was deleted, recreate it by rerunning the matching
+`gobby postgres install --mode ... --dsn ...` command while the daemon is stopped.
 
 After the validation window closes, the steady-state PostgreSQL runtime still
 uses the same keyring reference. A later rollback requires product-supported

@@ -92,7 +92,8 @@ def uninstall_postgres(
             "success": True,
             "mode": "external",
             "message": (
-                "External PostgreSQL server left untouched; runtime bootstrap preserved "
+                "External PostgreSQL service cleanup completed; server left untouched; "
+                "runtime bootstrap preserved "
                 "because PostgreSQL is the only supported hub backend."
             ),
         }

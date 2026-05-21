@@ -8,7 +8,9 @@ Phase 7 does not support restarting Gobby against the legacy SQLite hub runtime.
 `gobby postgres deactivate` is retained only as a compatibility command and
 exits before writing `hub_backend=sqlite`. This runbook captures PostgreSQL-side
 writes before a fix-forward or operator-managed restore path; it does not switch
-the current runtime back to SQLite.
+the current runtime back to SQLite. `gobby postgres uninstall` removes or
+disconnects PostgreSQL service artifacts only; it is not a rollback path and must
+not be used to restore the removed SQLite runtime.
 
 Writes made to PostgreSQL during the validation window are at risk during
 recovery and are not merged back into a legacy SQLite backup automatically. The
@@ -153,9 +155,10 @@ intact.
 
 1. Keep the current bootstrap on PostgreSQL. Do not run
    `gobby postgres deactivate`; if invoked, the command exits with an error and
-   does not write `hub_backend=sqlite`. Phase 7 startup rejects
-   `hub_backend=sqlite`; leave `bootstrap.yaml` using the PostgreSQL keyring
-   reference (`keyring:gobby:postgres_database_url`) and do not add a plaintext
+   does not write `hub_backend=sqlite`. Do not use `gobby postgres uninstall` as
+   a rollback step. Phase 7 startup rejects `hub_backend=sqlite`; leave
+   `bootstrap.yaml` using the PostgreSQL keyring reference
+   (`keyring:gobby:postgres_database_url`) and do not add a plaintext
    `database_url`.
 
 2. Choose the recovery path:
