@@ -12,6 +12,24 @@ services:
       - shared_preload_libraries=pg_search,pgaudit
       - -c
       - pgaudit.log=write
+      - -c
+      - pgaudit.log_catalog=off
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=/var/log/pgaudit
+      - -c
+      - log_filename=pgaudit-%Y-%m-%d_%H%M%S.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_file_mode=0640
+      - -c
+      - log_min_messages=log
     environment:
       POSTGRES_DB: ${GOBBY_POSTGRES_TEST_DB:-gobby_test}
       POSTGRES_USER: ${GOBBY_POSTGRES_TEST_USER:-gobby_test}
