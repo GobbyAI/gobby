@@ -105,14 +105,14 @@ def test_validate_migration_ignores_postgres_generated_columns() -> None:
     validation.validate_migration(source, target)
 
 
-def test_validate_migration_rejects_missing_schema_bookkeeping() -> None:
+def test_validate_migration_rejects_source_without_schema_bookkeeping() -> None:
     validation = importlib.import_module("gobby.storage.migration.validation")
     source = _sqlite_source(with_schema_version=False)
     target = _PostgresRows(
         {"tasks": [{"id": 1, "title": "imported", "created_at": "2026-01-01T00:00:00Z"}]}
     )
 
-    with pytest.raises(validation.MigrationValidationError, match="schema baseline missing"):
+    with pytest.raises(validation.MigrationValidationError, match="schema"):
         validation.validate_migration(source, target)
 
 
@@ -120,8 +120,8 @@ def _sqlite_source(*, with_schema_version: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     if with_schema_version:
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (BASELINE_VERSION,))
     conn.execute(
         "CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL)"
     )

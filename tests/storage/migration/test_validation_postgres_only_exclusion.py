@@ -100,8 +100,8 @@ def test_pgaudit_probe_excluded_unknown_table_fails() -> None:
 def _sqlite_source() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+    conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (BASELINE_VERSION,))
     conn.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
     conn.execute("INSERT INTO tasks (id, title) VALUES (1, 'imported')")
     return conn
