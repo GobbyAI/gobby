@@ -77,32 +77,19 @@ class TestSetMockDefault:
 
 
 class TestInitHubDatabase:
-    def test_uses_sqlite_backend_by_default(self, tmp_path, monkeypatch) -> None:
+    def test_rejects_sqlite_backend(self) -> None:
         from gobby.runner_init import helpers
 
-        db = MagicMock()
-        local_database = MagicMock(return_value=db)
-        run_migrations = MagicMock()
-        monkeypatch.setattr(helpers, "LocalDatabase", local_database)
-        monkeypatch.setattr(helpers, "run_migrations", run_migrations)
-
         config = SimpleNamespace(
-            database_path=str(tmp_path / "hub.db"),
             hub_backend="sqlite",
             database_url=None,
         )
 
-        result = helpers.init_hub_database(config)
-
-        assert result is db
-        local_database.assert_called_once_with(tmp_path / "hub.db")
-        run_migrations.assert_called_once_with(db)
+        with pytest.raises(ValueError, match="sqlite"):
+            helpers.init_hub_database(config)
 
     def test_uses_postgres_backend_when_selected(self, monkeypatch) -> None:
         from gobby.runner_init import helpers
-
-        run_migrations = MagicMock()
-        monkeypatch.setattr(helpers, "run_migrations", run_migrations)
 
         with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database:
             db = MagicMock()
@@ -118,7 +105,6 @@ class TestInitHubDatabase:
         assert result is db
         postgres_database.assert_called_once_with("postgresql://gobby:secret@localhost:60891/gobby")
         db.apply_migrations.assert_called_once_with()
-        run_migrations.assert_not_called()
 
     def test_postgres_backend_requires_database_url(self) -> None:
         from gobby.runner_init import helpers

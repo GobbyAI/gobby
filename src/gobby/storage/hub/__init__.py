@@ -1,1 +1,1 @@
-"""Backend-neutral hub storage contracts and adapters."""
+"""Hub storage contracts and the PostgreSQL runtime adapter."""

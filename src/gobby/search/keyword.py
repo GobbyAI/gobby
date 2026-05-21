@@ -1,4 +1,4 @@
-"""Dialect-aware keyword search backends for hub storage."""
+"""Keyword search backends for hub storage."""
 
 from __future__ import annotations
 
@@ -118,14 +118,12 @@ def pick_search_backend(
     table: str,
     mode: SearchMode = "keyword",
 ) -> KeywordSearchBackend:
-    """Pick the dialect-specific keyword search backend for a hub database."""
+    """Pick the runtime keyword search backend for a hub database."""
     if mode == "semantic":
         raise NotImplementedError(
             "Semantic search is a follow-up workstream; use mode='keyword' today."
         )
     config = _table_config(table)
-    if _dialect(hub) == "sqlite":
-        return FTS5SearchBackend(hub, config)
     return BM25SearchBackend(hub, config)
 
 
@@ -364,15 +362,8 @@ def row_value(row: Any, key: str) -> Any:
     return row[key]
 
 
-def uses_direct_placeholders(hub: Any) -> bool:
-    """Return True when SQL is executed directly against sqlite3-style methods."""
-    return hasattr(hub, "fetchall") or hasattr(hub, "execute") or hasattr(hub, "fetchone")
-
-
 def placeholder(hub: Any, index: int) -> str:
     """Return the placeholder token for the active execution surface."""
-    if _dialect(hub) == "sqlite" and uses_direct_placeholders(hub):
-        return "?"
     return f"${index}"
 
 
@@ -403,10 +394,6 @@ def _table_config(table: str) -> _TableConfig:
         return _TABLE_CONFIGS[table]
     except KeyError as exc:
         raise ValueError(f"unsupported keyword search table: {table}") from exc
-
-
-def _dialect(hub: Any) -> Literal["sqlite", "postgres"]:
-    return "postgres" if getattr(hub, "dialect", "sqlite") == "postgres" else "sqlite"
 
 
 def sanitize_pg_search_query(query: str) -> str:
