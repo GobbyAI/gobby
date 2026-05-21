@@ -53,6 +53,83 @@ def _format_bytes(n: int) -> str:
     return f"{n / (1024 * 1024 * 1024):.1f} GB"
 
 
+def _safe_status_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _format_postgres_host_db(payload: dict[str, Any]) -> str | None:
+    host = _safe_status_text(payload.get("dsn_host"))
+    db_name = _safe_status_text(payload.get("dsn_db"))
+    if host and db_name:
+        return f"{host}/{db_name}"
+    return host or db_name
+
+
+def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
+    extensions = payload.get("extensions")
+    if not isinstance(extensions, dict) or not extensions:
+        return None
+
+    missing = [
+        name for name in ("pg_search", "pgaudit") if name in extensions and not extensions.get(name)
+    ]
+    if missing:
+        return f"missing {', '.join(missing)}"
+    return "extensions ok"
+
+
+def _format_postgres_migration(payload: dict[str, Any]) -> str | None:
+    migration = payload.get("migration_complete")
+    if not isinstance(migration, dict):
+        return None
+    return "migration complete" if migration.get("present") else "migration pending"
+
+
+def _format_postgres_keyring(payload: dict[str, Any]) -> str | None:
+    keyring = payload.get("keyring")
+    if not isinstance(keyring, dict):
+        return None
+    if keyring.get("error"):
+        return "keyring unavailable"
+    if not keyring.get("configured"):
+        return "keyring not configured"
+    if keyring.get("credential_present"):
+        return "keyring ok"
+    if keyring.get("readable"):
+        return "keyring missing credential"
+    return "keyring configured"
+
+
+def _format_postgres_service_status(payload: Any) -> str | None:
+    """Format a compact PostgreSQL hub service status without exposing DSNs."""
+    if not isinstance(payload, dict):
+        return None
+
+    mode = _safe_status_text(payload.get("mode")) or "unknown"
+    if payload.get("available") is False:
+        details = [mode]
+        error = _safe_status_text(payload.get("error"))
+        if error:
+            details.append(error)
+        return f"unavailable ({'; '.join(details)})"
+
+    details = [mode]
+    for part in (
+        _format_postgres_host_db(payload),
+        _format_postgres_extensions(payload),
+        _format_postgres_migration(payload),
+        _format_postgres_keyring(payload),
+    ):
+        if part:
+            details.append(part)
+
+    health = "healthy" if payload.get("healthy") else "unhealthy"
+    return f"{health} ({'; '.join(details)})"
+
+
 def format_status_message(
     *,
     running: bool,
@@ -209,6 +286,11 @@ def format_status_message(
             status_str = "running" if docker_running else "stopped"
             lines.append(f"  {'Docker:':<{_LW}}{status_str} (v{docker_ver})")
 
+        # PostgreSQL hub
+        postgres_status = _format_postgres_service_status(data.get("postgres"))
+        if postgres_status:
+            lines.append(f"  {'PostgreSQL:':<{_LW}}{postgres_status}")
+
         # Qdrant
         memory = data.get("memory", {})
         qdrant = memory.get("qdrant", {})
@@ -360,6 +442,14 @@ def format_status_message(
             )
         elif source == "failed":
             health_issues.append(f"Provider models: {name} — {error or 'discovery failed'}")
+
+    postgres = data.get("postgres")
+    if isinstance(postgres, dict):
+        if postgres.get("available") is False:
+            error = _safe_status_text(postgres.get("error")) or "status unavailable"
+            health_issues.append(f"PostgreSQL: {error}")
+        elif postgres.get("healthy") is False:
+            health_issues.append("PostgreSQL: unhealthy")
 
     if health_issues:
         lines.append("Health Issues:")

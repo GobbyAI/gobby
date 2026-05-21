@@ -228,6 +228,8 @@ async def get_postgres_status(
     gobby_home: Path | None = None,
     mode: InstallMode | None = None,
     dsn: str | None = None,
+    readiness_timeout: float = 10.0,
+    connect_timeout: int = 5,
 ) -> dict[str, Any]:
     """Return the stable PostgreSQL status payload used by cutover runbooks."""
     home = gobby_home or Path("~/.gobby").expanduser()
@@ -248,7 +250,11 @@ async def get_postgres_status(
         "mode": active_mode,
         "dsn_host": _dsn_host(database_url),
         "dsn_db": _dsn_db(database_url),
-        "healthy": _pg_isready(database_url),
+        "healthy": _pg_isready(
+            database_url,
+            timeout=readiness_timeout,
+            connect_timeout=connect_timeout,
+        ),
         "keyring": keyring_status,
         "extensions": {"pg_search": False, "pgaudit": False},
         "preload_libraries": [],
@@ -256,7 +262,7 @@ async def get_postgres_status(
     }
 
     try:
-        with psycopg.connect(database_url, connect_timeout=5) as conn:
+        with psycopg.connect(database_url, connect_timeout=connect_timeout) as conn:
             payload["extensions"] = {
                 "pg_search": _extension_present(conn, "pg_search"),
                 "pgaudit": _extension_present(conn, "pgaudit"),
@@ -505,18 +511,18 @@ def _wait_for_pg_isready(
     return False
 
 
-def _pg_isready(dsn: str) -> bool:
+def _pg_isready(dsn: str, *, timeout: float = 10.0, connect_timeout: int = 5) -> bool:
     try:
         result = subprocess.run(  # nosec B603 B607 # fixed pg_isready command
             ["pg_isready", "-d", dsn],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
         )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
         try:
-            with psycopg.connect(dsn, connect_timeout=5):
+            with psycopg.connect(dsn, connect_timeout=connect_timeout):
                 return True
         except psycopg.Error:
             return False

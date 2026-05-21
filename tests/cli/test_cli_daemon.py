@@ -1677,6 +1677,16 @@ class TestEdgeCases:
             "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
             "sessions": {"active": 3, "paused": 0},
             "tasks": {"open": 5, "in_progress": 2},
+            "postgres": {
+                "mode": "docker",
+                "dsn_host": "localhost",
+                "dsn_db": "gobby",
+                "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                "healthy": True,
+                "extensions": {"pg_search": True, "pgaudit": True},
+                "migration_complete": {"present": True, "imported_at": "2026-05-21"},
+                "keyring": {"configured": True, "credential_present": True},
+            },
         }
 
         mock_proc = MagicMock()
@@ -1696,6 +1706,9 @@ class TestEdgeCases:
 
             assert result.exit_code == 0
             assert "LM Studio (running)" in result.output
+            assert "PostgreSQL:" in result.output
+            assert "postgresql://" not in result.output
+            assert "secret" not in result.output
             mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=3.0)
 
 
