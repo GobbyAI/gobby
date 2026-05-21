@@ -16,6 +16,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._crud import get_task, update_task
@@ -252,6 +253,74 @@ async def test_max_active_agents_cap(
 
     assert result.cap_reached is True
     assert spawned == []
+
+
+async def test_run_heartbeat_serializes_overlapping_development_start_actions(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "shared refactor", priority=1)
+    second = _task(temp_db, sample_project, "shared follow-up", priority=2)
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(first.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(second.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    stage_states = LocalTaskManager(temp_db).stage_states
+    assert result.executed == 1
+    assert result.skipped == 1
+    assert stage_states.get(first.id, "development").state == "in_progress"
+    assert stage_states.get(second.id, "development").state == "ready"
+
+
+async def test_run_heartbeat_allows_disjoint_development_write_sets(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "config refactor", priority=1)
+    second = _task(temp_db, sample_project, "routes follow-up", priority=2)
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(first.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(second.id, ["src/gobby/servers/routes/build.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    stage_states = LocalTaskManager(temp_db).stage_states
+    assert result.executed == 2
+    assert result.skipped == 0
+    assert stage_states.get(first.id, "development").state == "in_progress"
+    assert stage_states.get(second.id, "development").state == "in_progress"
+
+
+async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    owner_session_id = _session(temp_db, sample_project, "owner-session")
+    active = _task(
+        temp_db,
+        sample_project,
+        "active config work",
+        stage_state="in_progress",
+        claimed_by_session_id=owner_session_id,
+    )
+    waiting = _task(temp_db, sample_project, "waiting config work")
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(active.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(waiting.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert result.skipped == 1
+    assert LocalTaskManager(temp_db).stage_states.get(waiting.id, "development").state == "ready"
 
 
 async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
