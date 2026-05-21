@@ -63,6 +63,17 @@ class TmuxConfig(BaseModel):
         ge=1,
         description="Maximum reprompt attempts before failing an idle agent.",
     )
+    reasoning_watchdog_interrupt_enabled: bool = Field(
+        default=True,
+        description=(
+            "Interrupt Codex reasoning turns that exceed the idle timeout without workflow progress."
+        ),
+    )
+    reasoning_watchdog_settle_seconds: float = Field(
+        default=0.2,
+        ge=0.0,
+        description="Seconds to wait after Ctrl-C before sending the watchdog continuation prompt.",
+    )
     init_timeout_seconds: int = Field(
         default=120,
         ge=30,
