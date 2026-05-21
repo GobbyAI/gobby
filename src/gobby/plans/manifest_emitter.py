@@ -25,7 +25,7 @@ from gobby.plans.parser import (
     parse_plan,
     resolve_plan_id,
 )
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +54,7 @@ _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
     "config": "backend-developer",
     "docs": "tech-writer",
-    "planning": "planner",
     "refactor": "backend-developer",
-    "research": "researcher",
     "test": "backend-developer",
 }
 _DEFAULT_AGENT_FALLBACK = "backend-developer"
@@ -368,7 +366,10 @@ def _extract_category(title: str) -> str:
     match = _CATEGORY_RE.search(title)
     if match is None:
         return _DEFAULT_CATEGORY
-    return match.group("value")
+    category = match.group("value")
+    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
+        return _DEFAULT_CATEGORY
+    return category
 
 
 def _clean_title(title: str) -> str:

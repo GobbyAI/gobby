@@ -201,10 +201,11 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
 - **Concrete target file paths** — every `code` / `config` task must specify a
   file path (`Target: src/foo/bar.py` or inline). Vague tasks like
   "update the backend" are un-actionable.
-- **Valid categories** — every `### N.N` task carries one of: `code`, `config`,
-  `docs`, `refactor`, `test`, `research`, `planning`, `manual` (the enum-backed
-  canonical set from `VALID_CATEGORIES`). Anything else is silently rejected at
-  `create_task` time.
+- **Valid expansion categories** — every `### N.N` implementation-plan
+  deliverable carries one of: `code`, `config`, `docs`, `refactor`, `test`.
+  `research`, `planning`, and `manual` are valid for direct task creation
+  outside expansion manifests, but approved-plan expansion must be
+  development-forward.
 - **Phase heading syntax** — every `## Phase N` uses the canonical
   `## Phase N: Name` form (colon), or one of the tolerated dashes
   (`—`, `–`, `-`). Anything else is **silently skipped** by the expansion

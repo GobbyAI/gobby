@@ -81,9 +81,12 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         dry_run=False,
     )
 
-    assert events == ["schema", "lock", "copy", "reseed", "validate", "marker"]
-    assert result["rows"] >= 0
-    assert result["tables"] >= 0
+    assert events == ["schema", "copy", "reseed", "validate", "marker"]
+    assert result["rows"] == 3
+    assert result["tables"] == 2
+    assert result["dry_run"] is False
+    assert result["log_path"] == str(tmp_path / "import.log")
+    assert result["validation_artifact"] is None
 
 
 def test_migrate_sqlite_to_postgres_dry_run_is_read_only(
@@ -145,6 +148,9 @@ def test_migrate_sqlite_to_postgres_dry_run_is_read_only(
     assert forbidden == []
     assert result["dry_run"] is True
     assert result["rows"] == 2
+    assert result["tables"] == 1
+    assert result["log_path"] is None
+    assert result["validation_artifact"] is None
 
 
 def test_seed_bearing_tables_follow_postgres_baseline() -> None:

@@ -45,8 +45,8 @@ Compile this task into a deterministic expansion spec.
 - Keep the task graph complete but minimal.
 - Agent Selection runs after leaf generation and before returning the spec. Use the
   `expansion-agent-selection` skill heuristics and available agent definitions to emit
-  `assigned_agent` for every automated `code`, `config`, `docs`, or `test` leaf.
+  `assigned_agent` for every automated `code`, `config`, `docs`, `refactor`, or `test` leaf.
 - Emit `additional_skills` as an array, usually empty, when a leaf needs skills beyond
   the assigned agent's baseline.
-- Do not emit `planning` leaves; planning belongs to epics and stage tasks.
+- Do not emit `planning` or `research` leaves; approved-plan expansion must be development-forward.
 - Enabled parent stages: {{ enabled_stages | join(", ") if enabled_stages else "none" }}

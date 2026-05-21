@@ -13,7 +13,7 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES
+from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 from gobby.tasks.expansion import _apply, _compile, _contract, _reset, _validate
 from gobby.tasks.expansion._common import (
     _contract_single_task_id,
@@ -22,6 +22,7 @@ from gobby.tasks.expansion._common import (
 
 __all__ = [
     "AUTOMATED_LEAF_CATEGORIES",
+    "DEVELOPMENT_FORWARD_LEAF_CATEGORIES",
     "ExpansionService",
     "_contract_single_task_id",
     "compile_plan_to_spec",

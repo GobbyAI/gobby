@@ -185,4 +185,4 @@ def test_validate_plan_file_rejects_manual_manifest_category(
 
     assert result["valid"] is False
     assert any("unsupported category 'manual'" in error for error in result["errors"])
-    assert any("automated leaf categories" in error for error in result["errors"])
+    assert any("development-forward categories" in error for error in result["errors"])

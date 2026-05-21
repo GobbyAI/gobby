@@ -12,7 +12,10 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import (
+    DEVELOPMENT_FORWARD_LEAF_CATEGORIES,
+    TDD_ELIGIBLE_CATEGORIES,
+)
 
 ParseMode = Literal["draft", "expansion", "strict"]
 logger = logging.getLogger(__name__)
@@ -793,13 +796,13 @@ def _build_manifest_entry(
         return None
 
     category = str(raw["category"])
-    if category not in AUTOMATED_LEAF_CATEGORIES:
-        allowed = ", ".join(sorted(AUTOMATED_LEAF_CATEGORIES))
+    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
+        allowed = ", ".join(sorted(DEVELOPMENT_FORWARD_LEAF_CATEGORIES))
         errors.append(
             (
                 source_line,
                 f"manifest entry {index} has unsupported category {category!r}; "
-                f"expansion manifests only support automated leaf categories: {allowed}",
+                f"expansion manifests only support development-forward categories: {allowed}",
             )
         )
         return None

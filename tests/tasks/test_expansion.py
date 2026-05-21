@@ -70,6 +70,16 @@ def test_automated_leaf_categories_are_explicit() -> None:
     }
 
 
+def test_expansion_leaf_categories_are_development_forward() -> None:
+    assert expansion_module.DEVELOPMENT_FORWARD_LEAF_CATEGORIES == {
+        "code",
+        "config",
+        "docs",
+        "refactor",
+        "test",
+    }
+
+
 def test_validate_compiled_spec_rejects_manual_leaves(
     service: ExpansionService,
     sample_project,
@@ -124,7 +134,99 @@ def test_validate_compiled_spec_rejects_planning_leaf_tasks(
     validation = service.validate_compiled_spec(spec)
 
     assert validation["valid"] is False
-    assert any("planning leaf task" in error for error in validation["errors"])
+    assert any("unsupported category:planning" in error for error in validation["errors"])
+    assert any("development-forward" in error for error in validation["errors"])
+
+
+def test_validate_compiled_spec_rejects_research_leaf_tasks(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    epic = _parent(service, sample_project)
+    spec = service.normalize_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["research-leaf"]}],
+            "tasks": [
+                {
+                    "id": "research-leaf",
+                    "phase_id": "phase-1",
+                    "title": "Re-audit implementation",
+                    "category": "research",
+                    "task_type": "task",
+                }
+            ],
+            "dependencies": [],
+        },
+        task=epic,
+        plan_file=None,
+    )
+
+    validation = service.validate_compiled_spec(spec)
+
+    assert validation["valid"] is False
+    assert any("unsupported category:research" in error for error in validation["errors"])
+    assert any("development-forward" in error for error in validation["errors"])
+
+
+def test_contract_plan_manifest_rejects_research_and_planning_categories(tmp_path) -> None:
+    plan = tmp_path / "bad-categories.md"
+    plan.write_text(
+        """
+> **Plan ID:** bad-categories
+
+## P1 Phase
+`kind: framing`
+
+### 1.1 Re-audit
+`kind: deliverable`
+
+**Acceptance:**
+- 1.1.1 - Re-audit has an implementation artifact. file: `src/audit.py`
+
+### 1.2 Design note
+`kind: deliverable`
+
+**Acceptance:**
+- 1.2.1 - Design note is captured. file: `docs/design.md`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Re-audit"
+  category: research
+  task_type: task
+  depends_on: []
+  validation_criteria: "src/audit.py"
+  labels:
+    - "covers:bad-categories:1.1:1.1.1"
+  assigned_agent: researcher
+  tdd: false
+  source_section: "1.1"
+- title: "Design note"
+  category: planning
+  task_type: task
+  depends_on: []
+  validation_criteria: "docs/design.md"
+  labels:
+    - "covers:bad-categories:1.2:1.2.1"
+  assigned_agent: planner
+  tdd: false
+  source_section: "1.2"
+```
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    from gobby.plans.parser import PlanParseError, parse_plan
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion")
+
+    message = str(excinfo.value)
+    assert "unsupported category 'research'" in message
+    assert "unsupported category 'planning'" in message
+    assert "development-forward categories" in message
 
 
 def test_normalize_preserves_registry_agent_selection_and_additional_skills(

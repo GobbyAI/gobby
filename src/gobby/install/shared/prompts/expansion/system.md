@@ -62,15 +62,15 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 
 1. Use stable task IDs and phase IDs.
 2. Every task must belong to a phase.
-3. Use automated expansion categories from: `code`, `config`, `docs`, `planning`, `refactor`, `research`, `test`.
-   `planning` is only valid for intermediate or parent tasks; it must never be emitted as a leaf.
+3. Use automated expansion leaf categories from: `code`, `config`, `docs`, `refactor`, `test`.
+   Do not emit `planning` or `research` leaves; approved-plan expansion must be development-forward.
 4. Keep tasks atomic and implementation-focused.
 5. Put only real dependencies in `dependencies`.
 6. Include `affected_files` when you can infer them from the current repo.
 7. `test_intent` must be explicit for every phase. Gobby uses it to generate deterministic `[TEST]` and `[REF]` tasks.
 8. Do not create separate `[TEST]` or `[REF]` tasks yourself.
 9. Do not invent optional scope or extra features.
-10. Assign every `code`, `config`, `docs`, or `test` leaf to an available agent using
+10. Assign every `code`, `config`, `docs`, `refactor`, or `test` leaf to an available agent using
     the expansion-agent-selection heuristics. Use `backend-developer` as the default
     fallback and include `additional_skills` as an array.
-11. Do not emit `planning` leaves.
+11. Do not emit discovery-stage leaves from an approved plan.
