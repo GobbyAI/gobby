@@ -3,12 +3,48 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
 from tests.storage.tasks._stage_test_helpers import require_stage_registry_types
 
 pytestmark = pytest.mark.unit
+
+
+class _NoopTransaction:
+    def __enter__(self) -> _NoopTransaction:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def execute(self, sql: str) -> None:
+        raise AssertionError(f"unexpected schema migration: {sql}")
+
+
+class _PostgresColumnIntrospectionDb:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.fetchall_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
+        self.fetchall_calls.append((sql, params))
+        return [
+            {"name": "reviewer_agent"},
+            {"name": "reviewer_agent_selector_json"},
+            {"name": "review_policy"},
+            {"name": "default_max_work_attempts"},
+            {"name": "default_max_review_rounds"},
+            {"name": "dispatch_type"},
+            {"name": "dispatch_target"},
+            {"name": "dispatch_inputs_json"},
+            {"name": "deleted_at"},
+        ]
+
+    def transaction(self) -> _NoopTransaction:
+        return _NoopTransaction()
 
 
 def test_stage_registry_manager_exposes_listed_methods(temp_db) -> None:
@@ -130,3 +166,16 @@ def test_review_anchor_default_stage_is_planning(temp_db) -> None:
     manager = StageRegistryManager(temp_db)
 
     assert manager.list_default_stages("review_anchor") == [("planning", 0)]
+
+
+def test_stage_registry_uses_information_schema_for_postgres_columns() -> None:
+    _, StageRegistryManager = require_stage_registry_types()
+    db = _PostgresColumnIntrospectionDb()
+
+    StageRegistryManager(db)
+
+    assert len(db.fetchall_calls) == 1
+    sql, params = db.fetchall_calls[0]
+    assert "information_schema.columns" in sql
+    assert "PRAGMA" not in sql
+    assert params == ("task_stages_registry",)
