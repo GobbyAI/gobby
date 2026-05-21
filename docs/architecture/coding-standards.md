@@ -181,7 +181,7 @@ def find_task_by_prefix(prefix: str) -> Task | None:
 - Private attributes prefixed with single underscore
 
 ```python
-DEFAULT_DB_PATH = "~/.gobby/gobby-hub.db"       # Module constant
+DEFAULT_DAEMON_PORT = 60887                    # Module constant
 DAEMON_STATUS_TEXT = "running"               # Module constant
 
 self._session_mapping: dict[str, str] = {}   # Private attribute
@@ -212,7 +212,7 @@ Every module should have a docstring explaining its purpose and key responsibili
 Session Manager for multi-CLI session management (local-first).
 
 Handles:
-- Session registration with local SQLite storage
+- Session registration with hub database storage
 - Parent session lookup for context handoff
 - Session status updates (active, expired, handoff_ready)
 
@@ -442,7 +442,7 @@ class Task:
     ...
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Task:
+    def from_row(cls, row: Mapping[str, Any]) -> Task:
         """Convert database row to Task object."""
         labels_json = row["labels"]
         labels = json.loads(labels_json) if labels_json else []
@@ -518,23 +518,20 @@ class SessionManager:
             self._session_mapping[external_id] = session_id
 ```
 
-### Thread-Local Storage
+### Database Execution
 
-Use thread-local storage for connection pools:
+Use the shared hub database protocol for transaction boundaries:
 
 ```python
-import threading
+from gobby.storage.hub.protocol import HubDatabase
 
-class LocalDatabase:
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._local = threading.local()
+class SessionStore:
+    def __init__(self, db: HubDatabase) -> None:
+        self.db = db
 
-    @property
-    def connection(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "connection"):
-            self._local.connection = sqlite3.connect(self._db_path)
-        return self._local.connection
+    def register(self, session_id: str) -> None:
+        with self.db.transaction() as txn:
+            txn.execute("INSERT INTO sessions (id) VALUES ($1)", (session_id,))
 ```
 
 ### Context Variables for Async Context

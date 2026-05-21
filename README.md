@@ -63,9 +63,10 @@ have are missing.
 
 ## What Gobby is
 
-A Python 3.13+ daemon you run locally. SQLite at `~/.gobby/gobby-hub.db`.
-HTTP and the installed web UI on `:60887`, WebSocket on `:60888`, dev web UI
-on `:60889`, stdio MCP server that your coding CLIs talk to.
+A Python 3.13+ daemon you run locally. PostgreSQL is the runtime hub database,
+configured from bootstrap/keyring `database_url` settings. HTTP and the
+installed web UI run on `:60887`, WebSocket on `:60888`, dev web UI on
+`:60889`, with a stdio MCP server that your coding CLIs talk to.
 
 Three things make Gobby load-bearing:
 
@@ -233,7 +234,7 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 ## Architecture
 
 - Python 3.13+ daemon (`uv` for everything)
-- SQLite at `~/.gobby/gobby-hub.db`
+- PostgreSQL runtime hub configured from bootstrap/keyring `database_url`
 - HTTP API and installed web UI on `localhost:60887`, WebSocket on `:60888`,
   dev web UI on `:60889`
 - stdio MCP server for coding assistants
@@ -241,11 +242,12 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - Optional Qdrant + FalkorDB for vector and graph-backed search
 - Companion Rust toolchain via [gobby-cli](https://github.com/GobbyAI/gobby-cli)
 
-The SQLite database at `~/.gobby/gobby-hub.db` is the source of truth for task
-state. `.gobby/tasks.jsonl` is the git-native sync projection — checked in,
-diffable in PRs, and reconciled with the DB so task-linked commits stay
-auditable across machines. Linear is supported as an optional external sync
-target for teams that already track work there.
+The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
+is the git-native sync projection — checked in, diffable in PRs, and reconciled
+with the DB so task-linked commits stay auditable across machines. Linear is
+supported as an optional external sync target for teams that already track work
+there. Legacy SQLite hubs can still be imported with
+`gobby postgres migrate-from-sqlite`.
 
 The guides set is the source of truth for behavior:
 
@@ -351,11 +353,9 @@ team surfaces.
 
 ### Post-0.4.x: hardening
 
-- **PostgreSQL hub migration** (`#12761`) — replace SQLite as the runtime hub
-  with `psycopg` v3, `pg_search`, dual-backend test infra, and a one-shot
-  cold-cutover migration tool. Phased across baseline reflattening, service
-  bootstrap, dual-backend tests, schema and query parity, migration tooling,
-  cutover, and rollback.
+- **PostgreSQL hub hardening** (`#12761`) — keep the local PostgreSQL runtime
+  hub, `psycopg` v3, `pg_search`, and legacy `migrate-from-sqlite` import path
+  solid as the daemon moves toward the Rust hot-path port.
 - **FalkorDB graph migration** (`#12746`) — swap Neo4j for FalkorDB across
   daemon writes, Rust read clients, web UI, admin payloads, and the setup
   wizard.

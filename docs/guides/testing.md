@@ -113,11 +113,10 @@ loader mock, and `tests/servers/conftest.py` provides HTTP server and
 
 E2E daemon tests under `tests/e2e/` spawn isolated daemon processes. Use their
 fixtures rather than connecting to a real local daemon. The e2e environment sets
-`GOBBY_TEST_PROTECT=1`, clears parent `GOBBY_DATABASE_PATH` and
-`GOBBY_CONFIG_FILE` overrides before spawning the daemon, replaces `HOME` with a
-temporary directory, clears provider API keys, and uses high-numbered ports in
-the 30000-40000 range while excluding production ports `60887`, `60888`, and
-`60889`.
+`GOBBY_TEST_PROTECT=1`, clears parent database and config overrides before
+spawning the daemon, replaces `HOME` with a temporary directory, clears provider
+API keys, and uses high-numbered ports in the 30000-40000 range while excluding
+production ports `60887`, `60888`, and `60889`.
 
 ## Frontend Tests
 

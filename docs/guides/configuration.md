@@ -17,8 +17,8 @@ flowchart TB
 
 | Source | Scope | Purpose |
 | --- | --- | --- |
-| `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before SQLite is open |
-| `config_store` table in `~/.gobby/gobby-hub.db` | Machine | Runtime daemon settings and user overrides |
+| `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before the PostgreSQL hub is open |
+| `config_store` table in the PostgreSQL hub | Machine | Runtime daemon settings and user overrides |
 | `~/.gobby/mcp-servers.json` | Machine | Persistent downstream MCP server registry |
 | `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
@@ -50,13 +50,18 @@ booleans, strings, and lists keep their type.
 available:
 
 ```yaml
-database_path: "~/.gobby/gobby-hub.db"
+hub_backend: postgres
+database_url_ref: "keyring:gobby:postgres_database_url"
+postgres_install_mode: docker
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
 neo4j_password: "gobbyneo4j"
 ```
+
+`database_path` is only relevant to legacy SQLite import/rollback workflows.
+Use `gobby postgres migrate-from-sqlite` to import an old `gobby-hub.db`.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.

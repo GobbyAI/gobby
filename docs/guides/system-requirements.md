@@ -43,20 +43,20 @@ services installed by the Gobby installer.
 
 ## Daemon
 
-The daemon is a native Python process with a SQLite database, FastAPI HTTP server, WebSocket
-server, and optional UI dev server.
+The daemon is a native Python process with a local PostgreSQL hub, FastAPI HTTP
+server, WebSocket server, and optional UI dev server.
 
 | Resource | Current value |
 |----------|---------------|
 | Python | 3.13+ (`requires-python = ">=3.13"`) |
 | Package runner | `uv` for source/development commands such as `uv run gobby start` |
-| Database | `~/.gobby/gobby-hub.db` by default |
+| Database | Local PostgreSQL hub configured through bootstrap/keyring `database_url` |
 | HTTP API | `localhost:60887` by default |
 | WebSocket | `localhost:60888` by default |
 | Installed Web UI | `localhost:60887` by default |
 | Dev Web UI | `localhost:60889` when `gobby ui dev` is running |
 | Bind host | `localhost` by default |
-| Disk | 1 GB for code/dependencies plus SQLite database and transcript growth |
+| Disk | 1 GB for code/dependencies plus PostgreSQL data and transcript growth |
 | RAM | Hundreds of MB idle; plan 1-2 GB when many sessions, hooks, or MCP calls are active |
 
 Bootstrap settings live in `src/gobby/install/shared/config/bootstrap.yaml` and are copied into
@@ -116,7 +116,7 @@ The full local search footprint depends on your data volume.
 
 | Component | Working requirement |
 |-----------|---------------------|
-| SQLite | Grows with sessions, tasks, transcripts, memories, and task history |
+| PostgreSQL | Grows with sessions, tasks, transcripts, memories, and task history |
 | Qdrant | Grows with vector count and dimensions; SSD/NVMe storage is strongly preferred |
 | Neo4j | Grows with extracted entities and relationships |
 | Embedding provider | Small embedding models can run on CPU; local chat models loaded alongside them dominate RAM/VRAM |
@@ -149,8 +149,8 @@ daemon or pass the relevant installer flag where one exists. Qdrant exposes `--p
 
 ## Storage
 
-Use SSD or NVMe storage for any full-stack local install. SQLite, Qdrant, and Neo4j all suffer on
-slow or networked filesystems under write-heavy use.
+Use SSD or NVMe storage for any full-stack local install. PostgreSQL, Qdrant,
+and Neo4j all suffer on slow or networked filesystems under write-heavy use.
 
 Prefer Docker named volumes for Qdrant and Neo4j data. The shipped Compose template uses named
 volumes:

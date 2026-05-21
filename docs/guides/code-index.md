@@ -152,9 +152,10 @@ The SQLite store tracks:
 | Calls | Caller/callee relationships, including unresolved and external targets |
 | Content chunks | Searchable chunks for comments, strings, configs, docs, and other non-symbol text |
 
-Primary storage is always SQLite. Qdrant adds semantic search and Neo4j adds
-graph traversal when configured and available. Symbol summaries are cached in
-SQLite and invalidated when a symbol's content hash changes.
+The code-index store is separate from the runtime hub. Its primary storage is
+local SQLite; Qdrant adds semantic search and Neo4j adds graph traversal when
+configured and available. Symbol summaries are cached in the code-index store
+and invalidated when a symbol's content hash changes.
 
 ## Languages And Content
 

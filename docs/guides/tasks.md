@@ -379,8 +379,8 @@ use the artifact cleanup tools before retargeting when cleanup is intentional.
 
 ## Storage and Sync
 
-The canonical task data lives in Gobby's SQLite storage. Tasks can also export to
-JSONL for git-friendly synchronization:
+The canonical task data lives in Gobby's PostgreSQL hub. Tasks can also export
+to JSONL for git-friendly synchronization:
 
 - Project task export: `.gobby/tasks.jsonl`
 - Stealth-mode export: user-level Gobby task storage
