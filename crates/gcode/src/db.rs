@@ -95,7 +95,10 @@ fn resolve_database_url_from_bootstrap(
 
 fn resolve_keyring_database_url(database_url_ref: &str) -> anyhow::Result<String> {
     let (service, username) = parse_database_url_ref(database_url_ref)?;
-    let entry = keyring::Entry::new(service, username)
+    keyring::use_native_store(false).context("failed to open OS keyring store")?;
+    let store = keyring_core::get_default_store().context("OS keyring store is not configured")?;
+    let entry = store
+        .build(service, username, None)
         .with_context(|| format!("failed to open OS keyring entry {database_url_ref}"))?;
     let database_url = entry.get_password().with_context(|| {
         format!("failed to read database_url from OS keyring entry {database_url_ref}")

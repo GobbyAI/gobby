@@ -86,11 +86,11 @@ pub fn index_directory(
 
         progress.tick(&rel);
 
-        if let Some(ref stale_map) = stale {
-            if !stale_map.contains_key(&rel) {
-                result.files_skipped += 1;
-                continue;
-            }
+        if let Some(ref stale_map) = stale
+            && !stale_map.contains_key(&rel)
+        {
+            result.files_skipped += 1;
+            continue;
         }
 
         match index_file(

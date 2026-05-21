@@ -294,24 +294,23 @@ pub fn detect_project_root_from(start: &Path) -> anyhow::Result<PathBuf> {
 /// 3. Default: `http://localhost:60887`
 pub(crate) fn resolve_daemon_url() -> Option<String> {
     // Env var override takes priority (empty value falls through to defaults)
-    if let Ok(port) = std::env::var("GOBBY_PORT") {
-        if !port.is_empty() {
-            return Some(format!("http://localhost:{port}"));
-        }
+    if let Ok(port) = std::env::var("GOBBY_PORT")
+        && !port.is_empty()
+    {
+        return Some(format!("http://localhost:{port}"));
     }
 
     // Read from bootstrap.yaml
     let bootstrap_path = db::bootstrap_path().ok()?;
-    if let Ok(contents) = std::fs::read_to_string(&bootstrap_path) {
-        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents) {
-            if let Some(port) = yaml.get("daemon_port").and_then(|v| v.as_u64()) {
-                let host = yaml
-                    .get("bind_host")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("localhost");
-                return Some(format!("http://{host}:{port}"));
-            }
-        }
+    if let Ok(contents) = std::fs::read_to_string(&bootstrap_path)
+        && let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents)
+        && let Some(port) = yaml.get("daemon_port").and_then(|v| v.as_u64())
+    {
+        let host = yaml
+            .get("bind_host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("localhost");
+        return Some(format!("http://{host}:{port}"));
     }
 
     // Well-known default (matches gsqz)
