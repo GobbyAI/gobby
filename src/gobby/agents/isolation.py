@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger(__name__)
@@ -206,11 +207,20 @@ class WorktreeIsolationHandler(IsolationHandler):
         self._created_worktree_id = None
 
         branch_name = generate_branch_name(config)
+        base_branch = config.base_branch
+        current_branch = self._git_manager.get_current_branch()
+        if current_branch and base_branch == "main" and current_branch != "main":
+            base_branch = current_branch
 
         # Check if worktree already exists for this branch
         existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.worktree_path).is_dir():
+                await sync_reused_worktree_to_base(
+                    git_manager=self._git_manager,
+                    worktree_path=existing.worktree_path,
+                    base_branch=base_branch,
+                )
                 await repair_isolation_environment(
                     main_repo_path=str(self._git_manager.repo_path),
                     isolated_path=existing.worktree_path,
@@ -232,15 +242,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                 )
                 self._worktree_storage.delete(existing.id)
 
-        # Determine base branch - use parent's current branch if default "main" was passed
-        base_branch = config.base_branch
         use_local = False
-
-        # If base_branch is the default "main", check if parent is on a different branch
-        current_branch = self._git_manager.get_current_branch()
-        if current_branch and base_branch == "main" and current_branch != "main":
-            # Use parent's current branch instead
-            base_branch = current_branch
 
         # Check for unpushed commits on the base branch
         has_unpushed, unpushed_count = self._git_manager.has_unpushed_commits(base_branch)

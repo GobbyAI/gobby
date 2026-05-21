@@ -294,6 +294,31 @@ async def test_predict_conflicts_clean_pair(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_predict_conflicts_defaults_to_worktree_base_branch(tmp_path) -> None:
+    wt = _make_worktree(id="wt-a", branch="feat/a", path=str(tmp_path / "a"), base="0.4.7")
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    git_manager = MagicMock()
+    git_manager.repo_path = str(tmp_path)
+    git_manager.run_git_command.return_value = _completed(returncode=0)
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("predict_conflicts", {"worktree_ids": ["wt-a"]})
+
+    assert result["success"] is True
+    assert result["target_predictions"][0]["target_branch"] == "0.4.7"
+    assert git_manager.run_git_command.call_args.args[0] == [
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--no-messages",
+        "0.4.7",
+        "feat/a",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_predict_conflicts_pair_conflicts(tmp_path) -> None:
     wt_a = _make_worktree(id="wt-a", branch="feat/a", path=str(tmp_path / "a"))
     wt_b = _make_worktree(id="wt-b", branch="feat/b", path=str(tmp_path / "b"))

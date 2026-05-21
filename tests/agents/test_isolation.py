@@ -408,6 +408,7 @@ class TestWorktreeIsolationHandler:
         """Test prepare_environment reuses existing worktree for same branch."""
         mock_git_manager = MagicMock()
         mock_git_manager.repo_path = "/path/to/main/repo"
+        mock_git_manager.get_current_branch.return_value = "main"
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = MagicMock(
@@ -441,11 +442,20 @@ class TestWorktreeIsolationHandler:
                 "gobby.agents.isolation.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
+            patch(
+                "gobby.agents.isolation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
+            ) as sync,
         ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.worktree_id == "existing-wt-456"
         assert ctx.cwd == "/tmp/worktrees/existing-branch"
+        sync.assert_awaited_once_with(
+            git_manager=mock_git_manager,
+            worktree_path="/tmp/worktrees/existing-branch",
+            base_branch="main",
+        )
         repair.assert_awaited_once_with(
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/worktrees/existing-branch",

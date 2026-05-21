@@ -277,13 +277,14 @@ def register_merge_landscape_tools(
         description=(
             "Run `git merge-tree` simulations between worktree branches to predict "
             "which pairs will conflict. Returns conflict file lists per pair, plus "
-            "predicted conflicts when each branch is merged into the target. No "
-            "side effects."
+            "predicted conflicts when each branch is merged into the target. If "
+            "target_branch is omitted, each worktree uses its stored base_branch. "
+            "No side effects."
         ),
     )
     async def predict_conflicts(
         worktree_ids: list[str],
-        target_branch: str = "main",
+        target_branch: str | None = None,
     ) -> dict[str, Any]:
         if not worktree_manager:
             return {"success": False, "error": "worktree_manager not configured"}
@@ -294,14 +295,19 @@ def register_merge_landscape_tools(
 
         repo_path = git_manager.repo_path
 
-        branches: list[tuple[str, str]] = []
+        branches: list[tuple[str, str, str]] = []
         errors: list[dict[str, str]] = []
         for wid in worktree_ids:
-            _, branch, err = _resolve_worktree_path(worktree_manager, wid)
-            if err or not branch:
-                errors.append({"worktree_id": wid, "error": err or "no branch"})
+            worktree = worktree_manager.get(wid)
+            if not worktree:
+                errors.append({"worktree_id": wid, "error": f"Worktree '{wid}' not found"})
                 continue
-            branches.append((wid, branch))
+            branch = getattr(worktree, "branch_name", None)
+            if not branch:
+                errors.append({"worktree_id": wid, "error": "no branch"})
+                continue
+            effective_target = target_branch or getattr(worktree, "base_branch", None) or "main"
+            branches.append((wid, branch, effective_target))
 
         async def merge_tree(a: str, b: str) -> tuple[bool, list[str]]:
             rc, stdout, stderr = await _git_async(
@@ -323,8 +329,8 @@ def register_merge_landscape_tools(
             return False, conflict_files
 
         pairs: list[dict[str, Any]] = []
-        for i, (a_id, a_branch) in enumerate(branches):
-            for b_id, b_branch in branches[i + 1 :]:
+        for i, (a_id, a_branch, _) in enumerate(branches):
+            for b_id, b_branch, _ in branches[i + 1 :]:
                 try:
                     clean, files = await merge_tree(a_branch, b_branch)
                 except RuntimeError as exc:
@@ -340,16 +346,16 @@ def register_merge_landscape_tools(
                 )
 
         target_predictions: list[dict[str, Any]] = []
-        for wid, branch in branches:
+        for wid, branch, effective_target in branches:
             try:
-                clean, files = await merge_tree(target_branch, branch)
+                clean, files = await merge_tree(effective_target, branch)
             except RuntimeError as exc:
                 return {"success": False, "error": "merge_tree_failed", "message": str(exc)}
             target_predictions.append(
                 {
                     "worktree_id": wid,
                     "branch": branch,
-                    "target_branch": target_branch,
+                    "target_branch": effective_target,
                     "clean": clean,
                     "conflict_files": files,
                     "conflict_files_count": len(files),

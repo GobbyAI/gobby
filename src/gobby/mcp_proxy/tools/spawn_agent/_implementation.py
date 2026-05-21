@@ -23,6 +23,7 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
+from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
@@ -547,14 +548,22 @@ async def spawn_agent_impl(
                 "error": f"Worktree directory missing: {existing_worktree.worktree_path} (stale record cleaned up)",
             }
 
+        if git_manager is None:
+            return {"success": False, "error": "git_manager is required to reuse a worktree"}
+
         try:
+            await sync_reused_worktree_to_base(
+                git_manager=git_manager,
+                worktree_path=existing_worktree.worktree_path,
+                base_branch=effective_base_branch,
+            )
             await repair_isolation_environment(
                 main_repo_path=resolved_project_path,
                 isolated_path=existing_worktree.worktree_path,
                 provider=effective_provider,
             )
         except Exception as e:
-            return {"success": False, "error": f"Failed to repair worktree isolation: {e}"}
+            return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
 
         from gobby.agents.isolation import IsolationContext
 

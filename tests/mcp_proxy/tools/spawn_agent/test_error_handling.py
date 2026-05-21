@@ -247,12 +247,18 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
 
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
             ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
+            ) as sync,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
                 new=AsyncMock(),
@@ -287,9 +293,15 @@ class TestSpawnAgentImplErrorBranches:
                 provider="gemini",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
+                git_manager=git_manager,
             )
 
         assert result["success"] is True
+        sync.assert_awaited_once_with(
+            git_manager=git_manager,
+            worktree_path=str(worktree_path),
+            base_branch="main",
+        )
         repair.assert_awaited_once_with(
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
@@ -310,7 +322,12 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
         events: list[str] = []
+
+        async def sync(**_kwargs: object) -> None:
+            events.append("sync")
 
         async def repair(**_kwargs: object) -> None:
             events.append("repair")
@@ -322,6 +339,10 @@ class TestSpawnAgentImplErrorBranches:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                side_effect=sync,
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
@@ -360,10 +381,11 @@ class TestSpawnAgentImplErrorBranches:
                 provider="gemini",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
+                git_manager=git_manager,
             )
 
         assert result["success"] is True
-        assert events == ["repair", "index", "spawn"]
+        assert events == ["sync", "repair", "index", "spawn"]
 
     @pytest.mark.asyncio
     async def test_docs_isolated_spawn_skips_blocking_code_index_preflight(self, tmp_path) -> None:
@@ -379,6 +401,8 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
         task = SimpleNamespace(
             title="docs task",
             seq_num=123,
@@ -401,6 +425,10 @@ class TestSpawnAgentImplErrorBranches:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
                 return_value="task-1",
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
@@ -438,15 +466,14 @@ class TestSpawnAgentImplErrorBranches:
                 task_manager=task_manager,
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
+                git_manager=git_manager,
             )
 
         assert result["success"] is True
         index.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_isolated_spawn_continues_when_code_index_preflight_fails(
-        self, tmp_path
-    ) -> None:
+    async def test_isolated_spawn_continues_when_code_index_preflight_fails(self, tmp_path) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -459,6 +486,8 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
         spawn_result = SimpleNamespace(
             success=True,
             child_session_id="child-1",
@@ -475,6 +504,10 @@ class TestSpawnAgentImplErrorBranches:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
@@ -500,6 +533,7 @@ class TestSpawnAgentImplErrorBranches:
                 provider="gemini",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
+                git_manager=git_manager,
             )
 
         assert result["success"] is True
@@ -524,11 +558,17 @@ class TestSpawnAgentImplErrorBranches:
         worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
 
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
@@ -546,6 +586,7 @@ class TestSpawnAgentImplErrorBranches:
                 provider="gemini",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
+                git_manager=git_manager,
             )
 
         assert result["success"] is False

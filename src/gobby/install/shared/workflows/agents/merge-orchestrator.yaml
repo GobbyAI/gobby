@@ -70,7 +70,9 @@ instructions: |
     merge_strategy (default squash), then call record_merge_result.
   - If delivery state says no PR is required, run the existing direct merge
     campaign: analyze_merge_landscape, predict_conflicts, and inspect
-    merge_state for any worktree with non-null merge_state.
+    merge_state for any worktree with non-null merge_state. Use each
+    worktree's base_branch as the target branch unless the task explicitly
+    names a different target.
   - Plan: emit an ordered merge_plan into your session (variable
     merge_plan). Each step picks an action: merge | cherry-pick |
     merge_subset | abort.
@@ -89,9 +91,9 @@ instructions: |
     plan provides a non-red structural check.
   - For ordinary clean worktree delivery, worker prompts must instruct the
     merge-worker to call gobby-worktrees:merge_worktree with the worktree_id
-    and target_branch, run verify_in_worktree before recording success when a
-    verify command is supplied, then record the merge_sha returned by
-    merge_worktree.
+    and the worktree's base_branch target_branch, run verify_in_worktree before
+    recording success when a verify command is supplied, then record the
+    merge_sha returned by merge_worktree.
     Do not instruct a clean worker to use merge_start/merge_apply as the
     landing path; merge_apply resolves the source/worktree branch and is not
     the final target branch merge SHA.
@@ -243,7 +245,9 @@ steps:
     status_message: |
       Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
       to build a complete picture. Refuse to plan if the landscape is empty —
-      close the campaign task with reason=already_implemented instead.
+      close the campaign task with reason=already_implemented instead. Do not
+      default target_branch to main; use each worktree's base_branch unless the
+      task explicitly specifies another target.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
