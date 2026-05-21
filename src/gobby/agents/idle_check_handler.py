@@ -17,8 +17,15 @@ if TYPE_CHECKING:
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+WATCHDOG_ACTOR = "agent_idle_watchdog"
+REASONING_WATCHDOG_CONTINUATION = (
+    "Gobby watchdog interrupted a long idle reasoning turn with no workflow progress. "
+    "Continue from the current task context, avoid redoing completed analysis, finish the "
+    "required Gobby lifecycle MCP transition, then call end_agent_run."
+)
 
 
 class IdleCheckHandler:
@@ -32,6 +39,7 @@ class IdleCheckHandler:
         idle_detector: IdleDetector,
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
+        task_manager: LocalTaskManager | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
@@ -40,6 +48,7 @@ class IdleCheckHandler:
         self._idle_detector = idle_detector
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
+        self._task_manager = task_manager
         self._run_db = run_db
 
     async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -93,6 +102,7 @@ class IdleCheckHandler:
         session_stale = False
         session_id = run.child_session_id or run.parent_session_id
         session_manager = self._get_session_manager()
+        session: Any | None = None
 
         if session_id and session_manager:
             session = await self._run_sqlite(session_manager.get, session_id)
@@ -142,6 +152,14 @@ class IdleCheckHandler:
             idle_timeout_seconds,
             self._tmux_config.max_reprompt_attempts,
         ):
+            if session_stale and await self._recover_reasoning_idle(
+                run,
+                tmux_name=tmux_name,
+                session=session,
+                session_id=session_id,
+            ):
+                return 1
+
             logger.info(f"Reprompting idle agent {run.id}")
             await self._log_recent_codex_response_items(
                 run,
@@ -153,6 +171,127 @@ class IdleCheckHandler:
             return 1
 
         return 0
+
+    @staticmethod
+    def _latest_response_payload_type(items: list[dict[str, object]]) -> str | None:
+        for item in reversed(items):
+            payload_type = item.get("payload_type")
+            if isinstance(payload_type, str) and payload_type:
+                return payload_type
+        return None
+
+    async def _recover_reasoning_idle(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        session: Any | None,
+        session_id: str | None,
+    ) -> bool:
+        """Interrupt a stale Codex reasoning turn and send a focused continuation."""
+        if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
+            return False
+        if session is None or getattr(session, "source", None) != "codex":
+            return False
+
+        transcript_path = getattr(session, "transcript_path", None)
+        if not isinstance(transcript_path, str) or not transcript_path:
+            return False
+
+        try:
+            items = await self._read_recent_codex_response_items(transcript_path)
+        except OSError as exc:
+            logger.warning(
+                "Failed to read Codex transcript for reasoning watchdog on run %s: %s",
+                run.id,
+                exc,
+            )
+            return False
+
+        if self._latest_response_payload_type(items) != "reasoning":
+            return False
+
+        logger.warning(
+            "Codex reasoning watchdog interrupting run %s session %s: %s",
+            run.id,
+            session_id,
+            json.dumps(items, ensure_ascii=True),
+        )
+
+        interrupted = await self._tmux.send_keys(tmux_name, "C-c", literal=False)
+        if not interrupted:
+            return False
+
+        settle_seconds = self._tmux_config.reasoning_watchdog_settle_seconds
+        if settle_seconds:
+            await asyncio.sleep(settle_seconds)
+
+        sent = await self._tmux.send_keys(tmux_name, REASONING_WATCHDOG_CONTINUATION + "\n")
+        if not sent:
+            return False
+
+        self._idle_detector.record_reprompt(run.id)
+        await self._record_watchdog_task_event(
+            run,
+            action="reasoning_interrupt",
+            session_id=session_id,
+            detail="latest_response_item=reasoning",
+        )
+        return True
+
+    async def _record_watchdog_task_event(
+        self,
+        run: AgentRun,
+        *,
+        action: str,
+        session_id: str | None,
+        detail: str,
+    ) -> None:
+        """Append a durable task-history event for watchdog recovery actions."""
+        if self._task_manager is None or not run.task_id:
+            return
+
+        try:
+            task = await self._run_sqlite(self._task_manager.get_task, run.task_id)
+        except Exception:
+            logger.warning(
+                "Failed to load task %s for idle watchdog audit on run %s",
+                run.task_id,
+                run.id,
+                exc_info=True,
+            )
+            return
+        if task is None:
+            return
+
+        try:
+            from gobby.tasks.state_semantics import projected_task_state
+
+            state = projected_task_state(task)
+        except Exception:
+            state = "agent_watchdog"
+
+        reason = f"agent_idle_watchdog:{action} run_id={run.id}"
+        if session_id:
+            reason = f"{reason} session_id={session_id}"
+        reason = f"{reason} {detail}"
+
+        try:
+            await self._run_sqlite(
+                self._task_manager.lifecycle_events.record_lifecycle_event,
+                run.task_id,
+                from_state=state,
+                to_state=state,
+                reason=reason,
+                by_actor=WATCHDOG_ACTOR,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record idle watchdog audit for run %s task %s",
+                run.id,
+                run.task_id,
+                exc_info=True,
+            )
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Fail an agent that is irrecoverably idle."""

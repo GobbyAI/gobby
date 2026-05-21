@@ -138,6 +138,7 @@ class AgentLifecycleMonitor:
             idle_detector=self._idle_detector,
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
+            task_manager=task_manager,
             run_db=run_db,
         )
 
