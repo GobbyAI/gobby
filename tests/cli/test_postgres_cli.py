@@ -22,7 +22,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
-    assert {"install", "uninstall", "status", "activate", "deactivate"} <= set(
+    assert {"install", "backup", "restore", "uninstall", "status", "activate", "deactivate"} <= set(
         postgres_group.commands
     )
 
@@ -32,6 +32,8 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
     [
         (["postgres", "install", "--help"], ["--mode", "--dsn", "docker"]),
         (["postgres", "status", "--help"], ["--json"]),
+        (["postgres", "backup", "--help"], ["--output"]),
+        (["postgres", "restore", "--help"], ["--clean", "--yes"]),
         (["postgres", "uninstall", "--help"], ["--remove-data"]),
         (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
         (["postgres", "deactivate", "--help"], []),
@@ -175,6 +177,103 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
     assert result.exit_code == 0
     assert '"migration_complete"' in result.output
     assert '"pg_search": true' in result.output
+
+
+def test_postgres_backup_command_refuses_when_daemon_is_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: True)
+
+    result = CliRunner().invoke(postgres_cli, ["backup"])
+
+    assert result.exit_code != 0
+    assert "Stop the daemon first: gobby stop" in result.output
+
+
+def test_postgres_backup_command_invokes_verified_backup_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    calls: list[dict[str, Any]] = []
+
+    def _backup(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "backup_dir": str(tmp_path / "backup"),
+            "dump_path": str(tmp_path / "backup/gobby.dump"),
+            "metadata_path": str(tmp_path / "backup/metadata.json"),
+            "sha256s_path": str(tmp_path / "backup/SHA256SUMS"),
+            "dump_sha256": "a" * 64,
+            "verified": True,
+        }
+
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
+    monkeypatch.setattr(postgres_cli_module, "get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(postgres_cli_module, "create_postgres_backup", _backup)
+
+    result = CliRunner().invoke(postgres_cli, ["backup", "--output", str(tmp_path / "backup")])
+
+    assert result.exit_code == 0
+    assert calls == [{"output_dir": tmp_path / "backup", "gobby_home": tmp_path}]
+    assert "PostgreSQL backup created:" in result.output
+    assert "Verified: pg_restore --list" in result.output
+
+
+def test_postgres_restore_command_refuses_when_daemon_is_running(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    dump = tmp_path / "gobby.dump"
+    dump.write_bytes(b"dump")
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: True)
+
+    result = CliRunner().invoke(postgres_cli, ["restore", str(dump), "--yes"])
+
+    assert result.exit_code != 0
+    assert "Stop the daemon first: gobby stop" in result.output
+
+
+def test_postgres_restore_command_invokes_restore_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    dump = tmp_path / "gobby.dump"
+    dump.write_bytes(b"dump")
+    calls: list[dict[str, Any]] = []
+
+    def _restore(source: Path, **kwargs: Any) -> dict[str, Any]:
+        calls.append({"source": source, **kwargs})
+        return {
+            "database_url": "postgresql://gobby:****@localhost:60891/gobby",
+            "probes": {
+                "pg_search_present": True,
+                "pgaudit_present": True,
+                "migration_marker": {"present": True},
+            },
+        }
+
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
+    monkeypatch.setattr(postgres_cli_module, "get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(postgres_cli_module, "restore_postgres_backup", _restore)
+
+    result = CliRunner().invoke(postgres_cli, ["restore", str(dump), "--clean", "--yes"])
+
+    assert result.exit_code == 0
+    assert calls == [{"source": dump, "clean": True, "gobby_home": tmp_path}]
+    assert "PostgreSQL restore completed." in result.output
+    assert "pg_search: yes" in result.output
 
 
 @pytest.mark.parametrize("mode", ["docker", "native", "external"])

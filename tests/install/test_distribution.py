@@ -32,7 +32,7 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing() -> No
 
     message = str(exc_info.value)
     assert "Homebrew-managed Gobby requires Brew-installed helper binaries on PATH." in message
-    assert "gcode >= 0.7.0 required; gcode was not found on PATH." in message
+    assert "gcode >= 0.8.0 required; gcode was not found on PATH." in message
     assert "brew install GobbyAI/tap/gobby-code" in message
     assert "brew upgrade GobbyAI/tap/gobby-code" in message
     assert "brew install GobbyAI/tap/gobby-local" in message
@@ -55,7 +55,7 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale() -> None
             verify_homebrew_managed_bins()
 
     message = str(exc_info.value)
-    assert "gcode >= 0.7.0 required; gcode 0.1.0 at /opt/homebrew/bin/gcode is too old." in message
+    assert "gcode >= 0.8.0 required; gcode 0.1.0 at /opt/homebrew/bin/gcode is too old." in message
     assert "brew install GobbyAI/tap/gobby-code" in message
     assert "brew upgrade GobbyAI/tap/gobby-code" in message
 

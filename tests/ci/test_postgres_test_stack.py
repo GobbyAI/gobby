@@ -24,7 +24,7 @@ _POSTGRES_TEST_USER_ENV = "GOBBY_POSTGRES_TEST_USER"
 
 _POSTGRES_TEST_CONTAINER = "postgres-test"
 _POSTGRES_TEST_DB = "gobby_test"
-_POSTGRES_TEST_IMAGE = "gobby-postgres-local:17-pgsearch"
+_POSTGRES_TEST_IMAGE = "gobby-postgres-local:18-pgsearch"
 _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
 _POSTGRES_TEST_USER = "gobby_test"
@@ -61,7 +61,7 @@ def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -
     build = _mapping(postgres["build"])
     build_args = _mapping(build["args"])
 
-    assert postgres["image"] == "gobby-postgres-local:17-pgsearch"
+    assert postgres["image"] == _POSTGRES_TEST_IMAGE
     assert "gobby/postgres" not in str(postgres)
     assert build["context"] == "./src/gobby/data/postgres-pgsearch"
     assert build_args["PG_SEARCH_VERSION"] == _compose_default(
@@ -84,7 +84,7 @@ def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -
     assert postgres["ports"] == [
         f"{_compose_default(_POSTGRES_TEST_PORT_ENV, _POSTGRES_TEST_PORT)}:5432"
     ]
-    assert postgres["tmpfs"] == ["/var/lib/postgresql/data"]
+    assert postgres["tmpfs"] == ["/var/lib/postgresql"]
 
     healthcheck = _mapping(postgres["healthcheck"])
     assert healthcheck["test"] == [
@@ -145,7 +145,7 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
         '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
         '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
-        "--tmpfs /var/lib/postgresql/data",
+        "--tmpfs /var/lib/postgresql",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
         *_PGAUDIT_COMMAND_OPTIONS,

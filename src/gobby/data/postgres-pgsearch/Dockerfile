@@ -1,4 +1,4 @@
-FROM postgres:17-trixie@sha256:0027bef26712baaee437a4ea48fdf3d2d2e2bc5f0d81615374408ca320f3c7e3
+FROM postgres:18-trixie@sha256:8ff36f3c66371cba71d20ceedccfc3de9669a68737607888c4ef0af93abe8e39
 
 ARG PG_SEARCH_VERSION
 ARG PG_SEARCH_SHA256
@@ -11,10 +11,10 @@ RUN test -n "$PG_SEARCH_VERSION" \
     && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u3 \
-        postgresql-17-pgaudit=17.1-2.pgdg13+1 \
+        postgresql-18-pgaudit=18.0-3.pgdg13+1 \
     && arch="$(dpkg --print-architecture)" \
     && curl -fsSL \
-        "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-17-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" \
+        "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" \
         -o /tmp/pg_search.deb \
     && echo "${PG_SEARCH_SHA256}  /tmp/pg_search.deb" | sha256sum -c - \
     && apt-get install -y --no-install-recommends /tmp/pg_search.deb \

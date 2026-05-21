@@ -1,7 +1,7 @@
 # PostgreSQL Native pg_search from Source
 
 For non-Debian Linux distributions, Gobby does not run a native `pg_search`
-installer. Use Docker mode unless you already maintain a local PostgreSQL 17
+installer. Use Docker mode unless you already maintain a local PostgreSQL 18
 extension toolchain.
 
 Recommended path:
@@ -12,7 +12,7 @@ gobby postgres install --mode docker
 
 Manual path:
 
-1. Install PostgreSQL 17 and development headers for your distribution.
+1. Install PostgreSQL 18 and development headers for your distribution.
 2. Build `pg_search` from upstream ParadeDB sources against the same PostgreSQL
    installation.
 3. Create a dedicated Gobby database.

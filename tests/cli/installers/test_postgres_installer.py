@@ -162,7 +162,7 @@ def test_pg_search_manifest_selects_current_arch_checksum(
             '{"pg_search_version":"0.23.4",'
             '"pg_search_sha256":"amd64hash",'
             '"pg_search_sha256_by_arch":{"amd64":"amd64hash","arm64":"arm64hash"},'
-            '"postgres_major":"17"}'
+            '"postgres_major":"18"}'
         ),
         encoding="utf-8",
     )
@@ -178,6 +178,22 @@ def test_pg_search_manifest_selects_current_arch_checksum(
     manifest = installer._read_pgsearch_version_manifest()
 
     assert manifest["pg_search_sha256"] == "arm64hash"
+
+
+def test_pg_search_native_guidance_uses_postgres_18_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installer = _import_installer()
+    monkeypatch.setattr(
+        installer,
+        "_read_pgsearch_version_manifest",
+        lambda: {"pg_search_version": "0.23.4"},
+    )
+
+    command = installer._format_pg_search_install_command("Ubuntu PostgreSQL 18.4")
+
+    assert "postgresql-18-pg-search_0.23.4-1PARADEDB-trixie_$(dpkg" in command
+    assert "sudo dpkg -i postgresql-18-pg-search_*.deb" in command
 
 
 @pytest.mark.parametrize(
@@ -213,7 +229,7 @@ def test_native_debian_installs_sha_pinned_deb_and_probes_extension(
     manifest = {
         "pg_search_version": "0.17.0",
         "pg_search_sha256": "a" * 64,
-        "postgres_major": "17",
+        "postgres_major": "18",
     }
     deb_path = tmp_path / "pg_search.deb"
     records: list[tuple[str, dict[str, Any]]] = []
@@ -324,7 +340,7 @@ class _FakeCursor:
         if "pg_available_extensions" in sql:
             return [("pgaudit",)]
         if "version()" in sql:
-            return [("PostgreSQL 17.2 on x86_64-pc-linux-gnu",)]
+            return [("PostgreSQL 18.4 on x86_64-pc-linux-gnu",)]
         return []
 
 

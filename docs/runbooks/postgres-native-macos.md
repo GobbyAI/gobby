@@ -11,7 +11,7 @@ gobby postgres install --mode docker
 
 Manual path:
 
-1. Install PostgreSQL 17 with your preferred package manager.
+1. Install PostgreSQL 18 with your preferred package manager.
 2. Build `pg_search` from upstream ParadeDB sources for that PostgreSQL
    installation.
 3. Create a dedicated Gobby database.

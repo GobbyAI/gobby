@@ -27,7 +27,7 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     env:
-      IMAGE_TAG: gobby-postgres-local:17-pgsearch
+      IMAGE_TAG: gobby-postgres-local:18-pgsearch
       POSTGRES_DB: gobby_smoke
       POSTGRES_USER: gobby_smoke
       POSTGRES_PASSWORD: gobby_smoke

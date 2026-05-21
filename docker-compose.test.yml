@@ -4,8 +4,8 @@ services:
       context: ./src/gobby/data/postgres-pgsearch
       args:
         PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.23.4}
-        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256:-fd4ec8fec076910f60824176adddd57d192877a9ed271c1994202fdf4edb77cf}
-    image: gobby-postgres-local:17-pgsearch
+        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256:-6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676}
+    image: gobby-postgres-local:18-pgsearch
     command:
       - postgres
       - -c
@@ -37,7 +37,7 @@ services:
     ports:
       - "${GOBBY_POSTGRES_TEST_PORT:-60892}:5432"
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${GOBBY_POSTGRES_TEST_USER:-gobby_test}"]
       interval: 2s

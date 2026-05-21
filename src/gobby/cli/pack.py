@@ -18,6 +18,13 @@ from pathlib import Path
 import click
 
 from gobby.cli.installers.git_hooks import install_git_hooks
+from gobby.cli.postgres_backup import (
+    POSTGRES_BACKUP_ARCHIVE_PREFIX,
+    backup_payload_paths,
+    create_postgres_backup,
+    postgres_backup_configured,
+    restore_postgres_backup,
+)
 from gobby.cli.utils import get_gobby_home, stop_daemon
 
 DB_NAME = "gobby-hub.db"
@@ -236,8 +243,8 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
     """Pack all Gobby data into a portable archive for machine migration.
 
     Creates a tarball containing local configs, session transcripts, vector
-    store data, Docker volume data (Neo4j + Qdrant), and the legacy SQLite hub
-    file when present.
+    store data, Docker volume data (Neo4j + Qdrant), a logical PostgreSQL dump
+    when configured, and the legacy SQLite hub file when present.
 
     \b
     Usage:
@@ -290,6 +297,7 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
         for vol in DOCKER_VOLUMES:
             if _volume_exists(vol):
                 docker_volumes_to_export.append(vol)
+    include_postgres = postgres_backup_configured(gobby_home=get_gobby_home())
 
     if dry_run:
         click.echo("Pack contents (dry run):\n")
@@ -306,6 +314,9 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
                 click.echo(f"  {archive_name}/ ({_human_size(dir_size)}, {file_count} files)")
         for vol in docker_volumes_to_export:
             click.echo(f"  docker-volumes/{vol}.tar.gz (size unknown)")
+        if include_postgres:
+            for archive_name, _path in backup_payload_paths(Path()):
+                click.echo(f"  {archive_name} (created during pack)")
         if missing:
             click.echo(f"\nSkipped (not found): {', '.join(missing)}")
         click.echo(f"\nEstimated size: {_human_size(total_size)} (before compression)")
@@ -327,7 +338,7 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
             click.echo("  Stopped Docker services")
 
     try:
-        _do_pack(output_path, items, docker_volumes_to_export, missing)
+        _do_pack(output_path, items, docker_volumes_to_export, missing, include_postgres)
     finally:
         # Restart services that were running
         if services_were_running:
@@ -343,6 +354,7 @@ def _do_pack(
     items: list[tuple[str, Path]],
     docker_volumes_to_export: list[str],
     missing: list[str],
+    include_postgres: bool,
 ) -> None:
     """Inner pack logic, separated for try/finally lifecycle management."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -358,6 +370,14 @@ def _do_pack(
             else:
                 click.echo(f"    Warning: Failed to export {vol}", err=True)
 
+        if include_postgres:
+            click.echo("  Creating PostgreSQL logical backup...")
+            backup_dir = tmp / "postgres"
+            backup = create_postgres_backup(output_dir=backup_dir, gobby_home=get_gobby_home())
+            for archive_name, path in backup_payload_paths(backup_dir):
+                items.append((archive_name, path))
+            click.echo(f"    Done ({_human_size(Path(backup['dump_path']).stat().st_size)})")
+
         # Write manifest
         manifest = {
             "version": 1,
@@ -365,6 +385,7 @@ def _do_pack(
             "hostname": os.uname().nodename,
             "items": [name for name, _ in items],
             "docker_volumes": docker_volumes_to_export,
+            "postgres_backup": include_postgres,
         }
         manifest_path = tmp / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -385,25 +406,35 @@ def _do_pack(
 @click.command("unpack")
 @click.argument("archive", type=click.Path(exists=True))
 @click.option("--no-docker", is_flag=True, help="Skip Docker volume import (Neo4j + Qdrant)")
+@click.option("--no-postgres", is_flag=True, help="Skip PostgreSQL logical dump restore")
 @click.option("--dry-run", is_flag=True, help="Show what would be unpacked without extracting")
 @click.option(
     "--force",
     is_flag=True,
     help="Overwrite existing data without prompting",
 )
-def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
+def unpack(
+    archive: str,
+    no_docker: bool,
+    no_postgres: bool,
+    dry_run: bool,
+    force: bool,
+) -> None:
     """Unpack a Gobby archive to restore data on a new machine.
 
     Restores local configs, session transcripts, vector store data, Docker
-    volume data (Neo4j + Qdrant), and the legacy SQLite hub file when present.
+    volume data (Neo4j + Qdrant), PostgreSQL logical dump data when present,
+    and the legacy SQLite hub file when present.
 
     \b
     Usage:
         gobby unpack gobby-pack-20260316.tar.gz
         gobby unpack backup.tar.gz --no-docker
+        gobby unpack backup.tar.gz --no-postgres
         gobby unpack backup.tar.gz --dry-run
     """
     archive_path = Path(archive).resolve()
+    services_started = False
 
     with tarfile.open(archive_path, "r:gz") as tar:
         members = tar.getmembers()
@@ -471,6 +502,7 @@ def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
         # Extract gobby/ contents to ~/.gobby/
         get_gobby_home().mkdir(parents=True, exist_ok=True)
         docker_archives: list[tarfile.TarInfo] = []
+        postgres_members: list[tarfile.TarInfo] = []
 
         for member in members:
             if member.name == "gobby/manifest.json":
@@ -479,6 +511,10 @@ def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
 
             if member.name.startswith("gobby/docker-volumes/"):
                 docker_archives.append(member)
+                continue
+
+            if member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/"):
+                postgres_members.append(member)
                 continue
 
             if member.name.startswith("project-gobby"):
@@ -537,6 +573,29 @@ def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
                                     err=True,
                                 )
 
+        if postgres_members and no_postgres:
+            click.echo("  Skipped PostgreSQL restore")
+        elif postgres_members:
+            if services_were_running or (not no_docker and docker_archives):
+                click.echo("  Starting Docker services before PostgreSQL restore...")
+                _start_docker_services()
+                services_started = True
+            with tempfile.TemporaryDirectory() as tmpdir:
+                postgres_dir = Path(tmpdir) / "postgres"
+                postgres_dir.mkdir()
+                for member in postgres_members:
+                    rel = member.name.removeprefix(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
+                    target = postgres_dir / rel
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    f = tar.extractfile(member)
+                    if f:
+                        target.write_bytes(f.read())
+                restore_postgres_backup(postgres_dir, gobby_home=get_gobby_home())
+                click.echo("  Restored PostgreSQL logical dump")
+
     # Reinstall git hooks from templates (ensures they match current version)
     if (Path.cwd() / ".git").exists():
         click.echo("  Installing git hooks...")
@@ -547,7 +606,7 @@ def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
             click.echo(f"    Warning: {hook_result['error']}", err=True)
 
     # Restart services
-    if services_were_running or (not no_docker and docker_archives):
+    if not services_started and (services_were_running or (not no_docker and docker_archives)):
         click.echo("  Starting Docker services...")
         _start_docker_services()
     if daemon_was_running:

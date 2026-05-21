@@ -77,19 +77,29 @@ def test_version_manifest_schema_is_canonical(repo_root: Path) -> None:
     assert set(manifest["pg_search_sha256_by_arch"]) == {"amd64", "arm64"}
     for sha256 in manifest["pg_search_sha256_by_arch"].values():
         assert re.fullmatch(r"[0-9a-f]{64}", sha256)
-    assert manifest["postgres_major"] == "17"
+    assert manifest["postgres_major"] == "18"
+    assert manifest["pg_search_sha256_by_arch"]["amd64"] == (
+        "6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676"
+    )
+    assert manifest["pg_search_sha256_by_arch"]["arm64"] == (
+        "5ad13a80b76c46590914e0c366bd8deaf807d5b352f5ad489876ec836d06d3d1"
+    )
 
 
 def test_dockerfile_uses_manifest_build_args_and_initdb_seed(repo_root: Path) -> None:
     dockerfile = _read_source_asset(repo_root, "Dockerfile")
 
-    assert "FROM postgres:17" in dockerfile
+    assert (
+        "FROM postgres:18-trixie@sha256:8ff36f3c66371cba71d20ceedccfc3de9669a68737607888c4ef0af93abe8e39"
+        in dockerfile
+    )
     assert "ARG PG_SEARCH_VERSION" in dockerfile
     assert "ARG PG_SEARCH_SHA256" in dockerfile
     assert 'test -n "$PG_SEARCH_VERSION"' in dockerfile
     assert 'test -n "$PG_SEARCH_SHA256"' in dockerfile
     assert "sha256sum -c -" in dockerfile
-    assert "postgresql-17-pgaudit" in dockerfile
+    assert "postgresql-18-pgaudit=18.0-3.pgdg13+1" in dockerfile
+    assert "postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" in dockerfile
     assert "COPY initdb.d/ /docker-entrypoint-initdb.d/" in dockerfile
 
 

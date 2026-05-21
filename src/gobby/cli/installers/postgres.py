@@ -670,7 +670,7 @@ def _download_pg_search_deb(*, version: str, sha256: str) -> Path:
     arch = _debian_arch(platform.machine())
     url = (
         "https://github.com/paradedb/paradedb/releases/download/"
-        f"v{version}/postgresql-17-pg-search_{version}-1PARADEDB-trixie_{arch}.deb"
+        f"v{version}/postgresql-18-pg-search_{version}-1PARADEDB-trixie_{arch}.deb"
     )
     target = Path(tempfile.gettempdir()) / f"pg_search-{version}-{arch}.deb"
     with urllib.request.urlopen(url, timeout=60) as response:  # nosec B310 # fixed HTTPS URL
@@ -761,8 +761,8 @@ def _format_pg_search_install_command(version_text: str) -> str:
     if "debian" in version_text.lower() or "ubuntu" in version_text.lower():
         return (
             "curl -LO https://github.com/paradedb/paradedb/releases/download/"
-            f"v{version}/postgresql-17-pg-search_{version}-1PARADEDB-trixie_$(dpkg "
-            "--print-architecture).deb && sudo dpkg -i postgresql-17-pg-search_*.deb"
+            f"v{version}/postgresql-18-pg-search_{version}-1PARADEDB-trixie_$(dpkg "
+            "--print-architecture).deb && sudo dpkg -i postgresql-18-pg-search_*.deb"
         )
     return f"Install pg_search v{version} from https://github.com/paradedb/paradedb/releases"
 

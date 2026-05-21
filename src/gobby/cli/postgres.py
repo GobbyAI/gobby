@@ -35,6 +35,7 @@ from gobby.cli.installers.postgres import (
     uninstall_postgres,
 )
 from gobby.cli.installers.service import get_service_status
+from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, get_gobby_home
 from gobby.storage.migration.sqlite_to_postgres import (
@@ -89,6 +90,55 @@ def status_cmd(as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         click.echo(render_postgres_status(payload))
+
+
+@postgres_cli.command("backup")
+@click.option(
+    "--output",
+    "output_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Backup directory. Defaults to ~/.gobby/backups/postgres/<UTC timestamp>/.",
+)
+def backup_cmd(output_dir: Path | None) -> None:
+    """Create a verified logical PostgreSQL backup."""
+    if _daemon_running():
+        raise click.ClickException("Stop the daemon first: gobby stop")
+
+    result = create_postgres_backup(output_dir=output_dir, gobby_home=get_gobby_home())
+    _render_backup_result(result)
+
+
+@postgres_cli.command("restore")
+@click.argument("dump_or_dir", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--clean",
+    is_flag=True,
+    default=False,
+    help="Drop database objects before restoring them from the dump.",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Restore without an interactive confirmation prompt.",
+)
+def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
+    """Restore a verified PostgreSQL backup into the configured target database."""
+    if _daemon_running():
+        raise click.ClickException("Stop the daemon first: gobby stop")
+    if not yes and not click.confirm(
+        "Restore PostgreSQL backup into the configured target database?"
+    ):
+        click.echo("Aborted.")
+        sys.exit(0)
+
+    result = restore_postgres_backup(
+        dump_or_dir,
+        clean=clean,
+        gobby_home=get_gobby_home(),
+    )
+    _render_restore_result(result)
 
 
 @postgres_cli.command("uninstall")
@@ -290,6 +340,24 @@ def _render_migration_result(result: dict[str, Any]) -> None:
     artifact_path = result.get("validation_artifact")
     if artifact_path:
         click.echo(f"Validation artifact: {artifact_path}")
+
+
+def _render_backup_result(result: dict[str, Any]) -> None:
+    click.echo(f"PostgreSQL backup created: {result['backup_dir']}")
+    click.echo(f"  Dump:     {result['dump_path']}")
+    click.echo(f"  Metadata: {result['metadata_path']}")
+    click.echo(f"  SHA256:   {result['dump_sha256']}")
+    click.echo("  Verified: pg_restore --list")
+
+
+def _render_restore_result(result: dict[str, Any]) -> None:
+    probes = cast(dict[str, Any], result.get("probes", {}))
+    migration = cast(dict[str, Any], probes.get("migration_marker", {}))
+    click.echo("PostgreSQL restore completed.")
+    click.echo(f"  Target:    {result['database_url']}")
+    click.echo(f"  pg_search: {'yes' if probes.get('pg_search_present') else 'no'}")
+    click.echo(f"  pgaudit:   {'yes' if probes.get('pgaudit_present') else 'no'}")
+    click.echo(f"  Migration: {'complete' if migration.get('present') else 'missing'}")
 
 
 def _redact_dsn(dsn: str) -> str:

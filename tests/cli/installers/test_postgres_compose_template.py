@@ -47,7 +47,7 @@ def test_postgres_service_uses_local_build_context_and_tag(
 ) -> None:
     postgres = compose_data["services"]["postgres"]
 
-    assert postgres["image"] == "gobby-postgres-local:17-pgsearch"
+    assert postgres["image"] == "gobby-postgres-local:18-pgsearch"
     assert postgres["container_name"] == "gobby-postgres"
     assert postgres["build"]["context"] == "./postgres-pgsearch"
     assert postgres["build"]["args"]["PG_SEARCH_VERSION"] == ("${GOBBY_PG_SEARCH_VERSION:-0.23.4}")
@@ -61,7 +61,7 @@ def test_postgres_service_has_required_profiles_ports_and_volumes(
 
     assert set(postgres["profiles"]) == {"postgres", "all"}
     assert "${GOBBY_POSTGRES_PORT:-60891}:5432" in postgres["ports"]
-    assert "gobby_postgres_data:/var/lib/postgresql/data" in postgres["volumes"]
+    assert "gobby_postgres_data:/var/lib/postgresql" in postgres["volumes"]
     assert "gobby_pgaudit_log:/var/log/pgaudit" in postgres["volumes"]
     assert "gobby_postgres_data" in compose_data["volumes"]
     assert "gobby_pgaudit_log" in compose_data["volumes"]

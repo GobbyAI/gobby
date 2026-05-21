@@ -143,7 +143,7 @@ jobs:
     env:
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
       GOBBY_POSTGRES_TEST_DB: gobby_test
-      GOBBY_POSTGRES_TEST_IMAGE: gobby-postgres-local:17-pgsearch
+      GOBBY_POSTGRES_TEST_IMAGE: gobby-postgres-local:18-pgsearch
       GOBBY_POSTGRES_TEST_PASSWORD: gobby_test
       GOBBY_POSTGRES_TEST_PORT: "60892"
       GOBBY_POSTGRES_TEST_USER: gobby_test
@@ -192,7 +192,7 @@ jobs:
             -e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}" \
             -e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}" \
             -p "${GOBBY_POSTGRES_TEST_PORT}:5432" \
-            --tmpfs /var/lib/postgresql/data \
+            --tmpfs /var/lib/postgresql \
             --health-cmd "pg_isready -U ${GOBBY_POSTGRES_TEST_USER}" \
             --health-interval 2s \
             --health-timeout 2s \
