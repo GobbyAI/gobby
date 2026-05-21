@@ -8,6 +8,7 @@ rules:
     priority: 30
     when: >
       not skill_loaded('code-index')
+      and not variables.get('code_index_preflight_warning')
       and (
         (event.data.get('canonical_tool_kind') == 'read'
          and event.data.get('canonical_file_path', '').rpartition('.')[2]

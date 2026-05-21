@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.code_index import CodeIndexPreflightResult
+from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
 from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
@@ -609,43 +611,20 @@ async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
-) -> None:
-    """Run gcode indexing inside an isolated workspace before spawning an agent."""
-    workspace = Path(isolated_path)
-    if not workspace.is_dir():
-        raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
-
-    from gobby.utils.native_bin import resolve_native_bin
-
-    gcode_bin = resolve_native_bin("gcode")
-    if gcode_bin is None:
-        raise RuntimeError("gcode_not_installed")
-
-    proc: asyncio.subprocess.Process | None = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            gcode_bin,
-            "index",
-            "--quiet",
-            cwd=str(workspace),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError as exc:
-        if proc is not None:
-            try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
-        raise RuntimeError(f"gcode_index_timeout:{timeout:g}s") from exc
-    except OSError as exc:
-        raise RuntimeError(f"gcode_index_failed:{exc}") from exc
-
-    if proc.returncode != 0:
-        detail = stderr.decode(errors="replace").strip() if stderr else "<no stderr>"
-        raise RuntimeError(f"gcode_index_failed:{proc.returncode}:{detail}")
+    database_url: str | None = None,
+    runtime_root: Path | None = None,
+    config_probe_timeout: float = 5.0,
+    search_smoke_timeout: float = 10.0,
+) -> CodeIndexPreflightResult:
+    """Run and verify gcode indexing inside an isolated workspace before spawn."""
+    return await _ensure_isolation_code_index(
+        isolated_path,
+        timeout=timeout,
+        database_url=database_url,
+        runtime_root=runtime_root,
+        config_probe_timeout=config_probe_timeout,
+        search_smoke_timeout=search_smoke_timeout,
+    )
 
 
 async def _copy_cli_hooks(

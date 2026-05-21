@@ -556,7 +556,8 @@ class TestCodeIndexRuleCondition:
     """Test the code-index onboarding rule against canonical tool metadata."""
 
     CONDITION = (
-        "not skill_loaded('code-index') and ("
+        "not skill_loaded('code-index') "
+        "and not variables.get('code_index_preflight_warning') and ("
         "(event.data.get('canonical_tool_kind') == 'read' "
         "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
         "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
@@ -571,8 +572,14 @@ class TestCodeIndexRuleCondition:
         canonical_file_path: str = "",
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
+        code_index_preflight_warning: bool = False,
     ) -> bool:
         variables = {"loaded_skills": loaded_skills or []}
+        if code_index_preflight_warning:
+            variables["code_index_preflight_warning"] = {
+                "preflight": "code_index",
+                "message": "gcode_index_unavailable",
+            }
         if injected_skills is not None:
             variables["injected_skills"] = injected_skills
         context = {
@@ -606,6 +613,9 @@ class TestCodeIndexRuleCondition:
     def test_does_not_skip_when_legacy_injected(self) -> None:
         assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is True
 
+    def test_skips_when_isolated_code_index_preflight_failed(self) -> None:
+        assert self._eval(canonical_tool_kind="search", code_index_preflight_warning=True) is False
+
 
 class TestRequireCodeIndexSkillStructure:
     """Verify require-code-index-skill blocks with the canonical directive."""
@@ -620,6 +630,7 @@ class TestRequireCodeIndexSkillStructure:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "not skill_loaded('code-index')" in body.when
+        assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert (
