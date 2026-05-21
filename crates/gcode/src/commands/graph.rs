@@ -231,14 +231,14 @@ fn empty_response_for_unresolved(ctx: &Context, format: Format) -> anyhow::Resul
 /// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
 fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
-    let conn = match db::open_readonly(&ctx.db_path) {
+    let mut conn = match db::connect_readonly(&ctx.database_url) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to open index for graph resolution: {e}");
             return None;
         }
     };
-    let (resolved, suggestions) = fts::resolve_graph_symbol(&conn, input, &ctx.project_id);
+    let (resolved, suggestions) = fts::resolve_graph_symbol(&mut conn, input, &ctx.project_id);
     if resolved.is_none() {
         if suggestions.is_empty() {
             eprintln!("No symbol matching '{input}' found");

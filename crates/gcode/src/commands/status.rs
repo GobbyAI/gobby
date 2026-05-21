@@ -52,31 +52,23 @@ fn days_to_ymd(mut days: i64) -> (i64, i64, i64) {
 }
 
 pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
 
     let stats: Option<IndexedProject> = conn
-        .query_row(
-            "SELECT * FROM code_indexed_projects WHERE id = ?1",
-            rusqlite::params![&ctx.project_id],
-            |row| {
-                Ok(IndexedProject {
-                    id: row.get("id")?,
-                    root_path: row.get("root_path")?,
-                    total_files: row.get::<_, i64>("total_files")? as usize,
-                    total_symbols: row.get::<_, i64>("total_symbols")? as usize,
-                    last_indexed_at: row
-                        .get::<_, Option<String>>("last_indexed_at")?
-                        .unwrap_or_default(),
-                    index_duration_ms: row.get::<_, i64>("index_duration_ms")? as u64,
-                    total_eligible_files: row
-                        .get::<_, Option<i64>>("total_eligible_files")
-                        .ok()
-                        .flatten()
-                        .map(|n| n as usize),
-                })
-            },
+        .query_opt(
+            "SELECT id,
+                    root_path,
+                    total_files::BIGINT AS total_files,
+                    total_symbols::BIGINT AS total_symbols,
+                    last_indexed_at::TEXT AS last_indexed_at,
+                    COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
+                    NULL::BIGINT AS total_eligible_files
+             FROM code_indexed_projects WHERE id = $1",
+            &[&ctx.project_id],
         )
-        .ok();
+        .ok()
+        .flatten()
+        .and_then(|row| indexed_project_from_row(&row).ok());
 
     match stats {
         Some(s) => match format {
@@ -130,73 +122,56 @@ pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
         }
     }
 
-    let conn = db::open_readwrite(&ctx.db_path)?;
-    indexer::invalidate(&conn, &ctx.project_id, ctx.daemon_url.as_deref())
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())
 }
 
-/// Collect indexed projects from both standalone and gobby DBs.
-/// Returns (project, db_path) pairs.
-fn collect_projects() -> anyhow::Result<Vec<(IndexedProject, std::path::PathBuf)>> {
-    let gobby_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-        .join(".gobby");
-
-    let db_paths = [
-        gobby_dir.join("gobby-code-index.db"),
-        gobby_dir.join("gobby-hub.db"),
-    ];
-
+/// Collect indexed projects from the PostgreSQL hub.
+fn collect_projects() -> anyhow::Result<Vec<IndexedProject>> {
+    let database_url = db::resolve_database_url()?;
+    let mut conn = db::connect_readonly(&database_url)?;
     let mut seen_ids = std::collections::HashSet::new();
-    let mut all: Vec<(IndexedProject, std::path::PathBuf)> = Vec::new();
+    let mut all = Vec::new();
+    let rows = conn.query(
+        "SELECT id,
+                root_path,
+                total_files::BIGINT AS total_files,
+                total_symbols::BIGINT AS total_symbols,
+                last_indexed_at::TEXT AS last_indexed_at,
+                COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
+                NULL::BIGINT AS total_eligible_files
+         FROM code_indexed_projects
+         ORDER BY last_indexed_at DESC NULLS LAST",
+        &[],
+    )?;
 
-    for db_path in &db_paths {
-        if !db_path.exists() {
-            continue;
-        }
-        let conn = match db::open_readonly(db_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let has_table: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_indexed_projects')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-        if !has_table {
-            continue;
-        }
-
-        let mut stmt =
-            conn.prepare("SELECT * FROM code_indexed_projects ORDER BY last_indexed_at DESC")?;
-        let rows = stmt.query_map([], |row| {
-            Ok(IndexedProject {
-                id: row.get("id")?,
-                root_path: row.get("root_path")?,
-                total_files: row.get::<_, i64>("total_files")? as usize,
-                total_symbols: row.get::<_, i64>("total_symbols")? as usize,
-                last_indexed_at: row
-                    .get::<_, Option<String>>("last_indexed_at")?
-                    .unwrap_or_default(),
-                index_duration_ms: row.get::<_, i64>("index_duration_ms")? as u64,
-                total_eligible_files: row
-                    .get::<_, Option<i64>>("total_eligible_files")
-                    .ok()
-                    .flatten()
-                    .map(|n| n as usize),
-            })
-        })?;
-
-        for project in rows.flatten() {
-            if seen_ids.insert(project.id.clone()) {
-                all.push((project, db_path.clone()));
-            }
+    for row in rows {
+        if let Ok(project) = indexed_project_from_row(&row)
+            && seen_ids.insert(project.id.clone())
+        {
+            all.push(project);
         }
     }
 
     Ok(all)
+}
+
+fn indexed_project_from_row(row: &postgres::Row) -> anyhow::Result<IndexedProject> {
+    Ok(IndexedProject {
+        id: row.try_get("id")?,
+        root_path: row.try_get("root_path")?,
+        total_files: row.try_get::<_, i64>("total_files")? as usize,
+        total_symbols: row.try_get::<_, i64>("total_symbols")? as usize,
+        last_indexed_at: row
+            .try_get::<_, Option<String>>("last_indexed_at")?
+            .unwrap_or_default(),
+        index_duration_ms: row.try_get::<_, i64>("index_duration_ms")? as u64,
+        total_eligible_files: row
+            .try_get::<_, Option<i64>>("total_eligible_files")
+            .ok()
+            .flatten()
+            .map(|n| n as usize),
+    })
 }
 
 /// Format file count with optional coverage percentage.
@@ -223,20 +198,17 @@ fn display_name(p: &IndexedProject) -> String {
     format!("{basename} ({short_id})")
 }
 
-/// List all indexed projects from both standalone and gobby DBs.
+/// List all indexed projects from the PostgreSQL hub.
 pub fn projects(format: Format) -> anyhow::Result<()> {
     let all_projects = collect_projects()?;
 
     match format {
-        Format::Json => {
-            let projects: Vec<&IndexedProject> = all_projects.iter().map(|(p, _)| p).collect();
-            output::print_json(&projects)
-        }
+        Format::Json => output::print_json(&all_projects),
         Format::Text => {
             if all_projects.is_empty() {
                 eprintln!("No indexed projects. Run `gcode init` in a project directory.");
             } else {
-                for (p, _) in &all_projects {
+                for p in &all_projects {
                     println!("{} — {}", display_name(p), p.root_path);
                     println!(
                         "  {} files, {} symbols | Last indexed: {}",
@@ -273,7 +245,7 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     let all_projects = collect_projects()?;
     let stale: Vec<_> = all_projects
         .iter()
-        .filter_map(|(p, db_path)| is_stale(p).map(|reason| (p, db_path, reason)))
+        .filter_map(|p| is_stale(p).map(|reason| (p, reason)))
         .collect();
 
     if stale.is_empty() {
@@ -282,7 +254,7 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     }
 
     eprintln!("Found {} stale project(s):", stale.len());
-    for (p, _, reason) in &stale {
+    for (p, reason) in &stale {
         eprintln!("  {} — {}", display_name(p), reason);
     }
 
@@ -299,10 +271,11 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     }
 
     let daemon_url = config::resolve_daemon_url();
+    let database_url = db::resolve_database_url()?;
+    let mut conn = db::connect_readwrite(&database_url)?;
 
-    for (p, db_path, _) in &stale {
-        let conn = db::open_readwrite(db_path)?;
-        indexer::invalidate(&conn, &p.id, daemon_url.as_deref())?;
+    for (p, _) in &stale {
+        indexer::invalidate(&mut conn, &p.id, daemon_url.as_deref())?;
     }
 
     eprintln!("Pruned {} stale project(s).", stale.len());
@@ -310,26 +283,24 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
 }
 
 pub fn repo_outline(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
 
-    // Group files by directory with symbol counts
-    let mut stmt = conn.prepare(
-        "SELECT file_path, language, symbol_count FROM code_indexed_files \
-         WHERE project_id = ?1 ORDER BY file_path",
-    )?;
-
-    let files: Vec<serde_json::Value> = stmt
-        .query_map(rusqlite::params![&ctx.project_id], |row| {
-            let fp: String = row.get(0)?;
-            let lang: String = row.get(1)?;
-            let count: i64 = row.get(2)?;
-            Ok(serde_json::json!({
-                "file_path": fp,
-                "language": lang,
-                "symbol_count": count,
+    // Group files by directory with symbol counts.
+    let files: Vec<serde_json::Value> = conn
+        .query(
+            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
+             FROM code_indexed_files
+             WHERE project_id = $1 ORDER BY file_path",
+            &[&ctx.project_id],
+        )?
+        .iter()
+        .filter_map(|row| {
+            Some(serde_json::json!({
+                "file_path": row.try_get::<_, String>("file_path").ok()?,
+                "language": row.try_get::<_, String>("language").ok()?,
+                "symbol_count": row.try_get::<_, i64>("symbol_count").ok()?,
             }))
-        })?
-        .filter_map(|r| r.ok())
+        })
         .collect();
 
     // Group by directory

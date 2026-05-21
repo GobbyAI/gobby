@@ -10,13 +10,12 @@ pub fn run(
 ) -> anyhow::Result<()> {
     // Resolve root, project_id, and DB connection — re-resolve if path
     // belongs to a different project than the CWD-derived context.
-    let (root, project_id, conn) = match path.as_deref() {
+    let (root, project_id, mut conn) = match path.as_deref() {
         Some(p) => {
             let target = std::path::PathBuf::from(p);
             let target_root = crate::config::detect_project_root_from(&target)?;
             if target_root != ctx.project_root {
                 // Path belongs to a different project — re-resolve everything
-                let db_path = crate::config::resolve_db_path(&target_root)?;
                 let identity = crate::config::resolve_project_identity(
                     &target_root,
                     crate::config::MissingIdentity::Generate,
@@ -30,24 +29,24 @@ pub fn run(
                         &ctx.project_id[..8]
                     );
                 }
-                let conn = db::open_readwrite(&db_path)?;
+                let conn = db::connect_readwrite(&ctx.database_url)?;
                 if identity.should_write_gcode_json {
                     crate::project::ensure_gcode_json(&target_root)?;
                 }
                 (target_root, identity.project_id, conn)
             } else {
-                let conn = db::open_readwrite(&ctx.db_path)?;
+                let conn = db::connect_readwrite(&ctx.database_url)?;
                 (target, ctx.project_id.clone(), conn)
             }
         }
         None => {
-            let conn = db::open_readwrite(&ctx.db_path)?;
+            let conn = db::connect_readwrite(&ctx.database_url)?;
             (ctx.project_root.clone(), ctx.project_id.clone(), conn)
         }
     };
 
     if let Some(file_list) = files {
-        let result = indexer::index_files(&conn, &root, &project_id, &file_list)?;
+        let result = indexer::index_files(&mut conn, &root, &project_id, &file_list)?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files, {} symbols in {}ms",
@@ -55,7 +54,7 @@ pub fn run(
             );
         }
     } else {
-        let result = indexer::index_directory(&conn, &root, &project_id, !full, ctx.quiet)?;
+        let result = indexer::index_directory(&mut conn, &root, &project_id, !full, ctx.quiet)?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files ({} skipped), {} symbols in {}ms",

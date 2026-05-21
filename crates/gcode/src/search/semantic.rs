@@ -5,7 +5,7 @@
 //! OpenAI, etc.) — the same API the Gobby daemon uses for index-time embeddings.
 //!
 //! Graceful degradation:
-//! - No embedding API configured → semantic search disabled (FTS5 + graph only)
+//! - No embedding API configured → semantic search disabled (BM25 + graph only)
 //! - No Qdrant URL → semantic search disabled
 //! - API call fails → semantic search disabled for that query
 
@@ -147,7 +147,7 @@ mod tests {
 
     fn make_ctx_no_qdrant() -> Context {
         Context {
-            db_path: PathBuf::from("/nonexistent"),
+            database_url: "postgresql://localhost/nonexistent".to_string(),
             project_root: PathBuf::from("/nonexistent"),
             project_id: "test".to_string(),
             quiet: true,

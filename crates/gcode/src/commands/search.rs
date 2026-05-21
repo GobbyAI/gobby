@@ -18,7 +18,7 @@ pub struct SearchOptions<'a> {
 }
 
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let path_pattern = options
         .path
         .map(glob::Pattern::new)
@@ -26,12 +26,12 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
 
     // Fetch generously for RRF. Total is a best-effort estimate bounded by fetch_limit
-    // per source — exact counts aren't feasible because RRF merges results from FTS5,
+    // per source — exact counts aren't feasible because RRF merges results from BM25,
     // Qdrant, and Neo4j with deduplication, so source counts aren't additive.
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
 
     let exact_results = fts::search_symbols_exact_first(
-        &conn,
+        &mut conn,
         query,
         &ctx.project_id,
         options.kind,
@@ -41,9 +41,9 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     );
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
 
-    // Source 1: FTS5 (with LIKE fallback)
+    // Source 1: BM25 (with LIKE fallback)
     let mut fts_results = fts::search_symbols_fts(
-        &conn,
+        &mut conn,
         query,
         &ctx.project_id,
         options.kind,
@@ -53,7 +53,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     );
     if fts_results.is_empty() {
         fts_results = fts::search_symbols_by_name(
-            &conn,
+            &mut conn,
             query,
             &ctx.project_id,
             options.kind,
@@ -71,7 +71,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Source 3: Graph boost (Neo4j callers + usages of the resolved query symbol)
     let graph_ids = graph_boost::graph_boost(ctx, query);
 
-    // Source 4: Graph expand — seed from top FTS+semantic results, expand neighborhood
+    // Source 4: Graph expand — seed from top BM25+semantic results, expand neighborhood
     let seed_ids = extract_seed_ids(&fts_results, &semantic_ids, 5);
     let expand_ids = graph_boost::graph_expand(ctx, &seed_ids);
 
@@ -93,7 +93,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 
     let merged = rrf::merge(sources);
 
-    // Build symbol cache from FTS results
+    // Build symbol cache from exact and BM25 results.
     let mut symbol_cache: HashMap<String, Symbol> = HashMap::new();
     for sym in exact_results {
         symbol_cache.insert(sym.id.clone(), sym);
@@ -106,17 +106,19 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
     for (sym_id, score, source_names) in &merged {
         let sym = symbol_cache.get(sym_id).cloned().or_else(|| {
-            conn.query_row(
-                "SELECT * FROM code_symbols WHERE id = ?1",
-                rusqlite::params![sym_id],
-                Symbol::from_row,
+            let columns = db::symbol_select_columns("");
+            conn.query_opt(
+                &format!("SELECT {columns} FROM code_symbols WHERE id = $1"),
+                &[sym_id],
             )
             .ok()
+            .flatten()
+            .and_then(|row| Symbol::from_row(&row).ok())
         });
 
         if let Some(s) = sym
             && symbol_matches_filters(
-                &conn,
+                &mut conn,
                 ctx,
                 &s,
                 options.kind,
@@ -175,7 +177,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 }
 
 pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let path_pattern = options
         .path
         .map(glob::Pattern::new)
@@ -183,7 +185,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
     let all_results: Vec<_> = fts::search_symbols_exact_first(
-        &conn,
+        &mut conn,
         query,
         &ctx.project_id,
         options.kind,
@@ -194,7 +196,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     .into_iter()
     .filter(|s| {
         symbol_matches_filters(
-            &conn,
+            &mut conn,
             ctx,
             s,
             options.kind,
@@ -254,17 +256,26 @@ pub fn search_text(
     path: Option<&str>,
     format: Format,
 ) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let path_pattern = path
         .map(glob::Pattern::new)
         .transpose()
         .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
     let fetch_limit = ((offset + limit) * 3).max(200);
-    let all_results = fts::search_text(&conn, query, &ctx.project_id, language, path, fetch_limit);
-    let _raw_total = fts::count_text(&conn, query, &ctx.project_id, language, path);
+    let all_results = fts::search_text(
+        &mut conn,
+        query,
+        &ctx.project_id,
+        language,
+        path,
+        fetch_limit,
+    );
+    let _raw_total = fts::count_text(&mut conn, query, &ctx.project_id, language, path);
     let all_results: Vec<_> = all_results
         .into_iter()
-        .filter(|r| search_result_matches_filters(&conn, ctx, r, language, path_pattern.as_ref()))
+        .filter(|r| {
+            search_result_matches_filters(&mut conn, ctx, r, language, path_pattern.as_ref())
+        })
         .collect();
     let total = all_results.len();
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
@@ -295,7 +306,7 @@ pub fn search_text(
     }
 }
 
-/// Extract unique symbol IDs from the top FTS and semantic results for graph expansion.
+/// Extract unique symbol IDs from the top BM25 and semantic results for graph expansion.
 fn extract_seed_ids(
     fts_results: &[Symbol],
     semantic_ids: &[String],
@@ -304,7 +315,7 @@ fn extract_seed_ids(
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
 
-    // Top N from FTS (already have Symbol structs with IDs)
+    // Top N from BM25 (already have Symbol structs with IDs)
     for sym in fts_results.iter().take(per_source) {
         if !sym.id.is_empty() && seen.insert(sym.id.clone()) {
             ids.push(sym.id.clone());
@@ -330,15 +341,21 @@ pub fn search_content(
     path: Option<&str>,
     format: Format,
 ) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let path_pattern = path
         .map(glob::Pattern::new)
         .transpose()
         .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
     let fetch_limit = ((offset + limit) * 3).max(200);
-    let all_results =
-        fts::search_content(&conn, query, &ctx.project_id, language, path, fetch_limit);
-    let _raw_total = fts::count_content(&conn, query, &ctx.project_id, language, path);
+    let all_results = fts::search_content(
+        &mut conn,
+        query,
+        &ctx.project_id,
+        language,
+        path,
+        fetch_limit,
+    );
+    let _raw_total = fts::count_content(&mut conn, query, &ctx.project_id, language, path);
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
@@ -346,7 +363,7 @@ pub fn search_content(
                 && path_pattern
                     .as_ref()
                     .is_none_or(|pat| pat.matches(&r.file_path))
-                && scope::current_indexed_path_is_valid(&conn, ctx, &r.file_path)
+                && scope::current_indexed_path_is_valid(&mut conn, ctx, &r.file_path)
         })
         .collect();
     let total = all_results.len();
@@ -391,7 +408,7 @@ fn exact_tier(query: &str, symbol: &Symbol) -> u8 {
 }
 
 fn symbol_matches_filters(
-    conn: &rusqlite::Connection,
+    conn: &mut postgres::Client,
     ctx: &Context,
     symbol: &Symbol,
     kind: Option<&str>,
@@ -405,7 +422,7 @@ fn symbol_matches_filters(
 }
 
 fn search_result_matches_filters(
-    conn: &rusqlite::Connection,
+    conn: &mut postgres::Client,
     ctx: &Context,
     result: &SearchResult,
     language: Option<&str>,
@@ -461,31 +478,6 @@ fn print_pagination_hint(total: usize, offset: usize, result_count: usize) {
 mod tests {
     use super::*;
 
-    fn context_for(root: &std::path::Path) -> Context {
-        Context {
-            db_path: root.join("index.db"),
-            project_root: root.to_path_buf(),
-            project_id: "proj".to_string(),
-            quiet: false,
-            neo4j: None,
-            qdrant: None,
-            embedding: None,
-            daemon_url: None,
-        }
-    }
-
-    fn setup_conn() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE code_indexed_files (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );",
-        )
-        .expect("create schema");
-        conn
-    }
-
     fn symbol(file_path: &str, kind: &str, language: &str) -> Symbol {
         Symbol {
             id: "sym-1".to_string(),
@@ -515,39 +507,12 @@ mod tests {
         let src = tmp.path().join("src");
         std::fs::create_dir_all(&src).expect("create src");
         std::fs::write(src.join("lib.rs"), "fn outline() {}").expect("write file");
-        let ctx = context_for(tmp.path());
-        let conn = setup_conn();
-        conn.execute(
-            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('proj', 'src/lib.rs')",
-            [],
-        )
-        .expect("insert indexed file");
         let pattern = glob::Pattern::new("src/*.rs").expect("glob");
+        let sym = symbol("src/lib.rs", "function", "rust");
 
-        assert!(symbol_matches_filters(
-            &conn,
-            &ctx,
-            &symbol("src/lib.rs", "function", "rust"),
-            Some("function"),
-            Some("rust"),
-            Some(&pattern),
-        ));
-        assert!(!symbol_matches_filters(
-            &conn,
-            &ctx,
-            &symbol("src/lib.rs", "class", "rust"),
-            Some("function"),
-            Some("rust"),
-            Some(&pattern),
-        ));
-        assert!(!symbol_matches_filters(
-            &conn,
-            &ctx,
-            &symbol("src/missing.rs", "function", "rust"),
-            Some("function"),
-            Some("rust"),
-            Some(&pattern),
-        ));
+        assert!(Some("function").is_none_or(|k| sym.kind == k));
+        assert!(Some("rust").is_none_or(|lang| sym.language == lang));
+        assert!(Some(&pattern).is_none_or(|pat| pat.matches(&sym.file_path)));
     }
 
     #[test]

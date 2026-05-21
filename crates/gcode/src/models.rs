@@ -1,4 +1,5 @@
-use rusqlite::Row;
+use anyhow::Context as _;
+use postgres::Row;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -52,42 +53,35 @@ impl Symbol {
         Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
     }
 
-    /// Read a Symbol from a rusqlite Row (SELECT * FROM code_symbols).
-    pub fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let byte_start_raw = row.get::<_, i64>("byte_start")?;
-        let byte_end_raw = row.get::<_, i64>("byte_end")?;
-        let line_start_raw = row.get::<_, i64>("line_start")?;
-        let line_end_raw = row.get::<_, i64>("line_end")?;
-
-        let to_usize = |val: i64, col: usize| -> rusqlite::Result<usize> {
-            val.try_into()
-                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(col, val))
-        };
-
+    /// Read a Symbol from a PostgreSQL row.
+    ///
+    /// Callers should select via `crate::db::symbol_select_columns()` so integer
+    /// and timestamp fields are cast to stable Rust-readable types.
+    pub fn from_row(row: &Row) -> anyhow::Result<Self> {
         Ok(Self {
-            id: row.get("id")?,
-            project_id: row.get("project_id")?,
-            file_path: row.get("file_path")?,
-            name: row.get("name")?,
-            qualified_name: row.get("qualified_name")?,
-            kind: row.get("kind")?,
-            language: row.get("language")?,
-            byte_start: to_usize(byte_start_raw, 7)?,
-            byte_end: to_usize(byte_end_raw, 8)?,
-            line_start: to_usize(line_start_raw, 9)?,
-            line_end: to_usize(line_end_raw, 10)?,
-            signature: row.get("signature")?,
-            docstring: row.get("docstring")?,
-            parent_symbol_id: row.get("parent_symbol_id")?,
+            id: row.try_get("id")?,
+            project_id: row.try_get("project_id")?,
+            file_path: row.try_get("file_path")?,
+            name: row.try_get("name")?,
+            qualified_name: row.try_get("qualified_name")?,
+            kind: row.try_get("kind")?,
+            language: row.try_get("language")?,
+            byte_start: i64_to_usize(row.try_get("byte_start")?, "byte_start")?,
+            byte_end: i64_to_usize(row.try_get("byte_end")?, "byte_end")?,
+            line_start: i64_to_usize(row.try_get("line_start")?, "line_start")?,
+            line_end: i64_to_usize(row.try_get("line_end")?, "line_end")?,
+            signature: row.try_get("signature")?,
+            docstring: row.try_get("docstring")?,
+            parent_symbol_id: row.try_get("parent_symbol_id")?,
             content_hash: row
-                .get::<_, Option<String>>("content_hash")?
+                .try_get::<_, Option<String>>("content_hash")?
                 .unwrap_or_default(),
-            summary: row.get("summary")?,
+            summary: row.try_get("summary")?,
             created_at: row
-                .get::<_, Option<String>>("created_at")?
+                .try_get::<_, Option<String>>("created_at")?
                 .unwrap_or_default(),
             updated_at: row
-                .get::<_, Option<String>>("updated_at")?
+                .try_get::<_, Option<String>>("updated_at")?
                 .unwrap_or_default(),
         })
     }
@@ -121,6 +115,12 @@ impl Symbol {
             sources: None,
         }
     }
+}
+
+fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
+    value
+        .try_into()
+        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 /// Metadata for an indexed file.

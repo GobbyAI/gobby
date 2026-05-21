@@ -17,11 +17,15 @@ use crate::search::fts;
 /// Returns a ranked list of symbol IDs for use as an RRF source.
 /// Returns empty vec when Neo4j is unavailable (graceful degradation).
 pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
-    let conn = match db::open_readonly(&ctx.db_path) {
+    if ctx.neo4j.is_none() {
+        return vec![];
+    }
+
+    let mut conn = match db::connect_readonly(&ctx.database_url) {
         Ok(conn) => conn,
         Err(_) => return vec![],
     };
-    let (resolved, _) = fts::resolve_graph_symbol(&conn, query, &ctx.project_id);
+    let (resolved, _) = fts::resolve_graph_symbol(&mut conn, query, &ctx.project_id);
     let Some(symbol) = resolved else {
         return vec![];
     };
@@ -72,7 +76,7 @@ mod tests {
 
     fn make_ctx_no_neo4j() -> Context {
         Context {
-            db_path: PathBuf::from("/nonexistent"),
+            database_url: "postgresql://localhost/nonexistent".to_string(),
             project_root: PathBuf::from("/nonexistent"),
             project_id: "test".to_string(),
             quiet: true,

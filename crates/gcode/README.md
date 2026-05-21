@@ -40,19 +40,19 @@ One search call instead of reading 50 files. 90%+ token savings.
 ## How It Works
 
 ```
-codebase → tree-sitter AST → SQLite index → search / retrieve / navigate
+codebase → tree-sitter AST → PostgreSQL hub → search / retrieve / navigate
                 │                   │
      ┌──────────┼──────────┐        │
      │          │          │        │
   symbols    chunks     files    ┌──┴──┐
-  (FTS5)    (FTS5)   (hashes)   │     │
+  (BM25)    (BM25)   (hashes)   │     │
                               Neo4j  Qdrant
                              (calls) (vectors)
 ```
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, extract symbols and content chunks
-2. **Store** — SQLite for symbols + FTS5, Neo4j for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: FTS5 + optional semantic + optional graph sources → Reciprocal Rank Fusion
+2. **Store** — PostgreSQL hub tables for symbols/content, Neo4j for call/import graphs, Qdrant for semantic vectors
+3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → Reciprocal Rank Fusion
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -92,6 +92,11 @@ cargo install gobby-code
 Graph and semantic features are configured at runtime. You do not need Cargo
 feature flags to enable Neo4j, Qdrant, or embeddings support.
 
+Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
+`~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
+hub DSN from `database_url_ref` or `database_url`. The Gobby daemon process does
+not need to be running for normal index/search commands.
+
 ### With Gobby
 
 gcode is installed automatically as part of the [Gobby](https://github.com/GobbyAI/gobby) platform. If you're using Gobby, you already have it.
@@ -103,14 +108,14 @@ gcode is installed automatically as part of the [Gobby](https://github.com/Gobby
 gcode init
 
 # Search
-gcode search "query"                      # Hybrid: FTS + semantic + graph boost
+gcode search "query"                      # Hybrid: BM25 + semantic + graph boost
 gcode search "query" --kind function      # Filter by symbol kind
 gcode search "query" --language rust      # Filter by source language
 gcode search "query" --path "src/**/*.rs" # Filter by file path glob
 gcode search-symbol "outline"             # Exact-first symbol/command lookup
 gcode search-symbol "outline" --kind function --language rust
-gcode search-text "query"                 # FTS5 on symbol names/signatures
-gcode search-content "query"              # FTS5 on file content, comments, config, CSS
+gcode search-text "query"                 # BM25 on symbol names/signatures
+gcode search-content "query"              # BM25 on file content, comments, config, CSS
 
 # Symbol retrieval
 gcode outline src/auth.ts                 # Hierarchical symbol tree
@@ -144,48 +149,42 @@ gcode search --project /path/to/app "q"   # By path
 --no-freshness                            # Skip read-time index/source freshness checks
 ```
 
-## Standalone vs Gobby
+## Daemon-Independent Runtime
 
-gcode works out of the box with zero dependencies — just `gcode init` and search. But it's designed to unlock its full potential with [Gobby](https://github.com/GobbyAI/gobby).
-
-### Standalone
-
-```
-codebase → tree-sitter → SQLite
-                          (symbols + FTS5)
-```
-
-Full indexing and text search. No external services needed.
+gcode is standalone in the important CLI sense: `gcode index`, `gcode search`,
+`gcode status`, and symbol retrieval do not require the Gobby daemon process.
+They do require the migrated PostgreSQL hub schema because that hub is the
+source of truth for code-index rows.
 
 ### With Gobby
 
 ```
-codebase → tree-sitter → SQLite        → FTS5 search
-                          Neo4j         → call graphs, blast radius, imports
-                          Qdrant + embeddings API → semantic vector search
-                          Gobby daemon  → auto-indexing, LLM summaries,
-                                          config, secrets, sessions, agents
+codebase → tree-sitter → PostgreSQL hub + pg_search BM25
+                          Neo4j                 → call graphs, blast radius, imports
+                          Qdrant + embeddings   → semantic vector search
+                          Gobby daemon          → auto-indexing, graph/vector sync,
+                                                  config, secrets, sessions, agents
 ```
 
 Gobby adds graph queries, graph lifecycle orchestration, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
 
-**Search quality improves.** With Neo4j, `gcode search` blends FTS5 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
+**Search quality improves.** With Neo4j, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
 **Config and secrets are managed.** Neo4j URLs, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
-**Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Standalone requires manual `gcode index`.
+**Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 
-| Capability | Standalone | With Gobby |
+| Capability | gcode CLI | With Gobby daemon/services |
 |-----------|-----------|-----------|
-| AST indexing + FTS5 search | Yes | Yes |
-| Graph-boosted search ranking | — | Yes (Neo4j) |
-| Semantic vector search | — | Yes (Qdrant + embeddings API) |
-| Call graph / blast radius | — | Yes (Neo4j) |
-| Import graph | — | Yes (Neo4j) |
-| Graph clear / rebuild lifecycle | — | Yes (daemon-backed) |
-| Auto-indexing on file change | — | Yes (daemon file watcher) |
-| Centralized config + secrets | — | Yes (encrypted, no env vars) |
-| Shared index (daemon + CLI) | — | Yes (gobby-hub.db) |
+| AST indexing + BM25 search | Yes, via PostgreSQL hub | Yes |
+| Graph-boosted search ranking | When Neo4j is configured | Yes |
+| Semantic vector search | When Qdrant + embeddings are configured | Yes |
+| Call graph / blast radius | When Neo4j is configured | Yes |
+| Import graph | When Neo4j is configured | Yes |
+| Graph clear / rebuild lifecycle | Requires daemon | Yes |
+| Auto-indexing on file change | Manual `gcode index` | Yes (daemon file watcher) |
+| Centralized config + secrets | Reads PostgreSQL `config_store` + secrets | Yes |
+| Shared index (daemon + CLI) | PostgreSQL hub | PostgreSQL hub |
 | AI agent orchestration | — | Yes |
 | Persistent sessions + memory | — | Yes |
 | Task tracking + pipelines | — | Yes |
@@ -197,8 +196,9 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 | Service unavailable | Behavior |
 |---------------------|----------|
 | Neo4j down | Graph commands return `[]`. Search loses graph boost. |
-| Qdrant down | Search loses semantic boost. FTS5 + graph still work. |
-| Embeddings API unavailable | Semantic embeddings disabled. FTS5 + graph still work. |
+| Qdrant down | Search loses semantic boost. BM25 + graph still work. |
+| Embeddings API unavailable | Semantic embeddings disabled. BM25 + graph still work. |
+| PostgreSQL hub unavailable | Runtime index/search commands fail with a bootstrap or connection error. |
 | No index yet | Commands error with `Run gcode init to initialize`. |
 
 Read-side graph commands depend on Neo4j. `gcode graph clear` and `gcode graph rebuild`

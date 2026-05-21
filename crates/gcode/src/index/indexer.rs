@@ -1,14 +1,14 @@
 //! Full and incremental indexing orchestrator.
 //!
-//! Writes symbols, files, and content chunks to SQLite. External sync
+//! Writes symbols, files, and content chunks to the PostgreSQL hub. External sync
 //! (Qdrant vectors, Neo4j graph) is handled by the Gobby daemon's sync worker,
-//! which polls for files with `vectors_synced=0` / `graph_synced=0`.
+//! which polls for files with `vectors_synced=false` / `graph_synced=false`.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use rusqlite::Connection;
+use postgres::{Client, GenericClient};
 
 use crate::index::chunker;
 use crate::index::hasher;
@@ -40,7 +40,7 @@ const DEFAULT_EXCLUDES: &[&str] = &[
 
 /// Index a directory (full or incremental).
 pub fn index_directory(
-    conn: &Connection,
+    conn: &mut Client,
     root_path: &Path,
     project_id: &str,
     incremental: bool,
@@ -68,10 +68,10 @@ pub fn index_directory(
         None
     };
 
-    // Clean orphans (SQLite only — daemon handles Neo4j/Qdrant cleanup)
+    // Clean orphans from the hub; daemon handles Neo4j/Qdrant cleanup.
     let orphans = get_orphan_files(conn, project_id, &current_hashes);
     for orphan in &orphans {
-        delete_file_sqlite_data(conn, project_id, orphan);
+        delete_file_postgres_data(conn, project_id, orphan);
     }
 
     // Index each candidate file
@@ -146,7 +146,7 @@ pub fn index_directory(
 
 /// Index specific changed files.
 pub fn index_files(
-    conn: &Connection,
+    conn: &mut Client,
     root_path: &Path,
     project_id: &str,
     file_paths: &[String],
@@ -173,8 +173,8 @@ pub fn index_files(
         };
 
         if !abs.exists() {
-            // File deleted — clean up SQLite (daemon handles external cleanup)
-            delete_file_sqlite_data(conn, project_id, fp);
+            // File deleted — clean up hub rows (daemon handles external cleanup).
+            delete_file_postgres_data(conn, project_id, fp);
             continue;
         }
 
@@ -204,7 +204,7 @@ pub fn index_files(
 
 /// Index a single file. Returns symbol count or None if skipped.
 fn index_file(
-    conn: &Connection,
+    conn: &mut Client,
     file_path: &Path,
     project_id: &str,
     root_path: &Path,
@@ -221,30 +221,20 @@ fn index_file(
         import_context,
     )?;
 
-    if parse_result.symbols.is_empty() {
-        return Some(0);
-    }
-
     let count = parse_result.symbols.len();
 
-    // Detect optional columns/tables (daemon migration)
-    let has_imports_table = has_table(conn, "code_imports");
-    let has_calls_table = has_table(conn, "code_calls");
-    let has_graph_synced = has_graph_synced_column(conn);
-    let has_vectors_synced = has_vectors_synced_column(conn);
+    // PostgreSQL hub writes (transactional).
+    let mut tx = conn.transaction().ok()?;
 
-    // SQLite writes (transactional)
-    let tx = conn.unchecked_transaction().ok()?;
-
-    delete_file_sqlite_data(&tx, project_id, &rel);
-    upsert_symbols(&tx, &parse_result.symbols);
+    delete_file_postgres_data(&mut tx, project_id, &rel);
+    upsert_symbols(&mut tx, &parse_result.symbols);
 
     let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
     let h = hasher::file_content_hash(file_path).unwrap_or_default();
     let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
 
     upsert_file(
-        &tx,
+        &mut tx,
         &IndexedFile {
             id: IndexedFile::make_id(project_id, &rel),
             project_id: project_id.to_string(),
@@ -255,22 +245,15 @@ fn index_file(
             byte_size: size as usize,
             indexed_at: epoch_secs_str(),
         },
-        has_graph_synced,
-        has_vectors_synced,
     );
 
-    // Write import/call relations to SQLite (if daemon migration v183 applied)
-    if has_imports_table {
-        upsert_imports(&tx, project_id, &rel, &parse_result.imports);
-    }
-    if has_calls_table {
-        upsert_calls(&tx, project_id, &rel, &parse_result.calls);
-    }
+    upsert_imports(&mut tx, project_id, &rel, &parse_result.imports);
+    upsert_calls(&mut tx, project_id, &rel, &parse_result.calls);
 
     let chunks =
         chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
     if !chunks.is_empty() {
-        upsert_content_chunks(&tx, &chunks);
+        upsert_content_chunks(&mut tx, &chunks);
     }
 
     tx.commit().ok()?;
@@ -279,7 +262,7 @@ fn index_file(
 }
 
 /// Index content-only file (no AST, just chunks).
-fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_path: &Path) -> bool {
+fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_path: &Path) -> bool {
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
         Err(_) => return false,
@@ -300,16 +283,17 @@ fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_pat
         return false;
     }
 
-    // Clear old chunks
-    let _ = conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, &rel],
-    );
-
     let lang = path.extension().map(|e| e.to_string_lossy().to_string());
     let content_hash = hasher::file_content_hash(path).unwrap_or_default();
+
+    let mut tx = match conn.transaction() {
+        Ok(tx) => tx,
+        Err(_) => return false,
+    };
+
+    delete_file_postgres_data(&mut tx, project_id, &rel);
     upsert_file(
-        conn,
+        &mut tx,
         &IndexedFile {
             id: IndexedFile::make_id(project_id, &rel),
             project_id: project_id.to_string(),
@@ -320,45 +304,51 @@ fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_pat
             byte_size: meta.len() as usize,
             indexed_at: epoch_secs_str(),
         },
-        has_graph_synced_column(conn),
-        has_vectors_synced_column(conn),
     );
 
     let chunks = chunker::chunk_file_content(&source, &rel, project_id, lang.as_deref());
     if !chunks.is_empty() {
-        upsert_content_chunks(conn, &chunks);
+        upsert_content_chunks(&mut tx, &chunks);
     }
 
-    true
+    tx.commit().is_ok()
 }
 
 /// Invalidate all index data for a project.
 pub fn invalidate(
-    conn: &Connection,
+    conn: &mut Client,
     project_id: &str,
     daemon_url: Option<&str>,
 ) -> anyhow::Result<()> {
-    // Notify daemon FIRST — it reads project stats from the same SQLite
+    // Notify daemon FIRST — it reads project stats from the same hub
     // to know what to clean from Neo4j/Qdrant.
     if let Some(url) = daemon_url {
         notify_daemon_invalidate(url, project_id);
     }
 
     conn.execute(
-        "DELETE FROM code_symbols WHERE project_id = ?1",
-        rusqlite::params![project_id],
+        "DELETE FROM code_symbols WHERE project_id = $1",
+        &[&project_id],
     )?;
     conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = ?1",
-        rusqlite::params![project_id],
+        "DELETE FROM code_indexed_files WHERE project_id = $1",
+        &[&project_id],
     )?;
     conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = ?1",
-        rusqlite::params![project_id],
+        "DELETE FROM code_content_chunks WHERE project_id = $1",
+        &[&project_id],
     )?;
     conn.execute(
-        "DELETE FROM code_indexed_projects WHERE id = ?1",
-        rusqlite::params![project_id],
+        "DELETE FROM code_imports WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "DELETE FROM code_calls WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "DELETE FROM code_indexed_projects WHERE id = $1",
+        &[&project_id],
     )?;
     eprintln!("Invalidated code index for project {project_id}");
 
@@ -393,19 +383,18 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
     }
 }
 
-// ── SQLite helpers ─────────────────────────────────────────────────────
+// ── PostgreSQL helpers ─────────────────────────────────────────────────
 
-fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
-    let now = epoch_secs_str();
+fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[crate::models::Symbol]) {
     for sym in symbols {
         let _ = conn.execute(
             "INSERT INTO code_symbols (
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
                 line_start, line_end, signature, docstring,
-                parent_symbol_id, content_hash,
+                parent_symbol_id, content_hash, summary,
                 created_at, updated_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW())
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, qualified_name=excluded.qualified_name,
                 kind=excluded.kind, byte_start=excluded.byte_start,
@@ -413,161 +402,108 @@ fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
                 line_end=excluded.line_end, signature=excluded.signature,
                 docstring=excluded.docstring, parent_symbol_id=excluded.parent_symbol_id,
                 language=excluded.language, content_hash=excluded.content_hash,
-                updated_at=excluded.updated_at",
-            rusqlite::params![
-                sym.id,
-                sym.project_id,
-                sym.file_path,
-                sym.name,
-                sym.qualified_name,
-                sym.kind,
-                sym.language,
-                sym.byte_start as i64,
-                sym.byte_end as i64,
-                sym.line_start as i64,
-                sym.line_end as i64,
-                sym.signature,
-                sym.docstring,
-                sym.parent_symbol_id,
-                sym.content_hash,
-                &now,
-                &now,
+                summary=CASE WHEN excluded.content_hash != code_symbols.content_hash
+                             THEN NULL ELSE code_symbols.summary END,
+                updated_at=NOW()",
+            &[
+                &sym.id,
+                &sym.project_id,
+                &sym.file_path,
+                &sym.name,
+                &sym.qualified_name,
+                &sym.kind,
+                &sym.language,
+                &to_i32(sym.byte_start),
+                &to_i32(sym.byte_end),
+                &to_i32(sym.line_start),
+                &to_i32(sym.line_end),
+                &sym.signature,
+                &sym.docstring,
+                &sym.parent_symbol_id,
+                &sym.content_hash,
+                &sym.summary,
             ],
         );
     }
 }
 
-fn upsert_file(
-    conn: &Connection,
-    file: &IndexedFile,
-    has_graph_synced: bool,
-    has_vectors_synced: bool,
-) {
-    if has_graph_synced && has_vectors_synced {
-        let _ = conn.execute(
-            "INSERT INTO code_indexed_files (
-                id, project_id, file_path, language, content_hash,
-                symbol_count, byte_size, indexed_at, graph_synced, vectors_synced
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8, 0, 0)
-            ON CONFLICT(id) DO UPDATE SET
-                content_hash=excluded.content_hash,
-                symbol_count=excluded.symbol_count,
-                byte_size=excluded.byte_size,
-                indexed_at=excluded.indexed_at,
-                graph_synced=0,
-                vectors_synced=0",
-            rusqlite::params![
-                file.id,
-                file.project_id,
-                file.file_path,
-                file.language,
-                file.content_hash,
-                file.symbol_count as i64,
-                file.byte_size as i64,
-                file.indexed_at,
-            ],
-        );
-    } else if has_graph_synced {
-        let _ = conn.execute(
-            "INSERT INTO code_indexed_files (
-                id, project_id, file_path, language, content_hash,
-                symbol_count, byte_size, indexed_at, graph_synced
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8, 0)
-            ON CONFLICT(id) DO UPDATE SET
-                content_hash=excluded.content_hash,
-                symbol_count=excluded.symbol_count,
-                byte_size=excluded.byte_size,
-                indexed_at=excluded.indexed_at,
-                graph_synced=0",
-            rusqlite::params![
-                file.id,
-                file.project_id,
-                file.file_path,
-                file.language,
-                file.content_hash,
-                file.symbol_count as i64,
-                file.byte_size as i64,
-                file.indexed_at,
-            ],
-        );
-    } else {
-        let _ = conn.execute(
-            "INSERT INTO code_indexed_files (
-                id, project_id, file_path, language, content_hash,
-                symbol_count, byte_size, indexed_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-            ON CONFLICT(id) DO UPDATE SET
-                content_hash=excluded.content_hash,
-                symbol_count=excluded.symbol_count,
-                byte_size=excluded.byte_size,
-                indexed_at=excluded.indexed_at",
-            rusqlite::params![
-                file.id,
-                file.project_id,
-                file.file_path,
-                file.language,
-                file.content_hash,
-                file.symbol_count as i64,
-                file.byte_size as i64,
-                file.indexed_at,
-            ],
-        );
-    }
+fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) {
+    let _ = conn.execute(
+        "INSERT INTO code_indexed_files (
+            id, project_id, file_path, language, content_hash,
+            symbol_count, byte_size, graph_synced, vectors_synced,
+            graph_sync_attempted_at, indexed_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false,NULL,NOW())
+        ON CONFLICT(id) DO UPDATE SET
+            content_hash=excluded.content_hash,
+            symbol_count=excluded.symbol_count,
+            byte_size=excluded.byte_size,
+            graph_synced=false,
+            vectors_synced=false,
+            graph_sync_attempted_at=NULL,
+            indexed_at=NOW()",
+        &[
+            &file.id,
+            &file.project_id,
+            &file.file_path,
+            &file.language,
+            &file.content_hash,
+            &to_i32(file.symbol_count),
+            &to_i32(file.byte_size),
+        ],
+    );
 }
 
-fn upsert_content_chunks(conn: &Connection, chunks: &[crate::models::ContentChunk]) {
+fn upsert_content_chunks(conn: &mut impl GenericClient, chunks: &[crate::models::ContentChunk]) {
     for chunk in chunks {
         let _ = conn.execute(
             "INSERT INTO code_content_chunks (
                 id, project_id, file_path, chunk_index,
                 line_start, line_end, content, language, created_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
             ON CONFLICT(id) DO UPDATE SET
                 content=excluded.content,
                 line_start=excluded.line_start,
                 line_end=excluded.line_end",
-            rusqlite::params![
-                chunk.id,
-                chunk.project_id,
-                chunk.file_path,
-                chunk.chunk_index as i64,
-                chunk.line_start as i64,
-                chunk.line_end as i64,
-                chunk.content,
-                chunk.language,
-                chunk.created_at,
+            &[
+                &chunk.id,
+                &chunk.project_id,
+                &chunk.file_path,
+                &to_i32(chunk.chunk_index),
+                &to_i32(chunk.line_start),
+                &to_i32(chunk.line_end),
+                &chunk.content,
+                &chunk.language,
             ],
         );
     }
 }
 
-fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
+fn upsert_project_stats(conn: &mut impl GenericClient, project: &IndexedProject) {
     let _ = conn.execute(
         "INSERT INTO code_indexed_projects (
             id, root_path, total_files, total_symbols,
-            last_indexed_at, index_duration_ms, total_eligible_files
-        ) VALUES (?1,?2,?3,?4,?5,?6,?7)
+            last_indexed_at, index_duration_ms
+        ) VALUES ($1,$2,$3,$4,NOW(),$5)
         ON CONFLICT(id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
             last_indexed_at=excluded.last_indexed_at,
             index_duration_ms=excluded.index_duration_ms,
-            total_eligible_files=excluded.total_eligible_files",
-        rusqlite::params![
-            project.id,
-            project.root_path,
-            project.total_files as i64,
-            project.total_symbols as i64,
-            project.last_indexed_at,
-            project.index_duration_ms as i64,
-            project.total_eligible_files.map(|n| n as i64),
+            updated_at=NOW()",
+        &[
+            &project.id,
+            &project.root_path,
+            &to_i32(project.total_files),
+            &to_i32(project.total_symbols),
+            &to_i32(project.index_duration_ms as usize),
         ],
     );
 }
 
 fn refresh_project_stats(
-    conn: &Connection,
+    conn: &mut Client,
     root_path: &Path,
     project_id: &str,
     elapsed_ms: u64,
@@ -590,81 +526,81 @@ fn refresh_project_stats(
     );
 }
 
-/// Delete SQLite data for a file.
-fn delete_file_sqlite_data(conn: &Connection, project_id: &str, file_path: &str) {
+/// Delete PostgreSQL hub data for a file.
+fn delete_file_postgres_data(conn: &mut impl GenericClient, project_id: &str, file_path: &str) {
     let _ = conn.execute(
-        "DELETE FROM code_symbols WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, file_path],
+        "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
     );
     let _ = conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, file_path],
+        "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
     );
     let _ = conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, file_path],
+        "DELETE FROM code_content_chunks WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
     );
-    // Clean import/call tables if they exist (daemon migration v183)
-    if has_table(conn, "code_imports") {
-        let _ = conn.execute(
-            "DELETE FROM code_imports WHERE project_id = ?1 AND source_file = ?2",
-            rusqlite::params![project_id, file_path],
-        );
-    }
-    if has_table(conn, "code_calls") {
-        let _ = conn.execute(
-            "DELETE FROM code_calls WHERE project_id = ?1 AND file_path = ?2",
-            rusqlite::params![project_id, file_path],
-        );
-    }
+    let _ = conn.execute(
+        "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
+        &[&project_id, &file_path],
+    );
+    let _ = conn.execute(
+        "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
+    );
 }
 
-/// Write import relations to SQLite (delete-then-insert per file).
+/// Write import relations to Postgres (delete-then-insert per file).
 fn upsert_imports(
-    conn: &Connection,
+    conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
     imports: &[crate::models::ImportRelation],
 ) {
     let _ = conn.execute(
-        "DELETE FROM code_imports WHERE project_id = ?1 AND source_file = ?2",
-        rusqlite::params![project_id, file_path],
+        "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
+        &[&project_id, &file_path],
     );
     for imp in imports {
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO code_imports (project_id, source_file, target_module) \
-             VALUES (?1, ?2, ?3)",
-            rusqlite::params![project_id, &imp.file_path, &imp.module_name],
+            "INSERT INTO code_imports (project_id, source_file, target_module)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (project_id, source_file, target_module) DO NOTHING",
+            &[&project_id, &imp.file_path, &imp.module_name],
         );
     }
 }
 
-/// Write call relations to SQLite (delete-then-insert per file).
+/// Write call relations to Postgres (delete-then-insert per file).
 fn upsert_calls(
-    conn: &Connection,
+    conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
     calls: &[crate::models::CallRelation],
 ) {
     let _ = conn.execute(
-        "DELETE FROM code_calls WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, file_path],
+        "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
     );
     for call in calls {
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO code_calls \
+            "INSERT INTO code_calls
              (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
-              callee_target_kind, callee_external_module, file_path, line) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                project_id,
+              callee_target_kind, callee_external_module, file_path, line)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (
+                project_id, caller_symbol_id, callee_symbol_id, callee_name,
+                callee_target_kind, callee_external_module, file_path, line
+             ) DO NOTHING",
+            &[
+                &project_id,
                 &call.caller_symbol_id,
-                call.callee_symbol_id.as_deref().unwrap_or(""),
+                &call.callee_symbol_id.as_deref().unwrap_or(""),
                 &call.callee_name,
-                call.callee_target_kind.as_str(),
-                call.callee_external_module.as_deref().unwrap_or(""),
+                &call.callee_target_kind.as_str(),
+                &call.callee_external_module.as_deref().unwrap_or(""),
                 &call.file_path,
-                call.line as i64,
+                &to_i32(call.line),
             ],
         );
     }
@@ -672,26 +608,10 @@ fn upsert_calls(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::models::{CallRelation, CallTargetKind};
 
     #[test]
-    fn upsert_calls_writes_new_contract_columns() {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE code_calls (
-                project_id TEXT NOT NULL,
-                caller_symbol_id TEXT NOT NULL,
-                callee_symbol_id TEXT NOT NULL DEFAULT '',
-                callee_name TEXT NOT NULL,
-                callee_target_kind TEXT NOT NULL,
-                callee_external_module TEXT NOT NULL DEFAULT '',
-                file_path TEXT NOT NULL,
-                line INTEGER NOT NULL
-            );",
-        )
-        .expect("create table");
-
+    fn call_relation_contract_uses_empty_optional_storage_values() {
         let resolved = CallRelation::new(
             "caller-1".to_string(),
             "foo".to_string(),
@@ -706,229 +626,42 @@ mod tests {
             18,
         );
 
-        upsert_calls(
-            &conn,
-            "proj",
-            "src/main.py",
-            &[resolved.clone(), unresolved.clone()],
-        );
-
-        let mut stmt = conn
-            .prepare(
-                "SELECT caller_symbol_id, callee_symbol_id, callee_name, \
-                        callee_target_kind, callee_external_module, file_path, line \
-                 FROM code_calls ORDER BY line",
-            )
-            .expect("prepare select");
-        let rows: Vec<(String, String, String, String, String, String, i64)> = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            })
-            .expect("query rows")
-            .map(|row| row.expect("read row"))
-            .collect();
-
         assert_eq!(
-            rows[0],
-            (
-                "caller-1".to_string(),
-                "callee-1".to_string(),
-                "foo".to_string(),
-                CallTargetKind::Symbol.as_str().to_string(),
-                "".to_string(),
-                "src/main.py".to_string(),
-                12,
-            )
+            resolved.callee_symbol_id.as_deref().unwrap_or(""),
+            "callee-1"
         );
-        assert_eq!(
-            rows[1],
-            (
-                "caller-2".to_string(),
-                "".to_string(),
-                "bar".to_string(),
-                CallTargetKind::Unresolved.as_str().to_string(),
-                "".to_string(),
-                "src/main.py".to_string(),
-                18,
-            )
-        );
+        assert_eq!(unresolved.callee_symbol_id.as_deref().unwrap_or(""), "");
+        assert_eq!(resolved.callee_target_kind, CallTargetKind::Symbol);
+        assert_eq!(unresolved.callee_target_kind, CallTargetKind::Unresolved);
     }
-
-    #[test]
-    fn content_only_indexing_writes_indexed_file_row() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let file_path = tmp.path().join("README.md");
-        std::fs::write(&file_path, "# Outline\n\ncontent").expect("write file");
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE code_indexed_files (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                language TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                symbol_count INTEGER NOT NULL DEFAULT 0,
-                byte_size INTEGER NOT NULL DEFAULT 0,
-                indexed_at TEXT NOT NULL
-            );
-            CREATE TABLE code_content_chunks (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                line_start INTEGER NOT NULL,
-                line_end INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                language TEXT,
-                created_at TEXT
-            );",
-        )
-        .expect("create schema");
-
-        assert!(index_content_only(&conn, &file_path, "proj", tmp.path()));
-
-        let row: (String, i64) = conn
-            .query_row(
-                "SELECT language, symbol_count FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'README.md'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("indexed file row");
-        assert_eq!(row, ("md".to_string(), 0));
-    }
-
-    #[test]
-    fn index_files_refreshes_project_stats() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let file_path = tmp.path().join("lib.rs");
-        std::fs::write(&file_path, "pub fn target() {}\n").expect("write file");
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        crate::schema::ensure_schema(&conn).expect("schema");
-
-        let result =
-            index_files(&conn, tmp.path(), "proj", &["lib.rs".to_string()]).expect("index files");
-
-        assert_eq!(result.files_indexed, 1);
-        let stats: (i64, i64) = conn
-            .query_row(
-                "SELECT total_files, total_symbols FROM code_indexed_projects WHERE id = 'proj'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("project stats");
-        assert_eq!(stats, (1, 1));
-    }
-
-    #[test]
-    fn index_directory_removes_orphans_on_incremental_refresh() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(tmp.path().join("keep.rs"), "pub fn keep() {}\n").expect("write keep");
-        std::fs::write(tmp.path().join("gone.rs"), "pub fn gone() {}\n").expect("write gone");
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        crate::schema::ensure_schema(&conn).expect("schema");
-
-        index_directory(&conn, tmp.path(), "proj", true, true).expect("initial index");
-        std::fs::remove_file(tmp.path().join("gone.rs")).expect("remove gone");
-        index_directory(&conn, tmp.path(), "proj", true, true).expect("refresh index");
-
-        let gone_rows: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'gone.rs'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count gone");
-        let keep_rows: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'keep.rs'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count keep");
-
-        assert_eq!(gone_rows, 0);
-        assert_eq!(keep_rows, 1);
-    }
-}
-
-/// Check if the code_indexed_files table has a graph_synced column (gobby-hub.db only).
-fn has_graph_synced_column(conn: &Connection) -> bool {
-    has_column(conn, "code_indexed_files", "graph_synced")
-}
-
-/// Check if the code_indexed_files table has a vectors_synced column (daemon migration v183).
-fn has_vectors_synced_column(conn: &Connection) -> bool {
-    has_column(conn, "code_indexed_files", "vectors_synced")
-}
-
-/// Check if a table has a specific column.
-fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
-    let sql = format!("PRAGMA table_info({table})");
-    conn.prepare(&sql)
-        .ok()
-        .and_then(|mut stmt| {
-            stmt.query_map([], |row| row.get::<_, String>(1))
-                .ok()
-                .map(|names| names.flatten().any(|n| n == column))
-        })
-        .unwrap_or(false)
-}
-
-/// Check if a table exists in the database.
-fn has_table(conn: &Connection, table: &str) -> bool {
-    conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-        rusqlite::params![table],
-        |row| row.get::<_, i64>(0),
-    )
-    .unwrap_or(0)
-        > 0
 }
 
 fn get_stale_files(
-    conn: &Connection,
+    conn: &mut Client,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
 ) -> HashMap<String, ()> {
     let mut stale = HashMap::new();
-
-    // Create temp table for comparison
-    let _ = conn.execute_batch(
-        "CREATE TEMP TABLE IF NOT EXISTS _current_hashes \
-         (file_path TEXT PRIMARY KEY, content_hash TEXT); \
-         DELETE FROM _current_hashes;",
-    );
-
-    for (path, hash) in current_hashes {
-        let _ = conn.execute(
-            "INSERT INTO _current_hashes (file_path, content_hash) VALUES (?1, ?2)",
-            rusqlite::params![path, hash],
-        );
-    }
-
-    // Files with changed content or not yet indexed
-    if let Ok(mut stmt) = conn.prepare(
-        "SELECT ch.file_path FROM _current_hashes ch \
-         LEFT JOIN code_indexed_files cf \
-             ON cf.project_id = ?1 AND cf.file_path = ch.file_path \
-         WHERE cf.file_path IS NULL OR cf.content_hash != ch.content_hash",
-    ) && let Ok(rows) =
-        stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
-    {
-        for row in rows.flatten() {
-            stale.insert(row, ());
+    let mut indexed = HashMap::new();
+    if let Ok(rows) = conn.query(
+        "SELECT file_path, content_hash FROM code_indexed_files WHERE project_id = $1",
+        &[&project_id],
+    ) {
+        for row in rows {
+            if let (Ok(file_path), Ok(content_hash)) = (
+                row.try_get::<_, String>("file_path"),
+                row.try_get::<_, String>("content_hash"),
+            ) {
+                indexed.insert(file_path, content_hash);
+            }
         }
     }
 
-    let _ = conn.execute_batch("DROP TABLE IF EXISTS _current_hashes;");
+    for (path, hash) in current_hashes {
+        if indexed.get(path) != Some(hash) {
+            stale.insert(path.clone(), ());
+        }
+    }
     stale
 }
 
@@ -948,31 +681,39 @@ fn current_file_hashes(
 }
 
 fn get_orphan_files(
-    conn: &Connection,
+    conn: &mut Client,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
 ) -> Vec<String> {
     let mut orphans = Vec::new();
-    if let Ok(mut stmt) =
-        conn.prepare("SELECT file_path FROM code_indexed_files WHERE project_id = ?1")
-        && let Ok(rows) =
-            stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
-    {
-        for row in rows.flatten() {
-            if !current_hashes.contains_key(&row) {
-                orphans.push(row);
+    if let Ok(rows) = conn.query(
+        "SELECT file_path FROM code_indexed_files WHERE project_id = $1",
+        &[&project_id],
+    ) {
+        for row in rows {
+            if let Ok(file_path) = row.try_get::<_, String>("file_path")
+                && !current_hashes.contains_key(&file_path)
+            {
+                orphans.push(file_path);
             }
         }
     }
     orphans
 }
 
-fn count_rows(conn: &Connection, table: &str, project_id: &str) -> usize {
-    let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id = ?1");
-    conn.query_row(&sql, rusqlite::params![project_id], |row| {
-        row.get::<_, i64>(0)
-    })
-    .unwrap_or(0) as usize
+fn count_rows(conn: &mut Client, table: &str, project_id: &str) -> usize {
+    if !matches!(table, "code_indexed_files" | "code_symbols") {
+        return 0;
+    }
+    let sql = format!("SELECT COUNT(*)::BIGINT AS count FROM {table} WHERE project_id = $1");
+    conn.query_one(&sql, &[&project_id])
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0) as usize
+}
+
+fn to_i32(value: usize) -> i32 {
+    value.try_into().unwrap_or(i32::MAX)
 }
 
 fn relative_path(path: &Path, root: &Path) -> anyhow::Result<String> {

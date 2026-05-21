@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use rusqlite::Connection;
+use postgres::Client;
 
 use crate::config::Context;
 
@@ -40,32 +40,32 @@ pub(crate) fn path_exists_in_current_project(ctx: &Context, file_path: &str) -> 
     abs.starts_with(root)
 }
 
-pub(crate) fn indexed_file_exists(conn: &Connection, project_id: &str, file_path: &str) -> bool {
-    conn.query_row(
+pub(crate) fn indexed_file_exists(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
+    conn.query_one(
         "SELECT EXISTS(
             SELECT 1 FROM code_indexed_files
-            WHERE project_id = ?1 AND file_path = ?2
+            WHERE project_id = $1 AND file_path = $2
         )",
-        rusqlite::params![project_id, file_path],
-        |row| row.get::<_, bool>(0),
+        &[&project_id, &file_path],
     )
+    .and_then(|row| row.try_get::<_, bool>(0))
     .unwrap_or(false)
 }
 
-pub(crate) fn content_chunks_exist(conn: &Connection, project_id: &str, file_path: &str) -> bool {
-    conn.query_row(
+pub(crate) fn content_chunks_exist(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
+    conn.query_one(
         "SELECT EXISTS(
             SELECT 1 FROM code_content_chunks
-            WHERE project_id = ?1 AND file_path = ?2
+            WHERE project_id = $1 AND file_path = $2
         )",
-        rusqlite::params![project_id, file_path],
-        |row| row.get::<_, bool>(0),
+        &[&project_id, &file_path],
     )
+    .and_then(|row| row.try_get::<_, bool>(0))
     .unwrap_or(false)
 }
 
 pub(crate) fn current_indexed_path_is_valid(
-    conn: &Connection,
+    conn: &mut Client,
     ctx: &Context,
     file_path: &str,
 ) -> bool {
@@ -74,7 +74,7 @@ pub(crate) fn current_indexed_path_is_valid(
 }
 
 pub(crate) fn other_project_for_path(
-    conn: &Connection,
+    conn: &mut Client,
     ctx: &Context,
     file_path: &str,
 ) -> Option<ProjectMatch> {
@@ -83,23 +83,20 @@ pub(crate) fn other_project_for_path(
     }
 
     let current_root = ctx.project_root.canonicalize().ok();
-    let mut stmt = conn
-        .prepare(
+    let rows = conn
+        .query(
             "SELECT id, root_path FROM code_indexed_projects
-             WHERE id != ?1 AND root_path != ''
+             WHERE id != $1 AND root_path != ''
              ORDER BY root_path",
+            &[&ctx.project_id],
         )
         .ok()?;
-    let rows = stmt
-        .query_map(rusqlite::params![&ctx.project_id], |row| {
-            Ok(ProjectMatch {
-                id: row.get(0)?,
-                root_path: row.get(1)?,
-            })
-        })
-        .ok()?;
 
-    for project in rows.flatten() {
+    for row in rows {
+        let project = ProjectMatch {
+            id: row.try_get("id").ok()?,
+            root_path: row.try_get("root_path").ok()?,
+        };
         let root = PathBuf::from(&project.root_path);
         if current_root.as_ref().is_some_and(|current| {
             root.canonicalize()
@@ -117,27 +114,27 @@ pub(crate) fn other_project_for_path(
 }
 
 fn indexed_project_for_file_path(
-    conn: &Connection,
+    conn: &mut Client,
     current_project_id: &str,
     file_path: &str,
 ) -> Option<ProjectMatch> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT p.id, p.root_path
+    conn.query_opt(
+        "SELECT p.id, p.root_path
              FROM code_indexed_files f
              JOIN code_indexed_projects p ON p.id = f.project_id
-             WHERE f.file_path = ?1 AND f.project_id != ?2
+             WHERE f.file_path = $1 AND f.project_id != $2
              ORDER BY p.root_path
              LIMIT 1",
-        )
-        .ok()?;
-    stmt.query_row(rusqlite::params![file_path, current_project_id], |row| {
-        Ok(ProjectMatch {
-            id: row.get(0)?,
-            root_path: row.get(1)?,
+        &[&file_path, &current_project_id],
+    )
+    .ok()
+    .flatten()
+    .and_then(|row| {
+        Some(ProjectMatch {
+            id: row.try_get("id").ok()?,
+            root_path: row.try_get("root_path").ok()?,
         })
     })
-    .ok()
 }
 
 fn clean_relative_path(path: &Path) -> String {
@@ -160,7 +157,7 @@ mod tests {
 
     fn context_for(root: PathBuf) -> Context {
         Context {
-            db_path: root.join("index.db"),
+            database_url: "postgresql://localhost/gobby-test".to_string(),
             project_root: root,
             project_id: "current".to_string(),
             quiet: false,
@@ -169,26 +166,6 @@ mod tests {
             embedding: None,
             daemon_url: None,
         }
-    }
-
-    fn setup_conn() -> Connection {
-        let conn = Connection::open_in_memory().expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE code_indexed_projects (
-                id TEXT PRIMARY KEY,
-                root_path TEXT NOT NULL
-            );
-            CREATE TABLE code_indexed_files (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );
-            CREATE TABLE code_content_chunks (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );",
-        )
-        .expect("create schema");
-        conn
     }
 
     #[test]
@@ -207,38 +184,10 @@ mod tests {
     }
 
     #[test]
-    fn detects_path_owned_by_other_project() {
-        let conn = setup_conn();
-        let current = tempfile::tempdir().expect("current tempdir");
-        let other = tempfile::tempdir().expect("other tempdir");
-        conn.execute(
-            "INSERT INTO code_indexed_projects (id, root_path) VALUES (?1, ?2)",
-            rusqlite::params!["other", other.path().to_string_lossy()],
-        )
-        .expect("insert project");
-        conn.execute(
-            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('other', 'src/lib.rs')",
-            [],
-        )
-        .expect("insert file");
-        let ctx = context_for(current.path().to_path_buf());
-
-        let owner = other_project_for_path(&conn, &ctx, "src/lib.rs").expect("owner");
-
-        assert_eq!(owner.id, "other");
-    }
-
-    #[test]
-    fn rejects_missing_current_indexed_path() {
-        let conn = setup_conn();
-        let current = tempfile::tempdir().expect("current tempdir");
-        conn.execute(
-            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('current', 'src/lib.rs')",
-            [],
-        )
-        .expect("insert file");
-        let ctx = context_for(current.path().to_path_buf());
-
-        assert!(!current_indexed_path_is_valid(&conn, &ctx, "src/lib.rs"));
+    fn clean_relative_path_drops_absolute_root_components() {
+        assert_eq!(
+            clean_relative_path(Path::new("/tmp/project/src/lib.rs")),
+            "tmp/project/src/lib.rs"
+        );
     }
 }

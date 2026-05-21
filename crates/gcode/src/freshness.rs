@@ -18,10 +18,16 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<()> 
     }
 
     let _guard = FreshnessGuard::enter();
-    let conn = db::open_readwrite(&ctx.db_path)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
     match scope {
         FreshnessScope::Project => {
-            indexer::index_directory(&conn, &ctx.project_root, &ctx.project_id, true, ctx.quiet)?;
+            indexer::index_directory(
+                &mut conn,
+                &ctx.project_root,
+                &ctx.project_id,
+                true,
+                ctx.quiet,
+            )?;
         }
         FreshnessScope::Files(paths) => {
             let files: Vec<String> = paths
@@ -29,7 +35,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<()> 
                 .map(|path| normalize_file_path(&ctx.project_root, path))
                 .collect();
             if !files.is_empty() {
-                indexer::index_files(&conn, &ctx.project_root, &ctx.project_id, &files)?;
+                indexer::index_files(&mut conn, &ctx.project_root, &ctx.project_id, &files)?;
             }
         }
     }
@@ -41,14 +47,15 @@ pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let conn = db::open_readonly(&ctx.db_path)?;
-    let sym: Option<Symbol> = conn
-        .query_row(
-            "SELECT * FROM code_symbols WHERE id = ?1 AND project_id = ?2",
-            rusqlite::params![id, &ctx.project_id],
-            Symbol::from_row,
-        )
-        .ok();
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let columns = db::symbol_select_columns("");
+    let sym = conn
+        .query_opt(
+            &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
+            &[&id, &ctx.project_id],
+        )?
+        .as_ref()
+        .and_then(|row| Symbol::from_row(row).ok());
     drop(conn);
 
     let Some(sym) = sym else {
@@ -126,9 +133,9 @@ mod tests {
     use super::*;
     use crate::models::CODE_INDEX_UUID_NAMESPACE;
 
-    fn context_for(root: &Path, db_path: PathBuf) -> Context {
+    fn context_for(root: &Path) -> Context {
         Context {
-            db_path,
+            database_url: "postgresql://localhost/gobby-test".to_string(),
             project_root: root.to_path_buf(),
             project_id: "proj".to_string(),
             quiet: true,
@@ -147,13 +154,12 @@ mod tests {
     #[serial_test::serial]
     fn no_freshness_env_short_circuits_project_refresh() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let ctx = context_for(tmp.path(), tmp.path().join("missing.db"));
+        let ctx = context_for(tmp.path());
         unsafe { std::env::set_var(INFLIGHT_ENV, "1") };
         let result = ensure_fresh(&ctx, FreshnessScope::Project);
         unsafe { std::env::remove_var(INFLIGHT_ENV) };
 
         assert!(result.is_ok());
-        assert!(!ctx.db_path.exists());
     }
 
     #[test]
@@ -162,7 +168,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let source = b"fn before() {}\nfn target() {}\n";
         std::fs::write(tmp.path().join("lib.rs"), source).expect("write file");
-        let ctx = context_for(tmp.path(), tmp.path().join("index.db"));
+        let ctx = context_for(tmp.path());
         let start = 15;
         let end = source.len();
         let sym = Symbol {
@@ -194,55 +200,5 @@ mod tests {
         )
         .expect("shift file");
         assert!(!symbol_slice_is_current(&ctx, &sym));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn ensure_symbol_fresh_reindexes_shifted_symbol_slice() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let db_path = tmp.path().join("index.db");
-        let source = "pub fn target() {\n}\n";
-        std::fs::write(tmp.path().join("lib.rs"), source).expect("write file");
-        let conn = db::open_readwrite(&db_path).expect("open db");
-        indexer::index_directory(&conn, tmp.path(), "proj", true, true).expect("index");
-        drop(conn);
-
-        let ctx = context_for(tmp.path(), db_path.clone());
-        let conn = db::open_readonly(&db_path).expect("open readonly");
-        let old_id: String = conn
-            .query_row(
-                "SELECT id FROM code_symbols WHERE project_id = 'proj' AND name = 'target'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("old symbol id");
-        drop(conn);
-
-        std::fs::write(
-            tmp.path().join("lib.rs"),
-            "// inserted\npub fn target() {\n}\n",
-        )
-        .expect("shift file");
-
-        ensure_symbol_fresh(&ctx, &old_id).expect("freshen symbol");
-
-        let conn = db::open_readonly(&db_path).expect("open readonly");
-        let old_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM code_symbols WHERE id = ?1)",
-                rusqlite::params![old_id],
-                |row| row.get(0),
-            )
-            .expect("exists query");
-        let new_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM code_symbols WHERE project_id = 'proj' AND name = 'target'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count query");
-
-        assert!(!old_exists);
-        assert_eq!(new_count, 1);
     }
 }

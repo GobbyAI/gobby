@@ -13,9 +13,9 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 
 ## Search
 
-- `gcode search "query"` — hybrid search: FTS + semantic + graph boost (best for fuzzy or natural-language queries)
+- `gcode search "query"` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name"` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
-- `gcode search-text "query"` — FTS5 search on symbol names, signatures, and docstrings
+- `gcode search-text "query"` — pg_search BM25 search on symbol names, signatures, and docstrings
 - `gcode search-content "query"` — full-text search across file bodies (source, comments, config files, CSS, SQL)
 
 Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--path <glob>`, `--limit N`, and `--offset N` for scoped or paginated results.
@@ -48,7 +48,7 @@ Use these **before making changes** to understand what you'll affect:
 ## Graph Lifecycle (Gobby daemon required)
 
 - `gcode graph clear` — clear the current project's graph projection
-- `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch SQLite/FTS)
+- `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
 
 ## When to use which
 

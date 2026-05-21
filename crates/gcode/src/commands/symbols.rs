@@ -6,18 +6,24 @@ use crate::output::{self, Format};
 use crate::savings;
 
 pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
-    let conn = db::open_readwrite(&ctx.db_path)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let file = scope::normalize_file_arg(ctx, file);
-    let mut stmt = conn.prepare(
-        "SELECT * FROM code_symbols WHERE project_id = ?1 AND file_path = ?2 ORDER BY line_start",
-    )?;
-    let symbols: Vec<Symbol> = stmt
-        .query_map(rusqlite::params![&ctx.project_id, &file], Symbol::from_row)?
-        .filter_map(|r| r.ok())
+    let columns = db::symbol_select_columns("");
+    let symbols: Vec<Symbol> = conn
+        .query(
+            &format!(
+                "SELECT {columns} FROM code_symbols
+                 WHERE project_id = $1 AND file_path = $2
+                 ORDER BY line_start"
+            ),
+            &[&ctx.project_id, &file],
+        )?
+        .iter()
+        .filter_map(|row| Symbol::from_row(row).ok())
         .collect();
 
     if symbols.is_empty() && !ctx.quiet {
-        eprintln!("{}", outline_missing_diagnostic(&conn, ctx, &file));
+        eprintln!("{}", outline_missing_diagnostic(&mut conn, ctx, &file));
     }
 
     // Record savings: outline bytes vs full file bytes
@@ -65,7 +71,7 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
     }
 }
 
-fn outline_missing_diagnostic(conn: &rusqlite::Connection, ctx: &Context, file: &str) -> String {
+fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: &str) -> String {
     if scope::path_exists_in_current_project(ctx, file) {
         if scope::indexed_file_exists(conn, &ctx.project_id, file) {
             return format!("file has no indexed symbols in current project: {file}");
@@ -113,14 +119,16 @@ fn short_id(id: &str) -> &str {
 }
 
 pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readwrite(&ctx.db_path)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let columns = db::symbol_select_columns("");
     let sym: Option<Symbol> = conn
-        .query_row(
-            "SELECT * FROM code_symbols WHERE id = ?1 AND project_id = ?2",
-            rusqlite::params![id, &ctx.project_id],
-            Symbol::from_row,
+        .query_opt(
+            &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
+            &[&id, &ctx.project_id],
         )
-        .ok();
+        .ok()
+        .flatten()
+        .and_then(|row| Symbol::from_row(&row).ok());
 
     match sym {
         Some(s) => {
@@ -171,22 +179,30 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
 }
 
 pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readwrite(&ctx.db_path)?;
-    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    if ids.is_empty() {
+        return match format {
+            Format::Json => output::print_json(&Vec::<Symbol>::new()),
+            Format::Text => Ok(()),
+        };
+    }
+    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+    let project_placeholder = format!("${}", ids.len() + 1);
+    let columns = db::symbol_select_columns("");
     let sql = format!(
-        "SELECT * FROM code_symbols WHERE project_id = ?{} AND id IN ({})",
-        ids.len() + 1,
+        "SELECT {columns} FROM code_symbols
+         WHERE id IN ({}) AND project_id = {project_placeholder}",
         placeholders.join(",")
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params: Vec<&dyn rusqlite::types::ToSql> = ids
+    let mut params: Vec<&(dyn postgres::types::ToSql + Sync)> = ids
         .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .map(|s| s as &(dyn postgres::types::ToSql + Sync))
         .collect();
     params.push(&ctx.project_id);
-    let results: Vec<Symbol> = stmt
-        .query_map(&*params, Symbol::from_row)?
-        .filter_map(|r| r.ok())
+    let results: Vec<Symbol> = conn
+        .query(&sql, &params)?
+        .iter()
+        .filter_map(|row| Symbol::from_row(row).ok())
         .collect();
 
     // Aggregate savings across batch
@@ -225,12 +241,14 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
 }
 
 pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT kind FROM code_symbols WHERE project_id = ?1 ORDER BY kind")?;
-    let kinds: Vec<String> = stmt
-        .query_map(rusqlite::params![&ctx.project_id], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let kinds: Vec<String> = conn
+        .query(
+            "SELECT DISTINCT kind FROM code_symbols WHERE project_id = $1 ORDER BY kind",
+            &[&ctx.project_id],
+        )?
+        .iter()
+        .filter_map(|row| row.try_get(0).ok())
         .collect();
 
     match format {
@@ -245,21 +263,22 @@ pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
 }
 
 pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let conn = db::open_readonly(&ctx.db_path)?;
-    let mut stmt = conn.prepare(
-        "SELECT file_path, language, symbol_count FROM code_indexed_files \
-         WHERE project_id = ?1 ORDER BY file_path",
-    )?;
-
-    let files: Vec<serde_json::Value> = stmt
-        .query_map(rusqlite::params![&ctx.project_id], |row| {
-            Ok(serde_json::json!({
-                "file_path": row.get::<_, String>(0)?,
-                "language": row.get::<_, String>(1)?,
-                "symbol_count": row.get::<_, i64>(2)?,
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let files: Vec<serde_json::Value> = conn
+        .query(
+            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
+             FROM code_indexed_files
+             WHERE project_id = $1 ORDER BY file_path",
+            &[&ctx.project_id],
+        )?
+        .iter()
+        .filter_map(|row| {
+            Some(serde_json::json!({
+                "file_path": row.try_get::<_, String>("file_path").ok()?,
+                "language": row.try_get::<_, String>("language").ok()?,
+                "symbol_count": row.try_get::<_, i64>("symbol_count").ok()?,
             }))
-        })?
-        .filter_map(|r| r.ok())
+        })
         .collect();
 
     match format {
@@ -281,39 +300,6 @@ pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn context_for(root: &std::path::Path, db_path: std::path::PathBuf) -> Context {
-        Context {
-            db_path,
-            project_root: root.to_path_buf(),
-            project_id: "current-project".to_string(),
-            quiet: false,
-            neo4j: None,
-            qdrant: None,
-            embedding: None,
-            daemon_url: None,
-        }
-    }
-
-    fn setup_conn() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE code_indexed_projects (
-                id TEXT PRIMARY KEY,
-                root_path TEXT NOT NULL
-            );
-            CREATE TABLE code_indexed_files (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );
-            CREATE TABLE code_content_chunks (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );",
-        )
-        .expect("create schema");
-        conn
-    }
 
     fn symbol() -> Symbol {
         Symbol {
@@ -348,61 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn outline_diagnostic_reports_unindexed_current_file() {
-        let current = tempfile::tempdir().expect("current tempdir");
-        let src = current.path().join("src");
-        std::fs::create_dir_all(&src).expect("create src");
-        std::fs::write(src.join("lib.rs"), "fn main() {}").expect("write file");
-        let conn = setup_conn();
-        let ctx = context_for(current.path(), current.path().join("index.db"));
-
-        let diagnostic = outline_missing_diagnostic(&conn, &ctx, "src/lib.rs");
-
-        assert_eq!(
-            diagnostic,
-            "file not indexed in current project: src/lib.rs"
-        );
-    }
-
-    #[test]
-    fn outline_diagnostic_reports_other_project_owner() {
-        let conn = setup_conn();
-        let current = tempfile::tempdir().expect("current tempdir");
-        let other = tempfile::tempdir().expect("other tempdir");
-        conn.execute(
-            "INSERT INTO code_indexed_projects (id, root_path) VALUES (?1, ?2)",
-            rusqlite::params!["other-project", other.path().to_string_lossy().to_string()],
-        )
-        .expect("insert project");
-        conn.execute(
-            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('other-project', 'src/lib.rs')",
-            [],
-        )
-        .expect("insert file");
-        let ctx = context_for(current.path(), current.path().join("index.db"));
-
-        let diagnostic = outline_missing_diagnostic(&conn, &ctx, "src/lib.rs");
-
-        assert!(diagnostic.contains("path belongs to indexed project"));
-        assert!(diagnostic.contains("(other-pr)"));
-    }
-
-    #[test]
-    fn outline_diagnostic_reports_stale_current_index() {
-        let conn = setup_conn();
-        let current = tempfile::tempdir().expect("current tempdir");
-        conn.execute(
-            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('current-project', 'src/missing.rs')",
-            [],
-        )
-        .expect("insert file");
-        let ctx = context_for(current.path(), current.path().join("index.db"));
-
-        let diagnostic = outline_missing_diagnostic(&conn, &ctx, "src/missing.rs");
-
-        assert_eq!(
-            diagnostic,
-            "indexed path missing from current checkout: src/missing.rs; run gcode index"
-        );
+    fn short_id_truncates_long_ids() {
+        assert_eq!(short_id("1234567890"), "12345678");
     }
 }

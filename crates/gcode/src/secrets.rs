@@ -9,13 +9,14 @@
 //!
 //! Source: src/gobby/storage/secrets.py, src/gobby/utils/machine_id.py
 
-use std::path::Path;
-
 use anyhow::{Context as _, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE;
 use pbkdf2::pbkdf2_hmac;
+use postgres::Client;
 use sha2::Sha256;
+
+use crate::db;
 
 /// Derive a Fernet key from machine_id + salt using PBKDF2-HMAC-SHA256.
 /// Matches Python: _derive_fernet_key() in storage/secrets.py
@@ -34,14 +35,11 @@ fn decrypt_fernet(key: &str, token: &str) -> anyhow::Result<String> {
     String::from_utf8(plaintext).context("decrypted secret is not valid UTF-8")
 }
 
-/// Resolve a secret by name from the secrets table in gobby-hub.db.
+/// Resolve a secret by name from the secrets table in the PostgreSQL hub.
 ///
 /// Secret names are normalized to lowercase (matching Python SecretStore._normalize_name).
-pub fn resolve_secret(db_path: &Path, secret_name: &str) -> anyhow::Result<String> {
-    let gobby_dir = dirs::home_dir()
-        .context("cannot determine home directory")?
-        .join(".gobby");
-
+pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<String> {
+    let gobby_dir = db::gobby_home()?;
     // Read machine_id
     let machine_id_path = gobby_dir.join("machine_id");
     let machine_id = std::fs::read_to_string(&machine_id_path)
@@ -60,27 +58,14 @@ pub fn resolve_secret(db_path: &Path, secret_name: &str) -> anyhow::Result<Strin
     // Derive Fernet key
     let fernet_key = derive_fernet_key(&machine_id, &salt);
 
-    // Read encrypted value from DB
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| {
-        format!(
-            "failed to open DB for secret resolution: {}",
-            db_path.display()
-        )
-    })?;
-    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
-
     let name = secret_name.trim().to_lowercase();
-    let encrypted: String = conn
-        .query_row(
-            "SELECT encrypted_value FROM secrets WHERE name = ?1",
-            rusqlite::params![name],
-            |row| row.get(0),
+    let row = conn
+        .query_one(
+            "SELECT encrypted_value FROM secrets WHERE name = $1",
+            &[&name],
         )
         .with_context(|| format!("secret '{name}' not found in secrets table"))?;
+    let encrypted: String = row.try_get("encrypted_value")?;
 
     decrypt_fernet(&fernet_key, &encrypted)
 }
@@ -91,7 +76,7 @@ pub fn resolve_secret(db_path: &Path, secret_name: &str) -> anyhow::Result<Strin
 /// - `${VAR}` → environment variable
 /// - `${VAR:-default}` → environment variable with default
 /// - plain text → returned unchanged
-pub fn resolve_config_value(value: &str, db_path: &Path) -> anyhow::Result<String> {
+pub fn resolve_config_value(value: &str, conn: &mut Client) -> anyhow::Result<String> {
     // Fast path: no patterns
     if !value.contains("$secret:") && !value.contains("${") {
         return Ok(value.to_string());
@@ -99,7 +84,7 @@ pub fn resolve_config_value(value: &str, db_path: &Path) -> anyhow::Result<Strin
 
     // $secret:NAME pattern
     if let Some(name) = value.strip_prefix("$secret:") {
-        return resolve_secret(db_path, name);
+        return resolve_secret(conn, name);
     }
 
     // ${VAR} or ${VAR:-default} pattern
@@ -151,16 +136,14 @@ mod tests {
 
     #[test]
     fn test_resolve_config_value_passthrough() {
-        let result =
-            resolve_config_value("http://localhost:8474", Path::new("/nonexistent")).unwrap();
+        let result = resolve_config_value_without_secrets("http://localhost:8474").unwrap();
         assert_eq!(result, "http://localhost:8474");
     }
 
     #[test]
     fn test_resolve_config_value_env_var() {
         unsafe { std::env::set_var("GCODE_TEST_VAR_123", "hello") };
-        let result =
-            resolve_config_value("${GCODE_TEST_VAR_123}", Path::new("/nonexistent")).unwrap();
+        let result = resolve_config_value_without_secrets("${GCODE_TEST_VAR_123}").unwrap();
         assert_eq!(result, "hello");
         unsafe { std::env::remove_var("GCODE_TEST_VAR_123") };
     }
@@ -168,11 +151,27 @@ mod tests {
     #[test]
     fn test_resolve_config_value_env_default() {
         unsafe { std::env::remove_var("GCODE_NONEXISTENT_VAR_999") };
-        let result = resolve_config_value(
-            "${GCODE_NONEXISTENT_VAR_999:-fallback}",
-            Path::new("/nonexistent"),
-        )
-        .unwrap();
+        let result =
+            resolve_config_value_without_secrets("${GCODE_NONEXISTENT_VAR_999:-fallback}").unwrap();
         assert_eq!(result, "fallback");
     }
+}
+
+#[cfg(test)]
+fn resolve_config_value_without_secrets(value: &str) -> anyhow::Result<String> {
+    if value.contains("$secret:") {
+        bail!("secret resolution requires a PostgreSQL connection");
+    }
+    if !value.contains("${") {
+        return Ok(value.to_string());
+    }
+    if value.starts_with("${") && value.ends_with('}') {
+        let var_name = &value[2..value.len() - 1];
+        if let Some((var, default)) = var_name.split_once(":-") {
+            return Ok(std::env::var(var).unwrap_or_else(|_| default.to_string()));
+        }
+        return std::env::var(var_name)
+            .with_context(|| format!("environment variable {var_name} not set"));
+    }
+    Ok(value.to_string())
 }

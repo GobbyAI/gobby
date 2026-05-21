@@ -49,7 +49,7 @@ enum Command {
     // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
-    /// Index a directory (full or incremental). Writes symbols, files, and chunks to SQLite
+    /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
         /// Path to index (default: project root)
         path: Option<String>,
@@ -75,7 +75,7 @@ enum Command {
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
-    /// Hybrid search: FTS5 + optional semantic (Qdrant) + optional graph boost (Neo4j)
+    /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (Neo4j)
     Search {
         query: String,
         #[arg(long, default_value = "10")]
@@ -111,7 +111,7 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// FTS5 search on symbol metadata (names, signatures, docstrings)
+    /// pg_search BM25 search on symbol metadata (names, signatures, docstrings)
     SearchText {
         query: String,
         #[arg(long, default_value = "10")]
@@ -126,7 +126,7 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// FTS5 search on file content chunks
+    /// pg_search BM25 search on file content chunks
     SearchContent {
         query: String,
         #[arg(long, default_value = "10")]
