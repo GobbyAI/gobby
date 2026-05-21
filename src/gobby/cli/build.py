@@ -286,7 +286,7 @@ def _try_daemon_build_control(
         if response.status_code == 200:
             payload = response.json()
             if isinstance(payload, dict):
-                return payload
+                return _control_payload_from_daemon(payload)
             return None
         if response.status_code == 400:
             raise click.ClickException(_daemon_error_message(_daemon_error_detail(response)))
@@ -308,6 +308,17 @@ def _try_daemon_build_control(
         return None
 
 
+def _control_payload_from_daemon(payload: dict[str, object]) -> dict[str, object] | None:
+    if payload.get("success") is True:
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return {str(key): value for key, value in result.items()}
+        return None
+    if payload.get("success") is False:
+        raise click.ClickException(_daemon_error_message(payload))
+    return payload
+
+
 def _daemon_error_detail(response: Any) -> Any:
     try:
         payload = response.json()
@@ -321,6 +332,10 @@ def _daemon_error_detail(response: Any) -> Any:
 def _daemon_error_message(detail: Any) -> str:
     if isinstance(detail, dict):
         message = detail.get("message") or detail.get("detail") or detail.get("error")
+        if isinstance(message, Mapping):
+            nested = message.get("message") or message.get("detail") or message.get("error")
+            if nested is not None:
+                return str(nested)
         return str(message) if message is not None else str(detail)
     return str(detail)
 

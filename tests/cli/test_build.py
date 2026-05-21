@@ -399,7 +399,7 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
         status_code = 200
 
         def json(self) -> dict[str, object]:
-            return payload
+            return {"success": True, "result": payload, "error": None}
 
     class FakeDaemonClient:
         def __init__(self, *, port: int, timeout: float) -> None:
