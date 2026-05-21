@@ -17,13 +17,13 @@ import asyncio
 import logging
 import time
 from datetime import UTC
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
@@ -723,37 +723,67 @@ def create_agents_registry(
 
     @registry.tool(
         name="list_running_agents",
-        description="List all currently running agents. Optionally filter by parent session (defaults to current session). Accepts #N, N, UUID, or prefix for session_id.",
+        description=(
+            "List active agent runs. Defaults to build-wide scope. Pass "
+            "scope='parent' or parent_session_id to filter by parent session; "
+            "pass status='running' to match `gobby agents runs list --status running`."
+        ),
     )
     async def list_running_agents(
         parent_session_id: str | None = None,
+        scope: str = "all",
+        status: str = "active",
+        limit: int = 100,
     ) -> dict[str, Any]:
-        """
-        List all currently running agents.
+        """List active agent runs across the build or under one parent session."""
 
-        Args:
-            parent_session_id: Optional session reference (#N, N, UUID, or prefix) to filter by parent.
-                               Falls back to SessionContext if no filter provided.
+        scope_key = scope.strip().lower().replace("_", "-")
+        if scope_key in {"build", "build-wide"}:
+            scope_key = "all"
+        if parent_session_id is not None or scope_key == "current":
+            scope_key = "parent"
+        if scope_key not in {"all", "parent"}:
+            return {
+                "success": False,
+                "error": "scope must be one of: all, build, build-wide, parent, current",
+            }
 
-        Returns:
-            Dict with list of running agents.
-        """
+        status_key = status.strip().lower()
+        if status_key not in {"active", "pending", "running"}:
+            return {"success": False, "error": "status must be one of: active, pending, running"}
 
-        effective_parent_ref = parent_session_id or get_current_session_id()
-
-        if effective_parent_ref:
+        resolved_parent_id = None
+        if scope_key == "parent":
+            effective_parent_ref = parent_session_id or get_current_session_id()
+            if not effective_parent_ref:
+                return {
+                    "success": False,
+                    "error": "No parent_session_id or session context available",
+                }
             try:
                 resolved_parent_id = _resolve_session_id(effective_parent_ref)
             except ValueError as e:
                 return {"success": False, "error": str(e)}
-            runs = agent_run_manager.list_by_parent(resolved_parent_id)
+            parent_status = None if status_key == "active" else cast(AgentRunStatus, status_key)
+            runs = agent_run_manager.list_by_parent(
+                resolved_parent_id,
+                limit=limit,
+                status=parent_status,
+            )
+        elif status_key == "active":
+            runs = agent_run_manager.list_active(limit=limit)
+        elif status_key == "running":
+            runs = agent_run_manager.list_running(limit=limit)
         else:
-            runs = agent_run_manager.list_active()
+            runs = agent_run_manager.list_by_status(status="pending", limit=limit)
 
         return {
             "success": True,
             "agents": [run.to_brief() for run in runs],
             "count": len(runs),
+            "scope": scope_key,
+            "status": status_key,
+            "parent_session_id": resolved_parent_id,
         }
 
     @registry.tool(

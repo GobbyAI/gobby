@@ -165,11 +165,20 @@ class _AgentRunQueryMixin:
         self: _AgentRunQueryHost,
         parent_session_id: str,
         limit: int = 100,
+        status: AgentRunStatus | None = None,
     ) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
+        conditions = ["ar.parent_session_id = ?"]
+        params: list[object] = [parent_session_id]
+        if status:
+            conditions.append("ar.status = ?")
+            params.append(status)
+        else:
+            conditions.append("ar.status IN ('running', 'pending')")
+
         return self._fetch_runs_with_live_stats(
-            "WHERE ar.parent_session_id = ? AND ar.status IN ('running', 'pending')",
-            (parent_session_id,),
+            f"WHERE {' AND '.join(conditions)}",
+            params,
             order_by="ORDER BY ar.started_at ASC",
             limit=limit,
         )
