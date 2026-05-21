@@ -1,6 +1,6 @@
 """Metric snapshot storage for time-series OTel data.
 
-Stores periodic snapshots of get_all_metrics() output in SQLite
+Stores periodic snapshots of get_all_metrics() output in the hub database
 for dashboard charting. 24h retention, ~1440 rows max at 60s interval.
 """
 

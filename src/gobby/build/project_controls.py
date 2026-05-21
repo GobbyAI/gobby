@@ -87,7 +87,7 @@ def _record_project_build_event(
         )
         event_id = cursor.lastrowid
     if event_id is None:
-        raise RuntimeError("SQLite did not return a project lifecycle event id")
+        raise RuntimeError("PostgreSQL hub did not return a project lifecycle event id")
     return BuildLifecycleEvent(
         id=event_id,
         project_id=project_id,

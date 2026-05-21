@@ -40,9 +40,9 @@ class SkillManager:
     Example usage:
         ```python
         from gobby.skills.manager import SkillManager
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.postgres import PostgresHubDatabase
 
-        db = LocalDatabase("gobby-hub.db")
+        db = PostgresHubDatabase(database_url)
         manager = SkillManager(db)
 
         # Create a skill

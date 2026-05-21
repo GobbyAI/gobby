@@ -40,7 +40,7 @@ class CrossrefService:
         self._config = config
         self._run_db = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -82,7 +82,7 @@ class CrossrefService:
             if count >= max_links:
                 break
             try:
-                await self._run_sqlite(self._storage.create_crossref, memory.id, other_id, score)
+                await self._run_storage(self._storage.create_crossref, memory.id, other_id, score)
                 count += 1
             except Exception as e:
                 logger.debug(f"Crossref creation failed: {e}")

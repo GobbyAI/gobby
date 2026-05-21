@@ -72,7 +72,7 @@ class InterSessionMessage:
         """Create instance from database row.
 
         Args:
-            row: SQLite row with message data
+            row: Database row with message data
 
         Returns:
             InterSessionMessage instance

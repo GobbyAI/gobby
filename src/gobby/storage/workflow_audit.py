@@ -35,7 +35,7 @@ class WorkflowAuditEntry:
 
 
 class WorkflowAuditManager:
-    """Manages workflow audit log entries in SQLite."""
+    """Manages workflow audit log entries in the hub database."""
 
     def __init__(self, db: HubDatabase | None = None):
         """Initialize the audit manager.

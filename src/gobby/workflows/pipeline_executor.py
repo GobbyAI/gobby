@@ -105,7 +105,7 @@ class PipelineExecutor:
             tool_proxy_getter: Optional callable returning ToolProxyService for MCP steps
             session_manager: Optional SessionManager for session creation
             completion_registry: Optional CompletionEventRegistry for wait steps
-            run_db: Optional bounded executor bridge for SQLite work
+            run_db: Optional bounded executor bridge for hub database work
         """
         self.db = db
         self.execution_manager = execution_manager

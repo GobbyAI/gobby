@@ -1,4 +1,4 @@
-"""Bounded executor for daemon-owned SQLite work."""
+"""Bounded executor for daemon-owned database work."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class DatabaseExecutorStats:
 
 
 class DatabaseExecutor:
-    """Bounded async bridge for blocking SQLite storage calls."""
+    """Bounded async bridge for blocking database storage calls."""
 
     def __init__(self, *, max_workers: int = 4, thread_name_prefix: str = "gobby-db") -> None:
         if max_workers < 1:

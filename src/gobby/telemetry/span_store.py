@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GobbySpanExporter(SpanExporter):
     """
-    Custom OpenTelemetry SpanExporter that persists spans to SQLite and
+    Custom OpenTelemetry SpanExporter that persists spans to the hub database and
     broadcasts trace events via WebSocket.
     """
 

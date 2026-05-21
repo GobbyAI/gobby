@@ -84,7 +84,7 @@ class ChildSessionManager:
         Initialize ChildSessionManager.
 
         Args:
-            session_storage: SessionManager for SQLite operations.
+            session_storage: SessionManager for PostgreSQL hub operations.
             max_agent_depth: Maximum allowed nesting depth (default: 1).
                 Depth 0 = human-initiated session.
                 Depth 1 = agent can spawn, but child cannot spawn further.
