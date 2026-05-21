@@ -258,12 +258,13 @@ async def call_tool(
                         session_id=effective_session_id,
                     )
                 if not arguments:
-                    return await _execute_tool(
+                    return await _execute_tool_dispatch(
                         service=service,
                         server_name=server_name,
                         tool_name=tool_name,
                         arguments=arguments,
                         effective_session_id=effective_session_id,
+                        emit_after_workflow=enforce_workflow,
                     )
                 if strip_unknown:
                     properties = input_schema.get("properties", {})
@@ -296,13 +297,41 @@ async def call_tool(
                             session_id=effective_session_id,
                         )
 
-    return await _execute_tool(
+    return await _execute_tool_dispatch(
+        service=service,
+        server_name=server_name,
+        tool_name=tool_name,
+        arguments=arguments,
+        effective_session_id=effective_session_id,
+        emit_after_workflow=enforce_workflow,
+    )
+
+
+async def _execute_tool_dispatch(
+    *,
+    service: Any,
+    server_name: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    effective_session_id: str | None,
+    emit_after_workflow: bool,
+) -> Any:
+    result = await _execute_tool(
         service=service,
         server_name=server_name,
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
     )
+    if emit_after_workflow:
+        await service._apply_after_tool_workflow(
+            server_name=server_name,
+            tool_name=tool_name,
+            arguments=arguments,
+            session_id=effective_session_id,
+            tool_output=result,
+        )
+    return result
 
 
 async def _execute_tool(

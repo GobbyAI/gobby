@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils.session_context import session_context_for_test
 
@@ -1040,8 +1040,8 @@ class TestWorkflowBeforeToolEnforcement:
     # tracking through the rule engine.
 
 
-class TestNoSyntheticCodexMcpAfterTool:
-    """Codex MCP calls rely on native MCP hook payloads, not proxy AFTER_TOOL shims."""
+class TestDirectMcpAfterToolWorkflow:
+    """Direct MCP proxy calls emit workflow after_tool events for step state."""
 
     @pytest.fixture
     def mock_hook_manager(self):
@@ -1079,10 +1079,10 @@ class TestNoSyntheticCodexMcpAfterTool:
         )
 
     @pytest.mark.asyncio
-    async def test_internal_tool_success_does_not_emit_after_tool(
+    async def test_internal_tool_success_emits_after_tool_workflow(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
-        """Successful MCP calls should not emit proxy-synthesized AFTER_TOOL events."""
+        """Successful MCP calls should process both before_tool and after_tool workflow state."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
@@ -1096,13 +1096,23 @@ class TestNoSyntheticCodexMcpAfterTool:
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
+        events = [call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list]
+        assert [event.event_type for event in events] == [
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+        ]
+        after_event = events[1]
+        assert after_event.data["tool_name"] == "mcp__gobby__call_tool"
+        assert after_event.data["tool_input"]["server_name"] == "gobby-tasks"
+        assert after_event.data["tool_input"]["tool_name"] == "create_task"
+        assert after_event.data["tool_output"] == {"id": "task-123", "ref": "#123"}
         mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_internal_tool_exception_does_not_emit_failed_after_tool(
+    async def test_internal_tool_exception_emits_failed_after_tool_workflow(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
-        """Execution exceptions should return errors without proxy AFTER_TOOL dispatch."""
+        """Execution failures should still reach after_tool workflow recovery."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(side_effect=RuntimeError("boom"))
@@ -1117,6 +1127,13 @@ class TestNoSyntheticCodexMcpAfterTool:
 
         assert result["success"] is False
         assert result["error"] == "boom"
+        events = [call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list]
+        assert [event.event_type for event in events] == [
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+        ]
+        assert events[1].data["tool_output"]["success"] is False
+        assert events[1].data["tool_output"]["error"] == "boom"
         mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio

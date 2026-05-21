@@ -15,6 +15,7 @@ from .resource_operations import (
     read_resource as read_resource_impl,
 )
 from .result_handling import (
+    apply_after_tool_workflow,
     apply_before_tool_enforcement,
     build_before_tool_event,
 )
@@ -201,6 +202,24 @@ class ToolProxyService:
             tool_name,
             arguments,
             session_id,
+        )
+
+    async def _apply_after_tool_workflow(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str | None,
+        tool_output: Any,
+    ) -> None:
+        """Run workflow after_tool processing for direct MCP tool execution."""
+        await apply_after_tool_workflow(
+            self,
+            server_name,
+            tool_name,
+            arguments,
+            session_id,
+            tool_output,
         )
 
     async def list_tools(
