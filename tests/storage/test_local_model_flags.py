@@ -175,3 +175,5 @@ def test_agent_selector_escapes_literal_percent_for_psycopg() -> None:
 
     assert "LIKE '%%gpt-oss%%'" in sql
     assert "LIKE '%gpt-oss%'" not in sql
+    assert "THEN TRUE" in sql
+    assert "ELSE FALSE" in sql
