@@ -52,7 +52,7 @@ class _AgentRunSelectorMixin:
                         WHEN lower(COALESCE(ar.provider, '')) IN (
                             'lmstudio', 'ollama', 'llamacpp', 'local'
                         )
-                            OR lower(COALESCE(ar.model, '')) LIKE '%gpt-oss%'
+                            OR lower(COALESCE(ar.model, '')) LIKE '%%gpt-oss%%'
                         THEN 1
                         ELSE 0
                     END

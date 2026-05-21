@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents._selectors import _AgentRunSelectorMixin
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
@@ -167,3 +168,10 @@ def test_agent_run_row_uses_legacy_local_fallback_when_flag_is_null() -> None:
 
     row["is_local"] = 0
     assert AgentRun.from_row(row).is_local is False
+
+
+def test_agent_selector_escapes_literal_percent_for_psycopg() -> None:
+    sql = _AgentRunSelectorMixin._select_runs_with_live_stats_sql()
+
+    assert "LIKE '%%gpt-oss%%'" in sql
+    assert "LIKE '%gpt-oss%'" not in sql
