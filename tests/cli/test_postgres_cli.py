@@ -177,6 +177,48 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
     assert '"pg_search": true' in result.output
 
 
+@pytest.mark.parametrize("mode", ["docker", "native", "external"])
+def test_postgres_uninstall_preserves_required_runtime_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    from gobby.cli.postgres import postgres_cli
+
+    _write_postgres_bootstrap(tmp_path, mode=mode, hub_backend="postgres")
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    result = CliRunner().invoke(postgres_cli, ["uninstall"])
+
+    assert result.exit_code == 0
+    bootstrap = _read_bootstrap(tmp_path)
+    assert bootstrap["hub_backend"] == "postgres"
+    assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
+    assert bootstrap["postgres_install_mode"] == mode
+    assert "runtime bootstrap preserved" in result.output
+    assert "hub_backend=sqlite" not in result.output
+    assert "PostgreSQL uninstalled" not in result.output
+
+
+def test_postgres_uninstall_rejects_sqlite_runtime_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.cli.postgres import postgres_cli
+
+    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="sqlite")
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    result = CliRunner().invoke(postgres_cli, ["uninstall"])
+
+    assert result.exit_code != 0
+    bootstrap = _read_bootstrap(tmp_path)
+    assert bootstrap["hub_backend"] == "sqlite"
+    assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
+    assert bootstrap["postgres_install_mode"] == "docker"
+    assert "cannot restore hub_backend=sqlite" in result.output
+
+
 def test_postgres_activate_refuses_when_daemon_is_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

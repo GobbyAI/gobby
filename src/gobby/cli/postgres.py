@@ -104,7 +104,12 @@ def status_cmd(as_json: bool) -> None:
 )
 def uninstall_cmd(remove_data: bool) -> None:
     """Uninstall PostgreSQL using the recorded install mode."""
-    result = uninstall_postgres(mode=_active_install_mode(), remove_data=remove_data)
+    gobby_home = get_gobby_home()
+    result = uninstall_postgres(
+        mode=_active_install_mode(gobby_home=gobby_home),
+        gobby_home=gobby_home,
+        remove_data=remove_data,
+    )
     _render_uninstall_result(result)
 
 
@@ -259,7 +264,7 @@ def _render_install_result(result: dict[str, Any]) -> None:
 
 def _render_uninstall_result(result: dict[str, Any]) -> None:
     if result.get("success"):
-        click.echo(result.get("message", "PostgreSQL uninstalled"))
+        click.echo(result.get("message", "PostgreSQL service cleanup completed"))
         if result.get("data_removed"):
             click.echo("  Docker data volumes removed")
         for step in result.get("manual_steps", []):
