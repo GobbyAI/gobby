@@ -17,8 +17,10 @@ from unittest.mock import patch
 import pytest
 
 from gobby.cli.installers.ide_config import (
+    VSCODE_FAMILY_IDE_NAMES,
     _get_ide_config_dir,
     configure_ide_terminal_title,
+    configure_vscode_family_terminal_titles,
 )
 from gobby.cli.installers.mcp_config import (
     configure_mcp_server_json,
@@ -1131,3 +1133,65 @@ class TestConfigureIdeTerminalTitle:
 
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
+
+    def test_cursor_settings_created(self, temp_dir: Path) -> None:
+        """Cursor uses the same VS Code-family settings layout."""
+        config_dir = temp_dir / "Cursor"
+        config_dir.mkdir()
+
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
+            mock_dir.return_value = config_dir
+            result = configure_ide_terminal_title("Cursor")
+
+        assert result["success"] is True
+        assert result["added"] is True
+        settings = json.loads((config_dir / "User" / "settings.json").read_text())
+        assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+
+    def test_antigravity_ide_settings_created(self, temp_dir: Path) -> None:
+        """Antigravity IDE uses the same VS Code-family settings layout."""
+        config_dir = temp_dir / "Antigravity IDE"
+        config_dir.mkdir()
+
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
+            mock_dir.return_value = config_dir
+            result = configure_ide_terminal_title("Antigravity IDE")
+
+        assert result["success"] is True
+        assert result["added"] is True
+        settings = json.loads((config_dir / "User" / "settings.json").read_text())
+        assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+
+
+class TestConfigureVsCodeFamilyTerminalTitles:
+    """Tests for configuring known VS Code-family roots."""
+
+    def test_attempts_all_known_ide_roots(self) -> None:
+        with patch("gobby.cli.installers.ide_config.configure_ide_terminal_title") as mock_config:
+            mock_config.return_value = {"success": True, "skipped": True}
+
+            results = configure_vscode_family_terminal_titles()
+
+        assert tuple(results) == VSCODE_FAMILY_IDE_NAMES
+        assert [call.args[0] for call in mock_config.call_args_list] == list(
+            VSCODE_FAMILY_IDE_NAMES
+        )
+
+    def test_absent_roots_are_skipped(self, temp_dir: Path) -> None:
+        existing_root = temp_dir / "Cursor"
+        existing_root.mkdir()
+
+        def fake_config_dir(ide_name: str) -> Path:
+            return existing_root if ide_name == "Cursor" else temp_dir / ide_name
+
+        with patch(
+            "gobby.cli.installers.ide_config._get_ide_config_dir", side_effect=fake_config_dir
+        ):
+            results = configure_vscode_family_terminal_titles(("Code", "Cursor"))
+
+        assert results["Code"]["success"] is True
+        assert results["Code"]["skipped"] is True
+        assert not (temp_dir / "Code").exists()
+        assert results["Cursor"]["success"] is True
+        assert results["Cursor"]["added"] is True
+        assert (existing_root / "User" / "settings.json").exists()

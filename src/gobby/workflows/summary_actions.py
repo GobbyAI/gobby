@@ -15,6 +15,8 @@ import aiofiles
 
 if TYPE_CHECKING:
     from gobby.sessions.analyzer import HandoffContext
+
+from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -326,13 +328,12 @@ def schedule_tmux_window_rename(
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 
-    For user sessions (agent_depth 0), renames on the default tmux server.
-    For spawned agents, renames on Gobby's isolated ``-L gobby`` socket.
+    Uses the tmux server recorded in terminal context when present. Falls back
+    to the default user server for user sessions and Gobby's isolated socket for
+    spawned agents.
     Failures are logged but never propagated.
     """
-    import asyncio
-
-    tc = getattr(session, "terminal_context", None)
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:
         return
     pane = tc.get("tmux_pane")
@@ -347,54 +348,9 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
         title = f"{ref}: {title}"
 
     try:
-        if agent_depth > 0:
-            # Spawned agent — rename on Gobby's isolated socket
-            from gobby.agents.tmux import get_tmux_session_manager
-
-            mgr = get_tmux_session_manager()
-            await mgr.rename_window(pane, title)
-        else:
-            # User session — rename on the default tmux server.
-            # Chain: enable set-titles (propagates to terminal emulator),
-            # rename the window, then disable automatic-rename so tmux
-            # doesn't overwrite our title on the next command.
-            proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "set-option",
-                "-g",
-                "set-titles",
-                "on",
-                ";",
-                "set-option",
-                "-g",
-                "set-titles-string",
-                "#W",
-                ";",
-                "rename-window",
-                "-t",
-                pane,
-                title,
-                ";",
-                "select-pane",
-                "-t",
-                pane,
-                "-T",
-                title,
-                ";",
-                "set-option",
-                "-w",
-                "-t",
-                pane,
-                "automatic-rename",
-                "off",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            if proc.returncode != 0:
-                logger.warning(
-                    f"tmux rename-window failed for pane {pane}: {(stderr or b'').decode(errors='replace').strip()}",
-                )
+        default_socket_name = "gobby" if agent_depth > 0 else ""
+        mgr = get_tmux_manager_for_context(tc, default_socket_name=default_socket_name)
+        await mgr.rename_window(pane, title)
     except Exception as e:
         logger.warning(f"_rename_tmux_window: {e}")
 

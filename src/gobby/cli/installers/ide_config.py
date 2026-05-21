@@ -13,6 +13,17 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+VSCODE_FAMILY_IDE_NAMES: tuple[str, ...] = (
+    "Code",
+    "Code - Insiders",
+    "Cursor",
+    "Windsurf",
+    "VSCodium",
+    "Code - OSS",
+    "Antigravity",
+    "Antigravity IDE",
+)
+
 
 def _get_ide_config_dir(ide_name: str) -> Path:
     """Get the IDE's config root directory (cross-platform).
@@ -112,3 +123,10 @@ def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
     result["success"] = True
     result["added"] = True
     return result
+
+
+def configure_vscode_family_terminal_titles(
+    ide_names: tuple[str, ...] = VSCODE_FAMILY_IDE_NAMES,
+) -> dict[str, dict[str, Any]]:
+    """Configure tmux title passthrough for known VS Code-family IDEs."""
+    return {ide_name: configure_ide_terminal_title(ide_name) for ide_name in ide_names}

@@ -45,14 +45,29 @@ def get_tmux_socket_path(terminal_context: Mapping[str, Any] | None) -> str | No
     return None
 
 
+def get_tmux_socket_name(terminal_context: Mapping[str, Any] | None) -> str | None:
+    """Return the stored tmux socket name, if present."""
+    if not terminal_context:
+        return None
+    socket_name = terminal_context.get("tmux_socket_name")
+    if isinstance(socket_name, str) and socket_name:
+        return socket_name
+    return None
+
+
 def get_tmux_manager_for_context(
     terminal_context: Mapping[str, Any] | None,
+    *,
+    default_socket_name: str = "",
 ) -> TmuxSessionManager:
     """Build a tmux manager targeting the server recorded in terminal_context."""
     socket_path = get_tmux_socket_path(terminal_context)
     if socket_path:
         return TmuxSessionManager(TmuxConfig(socket_name="", socket_path=socket_path))
-    return TmuxSessionManager(TmuxConfig(socket_name=""))
+    socket_name = get_tmux_socket_name(terminal_context)
+    if socket_name:
+        return TmuxSessionManager(TmuxConfig(socket_name=socket_name))
+    return TmuxSessionManager(TmuxConfig(socket_name=default_socket_name))
 
 
 def get_tmux_prefix_for_context(
@@ -62,7 +77,10 @@ def get_tmux_prefix_for_context(
 ) -> list[str]:
     """Return the tmux CLI prefix for the recorded server context."""
     socket_path = get_tmux_socket_path(terminal_context)
+    socket_name = get_tmux_socket_name(terminal_context)
     args = [command]
     if socket_path:
         args.extend(["-S", socket_path])
+    elif socket_name:
+        args.extend(["-L", socket_name])
     return args
