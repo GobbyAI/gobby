@@ -9,7 +9,101 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.storage.migration.tables import sqlite_application_tables
-from gobby.storage.migrations import BASELINE_VERSION, _sqlite_baseline_sql
+from gobby.storage.migrations import BASELINE_VERSION
+
+_EXPECTED_SQLITE_SCHEMA_FINGERPRINTS = (
+    # Legacy v260 source with schema_migrations bookkeeping.
+    "fbe2914e66ab5d608c8ffc38638a761874fb5a19ff6e76f8bae9447871002269",
+    # Legacy v260 source with schema_version bookkeeping.
+    "2868b075dfd8258def472aa2912d8231e02b198834406a5be73961fc74fd4933",
+)
+_EXPECTED_SQLITE_MIGRATION_TABLES = frozenset(
+    {
+        "agent_commands",
+        "agent_runs",
+        "bin_update_state",
+        "build_profiles",
+        "chat_attachments",
+        "chat_messages",
+        "checkpoints",
+        "clones",
+        "code_calls",
+        "code_content_chunks",
+        "code_imports",
+        "code_indexed_files",
+        "code_indexed_projects",
+        "code_symbols",
+        "comms_attachments",
+        "comms_channels",
+        "comms_identities",
+        "comms_messages",
+        "comms_routing_rules",
+        "completion_subscribers",
+        "config_store",
+        "cron_jobs",
+        "cron_runs",
+        "expansion_runs",
+        "gh_issues_triaged",
+        "gh_triage_deliveries",
+        "integration_workspace_mutex",
+        "inter_session_messages",
+        "loop_progress",
+        "mcp_servers",
+        "memories",
+        "memory_crossrefs",
+        "merge_conflicts",
+        "merge_resolutions",
+        "metric_snapshots",
+        "metrics_events",
+        "metrics_events_archive",
+        "model_costs",
+        "pending_interactions",
+        "pipeline_executions",
+        "plans",
+        "project_github_triage_configs",
+        "project_lifecycle_events",
+        "projects",
+        "prompts",
+        "rule_overrides",
+        "savings_ledger",
+        "secrets",
+        "session_memories",
+        "session_skills",
+        "session_stop_signals",
+        "session_tasks",
+        "session_variables",
+        "sessions",
+        "skill_files",
+        "skills",
+        "spans",
+        "step_executions",
+        "task_affected_files",
+        "task_artifacts",
+        "task_comments",
+        "task_delivery_campaigns",
+        "task_delivery_units",
+        "task_dependencies",
+        "task_dispatch_mutex",
+        "task_lifecycle_events",
+        "task_selection_history",
+        "task_stage_states",
+        "task_stages_registry",
+        "task_type_default_stages",
+        "task_validation_history",
+        "tasks",
+        "token_events",
+        "tool_embeddings",
+        "tool_metrics",
+        "tool_metrics_daily",
+        "tool_schema_hashes",
+        "tools",
+        "workflow_audit_log",
+        "workflow_definitions",
+        "workflow_instances",
+        "workflow_states",
+        "worktrees",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -83,15 +177,7 @@ def sqlite_schema_fingerprint(source: sqlite3.Connection) -> str:
 
 
 def expected_sqlite_schema_fingerprints() -> tuple[str, ...]:
-    return tuple(_baseline_fingerprint(table) for table in ("schema_migrations", "schema_version"))
-
-
-def _baseline_fingerprint(version_table: str) -> str:
-    conn = _baseline_connection(version_table)
-    try:
-        return sqlite_schema_fingerprint(conn)
-    finally:
-        conn.close()
+    return _EXPECTED_SQLITE_SCHEMA_FINGERPRINTS
 
 
 def _migration_table_set_matches_baseline(source: sqlite3.Connection) -> bool:
@@ -99,26 +185,8 @@ def _migration_table_set_matches_baseline(source: sqlite3.Connection) -> bool:
     return source_tables in expected_sqlite_migration_table_sets()
 
 
-@cache
 def expected_sqlite_migration_table_sets() -> frozenset[frozenset[str]]:
-    return frozenset(
-        _baseline_table_set(table) for table in ("schema_migrations", "schema_version")
-    )
-
-
-def _baseline_table_set(version_table: str) -> frozenset[str]:
-    conn = _baseline_connection(version_table)
-    try:
-        return frozenset(sqlite_application_tables(conn))
-    finally:
-        conn.close()
-
-
-def _baseline_connection(version_table: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_sqlite_baseline_sql(version_table))
-    return conn
+    return frozenset({_EXPECTED_SQLITE_MIGRATION_TABLES})
 
 
 def _sqlite_schema_objects(source: sqlite3.Connection) -> list[tuple[str, str, str, str]]:

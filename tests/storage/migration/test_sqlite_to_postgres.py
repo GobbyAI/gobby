@@ -341,9 +341,13 @@ def test_assert_source_schema_supported_rejects_same_version_schema_drift() -> N
 def test_assert_source_schema_supported_accepts_ignored_runtime_tables() -> None:
     schema = importlib.import_module("gobby.storage.migration.schema")
     migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
-    source = schema._baseline_connection("schema_version")
+    source = sqlite3.connect(":memory:")
     source.row_factory = sqlite3.Row
+    source.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
     source.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+    [expected_tables] = schema.expected_sqlite_migration_table_sets()
+    for table in expected_tables:
+        source.execute(f'CREATE TABLE "{table}" (id TEXT PRIMARY KEY)')
     source.execute(
         """
         CREATE TABLE pending_approvals (
