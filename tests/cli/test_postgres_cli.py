@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import click
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -244,6 +248,8 @@ def test_postgres_activate_external_accepts_operator_capture_sink(
     _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="sqlite")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="external")
     ownership_checks: list[str] = []
+    audit_log = tmp_path / "pgaudit.log"
+    audit_log.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         postgres_cli_module,
         "_require_ownership_sentinel_or_fail",
@@ -252,7 +258,7 @@ def test_postgres_activate_external_accepts_operator_capture_sink(
 
     result = CliRunner().invoke(
         postgres_cli,
-        ["activate", "--capture-sink", f"pgaudit-file:{tmp_path / 'pgaudit.log'}"],
+        ["activate", "--capture-sink", f"pgaudit-file:{audit_log}"],
     )
 
     assert result.exit_code == 0
@@ -262,7 +268,156 @@ def test_postgres_activate_external_accepts_operator_capture_sink(
     payload = json.loads(ticket_path.read_text(encoding="utf-8"))
     assert payload["mode"] == "external"
     assert payload["capture_kind"] == "pgaudit-file"
-    assert payload["capture_value"] == str(tmp_path / "pgaudit.log")
+    assert payload["capture_value"] == str(audit_log)
+
+
+def test_postgres_activate_external_rejects_missing_pgaudit_file_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="sqlite")
+    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="external")
+    monkeypatch.setattr(postgres_cli_module, "_require_ownership_sentinel_or_fail", lambda: None)
+
+    result = CliRunner().invoke(
+        postgres_cli,
+        ["activate", "--capture-sink", f"pgaudit-file:{tmp_path / 'missing.log'}"],
+    )
+
+    assert result.exit_code != 0
+    assert "pgaudit-file capture sink must already exist" in result.output
+    assert _read_bootstrap(tmp_path)["hub_backend"] == "sqlite"
+
+
+def test_probe_capture_sink_wal_archive_requires_matching_replication_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+
+    queries: list[tuple[str, tuple[str, ...]]] = []
+
+    class _FakeConnection:
+        def execute(self, query: str, params: tuple[str, ...]) -> SimpleNamespace:
+            queries.append((query, params))
+            return SimpleNamespace(fetchone=lambda: None)
+
+    @contextmanager
+    def _postgres_context() -> Any:
+        yield _FakeConnection()
+
+    monkeypatch.setattr(postgres_cli_module, "_postgres_connection", _postgres_context)
+
+    with pytest.raises(click.ClickException, match="replication slot 'gobby_slot' was not found"):
+        postgres_cli_module._probe_capture_sink_or_fail("wal-archive", "gobby_slot")
+
+    assert queries == [
+        (
+            "SELECT slot_name FROM pg_replication_slots WHERE slot_name = %s",
+            ("gobby_slot",),
+        )
+    ]
+
+
+def test_probe_capture_sink_wal_archive_extracts_slot_from_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+
+    class _FakeConnection:
+        def execute(self, _query: str, params: tuple[str, ...]) -> SimpleNamespace:
+            assert params == ("gobby_slot",)
+            return SimpleNamespace(fetchone=lambda: ("gobby_slot",))
+
+    @contextmanager
+    def _postgres_context() -> Any:
+        yield _FakeConnection()
+
+    monkeypatch.setattr(postgres_cli_module, "_postgres_connection", _postgres_context)
+
+    result = postgres_cli_module._probe_capture_sink_or_fail(
+        "wal-archive",
+        "postgresql://archive.example/gobby?slot_name=gobby_slot",
+    )
+
+    assert result["capture_value"] == "postgresql://archive.example/gobby?slot_name=gobby_slot"
+    assert result["replication_slot"] == "gobby_slot"
+
+
+def test_probe_pgaudit_or_fail_reads_back_docker_audit_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+
+    class _FakeConnection:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+            self.committed = False
+
+        def __enter__(self) -> _FakeConnection:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str) -> SimpleNamespace:
+            self.queries.append(query)
+            if "pg_settings" in query:
+                return SimpleNamespace(fetchone=lambda: ("write",))
+            if "UPDATE _pgaudit_probe" in query:
+                return SimpleNamespace(fetchone=lambda: ("2026-05-21T00:00:00Z",))
+            raise AssertionError(f"unexpected query: {query}")
+
+        def commit(self) -> None:
+            self.committed = True
+
+    fake_conn = _FakeConnection()
+    commands: list[list[str]] = []
+
+    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        assert cmd[:4] == ["docker", "exec", "gobby-postgres", "sh"]
+        assert "gobby-pgaudit-probe-fixed" in cmd[-1]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "/var/log/pgaudit/pgaudit.log\n"
+                "LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE,TABLE,public._pgaudit_probe,"
+                "/* gobby-pgaudit-probe-fixed */ UPDATE\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(postgres_cli_module, "_postgres_connection", lambda: fake_conn)
+    monkeypatch.setattr(postgres_cli_module, "_extension_present", lambda _conn, _ext: True)
+    monkeypatch.setattr(postgres_cli_module, "_preload_libraries", lambda _conn: ["pgaudit"])
+    monkeypatch.setattr(postgres_cli_module.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed"))
+    monkeypatch.setattr(postgres_cli_module.subprocess, "run", _run)
+
+    result = postgres_cli_module._probe_pgaudit_or_fail()
+
+    assert fake_conn.committed is True
+    assert any("/* gobby-pgaudit-probe-fixed */" in query for query in fake_conn.queries)
+    assert commands
+    assert result["audit_file"] == "/var/log/pgaudit/pgaudit.log"
+    assert "gobby-pgaudit-probe-fixed" in result["audit_readback"]
+
+
+def test_docker_pgaudit_log_probe_fails_when_audit_line_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+
+    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no audit line")
+
+    monkeypatch.setattr(postgres_cli_module.subprocess, "run", _run)
+
+    with pytest.raises(click.ClickException, match="pgAudit log readback probe failed"):
+        postgres_cli_module._probe_docker_pgaudit_log_or_fail("missing-token")
 
 
 def test_postgres_activate_native_external_requires_one_capture_policy(

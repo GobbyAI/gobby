@@ -118,10 +118,13 @@ gobby postgres activate --capture-sink wal-archive:slot-or-archive-dsn
 gobby postgres activate --accept-no-rollback-risk
 ```
 
-`--capture-sink` accepts only `pgaudit-file:` or `wal-archive:` sinks. The
-`--accept-no-rollback-risk` path requires the typed phrase
-`I accept no-rollback risk` and records the operator and timestamp in the
-cutover artifact. There is no generic yes flag and no `custom:` capture sink.
+`--capture-sink` accepts only `pgaudit-file:` or `wal-archive:` sinks.
+`pgaudit-file:` must name an existing writable log file, and `wal-archive:`
+must name a replication slot directly or include `slot_name`, `slot`, or
+`replication_slot` in the DSN-style spec. The `--accept-no-rollback-risk` path
+requires the typed phrase `I accept no-rollback risk` and records the operator
+and timestamp in the cutover artifact. There is no generic yes flag and no
+`custom:` capture sink.
 
 ## Activate
 
