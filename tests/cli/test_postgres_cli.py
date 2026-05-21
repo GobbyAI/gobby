@@ -215,15 +215,27 @@ def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
 
     _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="sqlite")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
+
+    probe_calls: list[str] = []
+
+    def _probe_pgaudit() -> dict[str, str]:
+        probe_calls.append("probe")
+        return {
+            "audit_file": "/var/log/pgaudit/pgaudit.log",
+            "audit_readback": "LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE",
+            "write_probe": "ok",
+        }
+
     monkeypatch.setattr(
         postgres_cli_module,
         "_probe_pgaudit_or_fail",
-        lambda: {"write_probe": "ok"},
+        _probe_pgaudit,
     )
 
     result = CliRunner().invoke(postgres_cli, ["activate"])
 
     assert result.exit_code == 0
+    assert probe_calls == ["probe"]
     assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
     assert list(tmp_path.glob("bootstrap.yaml.*.bak"))
     tickets = list((tmp_path / "migrations").glob("cutover-*.json"))
@@ -233,6 +245,8 @@ def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
     assert payload["capture_kind"] == "pgaudit-managed"
     assert payload["capture_value"] is None
     assert payload["verification"]["state"] == "ok"
+    assert payload["verification"]["probe_detail"]["audit_file"] == "/var/log/pgaudit/pgaudit.log"
+    assert "AUDIT: SESSION" in payload["verification"]["probe_detail"]["audit_readback"]
     assert "_path" not in payload
     assert "gobby stop && gobby postgres deactivate && gobby start" in result.output
     assert "Validation-window deadline:" in result.output

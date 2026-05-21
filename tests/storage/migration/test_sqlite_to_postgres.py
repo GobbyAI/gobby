@@ -36,8 +36,12 @@ class _FakePostgres:
 
     def execute(self, statement: object, params: object = ()) -> SimpleNamespace:
         _ = params
-        if self._events is not None and str(statement).startswith("SET CONSTRAINTS"):
-            self._events.append(str(statement))
+        text = str(statement)
+        if self._events is not None and text.startswith("SET CONSTRAINTS"):
+            self._events.append(text)
+        if self._events is not None and text.startswith("INSERT INTO gobby_migration_state"):
+            assert self.transaction_depth == 1
+            self._events.append("marker-insert")
         return SimpleNamespace(fetchone=lambda: None)
 
 
@@ -127,12 +131,6 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         "validate_migration",
         lambda _source, target, **_kwargs: _record_locked_validation(events, target),
     )
-    monkeypatch.setattr(
-        migration,
-        "_write_import_complete_marker",
-        lambda target: _record_locked(target, "marker"),
-    )
-
     result = migration.migrate_sqlite_to_postgres(
         source=source,
         target="postgresql://gobby:secret@example.com/gobby",
@@ -154,7 +152,7 @@ def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
         "recreate",
         "reseed",
         "validate",
-        "marker",
+        "marker-insert",
         "transaction.commit",
     ]
     assert result["rows"] == 3

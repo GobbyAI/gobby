@@ -527,11 +527,10 @@ def _sqlite_foreign_key_dependencies(source: sqlite3.Connection, table: str) -> 
 
 
 def _write_import_complete_marker(target: psycopg.Connection[Any]) -> None:
-    with target.transaction():
-        target.execute(
-            "INSERT INTO gobby_migration_state (key, value) VALUES (%s, NOW()::text)",
-            (_IMPORT_COMPLETE_KEY,),
-        )
+    target.execute(
+        "INSERT INTO gobby_migration_state (key, value) VALUES (%s, NOW()::text)",
+        (_IMPORT_COMPLETE_KEY,),
+    )
 
 
 def _default_import_log_path() -> Path:
