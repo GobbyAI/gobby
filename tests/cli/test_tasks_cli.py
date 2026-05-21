@@ -13,9 +13,11 @@ from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
+from click import ClickException
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.cli.tasks._utils import config as task_config_utils
 
 pytestmark = pytest.mark.unit
 
@@ -115,6 +117,34 @@ def mock_manager():
     manager = MagicMock()
     manager.db = MagicMock()
     return manager
+
+
+def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task CLI storage follows the configured runtime hub storage."""
+    db = MagicMock()
+    open_hub = MagicMock(return_value=db)
+    monkeypatch.setattr(task_config_utils, "open_runtime_hub_database", open_hub)
+    manager_cls = MagicMock()
+    monkeypatch.setattr(task_config_utils, "LocalTaskManager", manager_cls)
+
+    task_config_utils.get_task_manager()
+
+    open_hub.assert_called_once_with(apply_migrations=False)
+    manager_cls.assert_called_once_with(db)
+
+
+def test_get_task_manager_rejects_sqlite_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task CLI does not fall back to removed SQLite runtime storage."""
+    monkeypatch.setattr(
+        task_config_utils,
+        "open_runtime_hub_database",
+        MagicMock(side_effect=RuntimeError("hub_backend=sqlite is no longer supported")),
+    )
+
+    with pytest.raises(ClickException, match="hub_backend=sqlite is no longer supported"):
+        task_config_utils.get_task_manager()
 
 
 # ==============================================================================

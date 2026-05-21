@@ -98,7 +98,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gloc")
-    @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     def test_run_daemon_setup_success(
         self,
         mock_ide,
@@ -120,7 +120,7 @@ class TestRunDaemonSetup:
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_gloc.return_value = {"installed": True, "version": "1.0", "method": "github"}
-        mock_ide.return_value = {"added": True}
+        mock_ide.return_value = {"Code": {"added": True}}
 
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -162,7 +162,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gloc")
-    @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide,
@@ -183,7 +183,7 @@ class TestRunDaemonSetup:
         mock_gsqz.return_value = {"skipped": True}
         mock_gcode.return_value = {"skipped": True}
         mock_gloc.return_value = {"skipped": True}
-        mock_ide.return_value = {"added": False}
+        mock_ide.return_value = {"Code": {"added": False}}
         mock_run.return_value = MagicMock(returncode=0)
 
         def _fake_install_ghook():
@@ -214,7 +214,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gloc")
-    @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
     def test_homebrew_mode_skips_npm_and_managed_helper_installs(
         self,
@@ -236,7 +236,7 @@ class TestRunDaemonSetup:
         mock_init.return_value = mock_db
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
-        mock_ide.return_value = {"added": False}
+        mock_ide.return_value = {"Code": {"added": False}}
         mock_verify.return_value = [
             HomebrewHelperStatus(
                 name=name,

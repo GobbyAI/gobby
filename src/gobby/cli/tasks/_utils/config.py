@@ -33,7 +33,10 @@ def check_tasks_enabled() -> None:
 
 def get_task_manager() -> LocalTaskManager:
     """Get initialized task manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    try:
+        db = open_runtime_hub_database(apply_migrations=False)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     return LocalTaskManager(db)
 
 

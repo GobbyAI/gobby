@@ -311,13 +311,19 @@ def run_daemon_setup(project_path: Path) -> None:
         _run_managed_native_binary_installs()
 
     try:
-        from .installers.ide_config import configure_ide_terminal_title
+        from .installers.ide_config import configure_vscode_family_terminal_titles
 
-        vscode_result = configure_ide_terminal_title("Code")
-        if vscode_result.get("added"):
-            click.echo("Configured VS Code terminal title for tmux integration")
+        ide_results = configure_vscode_family_terminal_titles()
+        configured_ides = [
+            ide_name for ide_name, result in ide_results.items() if result.get("added")
+        ]
+        if configured_ides:
+            click.echo(
+                "Configured VS Code-family terminal titles for tmux integration: "
+                f"{', '.join(configured_ides)}"
+            )
     except (ImportError, OSError, PermissionError, ValueError) as e:
-        click.echo(f"Warning: Failed to configure VS Code terminal title: {e}")
+        click.echo(f"Warning: Failed to configure VS Code-family terminal titles: {e}")
 
 
 def _run_npm_install(label: str, package: str, project_path: Path) -> None:
