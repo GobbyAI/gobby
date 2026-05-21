@@ -108,6 +108,11 @@ _BOOLEAN_LITERAL_RE = re.compile(
     rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
     r"\s*=\s*(?P<value>[01])\b"
 )
+_BOOLEAN_COALESCE_RE = re.compile(
+    r"COALESCE\(\s*"
+    rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
+    r"\s*,\s*(?P<default>[01])\s*\)\s*=\s*(?P<value>[01])\b"
+)
 _BOOLEAN_PARAM_COMPARISON_RE = re.compile(
     rf"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b"
     r"\s*(?:=|IS)\s*%s\b"
@@ -242,11 +247,16 @@ def _copy_rewritten_plain_segment(sql: str, start: int, end: int, out: list[str]
 def _rewrite_boolean_literals_in_plain_sql(sql: str) -> str:
     """Rewrite boolean integer predicates in a SQL segment with no strings/comments."""
 
+    def replace_coalesce(match: re.Match[str]) -> str:
+        default = "TRUE" if match.group("default") == "1" else "FALSE"
+        value = "TRUE" if match.group("value") == "1" else "FALSE"
+        return f"COALESCE({match.group('column')}, {default}) = {value}"
+
     def replace(match: re.Match[str]) -> str:
         literal = "TRUE" if match.group("value") == "1" else "FALSE"
         return f"{match.group('column')} = {literal}"
 
-    return _BOOLEAN_LITERAL_RE.sub(replace, sql)
+    return _BOOLEAN_LITERAL_RE.sub(replace, _BOOLEAN_COALESCE_RE.sub(replace_coalesce, sql))
 
 
 def _copy_block_comment_segment(sql: str, start: int, out: list[str]) -> int:

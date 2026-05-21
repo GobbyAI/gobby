@@ -214,6 +214,25 @@ def test_postgres_transaction_execute_rewrites_boolean_assignment_literals() -> 
     ]
 
 
+def test_postgres_transaction_execute_rewrites_sqlite_boolean_coalesce_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, 0) = 0 "
+        "OR COALESCE(tasks.allow_automation, 1) = 1"
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, FALSE) = FALSE "
+            "OR COALESCE(tasks.allow_automation, TRUE) = TRUE",
+            (),
+        )
+    ]
+
+
 def test_postgres_transaction_execute_coerces_boolean_filter_params() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
