@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -187,38 +188,118 @@ def _validate_bootstrap_file_permissions(path: Path) -> None:
 
 def store_postgres_database_url(database_url: str) -> str:
     """Store the bootstrap PostgreSQL DSN in the OS keyring."""
+    keyring_backend = _keyring()
     try:
-        _keyring().set_password(
+        keyring_backend.set_password(
             POSTGRES_DATABASE_URL_KEYRING_SERVICE,
             POSTGRES_DATABASE_URL_KEYRING_USERNAME,
             database_url,
         )
     except Exception as exc:
         raise BootstrapConfigError(
-            f"failed to store database_url in OS keyring entry {POSTGRES_DATABASE_URL_REF}"
+            _keyring_error_message("store", POSTGRES_DATABASE_URL_REF, exc)
         ) from exc
+    try:
+        stored_database_url = keyring_backend.get_password(
+            POSTGRES_DATABASE_URL_KEYRING_SERVICE,
+            POSTGRES_DATABASE_URL_KEYRING_USERNAME,
+        )
+    except Exception as exc:
+        raise BootstrapConfigError(
+            _keyring_error_message("read back", POSTGRES_DATABASE_URL_REF, exc)
+        ) from exc
+    if stored_database_url != database_url:
+        raise BootstrapConfigError(
+            "failed to verify database_url in OS keyring entry "
+            f"{POSTGRES_DATABASE_URL_REF}. {_keyring_guidance()}"
+        )
     return POSTGRES_DATABASE_URL_REF
 
 
 def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
     """Resolve the bootstrap PostgreSQL DSN from the OS keyring."""
     service, username = _parse_postgres_database_url_ref(database_url_ref)
+    keyring_backend = _keyring()
     try:
-        database_url = _keyring().get_password(service, username)
+        database_url = keyring_backend.get_password(service, username)
     except Exception as exc:
-        raise BootstrapConfigError(
-            f"failed to read database_url from OS keyring entry {database_url_ref}"
-        ) from exc
+        raise BootstrapConfigError(_keyring_error_message("read", database_url_ref, exc)) from exc
     if not database_url:
-        raise BootstrapConfigError(f"database_url_ref keyring entry {database_url_ref} is missing")
+        raise BootstrapConfigError(
+            f"database_url_ref keyring entry {database_url_ref} is missing. {_keyring_guidance()}"
+        )
     return str(database_url)
+
+
+def inspect_postgres_keyring(
+    database_url_ref: str | None = POSTGRES_DATABASE_URL_REF,
+) -> dict[str, Any]:
+    """Return non-mutating diagnostics for the PostgreSQL bootstrap keyring entry."""
+    status: dict[str, Any] = {
+        "reference": database_url_ref or POSTGRES_DATABASE_URL_REF,
+        "configured": bool(database_url_ref),
+        "backend": None,
+        "available": False,
+        "readable": None,
+        "credential_present": None,
+        "error": None,
+        "guidance": _keyring_guidance(),
+    }
+    try:
+        keyring_backend = _keyring()
+    except BootstrapConfigError as exc:
+        status["error"] = str(exc)
+        return status
+
+    status["backend"] = _keyring_backend_name(keyring_backend)
+    status["available"] = not _is_fail_keyring_backend(keyring_backend)
+    if _is_fail_keyring_backend(keyring_backend):
+        status["error"] = (
+            f"no usable OS keyring backend found for {POSTGRES_DATABASE_URL_REF}. "
+            f"{_keyring_guidance()}"
+        )
+        return status
+    if not database_url_ref:
+        return status
+
+    try:
+        service, username = _parse_postgres_database_url_ref(database_url_ref)
+        database_url = keyring_backend.get_password(service, username)
+    except Exception as exc:
+        status["available"] = False
+        status["readable"] = False
+        status["credential_present"] = False
+        status["error"] = _keyring_error_message("read", database_url_ref, exc)
+        return status
+
+    status["readable"] = True
+    status["credential_present"] = bool(database_url)
+    if not database_url:
+        status["error"] = (
+            f"database_url_ref keyring entry {database_url_ref} is missing. {_keyring_guidance()}"
+        )
+    return status
 
 
 def _keyring() -> Any:
     if keyring is None:
         raise BootstrapConfigError(
-            f"keyring package is required for database_url_ref {POSTGRES_DATABASE_URL_REF}"
+            "keyring package is required for database_url_ref "
+            f"{POSTGRES_DATABASE_URL_REF}. {_keyring_guidance()}"
         )
+    get_keyring = getattr(keyring, "get_keyring", None)
+    if callable(get_keyring):
+        try:
+            backend = get_keyring()
+        except Exception as exc:
+            raise BootstrapConfigError(
+                _keyring_error_message("inspect", POSTGRES_DATABASE_URL_REF, exc)
+            ) from exc
+        if _is_fail_keyring_backend(backend):
+            raise BootstrapConfigError(
+                f"no usable OS keyring backend found for {POSTGRES_DATABASE_URL_REF}. "
+                f"{_keyring_guidance()}"
+            )
     return keyring
 
 
@@ -233,3 +314,57 @@ def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
     ):
         raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_REF}")
     return service, username
+
+
+def _keyring_backend_name(keyring_backend: Any) -> str:
+    get_keyring = getattr(keyring_backend, "get_keyring", None)
+    if callable(get_keyring):
+        try:
+            keyring_backend = get_keyring()
+        except Exception:
+            pass
+    backend_name = getattr(keyring_backend, "name", None)
+    class_name = f"{keyring_backend.__class__.__module__}.{keyring_backend.__class__.__qualname__}"
+    if isinstance(backend_name, str) and backend_name.strip():
+        return f"{backend_name} ({class_name})"
+    return class_name
+
+
+def _is_fail_keyring_backend(keyring_backend: Any) -> bool:
+    backend_name = _keyring_backend_name(keyring_backend).lower()
+    return "keyring.backends.fail" in backend_name
+
+
+def _keyring_error_message(action: str, database_url_ref: str, exc: Exception) -> str:
+    detail = str(exc).strip()
+    suffix = f": {detail}" if detail else ""
+    return (
+        f"failed to {action} database_url in OS keyring entry {database_url_ref}{suffix}. "
+        f"{_keyring_guidance()}"
+    )
+
+
+def _keyring_guidance() -> str:
+    system = platform.system().lower()
+    if system == "linux":
+        return (
+            "Linux desktop: install and unlock a Secret Service or KWallet backend "
+            "such as gnome-keyring, kwallet, or SecretStorage. Linux headless/systemd: "
+            "run `gobby postgres install` and the daemon as the same Unix user with "
+            "access to that user's DBus session and unlocked keyring."
+        )
+    if system == "windows":
+        return (
+            "Windows: use Windows Credential Manager. Run `gobby postgres install` "
+            "and the Gobby daemon service as the same Windows user; LocalSystem or "
+            "another service account cannot read this credential."
+        )
+    if system == "darwin":
+        return (
+            "macOS: use the login Keychain. Run `gobby postgres install` and the "
+            "daemon as the same user with an unlocked login keychain."
+        )
+    return (
+        "Configure a keyring backend for this OS, then run `gobby postgres install` "
+        "and the daemon under the same user account."
+    )

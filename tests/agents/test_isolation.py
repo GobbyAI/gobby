@@ -25,6 +25,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from tests.config.fake_keyring import DATABASE_URL_REF, FakeKeyring, install_fake_keyring
 
 pytestmark = pytest.mark.unit
 
@@ -102,12 +103,16 @@ class TestEnsureIsolationCodeIndex:
         assert calls[0].kwargs["cwd"] == str(tmp_path)
 
     @pytest.mark.asyncio
-    async def test_database_url_creates_gcode_wrapper_runtime(self, tmp_path: Path) -> None:
+    async def test_database_url_creates_gcode_wrapper_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         proc = self._proc()
         runtime_root = tmp_path / "runtime"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+        fake_keyring = FakeKeyring()
+        install_fake_keyring(monkeypatch, fake_keyring)
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
@@ -130,7 +135,11 @@ class TestEnsureIsolationCodeIndex:
             f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
         )
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
-        assert "database_url: postgresql://gobby:secret@localhost/gobby" in bootstrap.read_text()
+        assert f"database_url_ref: {DATABASE_URL_REF}" in bootstrap.read_text()
+        assert fake_keyring.set_calls == [
+            ("gobby", "postgres_database_url", "postgresql://gobby:secret@localhost/gobby")
+        ]
+        assert fake_keyring.get_calls == [("gobby", "postgres_database_url")]
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],

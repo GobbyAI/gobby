@@ -270,6 +270,25 @@ def test_native_debian_installs_sha_pinned_deb_and_probes_extension(
     assert records[2][1]["sql"] == "CREATE EXTENSION pg_search"
 
 
+def test_write_bootstrap_defaults_surfaces_keyring_guidance_as_click_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+
+    def _fail_write(**_kwargs: Any) -> None:
+        raise installer.BootstrapConfigError("Linux desktop keyring guidance")
+
+    monkeypatch.setattr(installer._bootstrap, "write_postgres_defaults", _fail_write)
+
+    with pytest.raises(click.ClickException, match="Linux desktop keyring guidance"):
+        installer._write_bootstrap_defaults(
+            gobby_home=tmp_path,
+            mode="docker",
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        )
+
+
 class _FakeCursor:
     def __init__(self, statements: list[str], *, pg_search_present: bool = True) -> None:
         self.statements = statements
@@ -412,6 +431,21 @@ async def test_get_postgres_status_returns_stable_payload(
         lambda *_args, **_kwargs: _FakeConnection(statements),
     )
     monkeypatch.setattr(installer.subprocess, "run", lambda *args, **kwargs: _completed_process())
+    monkeypatch.setattr(
+        installer,
+        "_postgres_keyring_status",
+        lambda _home: {
+            "configured": True,
+            "available": True,
+            "readable": True,
+            "credential_present": True,
+            "backend": "FakeKeyring",
+            "error": None,
+            "guidance": "test guidance",
+            "reference": "keyring:gobby:postgres_database_url",
+        },
+        raising=False,
+    )
 
     status = await installer.get_postgres_status(
         gobby_home=tmp_path,
@@ -427,3 +461,30 @@ async def test_get_postgres_status_returns_stable_payload(
     assert isinstance(status["preload_libraries"], list)
     assert set(status["migration_complete"]) == {"present", "imported_at"}
     assert set(status["ownership"]) == {"sentinel_present", "installed_at", "gobby_version"}
+    assert status["keyring"]["credential_present"] is True
+
+
+def test_render_postgres_status_includes_keyring_preflight() -> None:
+    installer = _import_installer()
+
+    rendered = installer.render_postgres_status(
+        {
+            "mode": "docker",
+            "dsn_host": "localhost",
+            "dsn_db": "gobby",
+            "healthy": True,
+            "extensions": {"pg_search": True, "pgaudit": False},
+            "migration_complete": {"present": True, "imported_at": "now"},
+            "keyring": {
+                "configured": True,
+                "available": True,
+                "readable": True,
+                "credential_present": True,
+                "backend": "FakeKeyring",
+                "error": None,
+                "guidance": "test guidance",
+            },
+        }
+    )
+
+    assert "Keyring:     configured, credential present (FakeKeyring)" in rendered

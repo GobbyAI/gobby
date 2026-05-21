@@ -65,6 +65,13 @@ operator-managed restore artifacts outside the current runtime. Use
 `gobby postgres migrate-from-sqlite` to import an old `gobby-hub.db`; do not
 use `database_path` or `gobby postgres uninstall` to restore SQLite as the hub.
 
+`database_url_ref` must stay on `keyring:gobby:postgres_database_url`. The OS
+keyring credential belongs to the installing user. Linux desktop sessions need
+an unlocked Secret Service or KWallet backend; Linux headless/systemd services
+need the same Unix user and DBus/keyring context used during install. Windows
+uses Credential Manager, so a Windows service must run as the same user that
+created the credential.
+
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 
