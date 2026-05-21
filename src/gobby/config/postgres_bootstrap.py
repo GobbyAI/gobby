@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from .bootstrap import load_bootstrap, store_postgres_database_url
+from .bootstrap import BootstrapConfigError, load_bootstrap, store_postgres_database_url
 from .bootstrap_io import (
     bootstrap_path,
     default_gobby_home,
@@ -46,11 +46,11 @@ def write_postgres_defaults(
 
 
 def clear_postgres_fields(gobby_home: Path) -> None:
+    """Preserve required PostgreSQL runtime bootstrap during legacy uninstall flows."""
+
     def _apply(data: dict[str, Any]) -> None:
-        data["hub_backend"] = "sqlite"
-        data.pop("database_url", None)
-        data.pop("database_url_ref", None)
-        data.pop("postgres_install_mode", None)
+        _require_postgres_runtime_bootstrap(data)
+        data["hub_backend"] = "postgres"
 
     update_bootstrap_yaml(bootstrap_path(gobby_home), _apply)
 
@@ -72,3 +72,24 @@ def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
     if mode in {"docker", "native", "external"}:
         return cast(InstallMode, mode)
     return "docker"
+
+
+def _require_postgres_runtime_bootstrap(data: dict[str, Any]) -> None:
+    if data.get("hub_backend") != "postgres":
+        raise BootstrapConfigError(
+            "PostgreSQL uninstall cannot restore hub_backend=sqlite. "
+            "Keep hub_backend=postgres with database_url or database_url_ref."
+        )
+    if not (
+        _has_bootstrap_string(data, "database_url")
+        or _has_bootstrap_string(data, "database_url_ref")
+    ):
+        raise BootstrapConfigError(
+            "PostgreSQL uninstall requires database_url or database_url_ref so the "
+            "Phase 7 PostgreSQL-only runtime can start."
+        )
+
+
+def _has_bootstrap_string(data: dict[str, Any], key: str) -> bool:
+    value = data.get(key)
+    return isinstance(value, str) and bool(value.strip())
