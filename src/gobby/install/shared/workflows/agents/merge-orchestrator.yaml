@@ -290,7 +290,8 @@ steps:
       Apply the merge-expert ordering rubric (recover orphans -> toposort by
       task deps -> fewest predicted conflicts -> smallest diff -> freshness).
       Pick an action per step (merge | cherry-pick | merge_subset | abort).
-      Store the plan as session variable merge_plan, then transition.
+      Store the plan as session variable merge_plan, then transition. If a
+      provider emits merge_plan_json instead, treat it as the same plan.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -320,7 +321,7 @@ steps:
       - to: terminate
         when: "vars.report_complete"
       - to: execute
-        when: "vars.get('merge_plan')"
+        when: "vars.get('merge_plan') or vars.get('merge_plan_json')"
 
   - name: execute
     description: "Execute PR gating or direct merge steps"

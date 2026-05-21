@@ -12,7 +12,6 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
@@ -78,8 +77,115 @@ FORBIDDEN_EXECUTE_TOOLS = {
 @pytest.fixture
 def db(tmp_path: Path) -> LocalDatabase:
     database = LocalDatabase(tmp_path / "test_merge_orchestrator_contract.db")
-    run_migrations(database)
+    _create_contract_schema(database)
     return database
+
+
+def _create_contract_schema(db: LocalDatabase) -> None:
+    """Create the narrow workflow schema this contract test exercises."""
+    statements = [
+        """
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            external_id TEXT NOT NULL,
+            machine_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE workflow_definitions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            workflow_type TEXT NOT NULL DEFAULT 'workflow',
+            version TEXT DEFAULT '1.0',
+            enabled INTEGER DEFAULT 1,
+            priority INTEGER DEFAULT 100,
+            sources TEXT,
+            definition_json TEXT NOT NULL,
+            canvas_json TEXT,
+            source TEXT DEFAULT 'installed',
+            tags TEXT,
+            deleted_at TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE workflow_instances (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            workflow_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100,
+            current_step TEXT,
+            step_entered_at TEXT,
+            step_action_count INTEGER DEFAULT 0,
+            total_action_count INTEGER DEFAULT 0,
+            variables TEXT DEFAULT '{}',
+            context_injected INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT,
+            UNIQUE(session_id, workflow_name)
+        )
+        """,
+        """
+        CREATE TABLE session_variables (
+            session_id TEXT PRIMARY KEY,
+            variables TEXT DEFAULT '{}',
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE workflow_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            step TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            tool_name TEXT,
+            rule_id TEXT,
+            condition TEXT,
+            result TEXT NOT NULL,
+            reason TEXT,
+            context TEXT
+        )
+        """,
+        """
+        CREATE TABLE config_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'user',
+            is_secret INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE rule_overrides (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            rule_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT,
+            UNIQUE(session_id, rule_name)
+        )
+        """,
+    ]
+    for statement in statements:
+        db.execute(statement)
 
 
 def _agent() -> dict[str, Any]:
@@ -107,9 +213,14 @@ def _create_session(db: LocalDatabase, session_id: str = "agent-session") -> Non
     )
 
 
-def _install_workflow(db: LocalDatabase, *, current_step: str) -> WorkflowInstanceManager:
+def _install_workflow(
+    db: LocalDatabase,
+    *,
+    current_step: str,
+    session_id: str = "agent-session",
+) -> WorkflowInstanceManager:
     agent = _agent()
-    _create_session(db)
+    _create_session(db, session_id=session_id)
     definition = {
         "name": agent["name"],
         "version": agent["version"],
@@ -128,8 +239,8 @@ def _install_workflow(db: LocalDatabase, *, current_step: str) -> WorkflowInstan
     manager = WorkflowInstanceManager(db)
     manager.save_instance(
         WorkflowInstance(
-            id="inst-agent-session-merge-orchestrator",
-            session_id="agent-session",
+            id=f"inst-{session_id}-merge-orchestrator",
+            session_id=session_id,
             workflow_name=agent["name"],
             enabled=True,
             priority=100,
@@ -465,6 +576,16 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: LocalDatab
     instance = manager.get_instance("agent-session", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "execute"
+
+    manager = _install_workflow(db, current_step="plan", session_id="agent-session-json")
+    await engine.evaluate(
+        _after_set_variable("merge_plan_json", "step_no=1 worktree_id=wt-1"),
+        session_id="agent-session-json",
+        variables={},
+    )
+    json_instance = manager.get_instance("agent-session-json", "merge-orchestrator")
+    assert json_instance is not None
+    assert json_instance.current_step == "execute"
 
     for mcp_key in ("gobby-merge:inspect_merge_state", "gobby-agents:spawn_agent"):
         response = await engine.evaluate(
