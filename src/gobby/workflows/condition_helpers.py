@@ -7,6 +7,8 @@ so they can be called from rule ``when`` conditions, e.g.:
 """
 
 import logging
+import re
+import shlex
 from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 from uuid import UUID
@@ -17,6 +19,53 @@ logger = logging.getLogger(__name__)
 
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_SHELL_SEGMENT_SEPARATORS = frozenset({"&&", "||", ";", "|"})
+_UV_RUN_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "--active",
+        "--all-extras",
+        "--config-file",
+        "--directory",
+        "--env-file",
+        "--exclude-newer",
+        "--extra",
+        "--fork-strategy",
+        "--group",
+        "--index",
+        "--index-strategy",
+        "--link-mode",
+        "--managed-python",
+        "--module",
+        "--no-binary",
+        "--no-binary-package",
+        "--no-build",
+        "--no-build-isolation",
+        "--no-build-isolation-package",
+        "--no-build-package",
+        "--no-dev",
+        "--no-extra",
+        "--no-group",
+        "--no-index",
+        "--no-managed-python",
+        "--no-sources",
+        "--no-sync",
+        "--only-binary",
+        "--only-binary-package",
+        "--only-dev",
+        "--only-group",
+        "--package",
+        "--prerelease",
+        "--project",
+        "--python",
+        "--python-platform",
+        "--resolution",
+        "--upgrade-package",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+    }
+)
 
 
 class TaskProvider(Protocol):
@@ -32,6 +81,104 @@ def is_task_complete(task: Any) -> bool:
     A task is complete only when closure metadata projects to closed.
     """
     return projected_task_state(task) == "closed"
+
+
+def is_validation_command(command: Any) -> bool:
+    """Return whether a shell command invokes a validation tool."""
+    if not isinstance(command, str) or not command.strip():
+        return False
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    segment: list[str] = []
+    for token in [*tokens, ";"]:
+        if token in _SHELL_SEGMENT_SEPARATORS:
+            if _segment_invokes_validation(segment):
+                return True
+            segment = []
+            continue
+        segment.append(token)
+    return False
+
+
+def _segment_invokes_validation(tokens: list[str]) -> bool:
+    tokens = _strip_env_assignments(tokens)
+    if not tokens:
+        return False
+
+    executable = _executable_name(tokens[0])
+    if executable == "uv" and len(tokens) > 1 and tokens[1] == "run":
+        return _segment_invokes_validation(_strip_uv_run_options(tokens[2:]))
+    if executable in {"python", "python3"} or executable.startswith("python3."):
+        return _python_module_invokes_validation(tokens[1:])
+    if executable in {"pytest", "tox", "nox", "vitest", "jest"}:
+        return True
+    if executable in {"mypy", "pyright", "basedpyright"}:
+        return True
+    if executable == "coverage":
+        return len(tokens) > 1 and tokens[1] == "run"
+    if executable == "ruff":
+        return len(tokens) > 1 and (
+            tokens[1] == "check" or (tokens[1] == "format" and "--check" in tokens[2:])
+        )
+    if executable in {"npm", "pnpm", "yarn", "bun"}:
+        return _package_manager_invokes_validation(tokens[1:])
+    if executable in {"cargo", "go", "mix"}:
+        return len(tokens) > 1 and tokens[1] == "test"
+    if executable == "make":
+        return len(tokens) > 1 and tokens[1] in {"test", "tests"}
+    return False
+
+
+def _strip_env_assignments(tokens: list[str]) -> list[str]:
+    index = 0
+    while index < len(tokens) and _ENV_ASSIGNMENT_RE.match(tokens[index]):
+        index += 1
+    return tokens[index:]
+
+
+def _strip_uv_run_options(tokens: list[str]) -> list[str]:
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return tokens[index + 1 :]
+        if not token.startswith("-"):
+            return tokens[index:]
+        if "=" in token:
+            index += 1
+            continue
+        if token in _UV_RUN_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        index += 1
+    return []
+
+
+def _python_module_invokes_validation(tokens: list[str]) -> bool:
+    if len(tokens) < 2 or tokens[0] != "-m":
+        return False
+    module = tokens[1]
+    if module in {"pytest", "mypy", "pyright", "basedpyright", "tox", "nox"}:
+        return True
+    if module in {"coverage"}:
+        return len(tokens) > 2 and tokens[2] == "run"
+    return module == "ruff" and len(tokens) > 2 and tokens[2] == "check"
+
+
+def _package_manager_invokes_validation(tokens: list[str]) -> bool:
+    if not tokens:
+        return False
+    if tokens[0] in {"test", "lint"}:
+        return True
+    return len(tokens) > 1 and tokens[0] == "run" and tokens[1] in {"test", "lint"}
+
+
+def _executable_name(executable: str) -> str:
+    return executable.rsplit("/", 1)[-1]
 
 
 def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRef | None) -> bool:

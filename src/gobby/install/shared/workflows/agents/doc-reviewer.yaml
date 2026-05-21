@@ -49,6 +49,9 @@ instructions: |
   CRITICAL RULES:
   - Emit exactly one verdict: approve_review(stage_name="development"),
     reject_review(stage_name="development"), or escalate_task.
+  - After successful final validation in REVIEW, immediately call
+    approve_review, reject_review, or escalate_task. Successful validation
+    evidence creates a pending terminal-verdict obligation.
   - Use escalate_task only for "my workflow is broken" failures: blocked
     required tools, missing task context, corrupted workflow state, or inability
     to emit a verdict. Missing/incorrect documentation behavior is always
@@ -152,6 +155,7 @@ steps:
       4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
+      After successful final validation, immediately call one of those verdict tools.
       After deciding, call exactly one verdict tool immediately:
       - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
         stage_name="development", and approval_notes containing review evidence

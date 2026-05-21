@@ -48,6 +48,9 @@ def test_emits_review_verdict() -> None:
     assert "approve_review" in instructions
     assert "reject_review" in instructions
     assert "call that verdict tool immediately" in instructions
+    assert "After successful final validation in REVIEW" in instructions
+    assert "pending terminal-verdict obligation" in instructions
+    assert "After successful final validation" in status_message
     assert "artifacts, wait for mutexes" in instructions
     assert "task_id=assigned_task_id" in status_message
     assert "Dispatcher lifecycle owns post-verdict merge/closure" in status_message

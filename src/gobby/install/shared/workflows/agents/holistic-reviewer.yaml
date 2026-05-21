@@ -54,6 +54,9 @@ instructions: |
   - If changes are needed, call fail_stage with `stage_name="holistic_qa"`
     and include cited_subtasks for every blocking finding in the reason.
   - If human judgment is required, escalate with a reason beginning `needs_human:`.
+  - After successful final validation in REVIEW, immediately call
+    complete_stage, fail_stage, or escalate_task. Successful validation
+    evidence creates a pending terminal-verdict obligation.
   - Terminate only by calling end_agent_run.
 
   CRITICAL RULES:
@@ -143,6 +146,7 @@ steps:
       Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
       validation_override_reason="holistic_qa approved by holistic-reviewer"),
       fail_stage(stage_name="holistic_qa"), or escalate_task.
+      After successful final validation, immediately call one of those verdict tools.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"

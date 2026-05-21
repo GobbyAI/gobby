@@ -48,6 +48,9 @@ instructions: |
   CRITICAL RULES:
   - Emit exactly one verdict: approve_review(stage_name="development"),
     reject_review(stage_name="development"), or escalate_task.
+  - After successful final validation in REVIEW, immediately call
+    approve_review, reject_review, or escalate_task. Successful validation
+    evidence creates a pending terminal-verdict obligation.
   - Use escalate_task only for "my workflow is broken" failures: blocked
     required tools, missing task context, corrupted workflow state, or inability
     to emit a verdict. Missing/incorrect implementation behavior is always
@@ -150,6 +153,7 @@ steps:
       4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
+      After successful final validation, immediately call one of those verdict tools.
       If get_task shows the task is no longer at development:needs_review,
       this reviewer is stale. Do not emit a second verdict; call end_agent_run
       after the workflow transitions to terminate.

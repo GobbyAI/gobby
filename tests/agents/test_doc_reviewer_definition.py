@@ -65,6 +65,9 @@ def test_doc_reviewer_uses_ordered_docs_review_and_verdict_tools() -> None:
     assert "approve_review" in instructions
     assert "reject_review" in instructions
     assert "escalate_task" in instructions
+    assert "After successful final validation in REVIEW" in instructions
+    assert "pending terminal-verdict obligation" in instructions
+    assert "After successful final validation" in status_message
     assert {
         "gobby-tasks-ops:approve_review",
         "gobby-tasks-ops:reject_review",

@@ -40,6 +40,9 @@ def test_success_path_uses_complete_stage_for_in_progress_holistic_qa() -> None:
     assert "complete_stage" in instructions
     assert 'stage_name="holistic_qa"' in instructions
     assert "validation_override_reason" in instructions
+    assert "After successful final validation in REVIEW" in instructions
+    assert "pending terminal-verdict obligation" in instructions
+    assert "After successful final validation" in status
     assert 'complete_stage(stage_name="holistic_qa"' in status
     assert "gobby-tasks-ops:approve_review" in blocked
     assert "gobby-tasks-ops:reject_review" in blocked
