@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.config.bootstrap import store_postgres_database_url
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -115,11 +116,12 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
+    database_url_ref = store_postgres_database_url(database_url)
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
             "hub_backend": "postgres",
-            "database_url": database_url,
+            "database_url_ref": database_url_ref,
             "postgres_install_mode": "external",
         },
     )

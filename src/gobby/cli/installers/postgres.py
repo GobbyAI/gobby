@@ -24,7 +24,7 @@ import psycopg
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.postgres_bootstrap import InstallMode
-from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.bootstrap import BootstrapConfigError, inspect_postgres_keyring
 from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
@@ -232,15 +232,24 @@ async def get_postgres_status(
     """Return the stable PostgreSQL status payload used by cutover runbooks."""
     home = gobby_home or Path("~/.gobby").expanduser()
     active_mode = mode or _active_install_mode(gobby_home=home)
-    database_url = (
-        dsn or _read_bootstrap_database_url(home) or _docker_database_url(DEFAULT_POSTGRES_PORT)
-    )
+    bootstrap_error: str | None = None
+    try:
+        bootstrap_database_url = _read_bootstrap_database_url(home)
+    except BootstrapConfigError as exc:
+        bootstrap_database_url = None
+        bootstrap_error = str(exc)
+    keyring_status = _postgres_keyring_status(home)
+    if bootstrap_error:
+        keyring_status["error"] = bootstrap_error
+        keyring_status["available"] = False
+    database_url = dsn or bootstrap_database_url or _docker_database_url(DEFAULT_POSTGRES_PORT)
 
     payload: dict[str, Any] = {
         "mode": active_mode,
         "dsn_host": _dsn_host(database_url),
         "dsn_db": _dsn_db(database_url),
         "healthy": _pg_isready(database_url),
+        "keyring": keyring_status,
         "extensions": {"pg_search": False, "pgaudit": False},
         "preload_libraries": [],
         "migration_complete": {"present": False, "imported_at": None},
@@ -287,6 +296,11 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
         lines.append(
             f"Ownership:   {'present' if ownership.get('sentinel_present') else 'missing'}"
         )
+    keyring_status = payload.get("keyring")
+    if isinstance(keyring_status, dict):
+        lines.append(f"Keyring:     {_format_keyring_status(keyring_status)}")
+        if keyring_status.get("error"):
+            lines.append(f"Keyring help: {keyring_status.get('guidance')}")
     return "\n".join(lines)
 
 
@@ -427,11 +441,14 @@ def _write_bootstrap_defaults(
     mode: InstallMode,
     database_url: str,
 ) -> None:
-    _bootstrap.write_postgres_defaults(
-        gobby_home=gobby_home,
-        mode=mode,
-        database_url=database_url,
-    )
+    try:
+        _bootstrap.write_postgres_defaults(
+            gobby_home=gobby_home,
+            mode=mode,
+            database_url=database_url,
+        )
+    except BootstrapConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _preserve_required_postgres_runtime(gobby_home: Path) -> None:
@@ -699,6 +716,25 @@ def _docker_database_url(port: int) -> str:
 
 def _read_bootstrap_database_url(gobby_home: Path) -> str | None:
     return _bootstrap.read_bootstrap_database_url(gobby_home)
+
+
+def _postgres_keyring_status(gobby_home: Path) -> dict[str, Any]:
+    data = _bootstrap.read_bootstrap_yaml(_bootstrap.bootstrap_path(gobby_home))
+    database_url_ref = data.get("database_url_ref")
+    return inspect_postgres_keyring(database_url_ref if isinstance(database_url_ref, str) else None)
+
+
+def _format_keyring_status(status: dict[str, Any]) -> str:
+    backend = status.get("backend") or "unknown backend"
+    if status.get("error"):
+        return f"unavailable ({backend})"
+    if not status.get("configured"):
+        return f"not configured ({backend})"
+    if status.get("credential_present"):
+        return f"configured, credential present ({backend})"
+    if status.get("readable"):
+        return f"configured, credential missing ({backend})"
+    return f"configured ({backend})"
 
 
 def _active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:

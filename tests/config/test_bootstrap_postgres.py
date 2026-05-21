@@ -57,6 +57,7 @@ def test_bootstrap_migrates_plaintext_postgres_url_to_keyring(
     assert bootstrap.postgres_install_mode == "docker"
     assert bootstrap.database_path == "/tmp/sqlite.db"
     assert fake_keyring.set_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY, database_url)]
+    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert "database_url" not in persisted
@@ -111,7 +112,100 @@ def test_write_postgres_defaults_stores_database_url_ref(
     assert persisted["database_url_ref"] == DATABASE_URL_REF
     assert persisted["postgres_install_mode"] == "docker"
     assert fake_keyring.set_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY, database_url)]
+    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
     assert read_bootstrap_database_url(temp_dir) == database_url
+    assert fake_keyring.get_calls == [
+        (KEYRING_SERVICE, DATABASE_URL_KEY),
+        (KEYRING_SERVICE, DATABASE_URL_KEY),
+    ]
+
+
+def test_postgres_keyring_store_failure_includes_linux_guidance(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config import bootstrap as bootstrap_module
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.postgres_bootstrap import write_postgres_defaults
+
+    fake_keyring = FakeKeyring(set_error=RuntimeError("no secret service"))
+    install_fake_keyring(monkeypatch, fake_keyring)
+    monkeypatch.setattr(bootstrap_module.platform, "system", lambda: "Linux")
+
+    with pytest.raises(BootstrapConfigError) as exc_info:
+        write_postgres_defaults(
+            gobby_home=temp_dir,
+            mode="docker",
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        )
+
+    message = str(exc_info.value)
+    assert "failed to store database_url" in message
+    assert "Linux desktop" in message
+    assert "Linux headless/systemd" in message
+
+
+def test_postgres_keyring_readback_failure_includes_windows_service_guidance(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config import bootstrap as bootstrap_module
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.postgres_bootstrap import write_postgres_defaults
+
+    fake_keyring = FakeKeyring(get_error=RuntimeError("credential unavailable"))
+    install_fake_keyring(monkeypatch, fake_keyring)
+    monkeypatch.setattr(bootstrap_module.platform, "system", lambda: "Windows")
+
+    with pytest.raises(BootstrapConfigError) as exc_info:
+        write_postgres_defaults(
+            gobby_home=temp_dir,
+            mode="docker",
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        )
+
+    message = str(exc_info.value)
+    assert "failed to read back database_url" in message
+    assert "Windows Credential Manager" in message
+    assert "same Windows user" in message
+
+
+def test_postgres_keyring_status_reports_missing_credential_without_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.config.bootstrap import inspect_postgres_keyring
+
+    fake_keyring = FakeKeyring()
+    install_fake_keyring(monkeypatch, fake_keyring)
+
+    status = inspect_postgres_keyring(DATABASE_URL_REF)
+
+    assert status["configured"] is True
+    assert status["readable"] is True
+    assert status["credential_present"] is False
+    assert "postgres_database_url" in str(status["error"])
+    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
+    assert fake_keyring.set_calls == []
+
+
+def test_postgres_keyring_status_reports_unavailable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.config import bootstrap as bootstrap_module
+    from gobby.config.bootstrap import inspect_postgres_keyring
+
+    class _FailBackend:
+        __module__ = "keyring.backends.fail"
+
+    class _FakeKeyringModule:
+        def get_keyring(self) -> _FailBackend:
+            return _FailBackend()
+
+    monkeypatch.setattr(bootstrap_module, "keyring", _FakeKeyringModule())
+
+    status = inspect_postgres_keyring(DATABASE_URL_REF)
+
+    assert status["available"] is False
+    assert status["readable"] is None
+    assert "no usable OS keyring backend" in str(status["error"])
 
 
 def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Path) -> None:

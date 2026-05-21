@@ -112,6 +112,24 @@ keyring entry and rewrites the file with mode `0600`; startup fails when
 `bootstrap.yaml` has broader permissions or the referenced keyring value is
 missing.
 
+`gobby postgres status` reports the configured keyring backend, whether the
+`keyring:gobby:postgres_database_url` credential can be read, and any platform
+guidance returned by the preflight. `gobby postgres install` also verifies a
+write/read round trip before it records bootstrap defaults.
+
+Platform expectations:
+
+- Linux desktop: a Secret Service or KWallet-compatible backend must be
+  installed and unlocked for the user running Gobby. Typical packages include
+  `gnome-keyring`, `kwallet`, and Python `SecretStorage` support.
+- Linux headless or systemd: the daemon must run as the same Unix user that ran
+  `gobby postgres install`, and that user must have access to an unlocked
+  keyring through its DBus session. User services should preserve that user
+  context instead of switching to root.
+- Windows: the DSN is stored in Windows Credential Manager for the installing
+  user. The daemon service must run as that same Windows user; LocalSystem or a
+  different service account cannot read the credential.
+
 `gobby postgres deactivate` is retained only as a compatibility command and
 exits before writing `hub_backend=sqlite`. Phase 7 startup rejects
 `hub_backend=sqlite`; keep `hub_backend=postgres` in `bootstrap.yaml`.
