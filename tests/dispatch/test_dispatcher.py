@@ -530,6 +530,89 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     assert artifacts.target_branch == "main"
 
 
+async def test_leaf_spawn_recovers_parent_integration_target_branch(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    parent = _task(
+        temp_db,
+        sample_project,
+        title="Phase epic",
+        task_type="epic",
+        allow_automation=False,
+    )
+    leaf = _task(
+        temp_db,
+        sample_project,
+        title="Leaf implementation",
+        parent_task_id=parent.id,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        parent.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+    )
+    action = SpawnAgentAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    def unexpected_prepare(**_kwargs: object) -> None:
+        raise AssertionError("leaf spawn should not use holistic epic workspace preparation")
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=leaf.id,
+            run_id="run-leaf-integration-base",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        unexpected_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(leaf.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["base_branch"] == "gobby/integration/phase"
+    assert spawn_kwargs["worktree_id"] is None
+    assert artifacts.target_branch == "gobby/integration/phase"
+
+
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

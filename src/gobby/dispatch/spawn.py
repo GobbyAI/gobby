@@ -131,6 +131,12 @@ async def spawn_agent(
         artifacts=artifacts,
         services=services,
     )
+    artifacts = _repair_leaf_target_branch(
+        db=db,
+        task=task,
+        task_manager=task_manager,
+        artifacts=artifacts,
+    )
     project = LocalProjectManager(db).get(project_id)
     project_path = project.repo_path if project is not None else None
     worktree_id, clone_id = _spawn_workspace_ids(task=task, action=action, artifacts=artifacts)
@@ -258,6 +264,27 @@ def _sanitize_reusable_spawn_artifacts(
     if not fields:
         return artifacts
     TaskArtifactManager(db).set_artifacts_atomic(task.id, **fields)
+    return TaskArtifactManager(db).get_artifacts(task.id)
+
+
+def _repair_leaf_target_branch(
+    *,
+    db: DatabaseProtocol,
+    task: Task,
+    task_manager: LocalTaskManager,
+    artifacts: TaskArtifacts,
+) -> TaskArtifacts:
+    isolation = getattr(task, "isolation", None)
+    if isolation not in {"worktree", "clone"} or not task.parent_task_id:
+        return artifacts
+    if task.task_type == "epic" or artifacts.worktree_id or artifacts.clone_id:
+        return artifacts
+
+    target_branch = _nearest_parent_integration_or_target(task_manager, task)
+    if not target_branch or artifacts.target_branch == target_branch:
+        return artifacts
+
+    TaskArtifactManager(db).set_artifacts_atomic(task.id, target_branch=target_branch)
     return TaskArtifactManager(db).get_artifacts(task.id)
 
 
@@ -415,9 +442,9 @@ def _nearest_parent_integration_or_target(
             return None
         parent_artifacts = TaskArtifactManager(task_manager.db).get_artifacts(parent.id)
         if parent_artifacts.integration_branch:
-            return cast(str, parent_artifacts.integration_branch)
+            return parent_artifacts.integration_branch
         if parent_artifacts.target_branch:
-            return cast(str, parent_artifacts.target_branch)
+            return parent_artifacts.target_branch
         current_id = parent.parent_task_id
     return None
 
@@ -435,7 +462,7 @@ def _current_project_branch(db: DatabaseProtocol, project_id: str) -> str | None
     status = WorktreeGitManager(repo_path).get_worktree_status(repo_path)
     if status is None or not status.branch or status.branch == "HEAD":
         return None
-    return cast(str, status.branch)
+    return status.branch
 
 
 def _spawn_workspace_ids(
