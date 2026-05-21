@@ -1,8 +1,9 @@
 """Prompt storage and management.
 
 This module provides the PromptRecord dataclass and LocalPromptManager for
-storing and retrieving prompts from SQLite, with three-tier scope precedence
-(project > global > bundled) and read-only enforcement for bundled prompts.
+storing and retrieving prompts from the hub database, with three-tier scope
+precedence (project > global > bundled) and read-only enforcement for bundled
+prompts.
 """
 
 import json
@@ -209,7 +210,7 @@ class PromptChangeNotifier:
 
 
 class LocalPromptManager:
-    """Manages prompt storage in SQLite.
+    """Manages prompt storage in the hub database.
 
     Provides CRUD operations with three-tier scope precedence
     (project > global > bundled) and read-only enforcement for bundled prompts.

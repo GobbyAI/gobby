@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
-    """Manages skill storage in SQLite.
+    """Manages skill storage in the hub database.
 
     Provides CRUD operations for skills with support for:
     - Project-scoped uniqueness (UNIQUE(name, project_id, source))

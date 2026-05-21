@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpanStorage:
-    """Storage manager for OpenTelemetry spans in SQLite."""
+    """Storage manager for OpenTelemetry spans in the hub database."""
 
     def __init__(self, db: HubDatabase) -> None:
         self.db = db

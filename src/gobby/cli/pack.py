@@ -235,8 +235,9 @@ def _get_pack_size_estimate() -> int:
 def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: bool) -> None:
     """Pack all Gobby data into a portable archive for machine migration.
 
-    Creates a tarball containing the SQLite database, session transcripts,
-    vector store data, configs, and Docker volume data (Neo4j + Qdrant).
+    Creates a tarball containing local configs, session transcripts, vector
+    store data, Docker volume data (Neo4j + Qdrant), and the legacy SQLite hub
+    file when present.
 
     \b
     Usage:
@@ -393,8 +394,8 @@ def _do_pack(
 def unpack(archive: str, no_docker: bool, dry_run: bool, force: bool) -> None:
     """Unpack a Gobby archive to restore data on a new machine.
 
-    Restores the SQLite database, session transcripts, vector store data,
-    configs, and Docker volume data (Neo4j + Qdrant).
+    Restores local configs, session transcripts, vector store data, Docker
+    volume data (Neo4j + Qdrant), and the legacy SQLite hub file when present.
 
     \b
     Usage:
