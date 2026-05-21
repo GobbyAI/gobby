@@ -54,6 +54,46 @@ def _is_mcp_server_connected(mcp_manager: Any, name: str) -> bool:
     return False
 
 
+def _is_postgres_runtime(server: "HTTPServer", database_status: dict[str, Any]) -> bool:
+    """Return whether the active hub runtime is PostgreSQL."""
+    backend = database_status.get("backend")
+    if isinstance(backend, str) and backend == "postgres":
+        return True
+
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None) if services is not None else None
+    hub_backend = getattr(config, "hub_backend", None) if config is not None else None
+    return isinstance(hub_backend, str) and hub_backend == "postgres"
+
+
+def _postgres_mode_from_server(server: "HTTPServer") -> str | None:
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None) if services is not None else None
+    mode = getattr(config, "postgres_install_mode", None) if config is not None else None
+    return mode if isinstance(mode, str) else None
+
+
+async def _get_postgres_dashboard_status(
+    server: "HTTPServer", database_status: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Collect the PostgreSQL status payload used by the CLI status dashboard."""
+    if not _is_postgres_runtime(server, database_status):
+        return None
+
+    try:
+        from gobby.cli.installers.postgres import get_postgres_status
+
+        return await get_postgres_status(readiness_timeout=1.5, connect_timeout=1)
+    except Exception as exc:
+        logger.warning("Failed to get PostgreSQL status: %s", type(exc).__name__)
+        return {
+            "available": False,
+            "mode": _postgres_mode_from_server(server),
+            "healthy": False,
+            "error": type(exc).__name__,
+        }
+
+
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
     async def health_check() -> dict[str, str]:
@@ -438,7 +478,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         if executor_stats is not None:
             database_status["executor"] = executor_stats
 
-        return {
+        postgres_status = await _get_postgres_dashboard_status(server, database_status)
+
+        payload: dict[str, Any] = {
             "status": "healthy" if server._running else "degraded",
             "dev_mode": getattr(server.services, "dev_mode", False),
             "project_id": getattr(server.services, "project_id", None),
@@ -468,6 +510,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "last_shutdown": last_shutdown,
             "response_time_ms": response_time_ms,
         }
+        if postgres_status is not None:
+            payload["postgres"] = postgres_status
+        return payload
 
     @router.get("/metrics")
     async def get_metrics() -> PlainTextResponse:

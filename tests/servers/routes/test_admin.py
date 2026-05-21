@@ -155,6 +155,47 @@ class TestAdminRoutes:
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
         mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
+    @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_includes_postgres_hub_status(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_postgres_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_server.services.database.dialect = "postgres"
+        mock_server.services.database.connection_count = 2
+        mock_server.services.config.hub_backend = "postgres"
+        mock_server.services.config.postgres_install_mode = "docker"
+        mock_get_postgres_status.return_value = {
+            "mode": "docker",
+            "dsn_host": "localhost",
+            "dsn_db": "gobby",
+            "healthy": True,
+        }
+
+        response = client.get("/api/admin/status")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["database"]["backend"] == "postgres"
+        assert data["postgres"]["mode"] == "docker"
+        assert data["postgres"]["healthy"] is True
+        mock_get_postgres_status.assert_awaited_once_with(
+            readiness_timeout=1.5,
+            connect_timeout=1,
+        )
+
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")
     @patch("gobby.servers.routes.admin._health.psutil")

@@ -166,6 +166,72 @@ class TestStatusUtils:
         )
         assert "LM Studio (running)" in msg
 
+    def test_format_status_message_postgres_healthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "mode": "docker",
+                    "dsn_host": "localhost",
+                    "dsn_db": "gobby",
+                    "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                    "healthy": True,
+                    "extensions": {"pg_search": True, "pgaudit": True},
+                    "migration_complete": {"present": True, "imported_at": "2026-05-21"},
+                    "keyring": {"configured": True, "credential_present": True},
+                }
+            },
+        )
+
+        assert "PostgreSQL:" in msg
+        assert (
+            "healthy (docker; localhost/gobby; extensions ok; migration complete; keyring ok)"
+            in msg
+        )
+        assert "postgresql://" not in msg
+        assert "secret" not in msg
+
+    def test_format_status_message_postgres_unhealthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "mode": "external",
+                    "dsn_host": "db.example.com",
+                    "dsn_db": "gobby",
+                    "healthy": False,
+                    "extensions": {"pg_search": False, "pgaudit": False},
+                    "migration_complete": {"present": False, "imported_at": None},
+                    "keyring": {"configured": True, "error": "backend locked"},
+                }
+            },
+        )
+
+        assert "unhealthy (external; db.example.com/gobby" in msg
+        assert "missing pg_search, pgaudit" in msg
+        assert "migration pending" in msg
+        assert "keyring unavailable" in msg
+        assert "Health Issues:" in msg
+        assert "PostgreSQL: unhealthy" in msg
+
+    def test_format_status_message_postgres_unavailable(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "available": False,
+                    "mode": "native",
+                    "healthy": False,
+                    "error": "BootstrapConfigError",
+                }
+            },
+        )
+
+        assert "PostgreSQL:" in msg
+        assert "unavailable (native; BootstrapConfigError)" in msg
+        assert "Health Issues:" in msg
+        assert "PostgreSQL: BootstrapConfigError" in msg
+
     def test_format_status_message_config_issues(self) -> None:
         msg = format_status_message(
             running=True,
