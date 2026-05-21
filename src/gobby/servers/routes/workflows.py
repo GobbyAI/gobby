@@ -360,12 +360,14 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         name: str
         value: Any = None
         session_id: str
+        workflow: str | None = None
 
     class GetVariableRequest(BaseModel):
         """Request body for getting session variable(s)."""
 
         name: str | None = None
         session_id: str
+        workflow: str | None = None
 
     @router.post("/variables/set")
     async def set_variable(request: SetVariableRequest) -> dict[str, Any]:
@@ -381,7 +383,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 name=request.name,
                 value=request.value,
                 session_id=request.session_id,
-                workflow=None,
+                workflow=request.workflow,
             )
         except Exception as e:
             logger.error(f"Error setting variable: {e}", exc_info=True)
@@ -400,7 +402,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 server.session_manager.db,
                 name=request.name,
                 session_id=request.session_id,
-                workflow=None,
+                workflow=request.workflow,
             )
         except Exception as e:
             logger.error(f"Error getting variable: {e}", exc_info=True)

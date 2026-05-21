@@ -357,6 +357,59 @@ class TestVariables:
             "verification-before-completion",
         ]
 
+    def test_set_variable_accepts_workflow_scope(self) -> None:
+        mock_sm = MagicMock()
+        mock_sm.db = MagicMock()
+        srv = create_http_server(
+            config=DaemonConfig(),
+            database=mock_sm.db,
+            session_manager=mock_sm,
+        )
+        c = TestClient(srv.app)
+        with patch(
+            "gobby.mcp_proxy.tools.workflows._variables.set_variable",
+            return_value={"success": True},
+        ) as mock_set:
+            resp = c.post(
+                "/api/workflows/variables/set",
+                json={
+                    "name": "implementation_complete",
+                    "value": True,
+                    "session_id": "#1",
+                    "workflow": "backend-developer-steps",
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_set.assert_called_once()
+        assert mock_set.call_args.kwargs["workflow"] == "backend-developer-steps"
+
+    def test_get_variable_accepts_workflow_scope(self) -> None:
+        mock_sm = MagicMock()
+        mock_sm.db = MagicMock()
+        srv = create_http_server(
+            config=DaemonConfig(),
+            database=mock_sm.db,
+            session_manager=mock_sm,
+        )
+        c = TestClient(srv.app)
+        with patch(
+            "gobby.mcp_proxy.tools.workflows._variables.get_variable",
+            return_value={"success": True, "value": True},
+        ) as mock_get:
+            resp = c.post(
+                "/api/workflows/variables/get",
+                json={
+                    "name": "implementation_complete",
+                    "session_id": "#1",
+                    "workflow": "backend-developer-steps",
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_get.assert_called_once()
+        assert mock_get.call_args.kwargs["workflow"] == "backend-developer-steps"
+
     def test_get_variable_with_session_manager(self, temp_db) -> None:
         mock_sm = MagicMock()
         mock_sm.db = temp_db
