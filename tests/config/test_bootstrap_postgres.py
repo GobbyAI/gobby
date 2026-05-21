@@ -23,12 +23,12 @@ def _write_bootstrap(path: Path, content: str, mode: int = 0o600) -> None:
     path.chmod(mode)
 
 
-def test_bootstrap_defaults_to_sqlite_backend(temp_dir: Path) -> None:
+def test_bootstrap_defaults_to_postgres_backend_without_runtime_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 
     bootstrap = load_bootstrap(str(temp_dir / "missing.yaml"))
 
-    assert bootstrap.hub_backend == "sqlite"
+    assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url is None
     assert bootstrap.postgres_install_mode is None
 
@@ -262,7 +262,7 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
     assert persisted["postgres_install_mode"] == "docker"
 
 
-def test_clear_postgres_fields_rejects_sqlite_runtime_rollback(temp_dir: Path) -> None:
+def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError
     from gobby.config.postgres_bootstrap import clear_postgres_fields
 
@@ -274,7 +274,7 @@ def test_clear_postgres_fields_rejects_sqlite_runtime_rollback(temp_dir: Path) -
         "postgres_install_mode: docker\n",
     )
 
-    with pytest.raises(BootstrapConfigError, match="cannot restore hub_backend=sqlite"):
+    with pytest.raises(BootstrapConfigError, match="requires hub_backend=postgres"):
         clear_postgres_fields(temp_dir)
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
@@ -316,6 +316,7 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("content", "expected_message"),
     [
+        ("hub_backend: sqlite\n", "hub_backend"),
         ("hub_backend: mysql\n", "hub_backend"),
         ("database_url: 123\n", "database_url"),
         ("postgres_install_mode: managed\n", "postgres_install_mode"),
@@ -339,7 +340,7 @@ def test_bootstrap_rejects_insecure_file_permissions(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    _write_bootstrap(bootstrap_file, "hub_backend: sqlite\n", mode=0o644)
+    _write_bootstrap(bootstrap_file, "hub_backend: postgres\n", mode=0o644)
 
     with pytest.raises(BootstrapConfigError, match="permissions.*0600"):
         load_bootstrap(str(bootstrap_file))

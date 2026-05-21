@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class DatabasePathConfig(Protocol):
     """Configuration object exposing bootstrap database settings."""
 
-    hub_backend: Literal["sqlite", "postgres"]
+    hub_backend: Literal["postgres"]
     database_url: str | None
 
 
@@ -76,9 +76,9 @@ def _ensure_headless_settings() -> None:
 
 def init_hub_database(config: DatabasePathConfig) -> Any:
     """Initialize the runtime hub database."""
-    if getattr(config, "hub_backend", "sqlite") == "sqlite":
-        logger.warning("hub_backend=sqlite is no longer supported; configure PostgreSQL instead")
-        raise ValueError("hub_backend=sqlite is no longer supported")
+    if getattr(config, "hub_backend", "postgres") != "postgres":
+        logger.warning("Only PostgreSQL is supported for the runtime hub")
+        raise ValueError("hub_backend must be postgres")
 
     database_url = getattr(config, "database_url", None)
     if not database_url:

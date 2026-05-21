@@ -1,7 +1,4 @@
-"""SQLite CRUD for code index data.
-
-Follows the pattern established by storage/memories.py.
-"""
+"""Hub-backed CRUD for code index data."""
 
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class CodeIndexStorage:
-    """SQLite storage for code symbols, indexed files, and projects."""
+    """Storage for code symbols, indexed files, and projects in the runtime hub."""
 
     def __init__(self, db: DatabaseProtocol | HubDatabase) -> None:
         """Initialize storage against a legacy DB or HubDatabase seam."""
@@ -453,7 +450,7 @@ class CodeIndexStorage:
                     (
                         project_id,
                         c.caller_symbol_id,
-                        # SQLite stores optional callee_* fields as empty strings;
+                        # Optional callee_* fields use empty strings for uniqueness;
                         # the read path normalizes those empty strings back to None.
                         c.callee_symbol_id or "",
                         c.callee_name,
@@ -712,7 +709,7 @@ class CodeIndexStorage:
     # ── Graph visualization fallbacks ────────────────────────────────
 
     def get_file_symbol_tree(self, project_id: str, limit: int = 200) -> dict[str, Any]:
-        """Build file→symbol containment graph from SQLite.
+        """Build file→symbol containment graph from indexed hub rows.
 
         Fallback for when Neo4j is unavailable. No call/import edges,
         but still browsable as a file-to-symbol tree.

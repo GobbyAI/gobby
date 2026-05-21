@@ -1,4 +1,4 @@
-"""One-shot SQLite to PostgreSQL hub migration."""
+"""DEPRECATED_SQLITE_IMPORT: one-shot SQLite to PostgreSQL hub migration."""
 
 from __future__ import annotations
 

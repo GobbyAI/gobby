@@ -140,10 +140,10 @@ def test_get_task_manager_rejects_sqlite_bootstrap(
     monkeypatch.setattr(
         task_config_utils,
         "open_runtime_hub_database",
-        MagicMock(side_effect=RuntimeError("hub_backend=sqlite is no longer supported")),
+        MagicMock(side_effect=RuntimeError("hub_backend must be postgres")),
     )
 
-    with pytest.raises(ClickException, match="hub_backend=sqlite is no longer supported"):
+    with pytest.raises(ClickException, match="hub_backend must be postgres"):
         task_config_utils.get_task_manager()
 
 

@@ -232,7 +232,7 @@ exclude_dirs = ["tests", ".venv", "build", "examples"]
 # B110, B112: try_except_pass/continue (cleanup/fallback code)
 # B307: eval (workflow condition evaluator with controlled globals)
 # B404, B602, B603, B606, B607: subprocess/exec usage expected for CLI tool
-# B608: sql_expressions (local SQLite with parameterized queries)
+# B608: sql_expressions (hub SQL uses parameterized queries)
 # B701: jinja2 autoescape (not used for HTML)
 skips = ["B101", "B104", "B105", "B108", "B110", "B112", "B307", "B404", "B602", "B603", "B606", "B607", "B608", "B701"]
 

@@ -428,7 +428,7 @@ def get_configured_embedding_provider() -> str | None:
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )
-    return None
+    return _detect_openai()
 
 
 # ---------------------------------------------------------------------------

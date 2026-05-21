@@ -1,8 +1,8 @@
 """Background sync worker for code index external stores.
 
-Polls SQLite for files with vectors_synced=0 or graph_synced=0 and
-syncs them to Qdrant (embeddings) and Neo4j (graph edges) in-process.
-Replaces the old subprocess-based retry mechanism in maintenance.py.
+Polls hub-indexed files with vectors_synced=0 or graph_synced=0 and syncs them
+to Qdrant (embeddings) and Neo4j (graph edges) in-process. Replaces the old
+subprocess-based retry mechanism in maintenance.py.
 """
 
 from __future__ import annotations
@@ -307,8 +307,8 @@ async def _sync_graph(
     *,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Write Neo4j edges for a file from SQLite import/call/symbol data."""
-    # Read relations from SQLite
+    """Write Neo4j edges for a file from indexed import/call/symbol data."""
+    # Read relations from the runtime hub.
     imports = await _run_db(run_db, storage.get_imports_for_file, project_id, file.file_path)
     calls = await _run_db(run_db, storage.get_calls_for_file, project_id, file.file_path)
     symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)

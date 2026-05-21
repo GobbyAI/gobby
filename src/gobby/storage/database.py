@@ -1,4 +1,4 @@
-"""SQLite database manager for local storage."""
+"""DEPRECATED_SQLITE_IMPORT_TEST_ONLY: SQLite compatibility database manager."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
--- Test-only SQLite schema for LocalDatabase-backed unit tests.
+-- DEPRECATED_SQLITE_IMPORT_TEST_ONLY: schema for LocalDatabase-backed unit tests.
 -- Runtime SQLite migrations remain disabled; production code must not load this fixture.
 CREATE TABLE schema_version (
     version INTEGER PRIMARY KEY,

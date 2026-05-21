@@ -298,8 +298,8 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    hub_backend, database_url, postgres_install_mode, plus legacy database_path
-    compatibility) are read from ~/.gobby/bootstrap.yaml.
+    hub_backend, database_url, postgres_install_mode, plus migration-only
+    database_path compatibility) are read from ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -345,13 +345,13 @@ class DaemonConfig(BaseModel):
     database_path: str = Field(
         default="~/.gobby/gobby-hub.db",
         description=(
-            "Legacy SQLite hub path kept for migrate-from-sqlite and test "
+            "DEPRECATED_SQLITE_IMPORT path kept for migrate-from-sqlite and test "
             "compatibility; runtime hub access uses PostgreSQL database_url."
         ),
     )
-    hub_backend: Literal["sqlite", "postgres"] = Field(
-        default="sqlite",
-        description="Hub database backend selected by bootstrap.yaml; runtime installs use postgres.",
+    hub_backend: Literal["postgres"] = Field(
+        default="postgres",
+        description="Hub database backend selected by bootstrap.yaml; only postgres is supported.",
     )
     database_url: str | None = Field(
         default=None,
@@ -362,12 +362,6 @@ class DaemonConfig(BaseModel):
         default=None,
         description="PostgreSQL install mode recorded by gobby postgres install.",
     )
-
-    @model_validator(mode="after")
-    def validate_postgres_backend(self) -> DaemonConfig:
-        if self.hub_backend == "postgres" and not self.database_url:
-            raise ValueError("hub_backend=postgres requires database_url")
-        return self
 
     # Sub-configs
     websocket: WebSocketSettings = Field(
@@ -890,7 +884,7 @@ def load_config(
         _restore_bootstrap_backend_selection(config_dict, bootstrap)
     else:
         # Phase 1: bootstrap.yaml for pre-DB settings (ports, hub connection,
-        # legacy database_path compatibility)
+        # DEPRECATED_SQLITE_IMPORT database_path compatibility)
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap = load_bootstrap(config_file)

@@ -47,11 +47,11 @@ async def test_search_memories_no_query(memory_manager):
 
 @pytest.mark.asyncio
 async def test_search_memories_with_query(memory_manager):
-    """Without VectorStore, FTS5 keyword search is used."""
+    """Without VectorStore, keyword search is used."""
     await memory_manager.create_memory("The quick brown fox")
     await memory_manager.create_memory("The lazy dog")
 
-    # Without VectorStore, FTS5 handles keyword search
+    # Without VectorStore, the hub handles keyword search.
     memories = await memory_manager.search_memories(query="fox")
     assert len(memories) == 1
     assert "fox" in memories[0].content

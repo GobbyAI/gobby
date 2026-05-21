@@ -46,7 +46,7 @@ class TestPackCommand:
         # Setup fake GOBBY_HOME structure
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "gobby-hub.db").write_text("fake db")
+        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
         (fake_home / "session_transcripts").mkdir()
         (fake_home / "session_transcripts" / "1.txt").write_text("ts")
 
@@ -55,7 +55,8 @@ class TestPackCommand:
         result = runner.invoke(pack, ["--dry-run"])
         assert result.exit_code == 0
         assert "Pack contents (dry run):" in result.output
-        assert "gobby/gobby-hub.db" in result.output
+        assert "gobby/bootstrap.yaml" in result.output
+        assert "gobby/gobby-hub.db" not in result.output
         assert "gobby/session_transcripts/" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
@@ -66,7 +67,7 @@ class TestPackCommand:
     ) -> None:
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "gobby-hub.db").write_text("db content")
+        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
 
         mock_home.return_value = fake_home
 
@@ -80,7 +81,8 @@ class TestPackCommand:
         with tarfile.open(out_path, "r:gz") as tar:
             names = tar.getnames()
             assert "gobby/manifest.json" in names
-            assert "gobby/gobby-hub.db" in names
+            assert "gobby/bootstrap.yaml" in names
+            assert "gobby/gobby-hub.db" not in names
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
@@ -168,6 +170,10 @@ class TestUnpackCommand:
             db_path = tmp_path / "gobby-hub.db"
             db_path.write_text("restored db")
             tar.add(str(db_path), arcname="gobby/gobby-hub.db")
+
+            bootstrap_path = tmp_path / "bootstrap.yaml"
+            bootstrap_path.write_text("hub_backend: postgres\n")
+            tar.add(str(bootstrap_path), arcname="gobby/bootstrap.yaml")
         return out_path
 
     def _create_postgres_archive(self, tmp_path: Path) -> Path:
@@ -216,8 +222,9 @@ class TestUnpackCommand:
         result = runner.invoke(unpack, [str(archive)])
         assert result.exit_code == 0
 
-        assert (fake_home / "gobby-hub.db").exists()
-        assert (fake_home / "gobby-hub.db").read_text() == "restored db"
+        assert not (fake_home / "gobby-hub.db").exists()
+        assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
+        assert "Skipped DEPRECATED_SQLITE_IMPORT archive member" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
     def test_unpack_aborts_if_exists(self, mock_home, tmp_path, runner: CliRunner) -> None:
@@ -225,7 +232,7 @@ class TestUnpackCommand:
 
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "gobby-hub.db").write_text("existing")
+        (fake_home / "bootstrap.yaml").write_text("existing")
         mock_home.return_value = fake_home
 
         # Answer NO to confirmation
@@ -244,7 +251,7 @@ class TestUnpackCommand:
 
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "gobby-hub.db").write_text("old")
+        (fake_home / "bootstrap.yaml").write_text("old")
 
         mock_home.return_value = fake_home
 
@@ -252,7 +259,8 @@ class TestUnpackCommand:
         result = runner.invoke(unpack, [str(archive), "--force"])
         assert result.exit_code == 0
 
-        assert (fake_home / "gobby-hub.db").read_text() == "restored db"
+        assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
+        assert not (fake_home / "gobby-hub.db").exists()
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)

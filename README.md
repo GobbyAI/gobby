@@ -168,7 +168,7 @@ but Gobby wires them in for you.
 
 | Tool | What it does | Why it matters |
 | --- | --- | --- |
-| [`gcode`](https://github.com/GobbyAI/gobby-cli) | AST symbol search over 18 languages via tree-sitter + SQLite FTS5; with Qdrant/FalkorDB it adds vector + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
+| [`gcode`](https://github.com/GobbyAI/gobby-cli) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; with vector and graph backends it adds semantic + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
 | [`gsqz`](https://github.com/GobbyAI/gobby-cli) | Wraps shell commands and compresses output via 28 built-in pipelines (git, cargo, pytest, eslint, ruff, npm, more) | Verbose test/lint/build output collapses before it ever reaches the model. >90% token reduction on noisy commands, ~9ms overhead. |
 | [`gloc`](https://github.com/GobbyAI/gobby-cli) | One command to launch Claude Code or Codex against a local LLM (LM Studio, Ollama). Manages model lifecycle, env vars, warmup. | Same Gobby workflows run against local and cloud models without rewriting anything. |
 | [`ghook`](https://github.com/GobbyAI/gobby-cli) | Sandbox-tolerant hook dispatcher that spools events to `~/.gobby/hooks/inbox/` *before* posting to the daemon | Hook events survive sandbox FS denials, network blips, and daemon restarts. The drain worker replays them. |
@@ -246,8 +246,9 @@ The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
 is the git-native sync projection — checked in, diffable in PRs, and reconciled
 with the DB so task-linked commits stay auditable across machines. Linear is
 supported as an optional external sync target for teams that already track work
-there. Legacy SQLite hubs can still be imported with
-`gobby postgres migrate-from-sqlite`.
+there. Legacy SQLite hubs can still be imported with the deprecated
+`gobby postgres migrate-from-sqlite` tool while `DEPRECATED_SQLITE_IMPORT`
+cleanup remains tracked.
 
 The guides set is the source of truth for behavior:
 
@@ -354,8 +355,8 @@ team surfaces.
 ### Post-0.4.x: hardening
 
 - **PostgreSQL hub hardening** (`#12761`) — keep the local PostgreSQL runtime
-  hub, `psycopg` v3, `pg_search`, and legacy `migrate-from-sqlite` import path
-  solid as the daemon moves toward the Rust hot-path port.
+  hub, `psycopg` v3, `pg_search`, and deprecated `migrate-from-sqlite` import
+  path solid as the daemon moves toward the Rust hot-path port.
 - **FalkorDB graph migration** (`#12746`) — swap Neo4j for FalkorDB across
   daemon writes, Rust read clients, web UI, admin payloads, and the setup
   wizard.

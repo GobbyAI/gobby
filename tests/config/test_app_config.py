@@ -772,7 +772,7 @@ class TestBootstrapConfig:
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
-        assert d["hub_backend"] == "sqlite"
+        assert d["hub_backend"] == "postgres"
         assert d["database_url"] is None
         assert d["postgres_install_mode"] is None
 

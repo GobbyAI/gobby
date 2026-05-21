@@ -7,7 +7,6 @@ CLI commands for portable export/import of Gobby data.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -27,7 +26,7 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
 
-DB_NAME = "gobby-hub.db"
+DB_NAME = "gobby-hub.db"  # DEPRECATED_SQLITE_IMPORT: skip legacy pack members.
 
 
 # Directories to include in pack (relative to ~/.gobby/)
@@ -43,7 +42,6 @@ PACK_DIRS = [
 
 # Files to include (relative to ~/.gobby/)
 PACK_FILES = [
-    DB_NAME,
     "bootstrap.yaml",
     "machine_id",
     ".secret_salt",
@@ -234,6 +232,24 @@ def _get_pack_size_estimate() -> int:
     return total
 
 
+def _archive_would_overwrite(members: list[tarfile.TarInfo]) -> bool:
+    """Return whether unpacking current-runtime members would overwrite files."""
+    home = get_gobby_home()
+    for member in members:
+        if (
+            member.name == "gobby/manifest.json"
+            or member.name == f"gobby/{DB_NAME}"
+            or member.name.startswith("gobby/docker-volumes/")
+            or member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
+            or not member.name.startswith("gobby/")
+        ):
+            continue
+        rel = member.name.removeprefix("gobby/")
+        if rel and (home / rel).exists():
+            return True
+    return False
+
+
 @click.command("pack")
 @click.argument("output", required=False, type=click.Path())
 @click.option("--no-docker", is_flag=True, help="Skip Docker volume export (Neo4j + Qdrant)")
@@ -243,8 +259,8 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
     """Pack all Gobby data into a portable archive for machine migration.
 
     Creates a tarball containing local configs, session transcripts, vector
-    store data, Docker volume data (Neo4j + Qdrant), a logical PostgreSQL dump
-    when configured, and the legacy SQLite hub file when present.
+    store data, Docker volume data (Neo4j + Qdrant), and a logical PostgreSQL
+    dump when configured.
 
     \b
     Usage:
@@ -423,8 +439,7 @@ def unpack(
     """Unpack a Gobby archive to restore data on a new machine.
 
     Restores local configs, session transcripts, vector store data, Docker
-    volume data (Neo4j + Qdrant), PostgreSQL logical dump data when present,
-    and the legacy SQLite hub file when present.
+    volume data (Neo4j + Qdrant), and PostgreSQL logical dump data when present.
 
     \b
     Usage:
@@ -466,15 +481,13 @@ def unpack(
             return
 
         # Safety check
-        if get_gobby_home().exists() and not force:
-            existing_db = get_gobby_home() / DB_NAME
-            if existing_db.exists():
-                if not click.confirm(
-                    f"Warning: {existing_db} already exists. "
-                    "This will overwrite your existing Gobby data. Continue?"
-                ):
-                    click.echo("Aborted.")
-                    sys.exit(0)
+        if get_gobby_home().exists() and not force and _archive_would_overwrite(members):
+            if not click.confirm(
+                f"Warning: {get_gobby_home()} already has Gobby data. "
+                "This will overwrite matching files. Continue?"
+            ):
+                click.echo("Aborted.")
+                sys.exit(0)
 
         click.echo(f"Unpacking {archive_path}...")
         if manifest:
@@ -490,14 +503,6 @@ def unpack(
         services_were_running = _stop_docker_services()
         if services_were_running:
             click.echo("  Stopped Docker services")
-
-        # Backup existing DB if present
-        existing_db = get_gobby_home() / DB_NAME
-        if existing_db.exists():
-            backup_name = f"{DB_NAME}.pre-unpack-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-            backup_path = get_gobby_home() / backup_name
-            shutil.copy2(existing_db, backup_path)
-            click.echo(f"  Backed up existing DB to {backup_name}")
 
         # Extract gobby/ contents to ~/.gobby/
         get_gobby_home().mkdir(parents=True, exist_ok=True)
@@ -515,6 +520,13 @@ def unpack(
 
             if member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/"):
                 postgres_members.append(member)
+                continue
+
+            if member.name == f"gobby/{DB_NAME}":
+                click.echo(
+                    "  Skipped DEPRECATED_SQLITE_IMPORT archive member: "
+                    f"{DB_NAME}; use `gobby postgres migrate-from-sqlite` manually."
+                )
                 continue
 
             if member.name.startswith("project-gobby"):

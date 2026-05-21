@@ -1,4 +1,4 @@
-"""Shared table filters for SQLite-to-PostgreSQL migration."""
+"""DEPRECATED_SQLITE_IMPORT: table filters for SQLite-to-PostgreSQL migration."""
 
 from __future__ import annotations
 

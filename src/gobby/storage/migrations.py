@@ -1,4 +1,4 @@
-"""Database migrations for the PostgreSQL hub backend."""
+"""PostgreSQL hub migrations plus DEPRECATED_SQLITE_IMPORT_TEST_ONLY fixtures."""
 
 from __future__ import annotations
 

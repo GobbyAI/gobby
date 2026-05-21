@@ -1,4 +1,4 @@
-"""Value normalization helpers for hub database migration."""
+"""DEPRECATED_SQLITE_IMPORT: value normalization helpers for hub migration."""
 
 from __future__ import annotations
 

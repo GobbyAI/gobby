@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def db(tmp_path):
-    """Create a temporary database with FTS5 tables."""
+    """Create a temporary LocalDatabase fixture."""
     database = LocalDatabase(tmp_path / "test.db")
     run_migrations(database)
     yield database

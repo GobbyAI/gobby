@@ -49,6 +49,7 @@ _TICKET_CAPTURE_KINDS = {"pgaudit-managed", "pgaudit-file", "wal-archive", "none
 _PGAUDIT_CONTAINER = "gobby-postgres"
 _PGAUDIT_LOG_DIR = "/var/log/pgaudit"
 _WAL_ARCHIVE_SLOT_KEYS = ("slot_name", "slot", "replication_slot")
+# DEPRECATED_SQLITE_IMPORT: retained only for one-way legacy imports. Remove via #14981.
 
 
 @click.group("postgres")
@@ -170,7 +171,7 @@ def uninstall_cmd(remove_data: bool) -> None:
     type=click.Path(path_type=Path),
     default=Path("~/.gobby/gobby-hub.db"),
     show_default=True,
-    help="SQLite hub database to import.",
+    help="Deprecated migration-only SQLite hub database to import.",
 )
 @click.option(
     "--target",
@@ -196,7 +197,7 @@ def migrate_from_sqlite(
     batch_size: int,
     dry_run: bool,
 ) -> None:
-    """Import the SQLite hub database into PostgreSQL."""
+    """DEPRECATED_SQLITE_IMPORT: import the SQLite hub database into PostgreSQL."""
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
 
@@ -232,12 +233,12 @@ def migrate_from_sqlite(
     default=False,
     help=(
         "Native/external mode only. Acknowledges that no validation-window writes will "
-        "be auto-captured; rollback will rely on the pre-cutover SQLite backup. "
+        "be auto-captured; recovery will rely on the operator-managed pre-cutover backup. "
         "Requires typing the confirmation phrase. Mutually exclusive with --capture-sink."
     ),
 )
 def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> None:
-    """Activate PostgreSQL as the hub database runtime backend."""
+    """DEPRECATED_SQLITE_IMPORT: finalize an imported SQLite-to-PostgreSQL cutover."""
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
     if not _postgres_migration_complete():
@@ -276,22 +277,10 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
 
     click.echo("hub_backend set to postgres.")
     click.echo("PostgreSQL is now the required hub runtime.")
-    click.echo("For validation-window recovery guidance:")
+    click.echo("For validation-window recovery export guidance:")
     click.echo("  docs/runbooks/postgres-rollback.md")
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
-
-
-@postgres_cli.command("deactivate")
-def deactivate_cmd() -> None:
-    """Deprecated compatibility command for the removed SQLite hub runtime."""
-    raise click.ClickException(
-        "PostgreSQL is the only supported hub runtime. "
-        "`gobby postgres deactivate` no longer writes hub_backend=sqlite. "
-        "hub_backend=sqlite cannot start under the Phase 7 runtime. "
-        "Use `gobby postgres migrate-from-sqlite` only for legacy imports, "
-        "and follow docs/runbooks/postgres-rollback.md for recovery exports."
-    )
 
 
 def _render_install_result(result: dict[str, Any]) -> None:

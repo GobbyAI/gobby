@@ -1,4 +1,4 @@
-"""PostgreSQL sequence reseeding for SQLite imports."""
+"""DEPRECATED_SQLITE_IMPORT: PostgreSQL sequence reseeding for SQLite imports."""
 
 from __future__ import annotations
 

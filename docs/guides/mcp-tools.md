@@ -259,7 +259,7 @@ artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 
 | Tool | Description |
 | :--- | :--- |
-| `search_tasks` | FTS5 full-text search over titles, descriptions, and validation criteria. |
+| `search_tasks` | pg_search BM25 over titles, descriptions, and validation criteria. |
 
 ### Example: Task Workflow
 

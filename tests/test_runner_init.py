@@ -77,7 +77,7 @@ class TestSetMockDefault:
 
 
 class TestInitHubDatabase:
-    def test_rejects_sqlite_backend(self) -> None:
+    def test_rejects_non_postgres_backend(self) -> None:
         from gobby.runner_init import helpers
 
         config = SimpleNamespace(
@@ -85,7 +85,7 @@ class TestInitHubDatabase:
             database_url=None,
         )
 
-        with pytest.raises(ValueError, match="sqlite"):
+        with pytest.raises(ValueError, match="postgres"):
             helpers.init_hub_database(config)
 
     def test_uses_postgres_backend_when_selected(self, monkeypatch) -> None:

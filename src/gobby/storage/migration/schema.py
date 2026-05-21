@@ -1,4 +1,4 @@
-"""SQLite source schema validation for one-shot PostgreSQL imports."""
+"""DEPRECATED_SQLITE_IMPORT: SQLite source schema validation for one-shot imports."""
 
 from __future__ import annotations
 

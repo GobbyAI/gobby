@@ -1,4 +1,4 @@
-"""Post-copy validation for one-shot SQLite to PostgreSQL migration."""
+"""DEPRECATED_SQLITE_IMPORT: post-copy SQLite-to-PostgreSQL validation."""
 
 from __future__ import annotations
 

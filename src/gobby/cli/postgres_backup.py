@@ -37,14 +37,12 @@ _SUBPROCESS_TIMEOUT_SECONDS = 600
 
 
 def postgres_backup_configured(*, gobby_home: Path | None = None) -> bool:
-    """Return true when bootstrap state declares a PostgreSQL runtime target."""
+    """Return true when bootstrap state has a PostgreSQL backup target."""
     home = gobby_home or get_gobby_home()
     try:
         data = _bootstrap.read_bootstrap_yaml(_bootstrap.bootstrap_path(home))
     except Exception:
         return False
-    if data.get("hub_backend") == "postgres":
-        return True
     return _has_text(data.get("database_url")) or _has_text(data.get("database_url_ref"))
 
 

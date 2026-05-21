@@ -286,10 +286,10 @@ Search uses the best available local infrastructure:
 
 1. With Qdrant and embeddings configured, the query is embedded and matched
    against memory vectors.
-2. If Neo4j graph search is available, graph matches join vector and FTS results
-   through reciprocal-rank fusion.
-3. FTS5 keyword search participates when semantic search is available and is the
-   fallback when vectors are unavailable.
+2. If Neo4j graph search is available, graph matches join vector and keyword
+   results through reciprocal-rank fusion.
+3. pg_search BM25 keyword search participates when semantic search is available
+   and is the fallback when vectors are unavailable.
 4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
@@ -453,7 +453,7 @@ call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
 ### Search quality is poor
 
 Run a tag-filtered search to confirm the memory exists, then verify embeddings
-and Qdrant are available. Without embeddings, Gobby falls back to FTS5 keyword
+and Qdrant are available. Without embeddings, Gobby falls back to keyword
 search.
 
 ```bash

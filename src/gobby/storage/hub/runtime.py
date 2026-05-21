@@ -16,11 +16,8 @@ def open_runtime_hub_database(
 ) -> HubDatabase:
     """Open the configured PostgreSQL runtime hub database."""
     config = load_config(config_file)
-    if config.hub_backend == "sqlite":
-        raise RuntimeError(
-            "hub_backend=sqlite is no longer supported; configure PostgreSQL with "
-            "`gobby postgres install`."
-        )
+    if config.hub_backend != "postgres":
+        raise RuntimeError("hub_backend must be postgres; run `gobby postgres install`.")
     if not config.database_url:
         raise RuntimeError("hub_backend=postgres requires database_url_ref in bootstrap.yaml")
 

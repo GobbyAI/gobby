@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+
+from gobby.storage.sql_dialect import dialect_of
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +116,8 @@ def pick_search_backend(
             "Semantic search is a follow-up workstream; use mode='keyword' today."
         )
     config = _table_config(table)
+    if dialect_of(hub) == "sqlite":
+        return DeprecatedSqliteKeywordSearchBackend(hub, config)
     return BM25SearchBackend(hub, config)
 
 
@@ -185,6 +190,80 @@ class BM25SearchBackend:
         return None
 
 
+class DeprecatedSqliteKeywordSearchBackend:
+    """DEPRECATED_SQLITE_IMPORT_TEST_ONLY: LIKE search for LocalDatabase fixtures."""
+
+    def __init__(self, hub: Any, table: str | _TableConfig) -> None:
+        self._hub = hub
+        self._config = _table_config(table) if isinstance(table, str) else table
+        self._fit_items: list[tuple[str, str]] = []
+
+    def fit(self, items: list[tuple[str, str]]) -> None:
+        self._fit_items = items.copy()
+
+    def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        filters: Mapping[str, Any] | None = None,
+    ) -> list[SearchHit]:
+        if self._fit_items:
+            return _search_deprecated_sqlite_fit_items(query, limit, self._fit_items)
+
+        escaped_query = _escape_sqlite_like(query.strip())
+        if not escaped_query:
+            return []
+
+        params: list[Any] = []
+        columns = _sqlite_search_columns(self._config)
+        search_clauses = []
+        for column in columns:
+            search_clauses.append(f"COALESCE({column}, '') LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped_query}%")
+
+        where = [f"({' OR '.join(search_clauses)})"]
+        if filters:
+            where.extend(_sqlite_filter_clauses(params, self._config, filters))
+
+        params.append(limit)
+        sql = f"""
+            SELECT id
+              FROM {self._config.table}
+             WHERE {" AND ".join(where)}
+             ORDER BY id ASC
+             LIMIT ?
+        """  # nosec B608 - table and column names come from static _TABLE_CONFIGS.
+
+        try:
+            rows = fetch_all(self._hub, sql, params)
+        except Exception as exc:
+            logger.debug(
+                "DEPRECATED_SQLITE_IMPORT_TEST_ONLY keyword search failed on %s: %s",
+                self._config.table,
+                exc,
+            )
+            return []
+
+        return [SearchHit(id=str(row_value(row, "id")), score=1.0) for row in rows]
+
+    def get_stats(self) -> dict[str, Any]:
+        try:
+            row = fetch_one(self._hub, f"SELECT count(*) AS cnt FROM {self._config.table}", [])
+            count = int(row_value(row, "cnt")) if row else 0
+        except Exception:
+            count = 0
+        return {
+            "backend_type": "DEPRECATED_SQLITE_IMPORT_TEST_ONLY_like",
+            "table": self._config.table,
+            "document_count": count,
+            "fitted": True,
+        }
+
+    def clear(self) -> None:
+        return None
+
+
 class KeywordAsyncSearchBackend:
     """Async adapter for UnifiedSearcher keyword mode."""
 
@@ -194,6 +273,9 @@ class KeywordAsyncSearchBackend:
         self._backend = pick_search_backend(hub, table)
 
     async def fit_async(self, _items: list[tuple[str, str]]) -> None:
+        fit = getattr(self._backend, "fit", None)
+        if callable(fit):
+            fit(_items)
         return None
 
     async def search_async(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
@@ -265,6 +347,56 @@ def _filter_clauses(
         placeholder_token = _add_param(hub, params, value)
         clauses.append(f"{alias}.{columns[filter_name]} = {placeholder_token}")
     return clauses
+
+
+def _sqlite_filter_clauses(
+    params: list[Any],
+    config: _TableConfig,
+    filters: Mapping[str, Any],
+) -> list[str]:
+    clauses: list[str] = []
+    columns = config.filters or {}
+    for filter_name, value in filters.items():
+        if value is None or filter_name not in columns:
+            continue
+        clauses.append(f"{columns[filter_name]} = ?")
+        params.append(value)
+    return clauses
+
+
+def _sqlite_search_columns(config: _TableConfig) -> tuple[str, ...]:
+    return tuple("tags" if column == "tags_text" else column for column in config.postgres_columns)
+
+
+def _escape_sqlite_like(query: str) -> str:
+    return query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_deprecated_sqlite_fit_items(
+    query: str,
+    limit: int,
+    items: list[tuple[str, str]],
+) -> list[SearchHit]:
+    query_tokens = _keyword_tokens(query)
+    if not query_tokens:
+        return []
+
+    hits: list[SearchHit] = []
+    for item_id, content in items:
+        content_lower = content.lower()
+        content_tokens = set(_keyword_tokens(content))
+        matched = sum(
+            1 for token in query_tokens if token in content_tokens or token in content_lower
+        )
+        if matched == len(query_tokens):
+            hits.append(SearchHit(id=item_id, score=matched / len(query_tokens)))
+
+    hits.sort(key=lambda hit: (-hit.score, hit.id))
+    return hits[:limit]
+
+
+def _keyword_tokens(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9_]+", value.lower())
 
 
 def _table_config(table: str) -> _TableConfig:

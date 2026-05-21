@@ -2,8 +2,8 @@
 
 These settings are needed before the PostgreSQL hub is available:
 daemon_port, bind_host, websocket_port, ui_port, neo4j_password, hub_backend,
-database_url_ref, postgres_install_mode. database_path remains only for legacy
-SQLite import and test compatibility.
+database_url_ref, postgres_install_mode. database_path remains only for
+DEPRECATED_SQLITE_IMPORT tooling and test compatibility.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -32,9 +32,9 @@ POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
 POSTGRES_DATABASE_URL_REF = (
     f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
 )
-_POSTGRES_DATABASE_URL_CACHE: dict[tuple[int, str, str], str] = {}
+_POSTGRES_DATABASE_URL_CACHE: dict[tuple[Any, str, str], str] = {}
 
-HubBackend = Literal["sqlite", "postgres"]
+HubBackend = Literal["postgres"]
 PostgresInstallMode = Literal["docker", "native", "external"]
 
 try:
@@ -57,7 +57,7 @@ class BootstrapConfig:
     websocket_port: int = 60888
     ui_port: int = 60889
     neo4j_password: str = "gobbyneo4j"
-    hub_backend: HubBackend = "sqlite"
+    hub_backend: HubBackend = "postgres"
     database_url: str | None = None
     postgres_install_mode: PostgresInstallMode | None = None
 
@@ -112,7 +112,8 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
         if not isinstance(data, dict):
             return BootstrapConfig()
 
-        hub_backend = _parse_hub_backend(data.get("hub_backend", "sqlite"))
+        explicit_hub_backend = "hub_backend" in data
+        hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
         database_url_ref = _parse_optional_str(data.get("database_url_ref"), "database_url_ref")
         if database_url:
@@ -127,7 +128,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
         elif database_url_ref:
             database_url = resolve_postgres_database_url_ref(database_url_ref)
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
-        if hub_backend == "postgres" and not database_url:
+        if explicit_hub_backend and not database_url:
             raise BootstrapConfigError("hub_backend=postgres requires database_url")
 
         return BootstrapConfig(
@@ -154,9 +155,9 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
 
 
 def _parse_hub_backend(value: object) -> HubBackend:
-    if isinstance(value, str) and value in {"sqlite", "postgres"}:
+    if value == "postgres":
         return cast(HubBackend, value)
-    raise BootstrapConfigError("hub_backend must be one of: sqlite, postgres")
+    raise BootstrapConfigError("hub_backend must be postgres")
 
 
 def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
@@ -312,8 +313,8 @@ def _postgres_database_url_cache_key(
     keyring_backend: Any,
     service: str,
     username: str,
-) -> tuple[int, str, str]:
-    return id(keyring_backend), service, username
+) -> tuple[Any, str, str]:
+    return keyring_backend, service, username
 
 
 def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:

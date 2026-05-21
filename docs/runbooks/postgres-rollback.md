@@ -1,21 +1,16 @@
-# PostgreSQL Rollback Runbook
+# PostgreSQL Recovery Export Runbook
 
-Use this runbook only during the post-cutover validation window. Trigger it when
-any validation-window regression cannot be fixed forward within 2 hours, or when
-any data corruption is detected.
+Use this runbook during the post-cutover validation window when a regression
+cannot be fixed forward within 2 hours, or when any data corruption is detected.
 
 Phase 7 does not support restarting Gobby against the legacy SQLite hub runtime.
-`gobby postgres deactivate` is retained only as a compatibility command and
-exits before writing `hub_backend=sqlite`. This runbook captures PostgreSQL-side
-writes before a fix-forward or operator-managed restore path; it does not switch
-the current runtime back to SQLite. `gobby postgres uninstall` removes or
-disconnects PostgreSQL service artifacts only; it is not a rollback path and must
-not be used to restore the removed SQLite runtime.
+This runbook captures PostgreSQL-side writes before a fix-forward or
+operator-managed PostgreSQL restore path. `gobby postgres uninstall` removes or
+disconnects PostgreSQL service artifacts only; it is not a runtime fallback.
 
 Writes made to PostgreSQL during the validation window are at risk during
-recovery and are not merged back into a legacy SQLite backup automatically. The
-export step below preserves evidence for forensic analysis and possible later
-partial-merge work; it does not recover the writes into SQLite.
+recovery. The export step below preserves evidence for forensic analysis and
+operator-managed repair.
 
 ## Before Recovery
 
@@ -26,7 +21,7 @@ partial-merge work; it does not recover the writes into SQLite.
    ```
 
 2. Locate the cutover ticket emitted by `gobby postgres activate` and attach the
-   path to the rollback ticket:
+   path to the recovery ticket:
 
    ```bash
    ls -1t ~/.gobby/migrations/cutover-*.json | head -n1
@@ -40,18 +35,18 @@ partial-merge work; it does not recover the writes into SQLite.
    deadline_at="$(jq -r '.deadline_at' "$ticket")"
    capture_kind="$(jq -r '.capture_kind' "$ticket")"
    capture_value="$(jq -r '.capture_value // empty' "$ticket")"
-   rollback_end_at="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+   recovery_end_at="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
    ```
 
    Use `activated_at` as the export start. Use the current UTC time as the export
-   end when rolling back before `deadline_at`; set `rollback_end_at` to
+   end when recovering before `deadline_at`; set `recovery_end_at` to
    `deadline_at` when exporting a complete validation window after the deadline
    has already been reached.
 
 4. Create a safe artifact directory outside the live database paths:
 
    ```bash
-   artifact_dir="$HOME/.gobby/rollback-artifacts/$(date -u +%Y%m%dT%H%M%SZ)"
+   artifact_dir="$HOME/.gobby/recovery-artifacts/$(date -u +%Y%m%dT%H%M%SZ)"
    mkdir -p "$artifact_dir"
    cp "$ticket" "$artifact_dir/cutover-ticket.json"
    ```
@@ -68,7 +63,7 @@ container. Export the audit lines for the validation window before recovery:
 ```bash
 docker exec gobby-postgres /usr/local/bin/pg_audit_export.sh \
   --start "$activated_at" \
-  --end "$rollback_end_at" \
+  --end "$recovery_end_at" \
   > "$artifact_dir/validation-window-pgaudit.log"
 ```
 
@@ -101,7 +96,7 @@ in `capture_value`. Copy the source log and produce a window-filtered artifact:
 ```bash
 cp "$capture_value" "$artifact_dir/source-pgaudit.log"
 start_key="$(printf '%s\n' "$activated_at" | sed 's/T/ /; s/Z$//; s/+00:00$//')"
-end_key="$(printf '%s\n' "$rollback_end_at" | sed 's/T/ /; s/Z$//; s/+00:00$//')"
+end_key="$(printf '%s\n' "$recovery_end_at" | sed 's/T/ /; s/Z$//; s/+00:00$//')"
 awk -v start="$start_key" -v end="$end_key" '
   /AUDIT:/ {
     line_ts = substr($0, 1, 19)
@@ -115,13 +110,13 @@ awk -v start="$start_key" -v end="$end_key" '
 This filter assumes the operator's pgAudit file starts each line with a
 PostgreSQL timestamp such as `YYYY-MM-DD HH:MM:SS`. If the operator changed the
 log prefix, use their parser to apply the same `activated_at` to
-`rollback_end_at` window and attach both the parser command and output.
+`recovery_end_at` window and attach both the parser command and output.
 
 ### `capture_kind="wal-archive"`
 
 Native and external installs with WAL archiving record the archive endpoint or
 slot descriptor in `capture_value`. Use the operator's WAL archive runbook to
-export the timestamp window from `activated_at` to the rollback end time:
+export the timestamp window from `activated_at` to the recovery end time:
 
 ```bash
 printf '%s\n' "$capture_value" > "$artifact_dir/wal-archive-source.txt"
@@ -146,27 +141,22 @@ psql "$DATABASE_URL" \
   > "$artifact_dir/tasks-updated-during-window.csv"
 ```
 
-The operator is expected to rely on the pre-cutover SQLite backup only for an
-operator-managed legacy restore path outside the current Phase 7 runtime.
-The rollback ticket must include the acknowledgement block so the audit chain is
+The recovery ticket must include the acknowledgement block so the audit chain is
 intact.
 
 ## Recovery After Export
 
-1. Keep the current bootstrap on PostgreSQL. Do not run
-   `gobby postgres deactivate`; if invoked, the command exits with an error and
-   does not write `hub_backend=sqlite`. Do not use `gobby postgres uninstall` as
-   a rollback step. Phase 7 startup rejects `hub_backend=sqlite`; leave
-   `bootstrap.yaml` using the PostgreSQL keyring reference
+1. Keep the current bootstrap on PostgreSQL. Do not use `gobby postgres
+   uninstall` as a recovery step. Leave `bootstrap.yaml` using the PostgreSQL
+   keyring reference
    (`keyring:gobby:postgres_database_url`) and do not add a plaintext
    `database_url`.
 
 2. Choose the recovery path:
 
    - Preferred: fix forward against the PostgreSQL hub, then restart the daemon.
-   - If a rollback is unavoidable: use the exported artifacts and the
-     pre-cutover SQLite backup only in an operator-managed restore path outside
-     the current Phase 7 runtime.
+   - If restore is unavoidable: use the exported artifacts with an
+     operator-managed PostgreSQL restore path.
 
 3. Start the daemon after the selected recovery path is in place:
 
@@ -184,7 +174,7 @@ intact.
    gcode search "bar"
    ```
 
-5. Attach the complete artifact directory to the rollback or post-mortem task:
+5. Attach the complete artifact directory to the recovery or post-mortem task:
 
    ```text
    cutover-ticket.json
@@ -194,14 +184,10 @@ intact.
    smoke-check results after restart
    ```
 
-6. File a task to repair the blocking regression or corruption cause and re-run
-   import/cutover if an operator-managed legacy restore path was used.
+6. File a task to repair the blocking regression or corruption cause.
 
 ## After the Validation Window
 
-This rollback path is only for the validation window. If the window closes
-without recovery, a later rollback requires product-supported reverse migration
-tooling. The keyring-backed DSN remains required until that process is complete;
-deleting the keyring entry or writing a plaintext fallback to `bootstrap.yaml`
-is not a supported steady-state rollback path. That reverse migration is out of
-scope for this runbook.
+This recovery export path is only for the validation window. The keyring-backed
+DSN remains required; deleting the keyring entry or writing a plaintext fallback
+to `bootstrap.yaml` is not a supported steady-state recovery path.

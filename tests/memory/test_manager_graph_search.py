@@ -118,7 +118,7 @@ class TestRRFMerge:
         assert set(result_low_k) == {"a", "b"}
 
     def test_three_sources(self) -> None:
-        """RRF with three sources (Qdrant + graph + FTS5)."""
+        """RRF with three sources (Qdrant + graph + keyword)."""
         result = MemoryManager._rrf_merge(
             ["a", "b"],
             ["b", "c"],

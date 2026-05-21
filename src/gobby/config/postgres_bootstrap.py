@@ -77,8 +77,8 @@ def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
 def _require_postgres_runtime_bootstrap(data: dict[str, Any]) -> None:
     if data.get("hub_backend") != "postgres":
         raise BootstrapConfigError(
-            "PostgreSQL uninstall cannot restore hub_backend=sqlite. "
-            "Keep hub_backend=postgres with database_url or database_url_ref."
+            "PostgreSQL uninstall requires hub_backend=postgres with database_url "
+            "or database_url_ref."
         )
     if not (
         _has_bootstrap_string(data, "database_url")

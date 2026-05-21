@@ -22,9 +22,10 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
-    assert {"install", "backup", "restore", "uninstall", "status", "activate", "deactivate"} <= set(
+    assert {"install", "backup", "restore", "uninstall", "status", "activate"} <= set(
         postgres_group.commands
     )
+    assert "deactivate" not in postgres_group.commands
 
 
 @pytest.mark.parametrize(
@@ -36,7 +37,6 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
         (["postgres", "restore", "--help"], ["--clean", "--yes"]),
         (["postgres", "uninstall", "--help"], ["--remove-data"]),
         (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
-        (["postgres", "deactivate", "--help"], []),
     ],
 )
 def test_postgres_cli_help_exposes_phase1_options(args: list[str], expected: list[str]) -> None:
@@ -64,6 +64,7 @@ def test_postgres_cli_exposes_migrate_from_sqlite_command() -> None:
     assert "--target" in result.output
     assert "--batch-size" in result.output
     assert "--dry-run" in result.output
+    assert "Deprecated migration-only" in result.output
 
 
 def test_migrate_from_sqlite_command_invokes_importer_with_options(
@@ -315,7 +316,7 @@ def test_postgres_uninstall_rejects_sqlite_runtime_rollback(
     assert bootstrap["hub_backend"] == "sqlite"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == "docker"
-    assert "cannot restore hub_backend=sqlite" in result.output
+    assert "requires hub_backend=postgres" in result.output
 
 
 def test_postgres_activate_refuses_when_daemon_is_running(
@@ -354,7 +355,7 @@ def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
 
     probe_calls: list[str] = []
@@ -402,7 +403,7 @@ def test_postgres_activate_external_accepts_operator_capture_sink(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="postgres")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="external")
     ownership_checks: list[str] = []
     audit_log = tmp_path / "pgaudit.log"
@@ -435,7 +436,7 @@ def test_postgres_activate_external_rejects_missing_pgaudit_file_sink(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="external", hub_backend="postgres")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="external")
     monkeypatch.setattr(postgres_cli_module, "_require_ownership_sentinel_or_fail", lambda: None)
 
@@ -446,7 +447,7 @@ def test_postgres_activate_external_rejects_missing_pgaudit_file_sink(
 
     assert result.exit_code != 0
     assert "pgaudit-file capture sink must already exist" in result.output
-    assert _read_bootstrap(tmp_path)["hub_backend"] == "sqlite"
+    assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
 
 
 def test_probe_capture_sink_wal_archive_requires_matching_replication_slot(
@@ -584,7 +585,7 @@ def test_postgres_activate_native_external_requires_one_capture_policy(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="native", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="native", hub_backend="postgres")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="native")
 
     result = CliRunner().invoke(postgres_cli, ["activate"])
@@ -600,7 +601,7 @@ def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
     _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
     monkeypatch.setattr(
         postgres_cli_module,
@@ -617,28 +618,7 @@ def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
 
     assert result.exit_code != 0
     assert isinstance(result.exception, OSError)
-    assert _read_bootstrap(tmp_path)["hub_backend"] == "sqlite"
-
-
-def test_postgres_deactivate_rejects_sqlite_runtime_rollback(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
-
-    result = CliRunner().invoke(postgres_cli, ["deactivate"])
-
-    assert result.exit_code != 0
     assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
-    assert not list(tmp_path.glob("bootstrap.yaml.*.bak"))
-    assert "PostgreSQL is the only supported hub runtime" in result.output
-    assert "no longer writes hub_backend=sqlite" in result.output
-    assert "hub_backend=sqlite cannot start" in result.output
 
 
 def _write_postgres_bootstrap(

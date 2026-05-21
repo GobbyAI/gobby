@@ -60,10 +60,10 @@ ui_port: 60889
 neo4j_password: "gobbyneo4j"
 ```
 
-`database_path` is only relevant to legacy SQLite imports and
-operator-managed restore artifacts outside the current runtime. Use
-`gobby postgres migrate-from-sqlite` to import an old `gobby-hub.db`; do not
-use `database_path` or `gobby postgres uninstall` to restore SQLite as the hub.
+`database_path` is only relevant to `DEPRECATED_SQLITE_IMPORT` tooling and
+operator-managed artifacts outside the current runtime. Use the deprecated
+`gobby postgres migrate-from-sqlite` command to import an old `gobby-hub.db`;
+do not use `database_path` or `gobby postgres uninstall` as a runtime fallback.
 
 `database_url_ref` must stay on `keyring:gobby:postgres_database_url`. The OS
 keyring credential belongs to the installing user. Linux desktop sessions need

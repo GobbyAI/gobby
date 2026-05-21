@@ -1,1 +1,1 @@
-"""Helpers for one-shot SQLite to PostgreSQL storage migration."""
+"""DEPRECATED_SQLITE_IMPORT: helpers for one-shot SQLite to PostgreSQL migration."""

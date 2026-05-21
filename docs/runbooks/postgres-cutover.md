@@ -35,8 +35,8 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    gobby stop
    ```
 
-3. Back up the SQLite hub database to a dated path and record the SHA-256 digest
-   in the cutover change ticket:
+3. For `DEPRECATED_SQLITE_IMPORT` cutovers only, back up the SQLite hub database
+   to a dated path and record the SHA-256 digest in the cutover change ticket:
 
    ```bash
    backup_path="$HOME/.gobby/gobby-hub.db.$(date -u +%Y%m%dT%H%M%SZ).bak"
@@ -54,7 +54,7 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    gobby postgres install
    ```
 
-5. Import SQLite into PostgreSQL:
+5. Import SQLite into PostgreSQL with the deprecated migration-only command:
 
    ```bash
    gobby postgres migrate-from-sqlite --source ~/.gobby/gobby-hub.db --target "$DATABASE_URL"
@@ -130,19 +130,15 @@ Platform expectations:
   user. The daemon service must run as that same Windows user; LocalSystem or a
   different service account cannot read the credential.
 
-`gobby postgres deactivate` is retained only as a compatibility command and
-exits before writing `hub_backend=sqlite`. Phase 7 startup rejects
-`hub_backend=sqlite`; keep `hub_backend=postgres` in `bootstrap.yaml`.
-`gobby postgres uninstall` is service cleanup, not a rollback path to SQLite.
-Before restarting the daemon after uninstalling a PostgreSQL service, preserve or
-recreate a valid PostgreSQL `database_url_ref` / `database_url` bootstrap entry.
-If the keyring entry was deleted, recreate it by rerunning the matching
+`gobby postgres uninstall` is service cleanup. Before restarting the daemon
+after uninstalling a PostgreSQL service, preserve or recreate a valid PostgreSQL
+`database_url_ref` / `database_url` bootstrap entry. If the keyring entry was
+deleted, recreate it by rerunning the matching
 `gobby postgres install --mode ... --dsn ...` command while the daemon is stopped.
 
 After the validation window closes, the steady-state PostgreSQL runtime still
-uses the same keyring reference. A later rollback requires product-supported
-reverse migration tooling and a valid keyring entry until that process is
-complete; there is no supported plaintext bootstrap fallback.
+uses the same keyring reference. Product-supported recovery must preserve a
+valid keyring entry; there is no supported plaintext bootstrap fallback.
 
 ## Validation Capture
 
@@ -213,9 +209,9 @@ and timestamp in the cutover artifact. There is no generic yes flag and no
 
 5. Announce cutover complete and record the validation-window deadline from the
    cutover artifact. The maximum validation window is 48 hours from
-   `activated_at`; use `deadline_at` as the rollback deadline. If blocking
-   regressions remain at the deadline, roll back instead of extending the window
-   silently.
+   `activated_at`; use `deadline_at` as the recovery decision deadline. If
+   blocking regressions remain at the deadline, stop the daemon and use the
+   recovery export runbook instead of extending the window silently.
 
 ## Validation Watch List
 
