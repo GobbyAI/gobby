@@ -244,7 +244,7 @@ def _rewrite_boolean_literals_in_plain_sql(sql: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         literal = "TRUE" if match.group("value") == "1" else "FALSE"
-        return f"{match.group('column')} IS {literal}"
+        return f"{match.group('column')} = {literal}"
 
     return _BOOLEAN_LITERAL_RE.sub(replace, sql)
 

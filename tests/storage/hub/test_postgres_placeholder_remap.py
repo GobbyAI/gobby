@@ -192,9 +192,24 @@ def test_postgres_transaction_execute_rewrites_sqlite_boolean_literals() -> None
 
     assert conn.execute_calls == [
         (
-            "SELECT * FROM mcp_servers WHERE enabled IS TRUE "
-            "AND graph_synced IS FALSE AND source = 'enabled = 1'",
+            "SELECT * FROM mcp_servers WHERE enabled = TRUE "
+            "AND graph_synced = FALSE AND source = 'enabled = 1'",
             (),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_rewrites_boolean_assignment_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = ?", ("file-1",))
+
+    assert conn.execute_calls == [
+        (
+            "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
+            ("file-1",),
         )
     ]
 
