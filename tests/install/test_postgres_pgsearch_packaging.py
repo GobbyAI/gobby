@@ -34,8 +34,8 @@ def _source_asset_root(repo_root: Path) -> Path:
     return repo_root / "src/gobby/data/postgres-pgsearch"
 
 
-def _assert_phase1_tree_exists(root: Path) -> None:
-    for relative_path in _PHASE1_ASSET_FILES:
+def _assert_asset_files_exist(root: Path, relative_paths: tuple[str, ...]) -> None:
+    for relative_path in relative_paths:
         assert (root / relative_path).is_file(), f"missing {relative_path}"
 
 
@@ -45,15 +45,22 @@ def _read_source_asset(repo_root: Path, relative_path: str) -> str:
     return path.read_text()
 
 
+def _run_pg_audit_export_script(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    script_path = _source_asset_root(repo_root) / "scripts/pg_audit_export.sh"
+    return subprocess.run(
+        [str(script_path), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_source_tree_has_phase1_assets(repo_root: Path) -> None:
-    _assert_phase1_tree_exists(_source_asset_root(repo_root))
+    _assert_asset_files_exist(_source_asset_root(repo_root), _PHASE1_ASSET_FILES)
 
 
 def test_source_tree_has_phase6_pgaudit_assets(repo_root: Path) -> None:
-    asset_root = _source_asset_root(repo_root)
-
-    for relative_path in _PHASE6_PGAUDIT_ASSET_FILES:
-        assert (asset_root / relative_path).is_file(), f"missing {relative_path}"
+    _assert_asset_files_exist(_source_asset_root(repo_root), _PHASE6_PGAUDIT_ASSET_FILES)
 
 
 def test_version_manifest_schema_is_canonical(repo_root: Path) -> None:
@@ -143,17 +150,48 @@ def test_installed_wheel_ships_pg_audit_export_script() -> None:
 
 
 def test_pg_audit_export_script_help_exits_zero(repo_root: Path) -> None:
-    script_path = _source_asset_root(repo_root) / "scripts/pg_audit_export.sh"
-
-    result = subprocess.run(
-        [str(script_path), "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_pg_audit_export_script(repo_root, "--help")
 
     assert result.returncode == 0
     assert "Usage: pg_audit_export.sh" in result.stdout
+
+
+def test_pg_audit_export_script_filters_audit_lines_by_window(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    expected_line = (
+        "2026-05-21 12:05:00.000 UTC [42] LOG:  AUDIT: SESSION,1,1,"
+        "WRITE,INSERT,TABLE,public.tasks,insert"
+    )
+    (tmp_path / "pgaudit-2026-05-21_120000.log").write_text(
+        "\n".join(
+            [
+                "2026-05-21 11:59:59.000 UTC [42] LOG:  AUDIT: SESSION,outside",
+                "2026-05-21 12:03:00.000 UTC [42] LOG:  statement: SELECT 1",
+                expected_line,
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pgaudit-2026-05-21_130000.log").write_text(
+        "2026-05-21 13:00:00.000 UTC [42] LOG:  AUDIT: SESSION,outside\n",
+        encoding="utf-8",
+    )
+
+    result = _run_pg_audit_export_script(
+        repo_root,
+        "--start",
+        "2026-05-21T12:00:00Z",
+        "--end",
+        "2026-05-21T12:10:00Z",
+        "--log-dir",
+        str(tmp_path),
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [expected_line]
 
 
 def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
