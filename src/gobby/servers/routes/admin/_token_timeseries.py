@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Query
 
+from gobby.storage.sql_dialect import is_postgres, newer_than_now_expr
 from gobby.storage.token_events import (
     VALID_GRANULARITIES,
     TimeSeriesGranularity,
@@ -22,7 +23,22 @@ def _coerce_granularity(value: str) -> TimeSeriesGranularity:
     return cast(TimeSeriesGranularity, value)
 
 
-def _bucket_expression(column: str, granularity: TimeSeriesGranularity) -> str:
+def _bucket_expression(db: object, column: str, granularity: TimeSeriesGranularity) -> str:
+    if is_postgres(db):
+        column_utc = f"{column} AT TIME ZONE 'UTC'"
+        if granularity == "30m":
+            return (
+                "to_char("
+                f"date_trunc('hour', {column_utc}) + "
+                f"CASE WHEN EXTRACT(MINUTE FROM {column_utc}) < 30 "
+                "THEN INTERVAL '0 minutes' ELSE INTERVAL '30 minutes' END, "
+                '\'YYYY-MM-DD"T"HH24:MI:SS"Z"\''
+                ")"
+            )
+        if granularity == "1d":
+            return f"to_char(date_trunc('day', {column_utc}), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+        return f"to_char(date_trunc('hour', {column_utc}), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+
     if granularity == "30m":
         return (
             "CASE "
@@ -58,8 +74,8 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         clauses: list[str] = []
         params: list[Any] = []
         if hours > 0:
-            clauses.append("AND datetime(created_at) >= datetime('now', ?)")
-            params.append(f"-{hours} hours")
+            clauses.append(f"AND {newer_than_now_expr(db, 'created_at', '?', 'hour')}")
+            params.append(hours)
         if project_id:
             clauses.append("AND project_id = ?")
             params.append(project_id)
@@ -67,7 +83,7 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         where = " ".join(clauses)
         # _bucket_expression() is safe to interpolate here because FastAPI validates
         # granularity against ^(30m|1h|1d)$ before this query reaches db.fetchall().
-        bucket_expr = _bucket_expression("created_at", bucket_granularity)
+        bucket_expr = _bucket_expression(db, "created_at", bucket_granularity)
         rows = await server.run_db(
             db.fetchall,
             f"""

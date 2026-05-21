@@ -197,7 +197,7 @@ class PendingInteractionManager:
             result = conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'resolved', decision = ?, response_json = ?,
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND status = 'pending'""",
                 (decision, response_json, interaction_id),
             )
@@ -223,7 +223,7 @@ class PendingInteractionManager:
             conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND status = 'pending'""",
                 (interaction_id,),
             )
@@ -310,7 +310,7 @@ class PendingInteractionManager:
             conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE status = 'pending'"""
             )
 

@@ -19,6 +19,7 @@ from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.storage.sql_dialect import older_than_now_expr
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -241,14 +242,16 @@ async def cleanup_zombie_messages_loop(
     interval_seconds = interval_hours * 3600
 
     def _expire_zombies() -> None:
+        updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+        created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
         expired = db.execute(
-            "UPDATE inter_session_messages SET delivered_at = datetime('now') "
+            "UPDATE inter_session_messages SET delivered_at = CURRENT_TIMESTAMP "
             "WHERE delivered_at IS NULL AND to_session IN ("
             "  SELECT id FROM sessions WHERE status IN ('closed', 'expired') "
-            "  AND (updated_at < datetime('now', ? || ' hours')"
-            "       OR (updated_at IS NULL AND created_at < datetime('now', ? || ' hours')))"
+            f"  AND ({updated_stale_sql}"
+            f"       OR (updated_at IS NULL AND {created_stale_sql}))"
             ")",
-            (f"-{ttl_hours}", f"-{ttl_hours}"),
+            (ttl_hours, ttl_hours),
         )
         if expired.rowcount:
             logger.info(f"Expired {expired.rowcount} zombie messages")

@@ -86,7 +86,7 @@ def _ensure_dispatcher_project_row(db: DatabaseProtocol, project_id: str) -> Non
     db.execute(
         """
         INSERT INTO projects (id, name, created_at, updated_at)
-        VALUES (?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
         (project_id, f"project:{project_id}"),

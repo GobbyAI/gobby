@@ -764,7 +764,7 @@ def _create_stage_pipeline_execution(
                 id, pipeline_name, project_id, status, inputs_json, session_id,
                 definition_json, created_at, updated_at
             )
-            SELECT ?, ?, project_id, 'pending', ?, ?, ?, datetime('now'), datetime('now')
+            SELECT ?, ?, project_id, 'pending', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
               FROM tasks
              WHERE id = ?
             """,
@@ -782,7 +782,7 @@ def _create_stage_pipeline_execution(
             UPDATE task_dispatch_mutex
                SET run_id = ?,
                    action_kind = ?,
-                   updated_at = datetime('now')
+                   updated_at = CURRENT_TIMESTAMP
              WHERE task_id = ?
             """,
             (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),

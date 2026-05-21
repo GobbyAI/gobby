@@ -259,7 +259,7 @@ class StopRegistry:
                 """
                 DELETE FROM session_stop_signals
                 WHERE acknowledged_at IS NOT NULL
-                AND datetime(acknowledged_at) < datetime(?)
+                AND acknowledged_at < ?
                 """,
                 (threshold.isoformat(),),
             )

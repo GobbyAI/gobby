@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.storage.sql_dialect import is_postgres, older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,11 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
+    empty_terminal_context_sql = (
+        "terminal_context IS NULL"
+        if is_postgres(db)
+        else "(terminal_context IS NULL OR terminal_context = '')"
+    )
     cursor = db.execute(
         f"""
         UPDATE sessions
@@ -74,7 +79,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
             {updated_stale_sql}
             OR (
                 session_type = 'terminal'
-                AND (terminal_context IS NULL OR terminal_context = '')
+                AND {empty_terminal_context_sql}
                 AND {empty_terminal_created_stale_sql}
             )
         )
