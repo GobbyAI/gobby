@@ -138,6 +138,7 @@ def _remap_placeholders_to_psycopg(
         new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
     new_sql = _cast_null_test_placeholders(new_sql)
     new_params = _coerce_boolean_params(new_sql, new_params)
+    new_sql = _escape_literal_percent_for_psycopg(new_sql)
     _cache_param_permutation(sql, len(params), indexes)
     return new_sql, new_params
 
@@ -191,8 +192,35 @@ def _prepare_params(
     params: Sequence[Any] | Mapping[str, Any],
 ) -> tuple[str, Sequence[Any] | Mapping[str, Any]]:
     if isinstance(params, Mapping):
-        return _cast_null_test_placeholders(_rewrite_sqlite_boolean_literals(sql)), params
+        new_sql = _cast_null_test_placeholders(_rewrite_sqlite_boolean_literals(sql))
+        return _escape_literal_percent_for_psycopg(new_sql), params
     return _remap_placeholders_to_psycopg(sql, params)
+
+
+def _escape_literal_percent_for_psycopg(sql: str) -> str:
+    """Escape literal percent signs while preserving psycopg placeholders."""
+    out: list[str] = []
+    i = 0
+    n = len(sql)
+    while i < n:
+        char = sql[i]
+        if char != "%":
+            out.append(char)
+            i += 1
+            continue
+        if i + 1 < n and sql[i + 1] in {"s", "b", "t", "%"}:
+            out.append(sql[i : i + 2])
+            i += 2
+            continue
+        if i + 1 < n and sql[i + 1] == "(":
+            end = sql.find(")", i + 2)
+            if end >= 0 and end + 1 < n and sql[end + 1] in {"s", "b", "t"}:
+                out.append(sql[i : end + 2])
+                i = end + 2
+                continue
+        out.append("%%")
+        i += 1
+    return "".join(out)
 
 
 def _rewrite_sqlite_boolean_literals(sql: str) -> str:

@@ -124,6 +124,14 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
             ("dev",),
         ),
         ("/* ? */ SELECT ?", ("dev",), "/* ? */ SELECT %s", ("dev",)),
+        (
+            "SELECT body FROM task_comments WHERE task_id = ? "
+            "AND body LIKE '## Holistic QA Failure%'",
+            ("task-1",),
+            "SELECT body FROM task_comments WHERE task_id = %s "
+            "AND body LIKE '## Holistic QA Failure%%'",
+            ("task-1",),
+        ),
     ],
 )
 def test_remap_placeholders_to_psycopg(sql, params, expected_sql, expected_params) -> None:
@@ -147,6 +155,18 @@ def test_remap_placeholders_to_psycopg_rejects_unterminated_dollar_quote() -> No
 
     with pytest.raises(ValueError, match="unterminated dollar-quote"):
         module._remap_placeholders_to_psycopg("SELECT $body$not closed", ())
+
+
+def test_prepare_params_escapes_literal_percent_without_touching_named_placeholders() -> None:
+    module = _postgres_module()
+
+    sql, params = module._prepare_params(
+        "SELECT %(value)s WHERE body LIKE 'prefix%' AND title = %(title)s",
+        {"value": 1, "title": "demo"},
+    )
+
+    assert sql == "SELECT %(value)s WHERE body LIKE 'prefix%%' AND title = %(title)s"
+    assert params == {"value": 1, "title": "demo"}
 
 
 class _FakePostgresConnection:

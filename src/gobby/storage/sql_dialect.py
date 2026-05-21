@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 StorageDialect = Literal["sqlite", "postgres"]
 IntervalUnit = Literal["second", "minute", "hour", "day"]
 
 _JSON_PATH_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def dialect_of(db: object) -> StorageDialect:
@@ -21,6 +22,25 @@ def dialect_of(db: object) -> StorageDialect:
 
 def is_postgres(db: object) -> bool:
     return dialect_of(db) == "postgres"
+
+
+def table_column_names(db: Any, table_name: str) -> set[str]:
+    """Return column names for a table using the current storage dialect."""
+    if not _SQL_IDENTIFIER_RE.fullmatch(table_name):
+        raise ValueError(f"Invalid table name: {table_name!r}")
+    if is_postgres(db):
+        rows = db.fetchall(
+            """
+            SELECT column_name AS name
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+            """,
+            (table_name,),
+        )
+    else:
+        rows = db.fetchall(f"PRAGMA table_info({table_name})")  # nosec B608
+    return {str(row["name"]) for row in rows}
 
 
 def json_text_expr(db: object, column: str, *path: str) -> str:

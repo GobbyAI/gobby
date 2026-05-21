@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import is_postgres
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -318,18 +318,7 @@ class StageRegistryManager:
                     conn.execute(sql)
 
     def _columns(self, table_name: str) -> set[str]:
-        if is_postgres(self.db):
-            rows = self.db.fetchall(
-                """
-                SELECT column_name AS name
-                  FROM information_schema.columns
-                 WHERE table_schema = current_schema()
-                   AND table_name = ?
-                """,
-                (table_name,),
-            )
-            return {row["name"] for row in rows}
-        return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
+        return table_column_names(self.db, table_name)
 
     @staticmethod
     def _row_value(row: Mapping[str, Any], column: str) -> Any:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import pytest
+
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.metric_snapshots import MetricSnapshotStorage
 from gobby.storage.sql_dialect import (
@@ -9,6 +11,7 @@ from gobby.storage.sql_dialect import (
     json_text_expr,
     newer_than_now_expr,
     older_than_now_expr,
+    table_column_names,
     timestamp_plus_seconds_before_now_expr,
 )
 from gobby.storage.token_events import TokenEventStore
@@ -68,6 +71,29 @@ def test_timestamp_helpers_emit_postgres_native_time_arithmetic() -> None:
     assert elapsed_seconds_greater_than_expr(db, "last_activity_at", "timeout_seconds") == (
         "EXTRACT(EPOCH FROM (NOW() - last_activity_at)) > timeout_seconds"
     )
+
+
+def test_table_column_names_uses_information_schema_for_postgres() -> None:
+    db = _CaptureDb("postgres")
+
+    def fetchall(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
+        db.queries.append(query)
+        db.params.append(params)
+        return [{"name": "id"}, {"name": "title"}]
+
+    db.fetchall = fetchall  # type: ignore[method-assign]
+
+    assert table_column_names(db, "tasks") == {"id", "title"}
+    assert "information_schema.columns" in db.queries[-1]
+    assert "PRAGMA" not in db.queries[-1]
+    assert db.params[-1] == ("tasks",)
+
+
+def test_table_column_names_rejects_invalid_table_name() -> None:
+    db = _CaptureDb("sqlite")
+
+    with pytest.raises(ValueError, match="Invalid table name"):
+        table_column_names(db, "tasks); DROP TABLE tasks; --")
 
 
 def test_completion_notification_query_uses_postgres_jsonb_without_json_valid() -> None:
