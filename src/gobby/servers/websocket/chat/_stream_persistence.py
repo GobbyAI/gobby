@@ -58,8 +58,16 @@ class ChatStreamPersistence:
                     content=text,
                     content_blocks_json=blocks_json,
                 )
-        except Exception as exc:
-            logger.debug("Failed to persist chat message: %s", exc)
+        except Exception:
+            logger.warning(
+                "Failed to persist chat message",
+                extra={
+                    "conversation_id": self.conversation_id,
+                    "role": role,
+                    "content_blocks_count": len(content_blocks or []),
+                },
+                exc_info=True,
+            )
 
     async def persist_user_message(
         self,
@@ -123,7 +131,8 @@ class ChatStreamPersistence:
             await run_db(self.owner, session_manager.update, db_sid, external_id=sdk_session_id)
         except Exception:
             logger.debug(
-                f"Failed to update external_id to SDK session_id for {db_sid}",
+                "Failed to update external_id to SDK session_id for %s",
+                db_sid,
                 exc_info=True,
             )
 

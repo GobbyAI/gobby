@@ -59,7 +59,7 @@ def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
             abort=True,
         )
 
-    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    params = f"?{urllib.parse.urlencode({'project_id': project_id})}" if project_id else ""
     click.echo("Clearing knowledge graph...")
     try:
         response = client.call_http_api(
@@ -272,7 +272,7 @@ def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
             abort=True,
         )
 
-    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    params = f"?{urllib.parse.urlencode({'project_id': project_id})}" if project_id else ""
     click.echo("Clearing memory indices...")
     try:
         response = client.call_http_api(

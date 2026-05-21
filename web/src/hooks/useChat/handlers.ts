@@ -13,6 +13,7 @@ import {
   extractServerName,
   uuid,
 } from "./core";
+import { MESSAGE_FEEDBACK_DELAY_MS } from "./constants";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 
@@ -164,7 +165,7 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
       pendingPlanFeedbackRef.current = null;
       setTimeout(() => {
         sendMessageRef.current?.(feedback);
-      }, 200);
+      }, MESSAGE_FEEDBACK_DELAY_MS);
     }
   }
 }, []);

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from websockets.asyncio.server import ServerConnection
-from websockets.exceptions import ConnectionClosed, ConnectionClosedError
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ChatStreamTransport:
             try:
                 await ws.send(encoded)
                 any_sent = True
-            except (ConnectionClosed, ConnectionClosedError):
+            except ConnectionClosed:
                 pass
 
         if not any_sent:

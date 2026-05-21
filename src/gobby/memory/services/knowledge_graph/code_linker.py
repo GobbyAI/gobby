@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.memory.neo4j_client import Neo4jConnectionError
+from gobby.memory.vectorstore import is_recoverable_vector_store_error
 
 from .models import _GraphEntity
 
@@ -14,6 +15,15 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+
+
+def _is_expected_search_failure(error: Exception) -> bool:
+    if is_recoverable_vector_store_error(error):
+        return True
+    message = str(error).lower()
+    return "collection" in message and (
+        "not found" in message or "does not exist" in message or "doesn't exist" in message
+    )
 
 
 class KnowledgeGraphCodeLinker:
@@ -26,11 +36,13 @@ class KnowledgeGraphCodeLinker:
         *,
         code_link_min_score: float,
         code_symbol_collection_prefix: str,
+        search_limit: int = 3,
     ) -> None:
         self._neo4j = neo4j_client
         self._vector_store = vector_store
         self._code_link_min_score = code_link_min_score
         self._code_symbol_collection_prefix = code_symbol_collection_prefix
+        self.search_limit = search_limit
 
     async def link_entities_to_code(
         self,
@@ -57,7 +69,7 @@ class KnowledgeGraphCodeLinker:
                 results = await vector_store.search(
                     query_embedding=embedding,
                     collection_name=collection,
-                    limit=3,
+                    limit=self.search_limit,
                 )
                 for symbol_id, score in results:
                     if score >= self._code_link_min_score:
@@ -69,11 +81,24 @@ class KnowledgeGraphCodeLinker:
                             }
                         )
             except Exception as e:
-                logger.debug(
-                    "Code symbol search failed for entity %s: %s",
-                    entity.name,
-                    e,
-                )
+                if _is_expected_search_failure(e):
+                    logger.warning(
+                        "Code symbol search unavailable for entity %s in collection %s: %s",
+                        entity.name,
+                        collection,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "Unexpected code symbol search failure",
+                        extra={
+                            "entity_key": entity.entity_key,
+                            "entity_name": entity.name,
+                            "collection": collection,
+                            "project_id": project_id,
+                        },
+                        exc_info=True,
+                    )
                 continue
 
         if not links:

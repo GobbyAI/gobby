@@ -395,7 +395,27 @@ class HookManagerFactory:
 
     @staticmethod
     def _create_database(config: Any | None) -> HubDatabase:
-        _ = config
+        import os
+
+        if os.environ.get("GOBBY_TEST_PROTECT") == "1" and getattr(config, "database_path", None):
+            from gobby.storage.database import LocalDatabase
+            from gobby.storage.migrations import run_migrations
+
+            db = LocalDatabase(config.database_path)
+            run_migrations(db)
+            return db
+
+        import tempfile
+        from pathlib import Path
+
+        if os.environ.get("GOBBY_TEST_PROTECT") == "1":
+            from gobby.storage.database import LocalDatabase
+            from gobby.storage.migrations import run_migrations
+
+            db = LocalDatabase(Path(tempfile.mkdtemp()) / "hook-manager-test.db")
+            run_migrations(db)
+            return db
+
         from gobby.storage.hub.runtime import open_runtime_hub_database
 
         return open_runtime_hub_database(apply_migrations=False)

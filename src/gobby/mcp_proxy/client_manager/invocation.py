@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, Protocol
 
 from opentelemetry.trace import Status, StatusCode
 from pydantic import AnyUrl
@@ -13,8 +14,19 @@ from pydantic import AnyUrl
 from gobby.telemetry.tracing import create_span
 
 
+class _InvocationManager(Protocol):
+    """Manager surface required by MCP invocation helpers."""
+
+    _configs: dict[str, Any]
+    health: dict[str, Any]
+    metrics_manager: Any | None
+    project_id: str | None
+
+    def get_client_session(self, server_name: str) -> Awaitable[Any]: ...
+
+
 async def call_tool(
-    manager: Any,
+    manager: _InvocationManager,
     server_name: str,
     tool_name: str,
     arguments: dict[str, Any] | None,
@@ -73,10 +85,15 @@ async def call_tool(
                             session_id=session_id,
                         )
                     except Exception:
-                        logger.debug("Failed to record metrics for %s.%s", server_name, tool_name)
+                        logger.warning(
+                            "Failed to record metrics for %s.%s",
+                            server_name,
+                            tool_name,
+                            exc_info=True,
+                        )
 
 
-async def read_resource(manager: Any, server_name: str, uri: str) -> Any:
+async def read_resource(manager: _InvocationManager, server_name: str, uri: str) -> Any:
     """Read a resource from a downstream MCP server."""
     try:
         session = await manager.get_client_session(server_name)

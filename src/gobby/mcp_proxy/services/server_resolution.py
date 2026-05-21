@@ -67,7 +67,7 @@ async def list_servers(service: Any, name_filter: str | None = None) -> dict[str
     for config in service._mcp_manager.server_configs:
         health = service._mcp_manager.health.get(config.name)
         state = health.state.value if health else "unknown"
-        is_conn = manager_is_connected(service._mcp_manager, config.name)
+        is_conn = await manager_is_connected(service._mcp_manager, config.name)
         if is_conn:
             connected += 1
         entry: dict[str, Any] = {

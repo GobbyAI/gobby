@@ -29,13 +29,11 @@ class SessionSummaryDispatcher:
     def dispatch(
         self,
         session_id: str,
-        background: bool = False,
+        _background: bool = False,
         done_event: threading.Event | None = None,
         set_handoff_ready: bool = False,
     ) -> None:
         """Fire session summary generation in the background."""
-        del background
-
         from gobby.sessions.summarize import generate_session_summaries
 
         async def _run() -> None:

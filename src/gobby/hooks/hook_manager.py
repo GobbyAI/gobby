@@ -17,18 +17,18 @@ from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
-from gobby.hooks.health_gate import ensure_daemon_ready
+from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_ref_resolution import (
-    resolve_session_field,
     resolve_session_refs_in_tool_input,
 )
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
+from gobby.utils.session_refs import try_resolve_session_field
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -218,12 +218,47 @@ class HookManager:
                     span.record_exception(e)
                 raise
 
+    async def handle_async(self, event: HookEvent) -> HookResponse:
+        """Async entry point for event-loop hook callers."""
+        with create_span(
+            "hook.handle",
+            attributes={
+                "event_type": str(event.event_type),
+                "source": str(event.source),
+            },
+        ) as span:
+            try:
+                response = await self._handle_internal_async(event)
+                if span.is_recording():
+                    span.set_attribute("decision", response.decision)
+                return response
+            except Exception as e:
+                if span.is_recording():
+                    span.record_exception(e)
+                raise
+
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
         daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
         if daemon_unavailable:
             return daemon_unavailable
 
+        return self._handle_after_daemon_ready(event)
+
+    async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
+        """Internal async handle logic wrapped by span."""
+        daemon_unavailable = await ensure_daemon_ready_async(
+            event,
+            self._health_monitor,
+            self.logger,
+        )
+        if daemon_unavailable:
+            return daemon_unavailable
+
+        return await asyncio.to_thread(self._handle_after_daemon_ready, event)
+
+    def _handle_after_daemon_ready(self, event: HookEvent) -> HookResponse:
+        """Run hook handling after the daemon readiness gate has passed."""
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the
@@ -373,7 +408,7 @@ class HookManager:
         self, d: dict[str, Any], field: str, project_id: str | None
     ) -> bool:
         """Resolve a #N session reference in d[field] to UUID in place."""
-        return resolve_session_field(
+        return try_resolve_session_field(
             d,
             field,
             session_manager=self._session_manager,
@@ -476,7 +511,7 @@ class HookManager:
         )
         dispatcher.dispatch(
             session_id,
-            background=background,
+            _background=background,
             done_event=done_event,
             set_handoff_ready=set_handoff_ready,
         )

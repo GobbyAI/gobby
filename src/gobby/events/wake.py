@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: Job's Done.\n"
+CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: Task completed.\n"
 
 # Coalesce bursty completions targeting an interactive pane: while the user is
 # idle on the same turn, suppress redundant tmux send-keys after the first wake.

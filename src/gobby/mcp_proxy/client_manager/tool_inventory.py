@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any, Protocol
 
 from mcp import ClientSession
 
@@ -13,8 +13,38 @@ from gobby.mcp_proxy.models import MCPError
 from .server_registry import truncate_tool_brief
 
 
+class _ToolInventoryManager(Protocol):
+    _connections: dict[str, Any]
+    _configs: dict[str, Any]
+    _lazy_connector: Any
+    health: dict[str, Any]
+    mcp_db_manager: Any | None
+
+    def cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None: ...
+
+    async def ensure_connected(self, server_name: str) -> ClientSession: ...
+
+    async def get_client_session(self, server_name: str) -> ClientSession: ...
+
+    async def get_tool_info(self, server_name: str, tool_name: str) -> dict[str, Any]: ...
+
+    async def _list_tools_for_server(self, server_name: str) -> list[dict[str, Any]]: ...
+
+    async def _list_tools_from_session(self, session: ClientSession) -> list[dict[str, Any]]: ...
+
+    async def _retry_list_tools_after_failure(
+        self,
+        server_name: str,
+        initial_error: Exception,
+    ) -> list[dict[str, Any]]: ...
+
+
+def _validated_input_schema(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 async def list_tools(
-    manager: Any,
+    manager: _ToolInventoryManager,
     server_name: str | None,
     logger: logging.Logger,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -38,7 +68,7 @@ async def list_tools(
 
 
 async def list_tools_for_server(
-    manager: Any,
+    manager: _ToolInventoryManager,
     server_name: str,
     logger: logging.Logger,
 ) -> list[dict[str, Any]]:
@@ -51,19 +81,16 @@ async def list_tools_for_server(
         logger.warning("Failed to list tools for %s: %s", server_name, error_message)
         if server_name in manager.health:
             manager.health[server_name].record_failure(error_message)
-        return cast(
-            list[dict[str, Any]],
-            await manager._retry_list_tools_after_failure(server_name, initial_error),
-        )
+        return await manager._retry_list_tools_after_failure(server_name, initial_error)
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager._cache_discovered_tools(server_name, tool_list)
-    return cast(list[dict[str, Any]], tool_list)
+    manager.cache_discovered_tools(server_name, tool_list)
+    return tool_list
 
 
 async def retry_list_tools_after_failure(
-    manager: Any,
+    manager: _ToolInventoryManager,
     server_name: str,
     initial_error: Exception,
     logger: logging.Logger,
@@ -91,8 +118,8 @@ async def retry_list_tools_after_failure(
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager._cache_discovered_tools(server_name, tool_list)
-    return cast(list[dict[str, Any]], tool_list)
+    manager.cache_discovered_tools(server_name, tool_list)
+    return tool_list
 
 
 async def list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
@@ -104,13 +131,17 @@ async def list_tools_from_session(session: ClientSession) -> list[dict[str, Any]
         {
             "name": tool.name,
             "description": getattr(tool, "description", "") or "",
-            "inputSchema": getattr(tool, "inputSchema", {}) or {},
+            "inputSchema": _validated_input_schema(getattr(tool, "inputSchema", {})),
         }
         for tool in tools.tools
     ]
 
 
-def cache_discovered_tools(manager: Any, server_name: str, tools: list[dict[str, Any]]) -> None:
+def cache_discovered_tools(
+    manager: _ToolInventoryManager,
+    server_name: str,
+    tools: list[dict[str, Any]],
+) -> None:
     """Cache discovered full tool schemas and update config summaries."""
     config = manager._configs.get(server_name)
     if not config or not manager.mcp_db_manager or not config.project_id:
@@ -131,16 +162,20 @@ def cache_discovered_tools(manager: Any, server_name: str, tools: list[dict[str,
 
 
 async def get_tool_input_schema(
-    manager: Any,
+    manager: _ToolInventoryManager,
     server_name: str,
     tool_name: str,
 ) -> dict[str, Any]:
     """Return the input schema for one tool."""
     tool_info = await manager.get_tool_info(server_name, tool_name)
-    return cast(dict[str, Any], tool_info.get("inputSchema", {}))
+    return _validated_input_schema(tool_info.get("inputSchema", {}))
 
 
-async def get_tool_info(manager: Any, server_name: str, tool_name: str) -> dict[str, Any]:
+async def get_tool_info(
+    manager: _ToolInventoryManager,
+    server_name: str,
+    tool_name: str,
+) -> dict[str, Any]:
     """Return full tool info for one tool by filtering list_tools output."""
     server_tools = await manager._list_tools_for_server(server_name)
 
@@ -153,7 +188,7 @@ async def get_tool_info(manager: Any, server_name: str, tool_name: str) -> dict[
             if "description" in tool and tool["description"]:
                 result["description"] = tool["description"]
             if "inputSchema" in tool:
-                result["inputSchema"] = tool["inputSchema"]
+                result["inputSchema"] = _validated_input_schema(tool["inputSchema"])
             return result
 
     raise MCPError(f"Tool {tool_name} not found on server {server_name}")

@@ -1,0 +1,1 @@
+export const MESSAGE_FEEDBACK_DELAY_MS = 200;

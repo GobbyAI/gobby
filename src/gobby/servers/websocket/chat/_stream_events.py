@@ -19,6 +19,7 @@ from gobby.servers.websocket.chat._stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 
 logger = logging.getLogger(__name__)
+EXPECTED_TTS_ERRORS = (ValueError, RuntimeError, OSError)
 
 
 @dataclass
@@ -124,10 +125,22 @@ class ChatStreamEventHandler:
         if self.tts_pipeline and content.strip():
             try:
                 self.tts_pipeline.feed_text(content)
-            except (ValueError, RuntimeError):
-                logger.warning("TTS feed_text failed", exc_info=True)
+            except EXPECTED_TTS_ERRORS:
+                logger.warning(
+                    "TTS feed_text failed",
+                    extra={
+                        "conversation_id": self.conversation_id,
+                        "content_length": len(content),
+                    },
+                    exc_info=True,
+                )
             except Exception:
-                logger.warning("Unexpected TTS feed_text failure", exc_info=True)
+                logger.error(
+                    "Unexpected TTS feed_text failure",
+                    extra={"conversation_id": self.conversation_id},
+                    exc_info=True,
+                )
+                raise
         return True
 
     async def _handle_tool_call(self, event: ToolCallEvent) -> bool:
@@ -193,8 +206,19 @@ class ChatStreamEventHandler:
         if self.tts_pipeline:
             try:
                 await self.tts_pipeline.flush()
+            except EXPECTED_TTS_ERRORS:
+                logger.warning(
+                    "TTS flush failed",
+                    extra={"conversation_id": self.conversation_id},
+                    exc_info=True,
+                )
             except Exception:
-                logger.debug("TTS flush failed", exc_info=True)
+                logger.error(
+                    "Unexpected TTS flush failure",
+                    extra={"conversation_id": self.conversation_id},
+                    exc_info=True,
+                )
+                raise
 
         await self.persistence.persist_current_assistant(session)
 

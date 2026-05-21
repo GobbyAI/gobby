@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any
 
@@ -10,9 +11,15 @@ def manager_has_method(mcp_manager: Any, method_name: str) -> bool:
     return callable(getattr(mcp_manager, method_name, None))
 
 
-def manager_is_connected(mcp_manager: Any, name: str) -> bool:
-    if manager_has_method(mcp_manager, "is_connected"):
-        return bool(mcp_manager.is_connected(name))
+async def manager_is_connected(mcp_manager: Any, name: str) -> bool:
+    is_connected = getattr(mcp_manager, "is_connected", None)
+    if callable(is_connected):
+        result = is_connected(name)
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
+    if isinstance(is_connected, bool):
+        return is_connected
 
     connections = getattr(mcp_manager, "connections", None)
     return isinstance(connections, dict) and name in connections

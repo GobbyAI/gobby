@@ -7,6 +7,7 @@ import {
   toSessionObservationMeta,
   uuid,
 } from "./core";
+import { MESSAGE_FEEDBACK_DELAY_MS } from "./constants";
 import type { UseChatTransportParams } from "./transportTypes";
 
 export function handlePlanPendingApproval(
@@ -56,7 +57,7 @@ export function handleModeChanged(
         ctx.pendingPlanFeedbackRef.current = null;
         setTimeout(() => {
           ctx.sendMessageRef.current?.(feedback);
-        }, 200);
+        }, MESSAGE_FEEDBACK_DELAY_MS);
       }
       // Only update mode and notify if it actually changed —
       // prevents set_mode → mode_changed → setState → set_mode loop

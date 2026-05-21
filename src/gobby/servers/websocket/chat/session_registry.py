@@ -13,7 +13,7 @@ from gobby.sessions.compact_continuation import COMPACT_SELF_CONTINUE_PROMPT
 
 logger = logging.getLogger(__name__)
 
-WEB_CHAT_WAKE_PROMPT = "Message from Gobby daemon: Job's Done."
+WEB_CHAT_WAKE_PROMPT = "Message from Gobby daemon: Task completed."
 
 
 class WebChatSessionRegistry:

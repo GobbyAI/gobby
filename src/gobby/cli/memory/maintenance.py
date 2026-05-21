@@ -4,7 +4,7 @@ import asyncio
 import importlib
 from collections.abc import Awaitable
 from types import ModuleType
-from typing import Protocol
+from typing import Any, Protocol
 
 import click
 
@@ -13,6 +13,10 @@ from ._formatting import truncate
 
 class _MemoryDeleteManager(Protocol):
     def delete_memory(self, memory_id: str) -> Awaitable[bool]: ...
+
+
+class _MemoryListManager(_MemoryDeleteManager, Protocol):
+    def list_memories(self, **kwargs: Any) -> list[Any]: ...
 
 
 def _facade() -> ModuleType:
@@ -25,6 +29,17 @@ async def _delete_memories(manager: _MemoryDeleteManager, memory_ids: list[str])
         if await manager.delete_memory(memory_id):
             deleted += 1
     return deleted
+
+
+def _list_all_memories(manager: _MemoryListManager, *, page_size: int = 1000) -> list[Any]:
+    memories: list[Any] = []
+    offset = 0
+    while True:
+        page = manager.list_memories(limit=page_size, offset=offset)
+        memories.extend(page)
+        if len(page) < page_size:
+            return memories
+        offset += page_size
 
 
 @click.command("dedupe")
@@ -45,7 +60,7 @@ def dedupe_memories(ctx: click.Context, dry_run: bool) -> None:
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
 
-    memories = manager.list_memories(limit=10000)
+    memories = _list_all_memories(manager)
 
     if not memories:
         click.echo("No memories found.")
@@ -106,11 +121,8 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
         gobby memory fix-null-project             # Apply fixes
     """
     from gobby.storage.hub.runtime import runtime_hub_database
-    from gobby.storage.sessions import SessionManager
 
     with runtime_hub_database(apply_migrations=False) as db:
-        session_mgr = SessionManager(db)
-
         rows = db.fetchall(
             """
             SELECT id, content, source_session_id
@@ -126,27 +138,33 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
 
         click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
 
-        fixed = 0
+        session_ids = {row["source_session_id"] for row in rows if row["source_session_id"]}
+        placeholders = ",".join("?" for _ in session_ids)
+        session_project_ids: dict[str, str] = {}
+        if session_ids:
+            session_rows = db.fetchall(
+                f"SELECT id, project_id FROM sessions WHERE id IN ({placeholders})",
+                tuple(session_ids),
+            )
+            session_project_ids = {
+                row["id"]: row["project_id"] for row in session_rows if row["project_id"]
+            }
+
+        updates: list[tuple[str, str]] = []
+        fixable_count = 0
         for row in rows:
             memory_id = row["id"]
             session_id = row["source_session_id"]
             content_preview = row["content"][:50] if row["content"] else ""
 
-            session = session_mgr.get(session_id)
-            if session and session.project_id:
+            project_id = session_project_ids.get(session_id)
+            if project_id:
+                fixable_count += 1
                 if dry_run:
-                    click.echo(
-                        f"  Would fix {memory_id[:12]}: set project_id={session.project_id[:12]}"
-                    )
+                    click.echo(f"  Would fix {memory_id[:12]}: set project_id={project_id[:12]}")
                     click.echo(f"    Content: {content_preview}...")
-                    fixed += 1
                 else:
-                    with db.transaction() as conn:
-                        conn.execute(
-                            "UPDATE memories SET project_id = ? WHERE id = ?",
-                            (session.project_id, memory_id),
-                        )
-                    fixed += 1
+                    updates.append((project_id, memory_id))
             elif dry_run:
                 click.echo(
                     f"  Cannot fix {memory_id[:12]}: "
@@ -154,6 +172,12 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
                 )
 
         if dry_run:
-            click.echo(f"\nWould fix {fixed} memories. Run without --dry-run to apply.")
+            click.echo(f"\nWould fix {fixable_count} memories. Run without --dry-run to apply.")
         else:
-            click.echo(f"Fixed {fixed} memories with project_id from their source sessions.")
+            with db.transaction() as conn:
+                for project_id, memory_id in updates:
+                    conn.execute(
+                        "UPDATE memories SET project_id = ? WHERE id = ?",
+                        (project_id, memory_id),
+                    )
+            click.echo(f"Fixed {len(updates)} memories with project_id from their source sessions.")

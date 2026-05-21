@@ -243,7 +243,8 @@ class ChatStreamingMixin:
                 conversation_id=conversation_id,
                 error=error_message,
             )
-            if logger.isEnabledFor(logging.DEBUG):
+            messaging_logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
+            if logger.isEnabledFor(logging.DEBUG) or messaging_logger.isEnabledFor(logging.DEBUG):
                 error_payload["error_detail"] = f"{type(exc).__name__}: {exc}"
             await transport.send_direct(error_payload)
             return None

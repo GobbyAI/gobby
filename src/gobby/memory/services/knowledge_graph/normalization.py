@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 
@@ -10,6 +11,7 @@ from gobby.memory.identity import entity_key, normalize_entity_name
 from .models import Entity, Relationship, _GraphEntity
 
 _DISPLAY_WHITESPACE_RE = re.compile(r"\s+")
+logger = logging.getLogger(__name__)
 
 
 def display_entity_name(name: str) -> str:
@@ -30,6 +32,7 @@ def normalize_entities(
         display_name = display_entity_name(entity.name)
         normalized_name = normalize_entity_name(display_name)
         if not normalized_name:
+            logger.debug("Dropped entity with empty normalized name: %r", entity.name)
             continue
         key = entity_key(project_id, display_name)
         if key in deduped:
@@ -57,6 +60,12 @@ def normalize_relationships(
         source_key = entity_key(project_id, relationship.source)
         target_key = entity_key(project_id, relationship.target)
         if source_key not in entity_map or target_key not in entity_map:
+            logger.debug(
+                "Skipped relationship with missing endpoint: %s -> %s (%s)",
+                relationship.source,
+                relationship.target,
+                relationship.relationship,
+            )
             continue
         dedupe_key = (source_key, relationship.relationship, target_key)
         deduped[dedupe_key] = Relationship(

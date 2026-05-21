@@ -120,7 +120,7 @@ class ServerManagementService:
         """
         try:
             # First disconnect if connected
-            if manager_is_connected(self._mcp_manager, name):
+            if await manager_is_connected(self._mcp_manager, name):
                 try:
                     await disconnect_manager_server(self._mcp_manager, name)
                     logger.info(f"Disconnected server {name} before removal")

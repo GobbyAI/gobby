@@ -97,7 +97,7 @@ class MCPClientManager:
         server_registry.load_initial_configs(self, server_configs, logger)
 
     @staticmethod
-    def _load_tools_from_db(
+    def load_tools_from_db(
         mcp_db_manager: Any,
         server_name: str,
         project_id: str,
@@ -108,6 +108,14 @@ class MCPClientManager:
             project_id,
             logger,
         )
+
+    @staticmethod
+    def _load_tools_from_db(
+        mcp_db_manager: Any,
+        server_name: str,
+        project_id: str,
+    ) -> list[dict[str, str]] | None:
+        return MCPClientManager.load_tools_from_db(mcp_db_manager, server_name, project_id)
 
     @property
     def connections(self) -> dict[str, BaseTransportConnection]:
@@ -218,8 +226,11 @@ class MCPClientManager:
     async def _list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
         return await tool_inventory.list_tools_from_session(session)
 
-    def _cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
+    def cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
         tool_inventory.cache_discovered_tools(self, server_name, tools)
+
+    def _cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
+        self.cache_discovered_tools(server_name, tools)
 
     async def get_tool_input_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
         return await tool_inventory.get_tool_input_schema(self, server_name, tool_name)

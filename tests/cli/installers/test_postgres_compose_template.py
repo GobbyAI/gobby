@@ -11,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 _PGAUDIT_COMMAND_OPTIONS = [
     "shared_preload_libraries=pg_search,pgaudit",
-    "pgaudit.log=write",
+    "pgaudit.log=${GOBBY_PGAUDIT_LOG:-ddl}",
     "pgaudit.log_catalog=off",
     "logging_collector=on",
     "log_destination=stderr",
@@ -87,6 +87,7 @@ def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
     assert "extname='pgaudit'" in test_command
     assert "extname=$pgaudit$" not in test_command
     assert "SHOW pgaudit.log" in test_command
+    assert "GOBBY_PGAUDIT_LOG:-ddl" in test_command
     assert "/var/log/pgaudit" in test_command
     assert "pgaudit-*.log" in test_command
     assert "stat -c '%U %a'" in test_command

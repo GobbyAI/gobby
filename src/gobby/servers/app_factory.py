@@ -173,13 +173,27 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         if server.session_manager is not None:
             listener_loop = asyncio.get_running_loop()
+            app.state.session_broadcast_tasks = set()
+
+            def _session_broadcast_done(done_task: asyncio.Task[Any]) -> None:
+                app.state.session_broadcast_tasks.discard(done_task)
+                try:
+                    done_task.result()
+                except asyncio.CancelledError:
+                    logger.debug("Session change broadcast task cancelled")
+                except Exception:
+                    logger.exception("Session change broadcast task failed")
 
             def _broadcast_session_change(event: str, session_id: str) -> None:
                 if not ws_server or listener_loop.is_closed():
                     return
 
                 def _schedule() -> None:
-                    listener_loop.create_task(ws_server.broadcast_session_event(event, session_id))
+                    task = listener_loop.create_task(
+                        ws_server.broadcast_session_event(event, session_id)
+                    )
+                    app.state.session_broadcast_tasks.add(task)
+                    task.add_done_callback(_session_broadcast_done)
 
                 listener_loop.call_soon_threadsafe(_schedule)
 

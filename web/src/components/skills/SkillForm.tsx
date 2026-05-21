@@ -6,7 +6,7 @@ import { FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
 import { Heading } from '../shared/Heading'
 
 const OVERLAY_CLS =
-  'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fade-in_0.15s_ease]'
+  'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fade-in_0.2s_ease]'
 const MODAL_CLS =
   'flex max-h-[90vh] w-[90vw] max-w-[1000px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-5 py-4'

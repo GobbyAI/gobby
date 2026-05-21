@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -280,7 +279,6 @@ async def get_postgres_status(
                 "gobby_version": None,
             }
 
-    await asyncio.sleep(0)
     return payload
 
 

@@ -1097,7 +1097,7 @@ CREATE UNIQUE INDEX idx_prompts_name_scope_project
     ON prompts(name, scope, COALESCE(project_id, ''));
 
 CREATE TABLE auth_sessions (
-    token TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL,
     remember_me INTEGER NOT NULL DEFAULT 0

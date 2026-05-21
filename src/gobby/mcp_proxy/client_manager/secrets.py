@@ -63,6 +63,9 @@ def resolve_secrets_in_config(
         if config.env:
             updates["env"] = strip_unresolved_secrets(config.env, "env")
         return dataclasses.replace(config, **updates)
-    except (ImportError, AttributeError, TypeError, ValueError, RuntimeError, OSError) as exc:
+    except ImportError as exc:
         logger.debug("Secret resolution skipped for %s: %s", config.name, exc)
         return config
+    except Exception:
+        logger.warning("Secret resolution failed for %s", config.name, exc_info=True)
+        raise

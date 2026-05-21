@@ -5,9 +5,36 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.mcp_proxy.models import HealthState
+
+
+class _HealthConnection(Protocol):
+    @property
+    def is_connected(self) -> bool: ...
+
+    def health_check(self, timeout: float) -> Awaitable[bool]: ...
+
+
+class _HealthStatus(Protocol):
+    health: HealthState
+    consecutive_failures: int
+    last_error: str | None
+
+    def record_failure(self, error: str) -> None: ...
+
+    def record_success(self) -> None: ...
+
+
+class _HealthManager(Protocol):
+    _connections: dict[str, _HealthConnection]
+    _health_check_interval: float
+    _reconnect_tasks: set[asyncio.Task[Any]]
+    _running: bool
+    health: dict[str, _HealthStatus]
+
+    def _reconnect(self, server_name: str) -> Awaitable[None]: ...
 
 
 def _reconnect_done_callback(
@@ -24,7 +51,7 @@ def _reconnect_done_callback(
         logger.exception("Reconnect task failed")
 
 
-async def health_check_all(manager: Any) -> dict[str, Any]:
+async def health_check_all(manager: _HealthManager) -> dict[str, Any]:
     """Perform an immediate health check on all connected transports."""
     tasks: list[Awaitable[Any]] = []
     server_names: list[str] = []
@@ -40,7 +67,7 @@ async def health_check_all(manager: Any) -> dict[str, Any]:
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     health_status: dict[str, bool] = {}
-    for name, result in zip(server_names, results, strict=False):
+    for name, result in zip(server_names, results, strict=True):
         if isinstance(result, Exception) or result is False:
             manager.health[name].record_failure("Health check failed")
             health_status[name] = False
@@ -52,7 +79,7 @@ async def health_check_all(manager: Any) -> dict[str, Any]:
 
 
 async def monitor_health(
-    manager: Any,
+    manager: _HealthManager,
     logger: logging.Logger,
     sleep: Callable[[float], Awaitable[Any]],
 ) -> None:
@@ -74,7 +101,7 @@ async def monitor_health(
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for name, result in zip(server_names, results, strict=False):
+            for name, result in zip(server_names, results, strict=True):
                 if isinstance(result, Exception) or result is False:
                     previous_health = manager.health[name].health
                     manager.health[name].record_failure("Health check failed")

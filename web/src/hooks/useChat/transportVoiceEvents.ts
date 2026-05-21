@@ -17,6 +17,7 @@ export function handleVoiceTransportEvent(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
 ) {
+  let attachedVoice = false;
   try {
     // When STT transcription arrives, inject it as a user message and
     // register the request_id so the assistant's response stream is accepted.
@@ -30,7 +31,7 @@ export function handleVoiceTransportEvent(
           typeof voiceMsg.conversation_id === "string"
             ? voiceMsg.conversation_id
             : "";
-        const attachedVoice =
+        attachedVoice =
           voiceConversationId === ctx.attachedSessionIdRef.current &&
           ctx.sessionInteractionModeRef.current === "proxy";
         if (!attachedVoice) {
@@ -54,7 +55,9 @@ export function handleVoiceTransportEvent(
     ctx.handleVoiceMessageRef.current(data);
   } catch (err) {
     console.error("Voice message handling error:", err);
-    ctx.setIsStreaming(false);
-    ctx.setIsThinking(false);
+    if (!attachedVoice) {
+      ctx.setIsStreaming(false);
+      ctx.setIsThinking(false);
+    }
   }
 }

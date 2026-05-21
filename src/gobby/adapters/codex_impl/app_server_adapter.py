@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import platform
 import re
@@ -297,11 +298,26 @@ class CodexAdapter(BaseAdapter):
             hook_event = self.translate_to_hook_event({"method": method, "params": params})
 
             if hook_event and self._hook_manager:
-                # Process through HookManager (fire-and-forget for notifications)
-                self._hook_manager.handle(hook_event)
-                logger.debug(f"Processed Codex event: {method} -> {hook_event.event_type}")
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    self._hook_manager.handle(hook_event)
+                    logger.debug("Processed Codex event: %s -> %s", method, hook_event.event_type)
+                    return
+
+                task = loop.create_task(self._hook_manager.handle_async(hook_event))
+
+                def _log_notification_result(done_task: asyncio.Task[HookResponse]) -> None:
+                    try:
+                        done_task.result()
+                    except asyncio.CancelledError:
+                        logger.debug("Codex notification task cancelled for %s", method)
+                    except Exception:
+                        logger.exception("Codex notification task failed for %s", method)
+
+                task.add_done_callback(_log_notification_result)
         except Exception as e:
-            logger.error(f"Error handling Codex notification {method}: {e}")
+            logger.error("Error handling Codex notification %s: %s", method, e)
 
     async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle an incoming approval request from Codex.
@@ -328,9 +344,9 @@ class CodexAdapter(BaseAdapter):
         is_safe_auto_approved = self._is_safe_auto_approved_tool(hook_event)
 
         try:
-            hook_response = self._hook_manager.handle(hook_event)
+            hook_response = await self._hook_manager.handle_async(hook_event)
         except Exception as e:
-            logger.error(f"Error processing approval request {method}: {e}")
+            logger.error("Error processing approval request %s: %s", method, e)
             if is_safe_auto_approved:
                 if method == "mcpServer/elicitation/request":
                     return self._translate_mcp_elicitation_response()
@@ -791,7 +807,7 @@ class CodexAdapter(BaseAdapter):
                             "synced_from_existing": True,
                         },
                     )
-                    self._hook_manager.handle(event)
+                    await self._hook_manager.handle_async(event)
                     synced += 1
                 except Exception as e:
                     logger.error(f"Failed to sync thread {thread.id}: {e}")

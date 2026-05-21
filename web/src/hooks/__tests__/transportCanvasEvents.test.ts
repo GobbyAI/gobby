@@ -88,7 +88,7 @@ describe("handleCanvasTransportEvent", () => {
     expect(getSurfaces().size).toBe(0);
   });
 
-  it("rehydrates HTML panels unless completed is exactly true", () => {
+  it("rehydrates HTML panels only when completed is not boolean true", () => {
     const { ctx, getPanel } = makeContext();
 
     handleCanvasTransportEvent(

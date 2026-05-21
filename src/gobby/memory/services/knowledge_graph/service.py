@@ -125,7 +125,7 @@ class KnowledgeGraphService:
         try:
             extracted_entities = await self._extract_entities(content)
         except Exception as e:
-            logger.warning(f"Entity extraction failed for memory {memory_ref}: {e}")
+            logger.warning("Entity extraction failed for memory %s: %s", memory_ref, e)
             return self._failure_result(e)
 
         entities = self._normalize_entities(extracted_entities, project_id=project_id)
@@ -138,7 +138,7 @@ class KnowledgeGraphService:
         try:
             extracted_relationships = await self._extract_relationships(content, extracted_entities)
         except Exception as e:
-            logger.warning(f"Relationship extraction failed for memory {memory_ref}: {e}")
+            logger.warning("Relationship extraction failed for memory %s: %s", memory_ref, e)
             partial_errors.append(f"relationship_extraction:{e}")
             extracted_relationships = []
 
@@ -155,7 +155,7 @@ class KnowledgeGraphService:
                 project_id=project_id,
             )
         except Exception as e:
-            logger.warning(f"Relation cleanup failed for memory {memory_ref}: {e}")
+            logger.warning("Relation cleanup failed for memory %s: %s", memory_ref, e)
             partial_errors.append(f"relation_cleanup:{e}")
 
         for entity in entities:
@@ -163,7 +163,11 @@ class KnowledgeGraphService:
                 await self._writer.merge_entity(entity)
                 made_progress = True
             except Neo4jConnectionError as e:
-                logger.warning(f"Neo4j unreachable during merge_node for memory {memory_ref}: {e}")
+                logger.warning(
+                    "Neo4j unreachable during merge_node for memory %s: %s",
+                    memory_ref,
+                    e,
+                )
                 return self._connection_failure_result(
                     e,
                     made_progress=made_progress,
@@ -172,7 +176,12 @@ class KnowledgeGraphService:
                     relationships=len(relationships),
                 )
             except Exception as e:
-                logger.warning(f"Failed to merge node {entity.name} for memory {memory_ref}: {e}")
+                logger.warning(
+                    "Failed to merge node %s for memory %s: %s",
+                    entity.name,
+                    memory_ref,
+                    e,
+                )
                 partial_errors.append(f"merge_node:{entity.name}:{e}")
 
         for rel in relationships:
@@ -181,7 +190,9 @@ class KnowledgeGraphService:
                 made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(
-                    f"Neo4j unreachable during merge_relationship for memory {memory_ref}: {e}"
+                    "Neo4j unreachable during merge_relationship for memory %s: %s",
+                    memory_ref,
+                    e,
                 )
                 return self._connection_failure_result(
                     e,
@@ -191,7 +202,12 @@ class KnowledgeGraphService:
                     relationships=len(relationships),
                 )
             except Exception as e:
-                logger.warning(f"Failed to merge relationship {rel} for memory {memory_ref}: {e}")
+                logger.warning(
+                    "Failed to merge relationship %s for memory %s: %s",
+                    rel,
+                    memory_ref,
+                    e,
+                )
                 partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
 
         entity_embeddings: dict[str, list[float]] = {}
@@ -206,7 +222,9 @@ class KnowledgeGraphService:
                 made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(
-                    f"Neo4j unreachable during set_node_vector for memory {memory_ref}: {e}"
+                    "Neo4j unreachable during set_node_vector for memory %s: %s",
+                    memory_ref,
+                    e,
                 )
                 return self._connection_failure_result(
                     e,
@@ -217,7 +235,10 @@ class KnowledgeGraphService:
                 )
             except Exception as e:
                 logger.warning(
-                    f"Failed to set embedding for {entity.name} in memory {memory_ref}: {e}"
+                    "Failed to set embedding for %s in memory %s: %s",
+                    entity.name,
+                    memory_ref,
+                    e,
                 )
                 partial_errors.append(f"set_embedding:{entity.name}:{e}")
 
@@ -227,7 +248,9 @@ class KnowledgeGraphService:
                 made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(
-                    f"Neo4j unreachable during MENTIONED_IN link for memory {memory_ref}: {e}"
+                    "Neo4j unreachable during MENTIONED_IN link for memory %s: %s",
+                    memory_ref,
+                    e,
                 )
                 return self._connection_failure_result(
                     e,
@@ -237,7 +260,7 @@ class KnowledgeGraphService:
                     relationships=len(relationships),
                 )
             except Exception as e:
-                logger.warning(f"Failed to link entities to memory {memory_ref}: {e}")
+                logger.warning("Failed to link entities to memory %s: %s", memory_ref, e)
                 partial_errors.append(f"mentioned_in:{memory_id}:{e}")
 
         if project_id and self._vector_store and entity_embeddings:
@@ -246,8 +269,10 @@ class KnowledgeGraphService:
                 made_progress = True
             except Exception as e:
                 logger.warning(
-                    f"Failed to link entities to code for memory {memory_ref} "
-                    f"in project {project_id}: {e}"
+                    "Failed to link entities to code for memory %s in project %s: %s",
+                    memory_ref,
+                    project_id,
+                    e,
                 )
                 partial_errors.append(f"relates_to_code:{project_id}:{e}")
 

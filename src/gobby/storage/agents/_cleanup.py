@@ -130,10 +130,14 @@ class _AgentRunCleanupMixin:
                     updated_at = ?
                 WHERE status = 'pending'
                 AND (
-                    tmux_session_name IS NULL
-                    AND {pending_timeout_sql}
-                    OR tmux_session_name IS NOT NULL
-                    AND {pending_timeout_sql}
+                    (
+                        tmux_session_name IS NULL
+                        AND {pending_timeout_sql}
+                    )
+                    OR (
+                        tmux_session_name IS NOT NULL
+                        AND {pending_timeout_sql}
+                    )
                 )
                 """,  # nosec B608 - timeout expression is selected by storage dialect.
                 (now, now, timeout_minutes, long_timeout_minutes),

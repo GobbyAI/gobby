@@ -135,7 +135,6 @@ gobby = [
     "install/shared/**/*",
     "storage/*.sql",
     "storage/migrations/*",
-    "data/*",
     "data/**/*",
     "ui/web/dist/**/*",
 ]

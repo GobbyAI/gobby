@@ -293,10 +293,12 @@ def _render_migration_result(result: dict[str, Any]) -> None:
 
 
 def _redact_dsn(dsn: str) -> str:
-    if "@" not in dsn or ":" not in dsn.split("@", 1)[0]:
+    if "@" not in dsn:
         return dsn
     prefix, suffix = dsn.split("@", 1)
     scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
+    if ":" not in auth:
+        return dsn
     user = auth.split(":", 1)[0]
     redacted_auth = f"{user}:****"
     if scheme:

@@ -1,5 +1,12 @@
 import { useCallback, type MutableRefObject } from "react";
-import type { ChatMode } from "../../types/chat";
+import type {
+  ChatMessage,
+  ChatMode,
+  ContentBlock,
+  SessionObservationMeta,
+  ToolCall,
+  ToolResult,
+} from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -26,8 +33,131 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function nullableRecord<T>(value: unknown): T | null {
-  return isRecord(value) ? (value as T) : null;
+function validDate(value: unknown): Date | null {
+  if (
+    !(value instanceof Date) &&
+    typeof value !== "string" &&
+    typeof value !== "number"
+  ) {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.valueOf()) ? null : date;
+}
+
+function isRestorableChatMode(value: unknown): value is ChatMode {
+  return RESTORABLE_CHAT_MODES.has(value as ChatMode);
+}
+
+function isRestorableInteractionMode(
+  value: unknown,
+): value is ContinuationRollbackSnapshot["sessionInteractionMode"] {
+  return typeof value === "string" && RESTORABLE_INTERACTION_MODES.has(value);
+}
+
+function isToolResult(value: unknown): value is ToolResult {
+  if (!isRecord(value)) return false;
+  if (!["text", "json", "image", "error"].includes(String(value.kind))) {
+    return false;
+  }
+  if (typeof value.truncated !== "boolean") return false;
+  return value.metadata === undefined || isRecord(value.metadata);
+}
+
+function isToolCall(value: unknown): value is ToolCall {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== "string") return false;
+  if (typeof value.tool_name !== "string") return false;
+  if (typeof value.server_name !== "string") return false;
+  if (typeof value.tool_type !== "string") return false;
+  if (
+    !["calling", "completed", "error", "pending", "pending_approval"].includes(
+      String(value.status),
+    )
+  ) {
+    return false;
+  }
+  if (value.arguments !== undefined && !isRecord(value.arguments)) return false;
+  if (value.result !== undefined && !isToolResult(value.result)) return false;
+  return value.error === undefined || typeof value.error === "string";
+}
+
+function isContentBlock(value: unknown): value is ContentBlock {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "text" || value.type === "thinking") {
+    return typeof value.content === "string";
+  }
+  if (value.type === "tool_chain") {
+    return Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall);
+  }
+  if (value.type === "tool_reference") {
+    return typeof value.tool_name === "string" && typeof value.server_name === "string";
+  }
+  if (value.type === "attachment") {
+    return isRecord(value.attachment);
+  }
+  return value.type === "image";
+}
+
+function normalizeMessages(value: unknown): ChatMessage[] | null {
+  if (!Array.isArray(value)) return null;
+  const messages: ChatMessage[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    if (typeof item.id !== "string") return null;
+    if (item.role !== "user" && item.role !== "assistant" && item.role !== "system") {
+      return null;
+    }
+    if (typeof item.content !== "string") return null;
+    const timestamp = validDate(item.timestamp);
+    if (!timestamp) return null;
+
+    const message: ChatMessage = {
+      id: item.id,
+      role: item.role,
+      content: item.content,
+      timestamp,
+    };
+    if (Array.isArray(item.toolCalls) && item.toolCalls.every(isToolCall)) {
+      message.toolCalls = item.toolCalls;
+    }
+    if (typeof item.thinkingContent === "string") {
+      message.thinkingContent = item.thinkingContent;
+    }
+    if (Array.isArray(item.contentBlocks) && item.contentBlocks.every(isContentBlock)) {
+      message.contentBlocks = item.contentBlocks;
+    }
+    messages.push(message);
+  }
+  return messages;
+}
+
+function normalizeSessionMeta(value: unknown): SessionObservationMeta | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.source !== "string") return null;
+  if (typeof value.status !== "string") return null;
+  const sessionType =
+    value.sessionType === "terminal" || value.sessionType === "web_chat"
+      ? value.sessionType
+      : null;
+  return {
+    ref: nullableString(value.ref),
+    source: value.source,
+    title: nullableString(value.title),
+    status: value.status,
+    canProxyAttach:
+      typeof value.canProxyAttach === "boolean" ? value.canProxyAttach : undefined,
+    model: nullableString(value.model),
+    reasoningEffort: nullableString(value.reasoningEffort) ?? undefined,
+    externalId: typeof value.externalId === "string" ? value.externalId : "",
+    chatMode: nullableString(value.chatMode),
+    gitBranch: nullableString(value.gitBranch),
+    contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
+    agentRunId: nullableString(value.agentRunId),
+    workflowName: nullableString(value.workflowName),
+    agentName: nullableString(value.agentName),
+    sessionType,
+  };
 }
 
 function normalizeContextUsage(
@@ -56,48 +186,35 @@ function normalizeContinuationSnapshot(
   if (!isRecord(snapshot)) return null;
   if (typeof snapshot.sourceSessionId !== "string") return null;
   if (typeof snapshot.conversationId !== "string") return null;
-  if (!Array.isArray(snapshot.messages)) return null;
+  const messages = normalizeMessages(snapshot.messages);
+  if (!messages) return null;
 
-  const currentMode = RESTORABLE_CHAT_MODES.has(snapshot.currentMode as ChatMode)
-    ? snapshot.currentMode as ChatMode
+  const currentMode = isRestorableChatMode(snapshot.currentMode)
+    ? snapshot.currentMode
     : "plan";
-  const sessionInteractionMode = RESTORABLE_INTERACTION_MODES.has(
-    snapshot.sessionInteractionMode as string,
-  )
-    ? snapshot.sessionInteractionMode as ContinuationRollbackSnapshot["sessionInteractionMode"]
+  const sessionInteractionMode = isRestorableInteractionMode(snapshot.sessionInteractionMode)
+    ? snapshot.sessionInteractionMode
     : "none";
 
   return {
     sourceSessionId: snapshot.sourceSessionId,
     conversationId: snapshot.conversationId,
     dbSessionId: nullableString(snapshot.dbSessionId),
-    mainSessionMeta:
-      nullableRecord<ContinuationRollbackSnapshot["mainSessionMeta"]>(
-        snapshot.mainSessionMeta,
-      ),
+    mainSessionMeta: normalizeSessionMeta(snapshot.mainSessionMeta),
     sessionTitle: nullableString(snapshot.sessionTitle),
     sessionRef: nullableString(snapshot.sessionRef),
     selectedProvider: nullableString(snapshot.selectedProvider),
-    messages: snapshot.messages as ContinuationRollbackSnapshot["messages"],
+    messages,
     contextUsage: normalizeContextUsage(snapshot.contextUsage),
     currentMode,
     currentBranch: nullableString(snapshot.currentBranch),
     worktreePath: nullableString(snapshot.worktreePath),
     viewingSessionId: nullableString(snapshot.viewingSessionId),
-    viewingSessionMeta:
-      nullableRecord<ContinuationRollbackSnapshot["viewingSessionMeta"]>(
-        snapshot.viewingSessionMeta,
-      ),
+    viewingSessionMeta: normalizeSessionMeta(snapshot.viewingSessionMeta),
     observedSessionId: nullableString(snapshot.observedSessionId),
-    observedSessionMeta:
-      nullableRecord<ContinuationRollbackSnapshot["observedSessionMeta"]>(
-        snapshot.observedSessionMeta,
-      ),
+    observedSessionMeta: normalizeSessionMeta(snapshot.observedSessionMeta),
     attachedSessionId: nullableString(snapshot.attachedSessionId),
-    attachedSessionMeta:
-      nullableRecord<ContinuationRollbackSnapshot["attachedSessionMeta"]>(
-        snapshot.attachedSessionMeta,
-      ),
+    attachedSessionMeta: normalizeSessionMeta(snapshot.attachedSessionMeta),
     sessionInteractionMode,
     proxyDeliveryNotice: nullableString(snapshot.proxyDeliveryNotice),
   };

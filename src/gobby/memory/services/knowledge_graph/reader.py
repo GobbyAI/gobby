@@ -21,7 +21,7 @@ class KnowledgeGraphReader:
     def __init__(
         self,
         neo4j_client: Neo4jClient,
-        embed_fn: Callable[..., Any],
+        embed_fn: Callable[..., Any] | None,
         *,
         embedding_dim: int,
     ) -> None:

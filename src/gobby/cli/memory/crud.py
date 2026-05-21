@@ -183,7 +183,11 @@ def update_memory(
     memory_module = _facade()
     project_id = memory_module.resolve_project_ref(project_ref) if project_ref else None
     manager = memory_module.get_memory_manager(ctx)
-    memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
+    try:
+        memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
+    except click.ClickException as e:
+        click.echo(f"Error: {e.message}")
+        return
     tag_list = parse_tags(tags, empty_as_none=True)
 
     try:

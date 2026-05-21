@@ -97,7 +97,10 @@ export function handleAttachToSessionResult(
     const existingIds = new Set(ctx.messagesRef.current.map((m) => m.id));
     const merged = ctx.messagesRef.current.map((m) => mappedById.get(m.id) ?? m);
     const newMsgs = mapped.filter((m) => !existingIds.has(m.id));
-    if (newMsgs.length > 0 || mappedById.size > 0) {
+    const hasMergedChanges = merged.some(
+      (message, index) => message !== ctx.messagesRef.current[index],
+    );
+    if (newMsgs.length > 0 || hasMergedChanges) {
       ctx.setMessages([...merged, ...newMsgs]);
     }
   } else {

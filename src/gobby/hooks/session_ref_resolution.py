@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.session_types import HookSessionManager
 from gobby.utils.session_refs import try_resolve_session_field
@@ -48,19 +46,3 @@ def resolve_session_refs_in_tool_input(
                 session_manager=session_manager,
                 project_id=project_id,
             )
-
-
-def resolve_session_field(
-    data: dict[str, Any],
-    field: str,
-    *,
-    session_manager: HookSessionManager | None,
-    project_id: str | None,
-) -> bool:
-    """Resolve one session reference field in place."""
-    return try_resolve_session_field(
-        data,
-        field,
-        session_manager=session_manager,
-        project_id=project_id,
-    )

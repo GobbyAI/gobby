@@ -11,7 +11,6 @@ from .models import (
     KnowledgeGraphResult,
     KnowledgeGraphStatus,
     Relationship,
-    _GraphEntity,
 )
 from .service import KnowledgeGraphService
 

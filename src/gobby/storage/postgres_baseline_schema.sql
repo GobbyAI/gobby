@@ -1127,7 +1127,7 @@ ALTER TABLE prompts
     UNIQUE NULLS NOT DISTINCT (name, scope, project_id);
 
 CREATE TABLE auth_sessions (
-    token TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     remember_me BOOLEAN NOT NULL DEFAULT FALSE

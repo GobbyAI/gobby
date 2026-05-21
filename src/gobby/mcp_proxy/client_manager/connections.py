@@ -26,6 +26,27 @@ CreateConnection = Callable[
 ]
 
 
+def _dedupe_configs_by_name(configs: list[MCPServerConfig]) -> list[MCPServerConfig]:
+    deduped: dict[str, MCPServerConfig] = {}
+    for config in configs:
+        deduped.setdefault(config.name, config)
+    return list(deduped.values())
+
+
+async def _acquire_connection_lock(manager: Any, server_name: str) -> asyncio.Lock:
+    lock = manager._lazy_connector.get_connection_lock(server_name)
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=manager.connection_timeout)
+    except TimeoutError as exc:
+        error = MCPError(
+            f"Timed out waiting for connection lock for '{server_name}' "
+            f"after {manager.connection_timeout}s"
+        )
+        manager._lazy_connector.mark_failed(server_name, str(error))
+        raise error from exc
+    return lock
+
+
 async def connect_all(manager: Any, configs: list[MCPServerConfig] | None) -> dict[str, bool]:
     """Connect configured MCP servers according to lazy/eager settings."""
     manager._running = True
@@ -71,6 +92,7 @@ async def connect_all(manager: Any, configs: list[MCPServerConfig] | None) -> di
                 len(manager._configs),
             )
 
+    configs_to_connect = _dedupe_configs_by_name(configs_to_connect)
     connect_tasks: list[asyncio.Task[ClientSession | None]] = []
     bound_configs: list[MCPServerConfig] = []
     for config in configs_to_connect:
@@ -90,7 +112,7 @@ async def connect_all(manager: Any, configs: list[MCPServerConfig] | None) -> di
 
     task_results = await asyncio.gather(*connect_tasks, return_exceptions=True)
 
-    for config, result in zip(bound_configs, task_results, strict=False):
+    for config, result in zip(bound_configs, task_results, strict=True):
         if isinstance(result, Exception):
             logging.getLogger("gobby.mcp.manager").error(
                 "Failed to connect to %s: %s",
@@ -196,7 +218,8 @@ async def ensure_connected(manager: Any, server_name: str) -> ClientSession:
             raise CircuitBreakerOpen(server_name, recovery_in)
         raise MCPError(f"Circuit breaker open for '{server_name}'")
 
-    async with manager._lazy_connector.get_connection_lock(server_name):
+    lock = await _acquire_connection_lock(manager, server_name)
+    try:
         if server_name in manager._connections:
             connection = manager._connections[server_name]
             if connection.is_connected and connection.session:
@@ -243,6 +266,8 @@ async def ensure_connected(manager: Any, server_name: str) -> ClientSession:
             f"Failed to connect to '{server_name}' after "
             f"{retry_config.max_retries + 1} attempts: {last_error}"
         ) from last_error
+    finally:
+        lock.release()
 
 
 async def get_client_session(manager: Any, server_name: str) -> ClientSession:

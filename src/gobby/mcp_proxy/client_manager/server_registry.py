@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
 LOGGER = logging.getLogger("gobby.mcp.manager")
+
+
+class _CachedToolsManager(Protocol):
+    def get_cached_tools(self, server_name: str, *, project_id: str) -> list[Any]: ...
 
 
 def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
@@ -28,7 +32,7 @@ _truncate_tool_brief = truncate_tool_brief
 
 
 def load_tools_from_db(
-    mcp_db_manager: Any,
+    mcp_db_manager: _CachedToolsManager,
     server_name: str,
     project_id: str,
     logger: logging.Logger,
@@ -77,7 +81,7 @@ def load_initial_configs(
                 enabled=server.enabled,
                 description=server.description,
                 project_id=server.project_id,
-                tools=manager._load_tools_from_db(
+                tools=manager.load_tools_from_db(
                     manager.mcp_db_manager,
                     server.name,
                     server.project_id,
@@ -171,7 +175,7 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
                 )
 
         if tool_schemas:
-            manager._cache_discovered_tools(config.name, tool_schemas)
+            manager.cache_discovered_tools(config.name, tool_schemas)
 
     return {
         "success": True,
