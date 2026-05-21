@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.resources as resources
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,13 @@ def test_installed_wheel_ships_phase1_asset_tree() -> None:
         assert asset_root.joinpath(relative_path).is_file(), f"missing {relative_path}"
 
 
+def test_installed_wheel_ships_phase6_pgaudit_asset_tree() -> None:
+    asset_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
+
+    for relative_path in _PHASE6_PGAUDIT_ASSET_FILES:
+        assert asset_root.joinpath(relative_path).is_file(), f"missing {relative_path}"
+
+
 def test_installed_wheel_ships_pg_audit_export_script() -> None:
     script_ref = resources.files("gobby").joinpath(
         "data/postgres-pgsearch/scripts/pg_audit_export.sh"
@@ -132,6 +140,20 @@ def test_installed_wheel_ships_pg_audit_export_script() -> None:
 
     assert script_ref.is_file()
     assert script_ref.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
+
+
+def test_pg_audit_export_script_help_exits_zero(repo_root: Path) -> None:
+    script_path = _source_asset_root(repo_root) / "scripts/pg_audit_export.sh"
+
+    result = subprocess.run(
+        [str(script_path), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Usage: pg_audit_export.sh" in result.stdout
 
 
 def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
@@ -146,7 +168,7 @@ def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
     resource_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
     target_root = tmp_path / "services/postgres-pgsearch"
 
-    for relative_path in _PHASE1_ASSET_FILES:
+    for relative_path in _PHASE1_ASSET_FILES + _PHASE6_PGAUDIT_ASSET_FILES:
         assert (
             target_root.joinpath(relative_path).read_bytes()
             == resource_root.joinpath(relative_path).read_bytes()

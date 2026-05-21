@@ -60,6 +60,24 @@ services:
       - shared_preload_libraries=pg_search,pgaudit
       - -c
       - pgaudit.log=write
+      - -c
+      - pgaudit.log_catalog=off
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=/var/log/pgaudit
+      - -c
+      - log_filename=pgaudit-%Y-%m-%d_%H%M%S.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_file_mode=0640
+      - -c
+      - log_min_messages=log
     environment:
       POSTGRES_DB: ${GOBBY_POSTGRES_DB:-gobby}
       POSTGRES_USER: ${GOBBY_POSTGRES_USER:-gobby}
@@ -70,7 +88,20 @@ services:
       - gobby_postgres_data:/var/lib/postgresql/data
       - gobby_pgaudit_log:/var/log/pgaudit
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${GOBBY_POSTGRES_USER:-gobby}"]
+      test:
+        - CMD-SHELL
+        - >-
+          set -eu;
+          pg_isready -U ${GOBBY_POSTGRES_USER:-gobby};
+          test "$(psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -tAc 'SELECT 1 FROM pg_extension WHERE extname=$$pgaudit$$')" = "1";
+          test "$(psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -tAc 'SHOW pgaudit.log')" = "write";
+          test -d /var/log/pgaudit;
+          audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
+          test -n "$$audit_file";
+          test "$$(stat -c '%U %a' "$$audit_file")" = "postgres 640";
+          psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -c 'UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at;';
+          audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
+          tail -n 20 "$$audit_file" | grep -E 'LOG:  AUDIT: SESSION,.*UPDATE'
       interval: 5s
       timeout: 3s
       retries: 10

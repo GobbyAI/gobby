@@ -180,6 +180,11 @@ jobs:
             -t "${GOBBY_POSTGRES_TEST_IMAGE}" \
             src/gobby/data/postgres-pgsearch
 
+      - name: Smoke Postgres audit export helper
+        run: |
+          docker run --rm "${GOBBY_POSTGRES_TEST_IMAGE}" \
+            /usr/local/bin/pg_audit_export.sh --help
+
       - name: Start Postgres test container
         run: |
           docker run -d --name "${GOBBY_POSTGRES_TEST_CONTAINER}" \
@@ -193,7 +198,18 @@ jobs:
             --health-timeout 2s \
             --health-retries 15 \
             "${GOBBY_POSTGRES_TEST_IMAGE}" \
-            postgres -c shared_preload_libraries=pg_search,pgaudit -c pgaudit.log=write
+            postgres \
+              -c shared_preload_libraries=pg_search,pgaudit \
+              -c pgaudit.log=write \
+              -c pgaudit.log_catalog=off \
+              -c logging_collector=on \
+              -c log_destination=stderr \
+              -c log_directory=/var/log/pgaudit \
+              -c log_filename=pgaudit-%Y-%m-%d_%H%M%S.log \
+              -c log_rotation_age=1d \
+              -c log_rotation_size=0 \
+              -c log_file_mode=0640 \
+              -c log_min_messages=log
 
           for _ in $(seq 1 30); do
             status="$(
