@@ -15,6 +15,7 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 
@@ -263,12 +264,12 @@ def sync_bundled_pipelines(db: DatabaseProtocol) -> dict[str, Any]:
 
     # Orphan cleanup: soft-delete pipeline rows whose YAML was removed.
     # Only touch gobby-tagged pipeline-type rows.
-    tag_filter = '%"gobby"%'
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'pipeline' "
-        "AND tags LIKE ? AND deleted_at IS NULL",
-        (tag_filter,),
+        f"AND {tag_condition} AND deleted_at IS NULL",
+        tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:

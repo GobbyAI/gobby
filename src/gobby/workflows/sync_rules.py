@@ -17,7 +17,7 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sql_dialect import json_text_expr
+from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -146,11 +146,14 @@ def sync_bundled_rules(
 
                 # Name collision prevention: user templates can't shadow gobby rules
                 if tag != "gobby":
+                    gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
+                        db, "tags", "gobby"
+                    )
                     gobby_row = db.fetchone(
                         "SELECT id FROM workflow_definitions "
-                        "WHERE name = ? AND tags LIKE '%\"gobby\"%' "
+                        f"WHERE name = ? AND {gobby_tag_condition} "
                         "AND deleted_at IS NULL",
-                        (rule_name,),
+                        (rule_name, *gobby_tag_params),
                     )
                     if gobby_row:
                         logger.debug(
@@ -184,12 +187,12 @@ def sync_bundled_rules(
 
     # Orphan cleanup: soft-delete rules whose YAML was removed.
     # Only touch rows with matching tag to avoid cross-tag damage.
-    tag_filter = f'%"{tag}"%'
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'rule' "
-        "AND tags LIKE ? AND deleted_at IS NULL",
-        (tag_filter,),
+        f"AND {tag_condition} AND deleted_at IS NULL",
+        tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:

@@ -6,8 +6,10 @@ import pytest
 
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.metric_snapshots import MetricSnapshotStorage
+from gobby.storage.skills import LocalSkillManager
 from gobby.storage.sql_dialect import (
     elapsed_seconds_greater_than_expr,
+    json_array_contains_condition,
     json_text_expr,
     newer_than_now_expr,
     older_than_now_expr,
@@ -36,7 +38,24 @@ class _CaptureDb:
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> Any:
         self.queries.append(query)
         self.params.append(params)
-        return type("Cursor", (), {"rowcount": 0})()
+        return type(
+            "Cursor",
+            (),
+            {
+                "rowcount": 0,
+                "fetchone": lambda _self: None,
+                "fetchall": lambda _self: [],
+            },
+        )()
+
+    def transaction(self) -> _CaptureDb:
+        return self
+
+    def __enter__(self) -> _CaptureDb:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
 
 
 class _Db:
@@ -54,6 +73,32 @@ def test_json_text_expr_preserves_sqlite_json_extract_for_overlap_window() -> No
     assert json_text_expr(_Db("sqlite"), "metadata", "skillport", "category") == (
         "json_extract(metadata, '$.skillport.category')"
     )
+
+
+def test_json_array_contains_condition_uses_jsonb_contains_for_postgres() -> None:
+    condition, params = json_array_contains_condition(_Db("postgres"), "tags", "gobby")
+
+    assert condition == "tags @> ?::jsonb"
+    assert params == ('["gobby"]',)
+
+
+def test_json_array_contains_condition_uses_json_each_for_sqlite() -> None:
+    condition, params = json_array_contains_condition(_Db("sqlite"), "tags", "gobby")
+
+    assert condition == "EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)"
+    assert params == ("gobby",)
+
+
+def test_skill_list_negative_limit_omits_limit_for_postgres() -> None:
+    db = _CaptureDb("postgres")
+    manager = LocalSkillManager(db)  # type: ignore[arg-type]
+
+    assert manager.list_skills(project_id=None, include_global=False, limit=-1) == []
+
+    query = db.queries[-1]
+    assert "LIMIT" not in query
+    assert "OFFSET" not in query
+    assert db.params[-1] == ()
 
 
 def test_timestamp_helpers_emit_postgres_native_time_arithmetic() -> None:

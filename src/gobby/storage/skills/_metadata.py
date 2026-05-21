@@ -585,8 +585,13 @@ class SkillMetadataMixin:
             )"""  # nosec B608 - JSON expressions are generated from static keys.
             params.extend([category, category])
 
-        query += " ORDER BY name ASC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        query += " ORDER BY name ASC"
+        if limit >= 0:
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        elif offset > 0:
+            query += " OFFSET ?"
+            params.append(offset)
 
         rows = self._fetchall(query, tuple(params))
         skills = [Skill.from_row(row) for row in rows]

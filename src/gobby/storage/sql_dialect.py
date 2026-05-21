@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal, cast
 
@@ -54,6 +55,15 @@ def json_text_expr(db: object, column: str, *path: str) -> str:
     if not is_postgres(db):
         return f"json_extract({column}, '$.{'.'.join(path)}')"
     return f"{column} #>> '{{{','.join(path)}}}'"
+
+
+def json_array_contains_condition(
+    db: object, column: str, value: str
+) -> tuple[str, tuple[str, ...]]:
+    """Return a SQL condition and params for exact JSON string-array membership."""
+    if not is_postgres(db):
+        return f"EXISTS (SELECT 1 FROM json_each({column}) WHERE value = ?)", (value,)
+    return f"{column} @> ?::jsonb", (json.dumps([value]),)
 
 
 def older_than_now_expr(db: object, column: str, param: str, unit: IntervalUnit) -> str:

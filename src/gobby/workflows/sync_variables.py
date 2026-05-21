@@ -16,6 +16,7 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 logger = logging.getLogger(__name__)
@@ -118,12 +119,12 @@ def sync_bundled_variables(
 
     # Orphan cleanup: soft-delete variable rows whose YAML was removed.
     # Only touch rows with matching tag.
-    tag_filter = f'%"{tag}"%'
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'variable' "
-        "AND tags LIKE ? AND deleted_at IS NULL",
-        (tag_filter,),
+        f"AND {tag_condition} AND deleted_at IS NULL",
+        tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:
