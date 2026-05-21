@@ -276,11 +276,18 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
-            current_commit_sha = (
-                normalize_commit_sha(commit_sha, cwd=cwd)
-                if commit_sha
-                else run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
-            )
+            if commit_sha:
+                current_commit_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+            elif task.commits:
+                linked_commit_sha = task.commits[-1]
+                current_commit_sha = (
+                    normalize_commit_sha(linked_commit_sha, cwd=cwd) or linked_commit_sha
+                )
+            else:
+                current_commit_sha = run_git_command(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=cwd,
+                )
             if current_commit_sha is None:
                 return {
                     "success": False,

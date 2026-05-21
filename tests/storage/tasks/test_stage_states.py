@@ -6,6 +6,7 @@ import inspect
 
 import pytest
 
+from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
@@ -302,6 +303,41 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
     assert err.current_state == "in_progress"
     assert err.attempted_transition == "complete_stage"
     assert err.review_policy == "required"
+
+
+def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "in_progress", work_attempt_count=1)
+    TaskDeliveryStateManager(temp_db).record_campaign(
+        task.id,
+        state="merged",
+        merge_sha="delivery-merge-sha",
+        merge_report_ref="merge-report.md",
+        last_error="",
+    )
+
+    manager = LocalTaskManager(temp_db)
+    closed = manager.close_task(
+        task.id,
+        reason="completed",
+        closed_commit_sha="repair-commit-sha",
+    )
+
+    row = stage_row(temp_db, task.id, "merge")
+    assert row["state"] == "done"
+    assert row["completed_at"] is not None
+    assert row["completed_commit_sha"] == "delivery-merge-sha"
+    assert manager.stage_states.current_stage(task.id) is None
+    assert closed.closed_commit_sha == "repair-commit-sha"
 
 
 def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, title: str):

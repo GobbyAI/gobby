@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -61,6 +62,13 @@ def _close_task_in_txn(
     persisted_session_id = (
         closed_in_session_id if _session_exists(conn, closed_in_session_id) else None
     )
+    _complete_terminal_delivery_stage_for_close(
+        conn,
+        task_id,
+        now=now,
+        completed_by_session_id=persisted_session_id,
+        commit_sha=commit_sha,
+    )
     conn.execute(
         """
         UPDATE tasks
@@ -89,6 +97,88 @@ def _close_task_in_txn(
     )
     if cascade_descendants:
         _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)
+
+
+def _complete_terminal_delivery_stage_for_close(
+    conn: Transaction | sqlite3.Connection,
+    task_id: str,
+    *,
+    now: str,
+    completed_by_session_id: str | None,
+    commit_sha: str | None,
+) -> None:
+    row = conn.execute(
+        """
+        SELECT s.stage_name, s.state, r.category, r.is_terminal
+          FROM task_stage_states s
+          LEFT JOIN task_stages_registry r ON r.name = s.stage_name
+         WHERE s.task_id = ?
+           AND s.state != 'done'
+         ORDER BY s.position, s.stage_name
+         LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None or row["state"] != "in_progress":
+        return
+    if not _is_terminal_delivery_stage(row):
+        return
+
+    completion_commit_sha = _completion_commit_sha_for_stage(
+        conn,
+        task_id,
+        row["stage_name"],
+        commit_sha,
+    )
+    conn.execute(
+        """
+        UPDATE task_stage_states
+           SET state = 'done',
+               completed_at = COALESCE(completed_at, ?),
+               completed_by_session_id = COALESCE(completed_by_session_id, ?),
+               completed_commit_sha = COALESCE(completed_commit_sha, ?),
+               updated_at = ?
+         WHERE task_id = ?
+           AND stage_name = ?
+           AND state = 'in_progress'
+        """,
+        (
+            now,
+            completed_by_session_id,
+            completion_commit_sha,
+            now,
+            task_id,
+            row["stage_name"],
+        ),
+    )
+
+
+def _is_terminal_delivery_stage(row: Any) -> bool:
+    return bool(row["is_terminal"]) and row["category"] == "delivery"
+
+
+def _completion_commit_sha_for_stage(
+    conn: Transaction | sqlite3.Connection,
+    task_id: str,
+    stage_name: str,
+    fallback_commit_sha: str | None,
+) -> str | None:
+    if stage_name != "merge":
+        return fallback_commit_sha
+    row = conn.execute(
+        """
+        SELECT merge_sha
+          FROM task_delivery_campaigns
+         WHERE task_id = ?
+           AND state = 'merged'
+           AND merge_sha IS NOT NULL
+           AND merge_sha != ''
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return fallback_commit_sha
+    return row["merge_sha"] or fallback_commit_sha
 
 
 def _cascade_close_descendants(
