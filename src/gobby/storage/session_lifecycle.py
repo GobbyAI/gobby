@@ -34,7 +34,7 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
     # into a parameterized call (PRAGMA does not accept bound parameters
     # for identifiers anyway).
     for table_name, columns in _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS:
-        rows = db.fetchall(f"PRAGMA table_info({table_name})")
+        rows = _table_column_rows(db, table_name)
         if not rows:
             continue
 
@@ -50,6 +50,20 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
         guards.append(f"NOT EXISTS (SELECT 1 FROM {table_name} {alias} WHERE {column_predicate})")
 
     return tuple(guards)
+
+
+def _table_column_rows(db: HubDatabase, table_name: str) -> list[dict[str, object]]:
+    if is_postgres(db):
+        return db.fetchall(
+            """
+            SELECT column_name AS name
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+            """,
+            (table_name,),
+        )
+    return db.fetchall(f"PRAGMA table_info({table_name})")
 
 
 def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
