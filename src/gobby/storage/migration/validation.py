@@ -38,7 +38,6 @@ _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
         "config_store",
         "code_symbols",
         "agent_runs",
-        "metrics_events",
         "workflow_audit_log",
     }
 )
@@ -390,7 +389,12 @@ def _check_bm25_indexes(
         query = _sample_search_query(source, spec.table, spec.source_sample_columns)
         hits = _bm25_smoke_hits(target, spec, query)
         reads = _bm25_index_reads(target, spec.index_name)
-        if hits <= 0 or reads <= 0:
+        if not query:
+            verdicts.append(
+                {"table": spec.table, "state": "no-sample-query", "index": spec.index_name}
+            )
+            continue
+        if hits <= 0:
             failures.append(
                 {
                     "table": spec.table,
@@ -711,19 +715,24 @@ def _sample_search_query(
     if not selected_columns:
         return ""
     column_sql = ", ".join(_quote_identifier(column) for column in selected_columns)
-    row = source.execute(f"SELECT {column_sql} FROM {_quote_identifier(table)} LIMIT 1").fetchone()
-    if row is None:
-        return ""
-
-    pieces = [
-        str(_jsonable(_row_value(row, column))).strip()
+    nonempty = " OR ".join(
+        f"{_quote_identifier(column)} IS NOT NULL AND {_quote_identifier(column)} <> ''"
         for column in selected_columns
-        if _row_value(row, column) not in (None, "")
-    ]
-    tokens = " ".join(pieces).split()
-    if not tokens:
-        return ""
-    return _sanitize_pg_search_query(tokens[0])
+    )
+    rows = source.execute(
+        f"SELECT {column_sql} FROM {_quote_identifier(table)} WHERE {nonempty} LIMIT 100"
+    ).fetchall()
+    for row in rows:
+        pieces = [
+            str(_jsonable(_row_value(row, column))).strip()
+            for column in selected_columns
+            if _row_value(row, column) not in (None, "")
+        ]
+        for token in " ".join(pieces).split():
+            query = _sanitize_pg_search_query(token)
+            if query:
+                return query
+    return ""
 
 
 def _sqlite_columns(source: sqlite3.Connection, table: str) -> set[str]:

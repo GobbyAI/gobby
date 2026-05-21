@@ -174,6 +174,55 @@ def test_not_null_catalog_exclusions_are_passed_as_one_array_parameter() -> None
     assert checks[0].ok is True
 
 
+def test_metrics_events_are_count_validated_not_content_hashed() -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+
+    assert "metrics_events" not in validation._CONTENT_HASH_TABLES
+
+
+def test_bm25_validation_does_not_require_same_transaction_pg_stat_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, description TEXT)")
+    source.execute("INSERT INTO tasks (id, title, description) VALUES ('1', 'hello', '')")
+    checks: list[Any] = []
+
+    monkeypatch.setattr(validation, "_catalog_available", lambda _target: True)
+    monkeypatch.setattr(
+        validation,
+        "_bm25_index_metadata",
+        lambda _target, _index: (True, "id title description"),
+    )
+    monkeypatch.setattr(validation, "_bm25_smoke_hits", lambda *_args: 1)
+    monkeypatch.setattr(validation, "_bm25_index_reads", lambda *_args: 0)
+
+    try:
+        validation._check_bm25_indexes(source, object(), {"tasks"}, {"tasks": 1}, checks)
+    finally:
+        source.close()
+
+    assert checks[0].ok is True
+
+
+def test_sample_search_query_skips_empty_rows() -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute("CREATE TABLE code_content_chunks (id TEXT PRIMARY KEY, content TEXT)")
+    source.execute("INSERT INTO code_content_chunks (id, content) VALUES ('1', '')")
+    source.execute("INSERT INTO code_content_chunks (id, content) VALUES ('2', 'useful token')")
+
+    try:
+        query = validation._sample_search_query(source, "code_content_chunks", ("content",))
+    finally:
+        source.close()
+
+    assert query == "useful"
+
+
 def _allow_minimal_source_schema(monkeypatch: pytest.MonkeyPatch, validation: Any) -> None:
     monkeypatch.setattr(
         validation,
