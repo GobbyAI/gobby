@@ -1,7 +1,7 @@
 """Skill storage and management.
 
 This package provides the Skill dataclass and LocalSkillManager for storing
-and retrieving skills from SQLite, following the Agent Skills specification
+and retrieving skills from the PostgreSQL hub, following the Agent Skills specification
 (agentskills.io) with SkillPort feature parity plus Gobby-specific extensions.
 """
 

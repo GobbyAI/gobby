@@ -95,7 +95,7 @@ class TaskLifecycleEventManager:
                 (task_id, from_state, to_state, reason, actor),
             ).fetchone()
             if row is None:
-                raise RuntimeError("SQLite did not return a lifecycle event id")
+                raise RuntimeError("PostgreSQL hub did not return a lifecycle event id")
             event_id = int(row["id"])
 
         row = self.db.fetchone("SELECT * FROM task_lifecycle_events WHERE id = ?", (event_id,))
