@@ -95,7 +95,7 @@ def _local_merge_side_effect(
             return _make_git_result(0)
         if args == ["stash", "pop"]:
             return _make_git_result(0)
-        if args == ["merge", source, "--no-edit"]:
+        if args == ["merge", source, "--no-ff", "--no-edit"]:
             return merge_result or _make_git_result(0)
         if args == ["diff", "--name-only", "--diff-filter=U"]:
             return _make_git_result(0, stdout=unmerged_stdout)
@@ -162,7 +162,7 @@ async def test_merge_worktree_local_only_target_uses_local_branch():
         if call[0][0][0] == "merge" and "--no-edit" in call[0][0]
     ]
     assert len(merge_calls) == 1
-    assert merge_calls[0][0][0] == ["merge", "feat", "--no-edit"]
+    assert merge_calls[0][0][0] == ["merge", "feat", "--no-ff", "--no-edit"]
     assert merge_calls[0].kwargs.get("cwd") == "/tmp/repo"
 
 
@@ -197,7 +197,7 @@ async def test_merge_worktree_uses_existing_target_worktree_when_branch_is_check
     merge_calls = [
         call
         for call in ctx.git_manager._run_git.call_args_list
-        if call[0][0] == ["merge", "feat", "--no-edit"]
+        if call[0][0] == ["merge", "feat", "--no-ff", "--no-edit"]
     ]
     assert len(merge_calls) == 1
     assert merge_calls[0].kwargs.get("cwd") == "/tmp/target-wt"

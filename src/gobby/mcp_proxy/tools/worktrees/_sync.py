@@ -401,7 +401,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["merge", effective_source, "--no-edit"],
+                ["merge", effective_source, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
             )

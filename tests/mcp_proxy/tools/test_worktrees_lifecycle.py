@@ -72,7 +72,7 @@ def _local_merge_git_side_effect(
             return MagicMock(returncode=0, stdout="", stderr="")
         if args == ["stash", "pop"]:
             return MagicMock(returncode=0, stdout="", stderr="")
-        if args == ["merge", source, "--no-edit"]:
+        if args == ["merge", source, "--no-ff", "--no-edit"]:
             return MagicMock(returncode=merge_returncode, stdout="", stderr=merge_stderr)
         if args == ["diff", "--name-only", "--diff-filter=U"]:
             return MagicMock(returncode=0, stdout=unmerged_stdout, stderr="")
@@ -692,6 +692,7 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
     calls = mock_git_manager._run_git.call_args_list
     merge_call = [c for c in calls if c[0][0][:1] == ["merge"] and "--no-edit" in c[0][0]]
     assert len(merge_call) == 1
+    assert "--no-ff" in merge_call[0][0][0]
     assert (
         merge_call[0].kwargs.get("cwd") == "/tmp/repo" or merge_call[0][1].get("cwd") == "/tmp/repo"
     )
@@ -838,7 +839,7 @@ async def test_merge_worktree_default_target_branch(
     calls = mock_git_manager._run_git.call_args_list
     wt_merge = [c for c in calls if c[0][0][:1] == ["merge"] and "--no-edit" in c[0][0]]
     assert len(wt_merge) == 1
-    assert wt_merge[0][0][0] == ["merge", "feature/test", "--no-edit"]
+    assert wt_merge[0][0][0] == ["merge", "feature/test", "--no-ff", "--no-edit"]
 
 
 @pytest.mark.asyncio
@@ -988,7 +989,7 @@ async def test_merge_worktree_uses_project_repo_for_local_target_merge(
     merge_calls = [
         call
         for call in mock_git_manager._run_git.call_args_list
-        if call[0][0] == ["merge", "feature/test", "--no-edit"]
+        if call[0][0] == ["merge", "feature/test", "--no-ff", "--no-edit"]
     ]
     assert len(merge_calls) == 1
     assert merge_calls[0].kwargs.get("cwd") == "/tmp/repo"
