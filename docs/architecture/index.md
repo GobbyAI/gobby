@@ -13,7 +13,7 @@
 | **Type** | Backend + CLI (Daemon) |
 | **Language** | Python 3.13+ |
 | **Framework** | FastAPI + FastMCP + Click |
-| **Database** | SQLite (local-first) |
+| **Database** | PostgreSQL local runtime hub |
 | **Package Manager** | uv |
 | **License** | MIT |
 
@@ -79,7 +79,7 @@ gobby status
                           │
 ┌─────────────────────────▼────────────────────────────────────┐
 │                    Data Layer                                 │
-│              SQLite (~/.gobby/gobby-hub.db)                      │
+│              PostgreSQL hub (bootstrap/keyring database_url)      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,7 +123,7 @@ gobby status
 | Path | Purpose |
 |------|---------|
 | `~/.gobby/config.yaml` | Daemon configuration |
-| `~/.gobby/gobby-hub.db` | SQLite database |
+| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN |
 | `~/.gobby/logs/` | Log files |
 | `~/.gobby/session_summaries/` | Generated summaries |
 

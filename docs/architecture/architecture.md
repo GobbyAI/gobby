@@ -14,7 +14,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 | **Primary Language** | Python 3.13+ |
 | **Project Type** | Backend + CLI (Daemon) + Web UI |
 | **Framework** | FastAPI + FastMCP + Click |
-| **Database** | SQLite (local-first) |
+| **Database** | PostgreSQL local runtime hub |
 | **Architecture Pattern** | Layered Service Architecture with Event-Driven Hooks and Declarative Rules |
 
 ## System Architecture
@@ -65,10 +65,10 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          DATA LAYER                                     │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
-│  │  LocalDatabase  │  │  MCPDBManager   │  │ File Storage    │        │
-│  │   (SQLite)      │  │ (tool caching)  │  │ (sync, logs)    │        │
+│  │   HubDatabase   │  │  MCPDBManager   │  │ File Storage    │        │
+│  │  (PostgreSQL)   │  │ (tool caching)  │  │ (sync, logs)    │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
-│                    ~/.gobby/gobby-hub.db                                │
+│                    bootstrap/keyring database_url                       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,7 +116,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 
 | Component | File | Storage |
 |-----------|------|---------|
-| **LocalDatabase** | `storage/database.py` | SQLite with thread-local connections |
+| **PostgresHubDatabase** | `storage/hub/postgres.py` | PostgreSQL hub storage |
 | **LocalSessionManager** | `storage/sessions.py` | Session CRUD operations |
 | **LocalTaskManager** | `storage/tasks.py` | Task CRUD with dependency graphs |
 | **LocalProjectManager** | `storage/projects.py` | Project CRUD operations |
@@ -185,11 +185,11 @@ Hook event fired (e.g., before_tool)
 
 ## Key Design Decisions
 
-1. **Local-First**: All data stored in SQLite (`~/.gobby/gobby-hub.db`), no cloud dependency
+1. **Local-First**: Runtime state lives in a local PostgreSQL hub, no cloud dependency
 2. **CLI-Agnostic**: Adapter pattern normalizes different CLI hook formats to unified events
 3. **Rules-First Enforcement**: Declarative rules enforce behavior without relying on prompt compliance
 4. **Progressive Discovery**: MCP tools loaded on-demand to reduce token usage
 5. **Multi-Provider LLM**: Abstraction layer supports Claude, Gemini, OpenAI, and LiteLLM
 6. **Event-Driven Hooks**: Hook events feed into RuleEngine for enforcement and context injection
 7. **P2P Agent Messaging**: Agents communicate via send_message/send_command without parent relay
-8. **Thread-Safe Storage**: Thread-local SQLite connections for concurrent access
+8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access

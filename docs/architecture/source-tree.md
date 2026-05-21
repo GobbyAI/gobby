@@ -237,9 +237,9 @@ gobby/                                  # Project root
 │   │       ├── codex.py                # Codex transcript parser
 │   │       └── hook_assembler.py       # Hook-based transcript assembly
 │   │
-│   ├── storage/                        # SQLite storage layer (~29 modules)
-│   │   ├── database.py                 # LocalDatabase (connection management)
-│   │   ├── migrations.py               # Schema migrations
+│   ├── storage/                        # PostgreSQL hub storage and import helpers
+│   │   ├── hub/postgres.py             # PostgresHubDatabase
+│   │   ├── migrations.py               # PostgreSQL schema migrations
 │   │   ├── sessions.py                 # Session CRUD
 │   │   ├── session_models.py           # Session models
 │   │   ├── session_messages.py         # Session message storage

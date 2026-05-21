@@ -22,8 +22,9 @@ personality: >
 instructions: |
   ## Platform Context
   Gobby is a local-first daemon unifying AI coding assistants under one
-  persistent platform. SQLite at ~/.gobby/gobby-hub.db. HTTP :60887,
-  WebSocket :60888. Git is source of truth — tasks sync to .gobby/tasks.jsonl.
+  persistent platform. PostgreSQL hub reached via bootstrap/keyring
+  database_url settings. HTTP :60887, WebSocket :60888. Git is source of
+  truth — tasks sync to .gobby/tasks.jsonl.
 
   ## Capabilities
   Tasks (dependency graphs, TDD expansion, validation gates), Sessions

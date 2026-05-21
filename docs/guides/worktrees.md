@@ -76,8 +76,8 @@ Default worktree paths are generated under:
 On creation, Gobby copies `.gobby/project.json` into the worktree and records the
 parent project path so the isolated checkout can still resolve project context.
 
-Worktree metadata is stored in Gobby's local SQLite database. The default
-database path is `~/.gobby/gobby-hub.db`, unless configured otherwise.
+Worktree metadata is stored in Gobby's PostgreSQL hub, reached through the
+bootstrap/keyring `database_url` configuration.
 
 ## Status And Ownership
 

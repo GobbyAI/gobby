@@ -9,7 +9,7 @@ The daemon records operational data at several layers:
 
 - Logs explain immediate runtime behavior.
 - OpenTelemetry spans describe traced operations.
-- SQLite-backed metrics aggregate MCP tool calls and event history.
+- Hub-backed metrics aggregate MCP tool calls and event history.
 - Token events record model usage by source, model, project, and session.
 - Savings events record token or character savings from code index, compression,
   discovery, and related systems.
@@ -77,8 +77,8 @@ Primary routes:
 
 Tracing is implemented through `src/gobby/telemetry/tracing.py`. Code can use
 `@traced` or explicit span helpers. When tracing is enabled, Gobby exports spans
-through `GobbySpanExporter`, persists them to SQLite through the span store, and
-broadcasts trace events to the UI.
+through `GobbySpanExporter`, persists them to the hub database through the span
+store, and broadcasts trace events to the UI.
 
 Use traces when you need causality across services, such as an agent spawn, a
 workflow transition, a provider call, or a scheduled pipeline run.
@@ -88,7 +88,7 @@ workflow transition, a provider call, or a scheduled pipeline run.
 `src/gobby/mcp_proxy/metrics.py` records MCP tool activity. Tool calls are
 triple-written to:
 
-- SQLite aggregate metrics.
+- Hub aggregate metrics.
 - A tool event log.
 - OpenTelemetry metrics/spans when configured.
 

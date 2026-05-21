@@ -151,7 +151,8 @@ gobby memory restore [--input PATH] [--quiet]
 ```
 
 The default JSONL path is `.gobby/memories.jsonl`. Backup is a filesystem
-export for disaster recovery or migration. SQLite remains the source of truth.
+export for disaster recovery or migration. The PostgreSQL hub remains the
+source of truth.
 
 ### Maintenance
 
@@ -190,8 +191,8 @@ for the authoritative signature before calling a tool.
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
 | `rebuild_knowledge_graph` | Extract entities and relationships into Neo4j. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
-| `sync_import` | Import `.gobby/memories.jsonl` into SQLite. |
-| `sync_export` | Export project memories from SQLite to `.gobby/memories.jsonl`. |
+| `sync_import` | Import `.gobby/memories.jsonl` into the hub database. |
+| `sync_export` | Export project memories from the hub database to `.gobby/memories.jsonl`. |
 | `audit_memories` | Report stale, duplicate, code-derivable, and orphaned memory candidates. |
 | `cleanup_memories` | Delete or dry-run cleanup of problematic memories. |
 | `bootstrap_session_title` | System lifecycle tool for heuristic session titles. |
@@ -253,13 +254,13 @@ The daemon exposes memory routes under `/api/memories`.
 | `POST /api/memories/graph/rebuild` | Rebuild the knowledge graph, optionally in the background. |
 | `GET /api/memories/graph/rebuild/status` | Inspect background rebuild status. |
 | `POST /api/memories/embeddings/reindex` | Regenerate embedding vectors. |
-| `POST /api/memories/reconcile` | Reconcile Qdrant and Neo4j with SQLite. |
+| `POST /api/memories/reconcile` | Reconcile Qdrant and Neo4j with the hub database. |
 | `POST /api/memories/invalidate` | Clear secondary indices and start a background rebuild. |
 
 ## Architecture
 
-SQLite in `~/.gobby/gobby-hub.db` is the source of truth. The default path can
-move when `GOBBY_HOME` or bootstrap `database_path` is configured.
+The PostgreSQL hub is the source of truth. Runtime connection details come from
+bootstrap/keyring `database_url` settings.
 
 ```mermaid
 flowchart LR
@@ -268,16 +269,16 @@ flowchart LR
     MCP --> Manager[MemoryManager]
     CLI --> Manager
     HTTP[/api/memories] --> Manager
-    Manager --> SQLite[(SQLite hub DB)]
-    Manager --> FTS[SQLite FTS5]
+    Manager --> Hub[(PostgreSQL hub)]
+    Manager --> BM25[pg_search BM25]
     Manager --> Qdrant[Qdrant vectors]
     Manager --> Neo4j[Neo4j knowledge graph]
     Manager --> JSONL[.gobby/memories.jsonl backup]
 ```
 
-`MemoryManager` coordinates storage, FTS search, vector search, cross-references,
-image ingestion, cleanup, and the optional knowledge graph. `StorageAdapter`
-provides the async backend interface over the local SQLite storage layer.
+`MemoryManager` coordinates storage, keyword search, vector search,
+cross-references, image ingestion, cleanup, and the optional knowledge graph.
+`StorageAdapter` provides the async backend interface over the hub storage layer.
 
 ### Search
 
@@ -300,7 +301,7 @@ memory-recall rule currently uses `limit: 2` and `min_score: 0.7`.
 The knowledge graph extracts entities and relationships from memories into
 Neo4j. It is optional and depends on an LLM service, embeddings, a vector store,
 and Neo4j. Use it for relationship exploration, graph visualization, and
-entity-oriented recall. SQLite memories remain authoritative.
+entity-oriented recall. Hub memories remain authoritative.
 
 ## Configuration
 
@@ -484,8 +485,8 @@ gobby memory rebuild-graph --wait
 
 | Path | Description |
 | --- | --- |
-| `~/.gobby/gobby-hub.db` | Default SQLite hub database. |
-| `~/.gobby/bootstrap.yaml` | Bootstrap settings, including `database_path`. |
+| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN. |
+| `~/.gobby/bootstrap.yaml` | Bootstrap settings, including Postgres install metadata. |
 | `.gobby/memories.jsonl` | JSONL memory backup/export file. |
 | `.gobby/resources/` | Screenshot/image resources created by multimodal memory tools. |
 | `src/gobby/memory/` | Memory manager, search, graph, indexing, cleanup, and ingestion code. |
