@@ -104,6 +104,25 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
         ),
         ('SELECT "$1", $1 FROM t', ("a",), 'SELECT "$1", %s FROM t', ("a",)),
         ("SELECT foo$1, $1 FROM t", ("a",), "SELECT foo$1, %s FROM t", ("a",)),
+        (
+            "SELECT * FROM task_stages_registry WHERE name = ?",
+            ("dev",),
+            "SELECT * FROM task_stages_registry WHERE name = %s",
+            ("dev",),
+        ),
+        (
+            "SELECT * FROM workflow_definitions WHERE name = ? AND project_id IS ?",
+            ("dev", None),
+            "SELECT * FROM workflow_definitions WHERE name = %s AND project_id IS %s",
+            ("dev", None),
+        ),
+        (
+            "SELECT '?' AS literal WHERE name = ?",
+            ("dev",),
+            "SELECT '?' AS literal WHERE name = %s",
+            ("dev",),
+        ),
+        ("/* ? */ SELECT ?", ("dev",), "/* ? */ SELECT %s", ("dev",)),
     ],
 )
 def test_remap_placeholders_to_psycopg(sql, params, expected_sql, expected_params) -> None:
@@ -152,6 +171,16 @@ def test_postgres_transaction_execute_remaps_before_driver_call() -> None:
     assert conn.execute_calls == [("SELECT %s, %s, '$3'", ("two", "one"))]
 
 
+def test_postgres_transaction_execute_remaps_qmark_before_driver_call() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("SELECT * FROM task_stages_registry WHERE name = ?", ("dev",))
+
+    assert conn.execute_calls == [("SELECT * FROM task_stages_registry WHERE name = %s", ("dev",))]
+
+
 def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) -> None:
     module = _postgres_module()
     calls: list[tuple[str, tuple[object, ...]]] = []
@@ -180,6 +209,23 @@ def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) 
         (
             "INSERT INTO remap_rows (a, b, c) VALUES (%s, %s, %s)",
             [("right", "left", "right"), ("second", "first", "second")],
+        )
+    ]
+
+
+def test_postgres_transaction_executemany_reuses_qmark_rewrite() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+    tx.executemany(
+        "INSERT INTO remap_rows (a, b) VALUES (?, ?)",
+        [("left", "right"), ("first", "second")],
+    )
+
+    assert conn.executemany_calls == [
+        (
+            "INSERT INTO remap_rows (a, b) VALUES (%s, %s)",
+            [("left", "right"), ("first", "second")],
         )
     ]
 

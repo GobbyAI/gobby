@@ -20,7 +20,9 @@ from gobby.storage.hub.placeholders import (
 )
 from gobby.storage.hub.placeholders import (
     remap_dollar_placeholders,
+    remap_qmark_placeholders,
     scan_dollar_placeholder_indexes,
+    scan_qmark_placeholder_indexes,
 )
 from gobby.storage.hub.protocol import (
     ChatAttachmentMutation,
@@ -77,8 +79,11 @@ def _remap_placeholders_to_psycopg(
     sql: str,
     params: Sequence[Any],
 ) -> tuple[str, tuple[Any, ...]]:
-    """Translate top-level ``$N`` placeholders to psycopg ``%s`` placeholders."""
-    new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
+    """Translate top-level hub placeholders to psycopg ``%s`` placeholders."""
+    if params and "?" in sql and "$" not in sql:
+        new_sql, new_params, indexes = remap_qmark_placeholders(sql, params, "%s")
+    else:
+        new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
     _cache_param_permutation(sql, len(params), indexes)
     return new_sql, new_params
 
@@ -122,6 +127,8 @@ def _cached_param_permutation(sql: str, param_count: int) -> tuple[int, ...] | N
 
 
 def _scan_placeholder_indexes(sql: str, param_count: int) -> tuple[str, tuple[int, ...]]:
+    if param_count and "?" in sql and "$" not in sql:
+        return scan_qmark_placeholder_indexes(sql, param_count, "%s")
     return scan_dollar_placeholder_indexes(sql, param_count, "%s")
 
 
