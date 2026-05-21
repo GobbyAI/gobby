@@ -181,6 +181,87 @@ def test_postgres_transaction_execute_remaps_qmark_before_driver_call() -> None:
     assert conn.execute_calls == [("SELECT * FROM task_stages_registry WHERE name = %s", ("dev",))]
 
 
+def test_postgres_transaction_execute_rewrites_sqlite_boolean_literals() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM mcp_servers WHERE enabled = 1 AND graph_synced=0 AND source = 'enabled = 1'"
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM mcp_servers WHERE enabled IS TRUE "
+            "AND graph_synced IS FALSE AND source = 'enabled = 1'",
+            (),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_filter_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "SELECT * FROM workflow_definitions WHERE name = ? AND enabled = ?",
+        ("rule", 1),
+    )
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM workflow_definitions WHERE name = %s AND enabled = %s",
+            ("rule", True),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_update_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("UPDATE workflow_definitions SET enabled = ? WHERE id = ?", (0, "wf-1"))
+
+    assert conn.execute_calls == [
+        ("UPDATE workflow_definitions SET enabled = %s WHERE id = %s", (False, "wf-1"))
+    ]
+
+
+def test_postgres_transaction_execute_coerces_boolean_insert_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute(
+        "INSERT INTO workflow_definitions (id, enabled, name) VALUES (?, ?, ?)",
+        ("wf-1", 1, "rule"),
+    )
+
+    assert conn.execute_calls == [
+        (
+            "INSERT INTO workflow_definitions (id, enabled, name) VALUES (%s, %s, %s)",
+            ("wf-1", True, "rule"),
+        )
+    ]
+
+
+def test_postgres_transaction_execute_casts_null_test_params() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+
+    tx.execute("SELECT * FROM pipeline_executions WHERE (? IS NULL OR status = ?)", (None, None))
+
+    assert conn.execute_calls == [
+        (
+            "SELECT * FROM pipeline_executions WHERE (%s::text IS NULL OR status = %s)",
+            (None, None),
+        )
+    ]
+
+
 def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) -> None:
     module = _postgres_module()
     calls: list[tuple[str, tuple[object, ...]]] = []
@@ -226,6 +307,24 @@ def test_postgres_transaction_executemany_reuses_qmark_rewrite() -> None:
         (
             "INSERT INTO remap_rows (a, b) VALUES (%s, %s)",
             [("left", "right"), ("first", "second")],
+        )
+    ]
+
+
+def test_postgres_transaction_executemany_coerces_boolean_rows() -> None:
+    module = _postgres_module()
+    conn = _FakePostgresConnection()
+    tx = module._PostgresTransaction(conn)
+    tx.executemany(
+        "INSERT INTO task_stages_registry (name, requires_human, is_terminal) VALUES (?, ?, ?)",
+        [("dev", 0, 1), ("merge", 1, 0)],
+    )
+
+    assert conn.executemany_calls == [
+        (
+            "INSERT INTO task_stages_registry (name, requires_human, is_terminal) "
+            "VALUES (%s, %s, %s)",
+            [("dev", False, True), ("merge", True, False)],
         )
     ]
 
