@@ -99,10 +99,11 @@ class TestSpawnAgentIsolation:
                 return_value=None,
             ) as mock_config_error,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ) as mock_code_index,
         ):
+            mock_code_index.return_value = MagicMock(env={"PATH": "/isolated/bin:/usr/bin"})
             mock_ctx.return_value = {
                 "id": "proj-123",
                 "project_path": "/path/to/project",
@@ -161,7 +162,8 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/worktrees/branch")
+            mock_code_index.assert_awaited_once_with("/tmp/worktrees/branch", database_url=None)
+            assert mock_execute.await_args.args[0].extra_env == {"PATH": "/isolated/bin:/usr/bin"}
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -199,7 +201,7 @@ class TestSpawnAgentIsolation:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ),
         ):
@@ -274,7 +276,7 @@ class TestSpawnAgentIsolation:
                 return_value=None,
             ) as mock_config_error,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ) as mock_code_index,
         ):
@@ -336,7 +338,7 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/clones/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/clones/branch")
+            mock_code_index.assert_awaited_once_with("/tmp/clones/branch", database_url=None)
             mock_execute.assert_awaited_once()
 
 

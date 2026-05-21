@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
     SpawnConfig,
-    ensure_isolation_code_index,
     get_isolation_handler,
     provider_mcp_config_error,
     repair_isolation_environment,
@@ -31,6 +30,11 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
+from ._code_index import (
+    append_code_index_warning,
+    prepare_isolation_code_index,
+    without_code_index_skill,
+)
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 
 if TYPE_CHECKING:
@@ -647,28 +651,21 @@ async def spawn_agent_impl(
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
     code_index_preflight_warning: dict[str, str] | None = None
+    code_index_preflight_env: dict[str, str] = {}
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             return {"success": False, "error": config_error}
         if task_category != "docs":
-            try:
-                await ensure_isolation_code_index(isolation_ctx.cwd)
-            except Exception as e:
-                reason = str(e)
-                logger.warning(
-                    "Continuing isolated spawn after code index preflight failed for cwd=%s: %s",
-                    isolation_ctx.cwd,
-                    reason,
-                )
-                code_index_preflight_warning = {
-                    "preflight": "code_index",
-                    "cwd": isolation_ctx.cwd,
-                    "message": reason,
-                }
+            (
+                code_index_preflight_warning,
+                code_index_preflight_env,
+            ) = await prepare_isolation_code_index(isolation_ctx.cwd, daemon_config)
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
+    if code_index_preflight_warning is not None:
+        enhanced_prompt = append_code_index_warning(enhanced_prompt, code_index_preflight_warning)
 
     # 9. Generate session and run IDs
     session_id = str(uuid.uuid4())
@@ -698,6 +695,8 @@ async def spawn_agent_impl(
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills
+    if code_index_preflight_warning is not None:
+        additional_skills = without_code_index_skill(additional_skills)
     effective_initial_variables["additional_skills"] = additional_skills
 
     # 10b. Inject isolation context so workflow variables can reference them
@@ -752,6 +751,7 @@ async def spawn_agent_impl(
         reasoning_status=reasoning.status,
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
+        extra_env=code_index_preflight_env or None,
         timeout_seconds=effective_timeout,
         daemon_config=daemon_config,
     )

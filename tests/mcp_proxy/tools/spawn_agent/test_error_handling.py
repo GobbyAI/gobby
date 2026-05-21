@@ -268,7 +268,7 @@ class TestSpawnAgentImplErrorBranches:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ),
             patch(
@@ -332,8 +332,9 @@ class TestSpawnAgentImplErrorBranches:
         async def repair(**_kwargs: object) -> None:
             events.append("repair")
 
-        async def index(_path: str) -> None:
+        async def index(_path: str, **_kwargs: object) -> MagicMock:
             events.append("index")
+            return MagicMock(env={})
 
         with (
             patch(
@@ -353,7 +354,7 @@ class TestSpawnAgentImplErrorBranches:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 side_effect=index,
             ),
             patch(
@@ -439,7 +440,7 @@ class TestSpawnAgentImplErrorBranches:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
             ) as index,
             patch(
@@ -518,7 +519,7 @@ class TestSpawnAgentImplErrorBranches:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
             ),
             patch(
@@ -545,6 +546,12 @@ class TestSpawnAgentImplErrorBranches:
             }
         ]
         mock_execute.assert_awaited_once()
+        spawn_request = mock_execute.await_args.args[0]
+        assert "Code-index preflight failed: gcode_index_timeout:120s" in spawn_request.prompt
+        assert (
+            spawn_request.initial_variables["code_index_preflight_warning"] == result["warnings"][0]
+        )
+        assert "code-index" not in spawn_request.initial_variables["additional_skills"]
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_fails_when_provider_mcp_config_missing(self, tmp_path) -> None:

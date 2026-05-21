@@ -80,6 +80,7 @@ class SpawnRequest:
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = field(default=None)
+    extra_env: dict[str, str] | None = field(default=None)
 
     # Timeout
     timeout_seconds: float | None = None  # Agent timeout (persisted to DB for restart survival)
@@ -107,6 +108,11 @@ def _sandbox_config_for_spawn(
 
     extra_write_paths = [*sandbox_config.extra_write_paths, uv_cache_dir]
     return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
+
+
+def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
+    if request.extra_env:
+        env.update(request.extra_env)
 
 
 @dataclass
@@ -264,6 +270,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     # Map api_base/api_token to Claude-specific env vars
     if request.api_base:
@@ -381,6 +388,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     # Map api_base/api_token to Gemini-specific env vars
     if request.api_base:
@@ -494,6 +502,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     if request.api_base:
         env["QWEN_API_BASE"] = request.api_base
@@ -603,6 +612,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
 
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
@@ -701,6 +711,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
     if request.api_token:
         env["FACTORY_API_KEY"] = request.api_token
     if request.api_base:
