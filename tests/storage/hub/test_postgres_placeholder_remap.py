@@ -254,3 +254,36 @@ def test_postgres_transaction_executemany_rejects_first_row_out_of_range() -> No
         tx.executemany("INSERT INTO remap_rows (a) VALUES ($2)", [("only",)])
 
     assert conn.executemany_calls == []
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+        self.rowcount = len(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+def test_postgres_cursor_normalizes_jsonb_values_to_sqlite_contract() -> None:
+    module = _postgres_module()
+    cursor = module._PostgresCursor(
+        _FakeResult(
+            [
+                {
+                    "name": "profile",
+                    "skip_stages_json": ["merge", "qa"],
+                    "metadata_json": {"b": 2, "a": 1},
+                }
+            ]
+        )
+    )
+
+    assert cursor.fetchone() == {
+        "name": "profile",
+        "skip_stages_json": '["merge","qa"]',
+        "metadata_json": '{"a":1,"b":2}',
+    }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
 import os
 import re
 import threading
@@ -395,12 +396,16 @@ class _PostgresCursor:
     def fetchone(self) -> Row | None:
         if self._cursor is None:
             return None
-        return cast(Row | None, self._cursor.fetchone())
+        return _normalize_row(cast(Row | None, self._cursor.fetchone()))
 
     def fetchall(self) -> list[Row]:
         if self._cursor is None:
             return []
-        return list(cast(Sequence[Row], self._cursor.fetchall()))
+        return [
+            row
+            for row in (_normalize_row(row) for row in cast(Sequence[Row], self._cursor.fetchall()))
+            if row is not None
+        ]
 
     @property
     def rowcount(self) -> int:
@@ -411,6 +416,20 @@ class _PostgresCursor:
     @property
     def lastrowid(self) -> int | None:
         return None
+
+
+def _normalize_row(row: Row | None) -> Row | None:
+    if row is None:
+        return None
+    if isinstance(row, Mapping):
+        return cast(Row, {str(key): _normalize_value(value) for key, value in row.items()})
+    return row
+
+
+def _normalize_value(value: Any) -> Any:
+    if isinstance(value, dict | list):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
 
 
 class _PostgresSavepoint:
