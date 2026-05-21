@@ -35,7 +35,6 @@ from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
-    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
@@ -91,7 +90,6 @@ class MemoryManager:
         self._neo4j_rrf_k = neo4j_rrf_k
 
         self.storage = LocalMemoryManager(db)
-        self._fts_searcher: MemoryFTS5Searcher | None = None
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
         self._ingestion_service = IngestionService(
             storage=self.storage,
@@ -153,14 +151,13 @@ class MemoryManager:
             vector_store=vector_store,
             embed_fn=embed_fn,
             kg_service=self._kg_service,
-            fts_searcher_factory=self._get_fts_searcher,
+            keyword_search=self._keyword_search,
             config=config,
             neo4j_graph_search=neo4j_graph_search,
             neo4j_graph_min_score=neo4j_graph_min_score,
             rrf_k=rrf_k,
             neo4j_rrf_k=neo4j_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
-            keyword_search=self._fts_search,
             run_db=run_db,
         )
         self._crossref_service = CrossrefService(
@@ -175,14 +172,13 @@ class MemoryManager:
             vector_store=vector_store,
             embed_fn=embed_fn,
             kg_service=self._kg_service,
-            fts_searcher_factory=self._get_fts_searcher,
             crossref_service=self._crossref_service,
             kg_rebuilder=self.rebuild_knowledge_graph,
             run_db=run_db,
         )
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run memory SQLite work on the daemon DB executor when available."""
+        """Run memory storage work on the daemon DB executor when available."""
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -232,15 +228,7 @@ class MemoryManager:
         """Shared Neo4j client for graph-backed subsystems, when configured."""
         return self._neo4j_client
 
-    def _get_fts_searcher(self) -> MemoryFTS5Searcher:
-        """Lazily initialize the SQLite FTS5 searcher."""
-        if self._fts_searcher is None:
-            from gobby.memory.fts_search import MemoryFTS5Searcher
-
-            self._fts_searcher = MemoryFTS5Searcher(self.db)
-        return self._fts_searcher
-
-    def _fts_search(
+    def _keyword_search(
         self,
         query: str,
         limit: int,
@@ -377,7 +365,7 @@ class MemoryManager:
         source_session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Store a new memory in SQLite and VectorStore."""
+        """Store a new memory in storage and VectorStore."""
         normalized_content = content.strip()
         if await self._backend.content_exists(normalized_content, project_id):
             existing_record = await self._backend.get_memory_by_content(
@@ -541,16 +529,16 @@ class MemoryManager:
             project_id=project_id,
         )
 
-    async def _fts5_ranked(
+    async def _keyword_ranked(
         self,
         query: str,
         limit: int,
         project_id: str | None,
     ) -> list[str]:
-        """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
-        return await self._search_service._fts5_ranked(query, limit, project_id)
+        """Run keyword search and return ranked memory IDs for RRF merge."""
+        return await self._search_service._keyword_ranked(query, limit, project_id)
 
-    async def _fts5_fallback(
+    async def _keyword_fallback(
         self,
         query: str,
         limit: int,
@@ -560,13 +548,13 @@ class MemoryManager:
         tags_any: list[str] | None,
         tags_none: list[str] | None,
     ) -> list[Memory]:
-        """FTS5 keyword search fallback when vector search returns nothing."""
-        return await self._search_service._fts5_fallback(
+        """Keyword search fallback when vector search returns nothing."""
+        return await self._search_service._keyword_fallback(
             query, limit, project_id, memory_type, tags_all, tags_any, tags_none
         )
 
     async def delete_memory(self, memory_id: str) -> bool:
-        """Delete a memory from SQLite, VectorStore, and Neo4j."""
+        """Delete a memory from storage, VectorStore, and Neo4j."""
         existing_memory = self.get_memory(memory_id)
         result = self.storage.delete_memory(memory_id)
         if result and self._vector_store:
@@ -604,7 +592,7 @@ class MemoryManager:
         return result
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with SQLite source of truth."""
+        """Reconcile Qdrant and Neo4j with memory storage."""
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
 
     def count_memories(self, project_id: str | None = None) -> int:
@@ -621,7 +609,7 @@ class MemoryManager:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> list[Memory]:
-        """List memories with optional filtering (SQLite only)."""
+        """List memories with optional filtering."""
         return self.storage.list_memories(
             project_id=project_id,
             memory_type=memory_type,
@@ -701,7 +689,7 @@ class MemoryManager:
         content: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Update an existing memory in SQLite and re-embed if content changed."""
+        """Update an existing memory and re-embed if content changed."""
         result = self.storage.update_memory(
             memory_id=memory_id,
             content=content,
@@ -749,7 +737,7 @@ class MemoryManager:
         return await self._indexing_service.clear_indices(project_id=project_id)
 
     async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
-        """Rebuild all secondary indices from the SQLite source of truth."""
+        """Rebuild all secondary indices from memory storage."""
         return await self._indexing_service.rebuild_indices(project_id=project_id)
 
     async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:
@@ -811,7 +799,7 @@ class MemoryManager:
         limit: int = MAX_REINDEX_LIMIT,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
-        """Rebuild the Neo4j knowledge-graph projection from SQLite memories."""
+        """Rebuild the Neo4j knowledge-graph projection from stored memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
 

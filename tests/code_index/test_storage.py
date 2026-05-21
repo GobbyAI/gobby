@@ -450,7 +450,7 @@ def test_delete_content_chunks_for_project(code_storage: CodeIndexStorage) -> No
 
 
 def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
-    """FTS search finds text in content chunks."""
+    """Keyword search finds text in content chunks."""
     code_storage.upsert_content_chunks(_make_chunks())
 
     results = code_storage.search_content_fts("greeting", "proj-1")
@@ -461,7 +461,7 @@ def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
 
 
 def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> None:
-    """FTS search can be filtered to a specific file."""
+    """Keyword search can be filtered to a specific file."""
     chunks1 = _make_chunks(file_path="a.py")
     chunks2 = _make_chunks(file_path="b.py")
     code_storage.upsert_content_chunks(chunks1)

@@ -156,24 +156,6 @@ class CodeIndexStorage:
         )
         return [Symbol.from_row(r) for r in rows]
 
-    @staticmethod
-    def _sanitize_fts_query(query: str) -> str:
-        """Sanitize user input for FTS5 queries.
-
-        Strips FTS5 special characters and joins tokens with implicit AND.
-        """
-        # Remove FTS5 operators and special chars
-        cleaned = ""
-        for ch in query:
-            if ch.isalnum() or ch in (" ", "_"):
-                cleaned += ch
-        # Split into tokens, filter empty, join with implicit AND
-        tokens = [t.strip() for t in cleaned.split() if t.strip()]
-        if not tokens:
-            return ""
-        # Quote each token to avoid FTS5 syntax issues
-        return " ".join(f'"{t}"' for t in tokens)
-
     def search_symbols_fts(
         self,
         query: str,
@@ -206,7 +188,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     def delete_symbols_for_project(self, project_id: str) -> int:
         """Delete all symbols for a project."""
@@ -215,7 +197,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_symbols WHERE project_id = ?",
                 (project_id,),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     # ── Files ────────────────────────────────────────────────────────
 
@@ -380,7 +362,7 @@ class CodeIndexStorage:
                 "UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = ?",
                 (file_id,),
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def mark_graph_synced(self, file_id: str) -> bool:
         """Mark a file's graph edges as synced. Returns True if updated."""
@@ -392,7 +374,7 @@ class CodeIndexStorage:
                    WHERE id = ?""",
                 (now, file_id),
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def mark_graph_sync_attempted(self, file_id: str) -> bool:
         """Mark that a graph sync was attempted, even if it later fails."""
@@ -404,7 +386,7 @@ class CodeIndexStorage:
                    WHERE id = ?""",
                 (now, file_id),
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def reset_graph_sync_for_project(self, project_id: str) -> int:
         """Mark every file in a project as needing graph rebuild."""
@@ -415,7 +397,7 @@ class CodeIndexStorage:
                    WHERE project_id = ?""",
                 (project_id,),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     # ── Imports & Calls ─────────────────────────────────────────────
 
@@ -525,7 +507,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_imports WHERE project_id = ? AND source_file = ?",
                 (project_id, file_path),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     def delete_calls_for_file(self, project_id: str, file_path: str) -> int:
         """Delete call relations for a file. Returns count deleted."""
@@ -534,7 +516,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_calls WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     def delete_file(self, project_id: str, file_path: str) -> None:
         """Delete a file record (symbols deleted separately)."""
@@ -551,7 +533,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_indexed_files WHERE project_id = ?",
                 (project_id,),
             )
-            return cursor.rowcount
+            return cast(int, cursor.rowcount)
 
     # ── Projects ─────────────────────────────────────────────────────
 
@@ -657,7 +639,7 @@ class CodeIndexStorage:
                 "UPDATE code_symbols SET summary = ? WHERE id = ?",
                 (summary, symbol_id),
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     # ── Counts ───────────────────────────────────────────────────────
 
@@ -667,7 +649,7 @@ class CodeIndexStorage:
             "SELECT COUNT(*) as cnt FROM code_symbols WHERE project_id = ?",
             (project_id,),
         )
-        return row["cnt"] if row else 0
+        return cast(int, row["cnt"]) if row else 0
 
     def count_files(self, project_id: str) -> int:
         """Count total indexed files for a project."""
@@ -675,7 +657,7 @@ class CodeIndexStorage:
             "SELECT COUNT(*) as cnt FROM code_indexed_files WHERE project_id = ?",
             (project_id,),
         )
-        return row["cnt"] if row else 0
+        return cast(int, row["cnt"]) if row else 0
 
     # ── Content Chunks ──────────────────────────────────────────────
 

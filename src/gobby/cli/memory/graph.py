@@ -231,11 +231,11 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
-    """Wipe and rebuild ALL memory indices (embeddings, crossrefs, graph, FTS5).
+    """Wipe and rebuild ALL memory indices (embeddings, crossrefs, graph).
 
-    Clears Qdrant vectors, Neo4j graph, crossrefs, and FTS5 for the
-    project, then starts a background rebuild from the SQLite source of
-    truth.  The command returns as soon as indices are cleared.
+    Clears Qdrant vectors, Neo4j graph, and crossrefs for the project,
+    then starts a background rebuild from memory storage. The command
+    returns as soon as indices are cleared.
 
     Examples:
 
@@ -302,8 +302,5 @@ def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     crossrefs = data.get("crossrefs_cleared")
     if crossrefs is not None:
         click.echo(f"  Crossrefs: {crossrefs} deleted")
-    if data.get("fts_cleared"):
-        click.echo("  FTS5: cleared")
-
     click.echo("Indices cleared. Rebuild started in background.")
     click.echo("Check daemon logs for rebuild progress.")

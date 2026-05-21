@@ -1,4 +1,4 @@
-"""Indexing service for embedding/crossref/KG/FTS5 lifecycle ops."""
+"""Indexing service for embedding, cross-reference, and graph lifecycle ops."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
-    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
     from gobby.memory.vectorstore import VectorStore
 
@@ -21,7 +20,7 @@ MAX_REINDEX_LIMIT = 100_000
 
 
 class IndexingService:
-    """Orchestrates wipe, rebuild, reconcile across vector/graph/crossref/FTS indices."""
+    """Orchestrates wipe, rebuild, and reconcile across vector/graph/crossref indices."""
 
     def __init__(
         self,
@@ -30,7 +29,6 @@ class IndexingService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         kg_service: KnowledgeGraphService | None,
-        fts_searcher_factory: Callable[[], MemoryFTS5Searcher],
         crossref_service: CrossrefService,
         kg_rebuilder: Callable[[str | None], Awaitable[dict[str, Any]]],
         run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -39,12 +37,11 @@ class IndexingService:
         self._vector_store = vector_store
         self._embed_fn = embed_fn
         self._kg_service = kg_service
-        self._fts_searcher_factory = fts_searcher_factory
         self._crossref_service = crossref_service
         self._kg_rebuilder = kg_rebuilder
         self._run_db = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -58,11 +55,11 @@ class IndexingService:
         self._kg_service = value
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with SQLite source of truth."""
-        sqlite_ids = set(await self._run_sqlite(self._storage.list_all_ids))
+        """Reconcile Qdrant and Neo4j with the memory storage source of truth."""
+        storage_ids = set(await self._run_storage(self._storage.list_all_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,
-            "sqlite_count": len(sqlite_ids),
+            "storage_count": len(storage_ids),
             "qdrant": {"orphans_found": 0, "orphans_deleted": 0, "errors": 0},
             "neo4j": {
                 "orphan_memories_found": 0,
@@ -75,7 +72,7 @@ class IndexingService:
         if self._vector_store:
             try:
                 qdrant_ids = set(await self._vector_store.scroll_ids())
-                orphaned = qdrant_ids - sqlite_ids
+                orphaned = qdrant_ids - storage_ids
                 report["qdrant"]["total"] = len(qdrant_ids)
                 report["qdrant"]["orphans_found"] = len(orphaned)
 
@@ -95,7 +92,7 @@ class IndexingService:
         if self._kg_service:
             try:
                 neo4j_ids = await self._kg_service.get_all_memory_node_ids()
-                orphaned = neo4j_ids - sqlite_ids
+                orphaned = neo4j_ids - storage_ids
                 report["neo4j"]["total"] = len(neo4j_ids)
                 report["neo4j"]["orphan_memories_found"] = len(orphaned)
 
@@ -169,33 +166,23 @@ class IndexingService:
 
         try:
             if project_id:
-                deleted = await self._run_sqlite(self._storage.delete_project_crossrefs, project_id)
+                deleted = await self._run_storage(
+                    self._storage.delete_project_crossrefs, project_id
+                )
             else:
-                deleted = await self._run_sqlite(self._delete_all_memory_crossrefs)
+                deleted = await self._run_storage(self._delete_all_memory_crossrefs)
             report["crossrefs_cleared"] = deleted
         except Exception as e:
             logger.error(f"Failed to clear crossrefs: {e}")
             report["crossrefs_cleared"] = 0
             report["crossrefs_error"] = str(e)
 
-        try:
-            fts = self._fts_searcher_factory()
-            await self._run_sqlite(fts.clear)
-            report["fts_cleared"] = True
-        except Exception as e:
-            logger.error(
-                f"Failed to clear memory FTS5 index: {e} "
-                "(this is an FTS-local issue, not whole-DB corruption)"
-            )
-            report["fts_cleared"] = False
-            report["fts_error"] = str(e)
-
         scope = f"project {project_id}" if project_id else "all projects"
         logger.info(f"Indices cleared for {scope}: {report}")
         return report
 
     async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
-        """Rebuild all secondary indices from the SQLite source of truth."""
+        """Rebuild all secondary indices from memory storage."""
         report: dict[str, Any] = {}
         scope = f"project {project_id}" if project_id else "all projects"
         logger.info(f"Starting index rebuild for {scope}")
@@ -205,7 +192,7 @@ class IndexingService:
         if project_id:
             all_memories = await self.fetch_all_project_memories(project_id)
         else:
-            all_memories = await self._run_sqlite(
+            all_memories = await self._run_storage(
                 self._storage.list_memories, project_id, None, MAX_REINDEX_LIMIT
             )
         total = len(all_memories)
@@ -239,15 +226,6 @@ class IndexingService:
         if self._kg_service:
             report["graph_rebuilt"] = await self._kg_rebuilder(project_id)
 
-        try:
-            report["fts5"] = await self._run_sqlite(self._fts_searcher_factory().reindex)
-        except Exception as e:
-            logger.error(
-                f"Failed to rebuild memory FTS5 index: {e} "
-                "(FTS-local failure, other indices were rebuilt successfully)"
-            )
-            report["fts5"] = {"success": False, "error": str(e)}
-
         logger.info(f"Index rebuild complete for {scope}: {report}")
         return report
 
@@ -265,7 +243,7 @@ class IndexingService:
         offset = 0
         batch_size = 500
         while True:
-            batch = await self._run_sqlite(
+            batch = await self._run_storage(
                 self._storage.list_memories,
                 project_id,
                 None,

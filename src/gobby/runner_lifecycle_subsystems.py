@@ -132,7 +132,7 @@ async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker 
         failure_reason = f"unreachable at {emb_cfg.api_base}"
         logger.warning(
             f"Embedding endpoint unreachable at {emb_cfg.api_base} "
-            f"(model: {emb_cfg.model}) — semantic search will fall back to FTS5"
+            f"(model: {emb_cfg.model}) — semantic search will fall back to keyword search"
         )
     if tracker:
         tracker.error("Embeddings", failure_reason)

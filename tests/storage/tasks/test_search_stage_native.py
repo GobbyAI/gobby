@@ -23,8 +23,10 @@ def test_status_filter_kwarg_removed_or_replaced_with_stage_state() -> None:
     assert "current_stage_state" in signature.parameters
 
 
-def test_fts_pushdown_preserved() -> None:
+def test_postgres_keyword_pushdown_preserved() -> None:
     source = source_text("src/gobby/storage/tasks/_search.py")
 
-    assert "tasks_fts" in source
-    assert "MATCH" in source
+    assert "pdb.score(t.id)" in source
+    assert "@@@" in source
+    assert "tasks_fts" not in source
+    assert " MATCH " not in source

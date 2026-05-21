@@ -30,9 +30,9 @@ class WorkflowInstanceManager:
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
         """Get all enabled workflow instances for a session, sorted by priority."""
         rows = self.db.fetchall(
-            "SELECT * FROM workflow_instances WHERE session_id = ? AND enabled = 1 "
+            "SELECT * FROM workflow_instances WHERE session_id = ? AND enabled = ? "
             "ORDER BY priority ASC",
-            (session_id,),
+            (session_id, True),
         )
         return [self._row_to_instance(row) for row in rows]
 
@@ -61,14 +61,14 @@ class WorkflowInstanceManager:
                 instance.id,
                 instance.session_id,
                 instance.workflow_name,
-                1 if instance.enabled else 0,
+                instance.enabled,
                 instance.priority,
                 instance.current_step,
                 instance.step_entered_at.isoformat() if instance.step_entered_at else None,
                 instance.step_action_count,
                 instance.total_action_count,
                 json.dumps(instance.variables),
-                1 if instance.context_injected else 0,
+                instance.context_injected,
                 now,
                 now,
             ),
@@ -96,7 +96,7 @@ class WorkflowInstanceManager:
         self.db.execute(
             "UPDATE workflow_instances SET enabled = ?, updated_at = ? "
             "WHERE session_id = ? AND workflow_name = ?",
-            (1 if enabled else 0, now, session_id, workflow_name),
+            (enabled, now, session_id, workflow_name),
         )
 
     @staticmethod
@@ -179,7 +179,8 @@ class SessionVariableManager:
 
         rows = self.db.fetchall(
             "SELECT name, definition_json FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' AND enabled = 1 AND source = 'installed'",
+            "WHERE workflow_type = 'variable' AND enabled = ? AND source = 'installed'",
+            (True,),
         )
         defaults: dict[str, Any] = {}
         for row in rows:

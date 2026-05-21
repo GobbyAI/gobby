@@ -27,12 +27,6 @@ def _raw_fts_lines(source: str, pattern: str) -> list[str]:
     return [line.strip() for line in source.splitlines() if matcher.search(line)]
 
 
-def _hub_db(request: pytest.FixtureRequest) -> object:
-    if "hub_db" in request.fixturenames:
-        return request.getfixturevalue("hub_db")
-    return request.getfixturevalue("temp_db")
-
-
 def _detect_search_backend_seams() -> dict[str, bool]:
     """Detect whether the #14098 search-backend port has landed.
 
@@ -45,7 +39,7 @@ def _detect_search_backend_seams() -> dict[str, bool]:
     """
     seams: dict[str, bool] = {
         "bm25_backend": False,
-        "memory_fts_search": False,
+        "memory_keyword_search": False,
         "memory_rrf_k": False,
         "skills_hub_seam": False,
         "code_index_hub_seam": False,
@@ -59,7 +53,7 @@ def _detect_search_backend_seams() -> dict[str, bool]:
     try:
         from gobby.memory.manager import MemoryManager
 
-        seams["memory_fts_search"] = hasattr(MemoryManager, "_fts_search")
+        seams["memory_keyword_search"] = hasattr(MemoryManager, "_keyword_search")
         seams["memory_rrf_k"] = "rrf_k" in inspect.signature(MemoryManager.__init__).parameters
     except ImportError:
         pass
@@ -145,33 +139,29 @@ async def _embed(_text: str, **_kwargs: object) -> list[float]:
 
 
 @pytest.mark.skipif(not _SEAMS["bm25_backend"], reason=_PENDING_REASON)
-def test_pick_search_backend_dispatches_by_hub_dialect_and_rejects_semantic() -> None:
+def test_pick_search_backend_uses_postgres_bm25_and_rejects_semantic() -> None:
     from gobby.storage.tasks._search import (
         BM25SearchBackend,
-        FTS5SearchBackend,
         pick_search_backend,
     )
 
-    sqlite_backend = pick_search_backend(SimpleNamespace(dialect="sqlite"), "tasks")
     postgres_backend = pick_search_backend(SimpleNamespace(dialect="postgres"), "tasks")
 
-    assert isinstance(sqlite_backend, FTS5SearchBackend)
     assert isinstance(postgres_backend, BM25SearchBackend)
     with pytest.raises(NotImplementedError, match="Semantic search is a follow-up workstream"):
         pick_search_backend(SimpleNamespace(dialect="postgres"), "tasks", mode="semantic")
 
 
-@pytest.mark.skipif(not _SEAMS["memory_fts_search"], reason=_PENDING_REASON)
-def test_memory_fts_search_uses_keyword_backend_seam() -> None:
+@pytest.mark.skipif(not _SEAMS["memory_keyword_search"], reason=_PENDING_REASON)
+def test_memory_keyword_search_uses_keyword_backend_seam() -> None:
     from gobby.memory.manager import MemoryManager
 
-    assert hasattr(MemoryManager, "_fts_search")
-    source = inspect.getsource(MemoryManager._fts_search)
+    assert hasattr(MemoryManager, "_keyword_search")
+    source = inspect.getsource(MemoryManager._keyword_search)
 
     assert "pick_search_backend" in source
     assert '"memories"' in source or "'memories'" in source
     assert ".search(" in source
-    assert "MemoryFTS5Searcher" not in source
 
 
 @pytest.mark.skipif(not _SEAMS["memory_rrf_k"], reason=_PENDING_REASON)
@@ -191,13 +181,10 @@ def test_memory_fused_search_preserves_rrf_configuration_surface() -> None:
     "signal_case",
     ["keyword_only", "vector_only", "graph_only", "combined_signal"],
 )
-async def test_fused_search_dialect_parity_cases(
-    request: pytest.FixtureRequest, signal_case: str
-) -> None:
+async def test_fused_search_dialect_parity_cases(hub_db: Any, signal_case: str) -> None:
     from gobby.config.persistence import MemoryConfig
     from gobby.memory.manager import MemoryManager
 
-    hub_db = _hub_db(request)
     vector_store = _VectorStoreStub()
     manager = MemoryManager(
         db=hub_db,
@@ -241,7 +228,7 @@ async def test_fused_search_dialect_parity_cases(
 
 
 @pytest.mark.skipif(not _SEAMS["skills_hub_seam"], reason=_PENDING_REASON)
-def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
+def test_skills_search_dialect_parity(hub_db: Any) -> None:
     from gobby.search import SearchConfig
     from gobby.skills.search import SkillSearch
     from gobby.storage.skills import Skill
@@ -259,7 +246,7 @@ def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     assert not raw_sql_lines
     assert "_is_sqlite" in skills_search
 
-    search = SkillSearch(db=_hub_db(request), config=SearchConfig(mode="keyword"))
+    search = SkillSearch(db=hub_db, config=SearchConfig(mode="keyword"))
     search.index_skills(
         [
             Skill(
@@ -290,7 +277,7 @@ def test_skills_search_dialect_parity(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.mark.skipif(not _SEAMS["code_index_hub_seam"], reason=_PENDING_REASON)
-def test_code_search_dialect_parity(request: pytest.FixtureRequest) -> None:
+def test_code_search_dialect_parity(hub_db: Any) -> None:
     from gobby.code_index.models import ContentChunk, Symbol
     from gobby.code_index.storage import CodeIndexStorage
 
@@ -304,7 +291,7 @@ def test_code_search_dialect_parity(request: pytest.FixtureRequest) -> None:
     raw_fts_lines = _raw_fts_lines(code_storage, r"code_symbols_fts|code_content_fts|bm25\(")
     assert not raw_fts_lines
 
-    storage = CodeIndexStorage(_hub_db(request))
+    storage = CodeIndexStorage(hub_db)
     storage.upsert_symbols(
         [
             Symbol(

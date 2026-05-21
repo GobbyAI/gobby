@@ -15,12 +15,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
-ALLOWED_FTS5_HELPER_IMPORTS = {
-    Path("code_index/storage.py"),
-    Path("memory/fts_search.py"),
-    Path("search/fts5.py"),
-    Path("skills/search.py"),
-}
 
 
 def _storage_module_name(path: Path) -> str:
@@ -58,15 +52,6 @@ def _imports_migration_helpers(path: Path) -> list[int]:
                 lines.append(node.lineno)
 
     return lines
-
-
-def _function_line_span(path: Path, name: str) -> range:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            assert node.end_lineno is not None
-            return range(node.lineno, node.end_lineno + 1)
-    raise AssertionError(f"{name} not found in {path}")
 
 
 def test_legacy_migrations_list_is_empty_in_source_and_runtime() -> None:
@@ -131,26 +116,26 @@ def test_postgres_runner_rejects_legacy_migrations_before_opening_transaction(
         module.MigrationRunner(PostgresHub()).apply_pending()
 
 
-def test_migration_helpers_are_not_imported_by_postgres_storage_paths() -> None:
-    baseline_span = _function_line_span(MIGRATIONS_SOURCE, "_apply_baseline")
+def test_sqlite_baseline_and_fts_runtime_files_are_removed() -> None:
+    removed_paths = [
+        SRC_ROOT / "storage" / "baseline_schema.sql",
+        SRC_ROOT / "storage" / "migration_helpers.py",
+        SRC_ROOT / "search" / "fts5.py",
+        SRC_ROOT / "memory" / "fts_search.py",
+    ]
+
+    assert [path for path in removed_paths if path.exists()] == []
+
+
+def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:
     violations: list[str] = []
 
     for path in SRC_ROOT.rglob("*.py"):
         relative = path.relative_to(SRC_ROOT)
-        if relative == Path("storage/migration_helpers.py"):
-            continue
-
         import_lines = _imports_migration_helpers(path)
         if not import_lines:
             continue
 
-        if relative == Path("storage/migrations.py"):
-            disallowed_lines = [line for line in import_lines if line not in baseline_span]
-        elif relative in ALLOWED_FTS5_HELPER_IMPORTS:
-            disallowed_lines = []
-        else:
-            disallowed_lines = import_lines
-
-        violations.extend(f"{relative}:{line}" for line in disallowed_lines)
+        violations.extend(f"{relative}:{line}" for line in import_lines)
 
     assert violations == []

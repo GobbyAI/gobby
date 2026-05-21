@@ -18,7 +18,7 @@ class SearchMode(str, Enum):
     """Search mode options for UnifiedSearcher.
 
     Modes:
-    - KEYWORD: FTS5 keyword search only (always works, no API needed)
+    - KEYWORD: PostgreSQL keyword search only
     - EMBEDDING: Embedding-based search only (fails if unavailable)
     - AUTO: Try embedding, fallback to keyword if unavailable
     - HYBRID: Combine both with weighted scores
@@ -42,7 +42,7 @@ class SearchConfig(BaseModel):
     (config.embeddings.*) and passed to search consumers as constructor args.
 
     Supported modes:
-    - keyword: FTS5 keyword search only (always works, no API needed)
+    - keyword: PostgreSQL keyword search only
     - embedding: Embedding-based search only (fails if unavailable)
     - auto: Try embedding, fallback to keyword if unavailable
     - hybrid: Combine both with weighted scores
@@ -58,7 +58,7 @@ class SearchConfig(BaseModel):
         default=0.4,
         ge=0.0,
         le=1.0,
-        description="Weight for keyword (FTS5) scores in hybrid mode",
+        description="Weight for keyword scores in hybrid mode",
     )
     embedding_weight: float = Field(
         default=0.6,

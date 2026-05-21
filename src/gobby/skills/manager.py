@@ -34,7 +34,7 @@ class SkillManager:
     This class provides a unified interface for skill management,
     wiring together:
     - LocalSkillManager for persistent storage
-    - SkillSearch for keyword-based search (FTS5)
+    - SkillSearch for keyword-based search
     - SkillChangeNotifier for automatic reindex tracking
 
     Example usage:

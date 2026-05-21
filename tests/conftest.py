@@ -315,7 +315,7 @@ def protect_production_resources(
     # Without migrations, queries will fail with "file is not a database" errors.
     # Only run migrations if the database doesn't exist yet (session-scoped, reused across tests).
     from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+    from gobby.storage.migrations import MigrationUnsupportedError, run_migrations
 
     # Use file lock to prevent TOCTOU race condition during parallel test execution.
     # Without this, multiple pytest workers can simultaneously check exists() -> False,
@@ -324,7 +324,13 @@ def protect_production_resources(
     with FileLock(lock_path, timeout=60):
         if not safe_db_path.exists():
             safe_db = LocalDatabase(safe_db_path)
-            run_migrations(safe_db)
+            try:
+                run_migrations(safe_db)
+            except MigrationUnsupportedError:
+                # Postgres-only builds no longer initialize a runtime SQLite hub.
+                # The protection fixture still points accidental LocalDatabase()
+                # calls at an isolated path instead of the user's daemon state.
+                pass
             safe_db.close()
 
     safe_log_client = safe_logs_dir / "gobby.log"

@@ -1,7 +1,7 @@
 """Tests for MemoryManager integration with VectorStore.
 
 Validates that create_memory, search_memories, delete_memory, and
-update_memory correctly interact with both SQLite and VectorStore.
+update_memory correctly interact with local storage and VectorStore.
 """
 
 from __future__ import annotations
@@ -14,16 +14,44 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
+
+_MEMORY_SCHEMA = """
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    project_id TEXT,
+    memory_type TEXT NOT NULL DEFAULT 'fact',
+    content TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'agent',
+    source_session_id TEXT,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed_at TEXT,
+    tags TEXT,
+    media TEXT,
+    graph_processed INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_memories_content ON memories(content);
+CREATE INDEX idx_memories_project ON memories(project_id);
+
+CREATE TABLE memory_crossrefs (
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    similarity REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_id, target_id)
+);
+"""
 
 
 @pytest.fixture
 def db(tmp_path):
-    """Create a temporary database for testing."""
+    """Create a temporary local memory database for testing."""
     database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+    database.connection.executescript(_MEMORY_SCHEMA)
+    database.connection.commit()
     yield database
     database.close()
 
@@ -61,7 +89,7 @@ def manager(db, mock_vector_store, mock_embed_fn):
 
 @pytest.mark.asyncio
 async def test_create_memory_upserts_to_qdrant(manager, mock_vector_store, mock_embed_fn):
-    """create_memory should store in SQLite AND upsert to Qdrant."""
+    """create_memory should store locally and upsert to Qdrant."""
     memory = await manager.create_memory(
         content="test fact",
         memory_type="fact",
@@ -134,9 +162,8 @@ async def test_search_memories_user_source_boost(manager, mock_vector_store, moc
         (user_mem.id, 0.8),
     ]
 
-    # Suppress FTS5 so RRF ranking is purely from Qdrant — isolates the boost test
-    manager._fts_searcher = AsyncMock()
-    manager._fts_searcher.search = lambda *a, **kw: []
+    # Suppress keyword search so RRF ranking is purely from Qdrant — isolates the boost test
+    manager._search_service._keyword_ranked = AsyncMock(return_value=[])
 
     results = await manager.search_memories(query="alpha", limit=10)
 
@@ -152,7 +179,7 @@ async def test_search_memories_user_source_boost(manager, mock_vector_store, moc
 
 @pytest.mark.asyncio
 async def test_search_memories_no_query_returns_list(manager, mock_vector_store):
-    """search_memories without query should list from SQLite."""
+    """search_memories without query should list from local storage."""
     await manager.create_memory(content="fact one")
     await manager.create_memory(content="fact two")
 
@@ -168,7 +195,7 @@ async def test_search_memories_no_query_returns_list(manager, mock_vector_store)
 
 @pytest.mark.asyncio
 async def test_delete_memory_removes_from_qdrant(manager, mock_vector_store):
-    """delete_memory should remove from both SQLite and Qdrant."""
+    """delete_memory should remove from both local storage and Qdrant."""
     memory = await manager.create_memory(content="to delete")
     await manager.delete_memory(memory.id)
 
@@ -228,7 +255,7 @@ async def test_search_memories_tag_filtering(manager, mock_vector_store, mock_em
     await manager.create_memory(content="untagged")
     mock_embed_fn.reset_mock()
 
-    # Search with tags_all filter (no query = SQLite list)
+    # Search with tags_all filter (no query = local storage list)
     results = await manager.search_memories(query=None, tags_all=["python"])
     assert len(results) == 1
     assert results[0].id == m1.id

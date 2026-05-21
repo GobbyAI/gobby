@@ -64,7 +64,7 @@ def search_tasks(
     min_score: float,
     json_format: bool,
 ) -> None:
-    """Search tasks using FTS5 full-text search.
+    """Search tasks using keyword search.
 
     QUERY is the natural language search query.
 

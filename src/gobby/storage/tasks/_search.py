@@ -33,7 +33,6 @@ __all__ = [
     "KeywordSearchBackend",
     "SearchHit",
     "SearchMode",
-    "TaskFTS5Searcher",
     "TaskSearchBackend",
     "pick_search_backend",
     "search_tasks",
@@ -294,6 +293,3 @@ class TaskSearchBackend:
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the search index."""
         return self._backend.get_stats()
-
-
-TaskFTS5Searcher = TaskSearchBackend

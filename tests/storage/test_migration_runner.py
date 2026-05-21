@@ -219,30 +219,14 @@ def test_bookkeeping_table_is_noop_for_postgres_schema_migrations_only() -> None
     assert not any("DROP TABLE" in statement for statement in hub.statements)
 
 
-def test_migration_runner_creates_schema_migrations_for_brand_new_sqlite(tmp_path) -> None:
+def test_migration_runner_rejects_sqlite_hubs_after_cutover(tmp_path) -> None:
     from gobby.storage.database import LocalDatabase
 
     migration_module = _migration_module()
     db = LocalDatabase(tmp_path / "brand-new.db")
 
     try:
-        migration_module.MigrationRunner(db).apply_pending()
-        with db.transaction() as tx:
-            row = tx.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
-                ("schema_migrations",),
-            ).fetchone()
-            tasks = tx.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
-                ("tasks",),
-            ).fetchone()
-            fts = tx.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
-                ("tasks_fts",),
-            ).fetchone()
+        with pytest.raises(MigrationUnsupportedError, match="SQLite hub migrations were removed"):
+            migration_module.MigrationRunner(db).apply_pending()
     finally:
         db.close()
-
-    assert row is not None
-    assert tasks is not None
-    assert fts is not None

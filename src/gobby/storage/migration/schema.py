@@ -6,10 +6,16 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from functools import cache
 from typing import Any
 
-from gobby.storage.migrations import BASELINE_VERSION, _sqlite_baseline_sql
+from gobby.storage.migrations import BASELINE_VERSION
+
+_EXPECTED_SQLITE_SCHEMA_FINGERPRINTS = (
+    # Legacy v260 source with schema_migrations bookkeeping.
+    "fbe2914e66ab5d608c8ffc38638a761874fb5a19ff6e76f8bae9447871002269",
+    # Legacy v260 source with schema_version bookkeeping.
+    "2868b075dfd8258def472aa2912d8231e02b198834406a5be73961fc74fd4933",
+)
 
 
 @dataclass(frozen=True)
@@ -71,24 +77,8 @@ def sqlite_schema_fingerprint(source: sqlite3.Connection) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-@cache
 def expected_sqlite_schema_fingerprints() -> tuple[str, ...]:
-    return tuple(_baseline_fingerprint(table) for table in ("schema_migrations", "schema_version"))
-
-
-def _baseline_fingerprint(version_table: str) -> str:
-    conn = _baseline_connection(version_table)
-    try:
-        return sqlite_schema_fingerprint(conn)
-    finally:
-        conn.close()
-
-
-def _baseline_connection(version_table: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_sqlite_baseline_sql(version_table))
-    return conn
+    return _EXPECTED_SQLITE_SCHEMA_FINGERPRINTS
 
 
 def _sqlite_schema_objects(source: sqlite3.Connection) -> list[tuple[str, str, str, str]]:

@@ -298,57 +298,8 @@ class TestTaskSearch:
         assert len(results1) == len(results2)
 
 
-class TestTaskFTS5Searcher:
-    """Tests for the TaskFTS5Searcher class."""
-
-    def test_fts5_searcher_search(self, db_with_tasks) -> None:
-        """Test TaskFTS5Searcher direct search."""
-        from gobby.storage.tasks._search import TaskFTS5Searcher
-
-        db, manager, project_id = db_with_tasks
-
-        searcher = TaskFTS5Searcher(db)
-        results = searcher.search("authentication")
-
-        assert len(results) > 0
-        for task_id, score in results:
-            assert isinstance(task_id, str)
-            assert isinstance(score, float)
-            assert 0.0 <= score <= 1.0
-
-    def test_fts5_searcher_with_filters(self, db_with_tasks) -> None:
-        """Test TaskFTS5Searcher with SQL filter push-down."""
-        from gobby.storage.tasks._search import TaskFTS5Searcher
-
-        db, manager, project_id = db_with_tasks
-
-        searcher = TaskFTS5Searcher(db)
-
-        # Search with project filter
-        results = searcher.search("authentication", project_id=project_id)
-        assert len(results) > 0
-
-        # Search with non-matching project should return empty
-        results = searcher.search("authentication", project_id="nonexistent")
-        assert len(results) == 0
-
-    def test_fts5_searcher_reindex(self, db_with_tasks) -> None:
-        """Test FTS5 index rebuild."""
-        from gobby.storage.tasks._search import TaskFTS5Searcher
-
-        db, manager, project_id = db_with_tasks
-
-        searcher = TaskFTS5Searcher(db)
-        stats = searcher.reindex()
-
-        assert stats["backend_type"] == "fts5"
-        assert stats["document_count"] > 0
-
-    def test_legacy_name_aliases_dialect_aware_searcher(self) -> None:
-        """TaskFTS5Searcher remains as a compatibility alias."""
-        from gobby.storage.tasks._search import TaskFTS5Searcher, TaskSearchBackend
-
-        assert TaskFTS5Searcher is TaskSearchBackend
+class TestTaskSearchBackend:
+    """Tests for the Postgres task search backend."""
 
     def test_postgres_stage_state_search_uses_live_rows(self) -> None:
         """Postgres stage-state search normalizes fetched pg_search scores."""
@@ -378,21 +329,14 @@ class TestTaskFTS5Searcher:
         assert "(t.title @@@ $1 OR t.description @@@ $1)" in db.sql
         assert db.params == ("alpha", "ready", "in_progress", 2)
 
-    def test_fts5_query_sanitization(self) -> None:
-        """Test FTS5 query sanitization."""
-        from gobby.search.fts5 import sanitize_fts_query
+    def test_pg_search_query_sanitization(self) -> None:
+        """Test pg_search query sanitization."""
+        from gobby.search.keyword import sanitize_pg_search_query
 
-        # Normal query
-        assert sanitize_fts_query("hello world") == '"hello" "world"'
-
-        # Special characters stripped
-        assert sanitize_fts_query("hello (world)") == '"hello" "world"'
-        assert sanitize_fts_query('key:value "quoted"') == '"keyvalue" "quoted"'
-
-        # Empty/whitespace
-        assert sanitize_fts_query("") == ""
-        assert sanitize_fts_query("   ") == ""
-
-        # Underscores and hyphens preserved
-        assert sanitize_fts_query("my_func") == '"my_func"'
-        assert sanitize_fts_query("some-thing") == '"some-thing"'
+        assert sanitize_pg_search_query("hello world") == "hello world"
+        assert sanitize_pg_search_query("hello (world)") == "hello world"
+        assert sanitize_pg_search_query('key:value "quoted"') == "key value quoted"
+        assert sanitize_pg_search_query("") == ""
+        assert sanitize_pg_search_query("   ") == ""
+        assert sanitize_pg_search_query("my_func") == "my_func"
+        assert sanitize_pg_search_query("some-thing") == "some-thing"

@@ -9,7 +9,6 @@ import pytest
 from gobby.code_index.models import Symbol
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -127,35 +126,17 @@ CREATE INDEX IF NOT EXISTS idx_ccc_file ON code_content_chunks(project_id, file_
 
 
 @pytest.fixture
-def code_db(tmp_path: Path) -> LocalDatabase:
-    """Database with code index tables migrated."""
+def code_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalDatabase:
+    """Database with the code index tables needed by these unit tests."""
     db = LocalDatabase(tmp_path / "code-test.db")
-    run_migrations(db)
-    # Apply code index schema on top (idempotent via IF NOT EXISTS)
     conn = db.connection
     conn.executescript(_CODE_INDEX_SCHEMA)
-    # Set up FTS5 for content search
-    conn.executescript("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS code_content_fts USING fts5(
-            content, file_path, language,
-            content='code_content_chunks', content_rowid='rowid'
-        );
-        CREATE TRIGGER IF NOT EXISTS code_content_ai AFTER INSERT ON code_content_chunks BEGIN
-            INSERT INTO code_content_fts(rowid, content, file_path, language)
-            VALUES (new.rowid, new.content, new.file_path, new.language);
-        END;
-        CREATE TRIGGER IF NOT EXISTS code_content_ad AFTER DELETE ON code_content_chunks BEGIN
-            INSERT INTO code_content_fts(code_content_fts, rowid, content, file_path, language)
-            VALUES ('delete', old.rowid, old.content, old.file_path, old.language);
-        END;
-        CREATE TRIGGER IF NOT EXISTS code_content_au AFTER UPDATE ON code_content_chunks BEGIN
-            INSERT INTO code_content_fts(code_content_fts, rowid, content, file_path, language)
-            VALUES ('delete', old.rowid, old.content, old.file_path, old.language);
-            INSERT INTO code_content_fts(rowid, content, file_path, language)
-            VALUES (new.rowid, new.content, new.file_path, new.language);
-        END;
-    """)
     conn.commit()
+
+    def _raise_keyword_backend(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("PostgreSQL keyword backend is not available in LocalDatabase tests")
+
+    monkeypatch.setattr("gobby.code_index.storage.pick_search_backend", _raise_keyword_backend)
     yield db
     db.close()
 

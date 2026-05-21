@@ -458,7 +458,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Clear all secondary memory indices and start background rebuild.
 
-        Clears Qdrant vectors, Neo4j graph, crossrefs, and FTS5 immediately.
+        Clears Qdrant vectors, Neo4j graph, and crossrefs immediately.
         Rebuild runs in the background — the response returns as soon as
         indices are cleared.
         """

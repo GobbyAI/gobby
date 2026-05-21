@@ -612,8 +612,8 @@ class SkillMetadataMixin:
     ) -> list[Skill]:
         """Search skills by name and description.
 
-        This is a simple text search. For advanced search with keyword (FTS5)
-        and embeddings, use SkillSearch from the skills module.
+        This is a simple text search. For advanced keyword and embedding search,
+        use SkillSearch from the skills module.
 
         Args:
             query_text: Text to search for

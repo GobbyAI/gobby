@@ -492,7 +492,7 @@ class SkillSearch:
         """Get the name of the currently active backend.
 
         Returns:
-            One of "fts5", "embedding", "hybrid", or "none"
+            One of "keyword", "embedding", "hybrid", or "none"
         """
         return self._searcher.get_active_backend()
 

@@ -305,7 +305,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self.db.fetchall(
@@ -335,7 +335,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(
@@ -365,7 +365,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(

@@ -1,4 +1,4 @@
-"""Search service for memory retrieval (vector + graph + FTS5 + RRF)."""
+"""Search service for memory retrieval (vector + graph + keyword + RRF)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
-    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
     from gobby.memory.vectorstore import VectorStore
 
@@ -25,7 +24,7 @@ _USER_SOURCE_BOOST = 1.2
 
 
 class SearchService:
-    """Encapsulates memory search across Qdrant, Neo4j graph, and FTS5."""
+    """Encapsulates memory search across Qdrant, Neo4j graph, and keyword search."""
 
     def __init__(
         self,
@@ -34,31 +33,29 @@ class SearchService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         kg_service: KnowledgeGraphService | None,
-        fts_searcher_factory: Callable[[], MemoryFTS5Searcher],
+        keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]],
         config: MemoryConfig,
         neo4j_graph_search: bool,
         neo4j_graph_min_score: float,
         rrf_k: int,
         neo4j_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
-        keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
         self._embed_fn = embed_fn
         self._kg_service = kg_service
-        self._fts_searcher_factory = fts_searcher_factory
+        self._keyword_search = keyword_search
         self._config = config
         self._neo4j_graph_search = neo4j_graph_search
         self._neo4j_graph_min_score = neo4j_graph_min_score
         self._rrf_k = rrf_k
         self._neo4j_rrf_k = neo4j_rrf_k
-        self._keyword_search = keyword_search
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -138,7 +135,7 @@ class SearchService:
                     effective_min_score=effective_min_score,
                 )
             else:
-                memories = await self._search_qdrant_fts(
+                memories = await self._search_qdrant_keyword(
                     query=query,
                     query_embedding=query_embedding,
                     limit=limit,
@@ -153,7 +150,7 @@ class SearchService:
                 )
         else:
             if query:
-                memories = await self._fts5_fallback(
+                memories = await self._keyword_fallback(
                     query, limit, project_id, memory_type, tags_all, tags_any, tags_none
                 )
             else:
@@ -199,10 +196,10 @@ class SearchService:
             min_score=graph_min_score,
             project_id=project_id,
         )
-        fts_coro = self._fts5_ranked(query, limit * 2, project_id)
+        keyword_coro = self._keyword_ranked(query, limit * 2, project_id)
 
-        qdrant_result, graph_result, fts_result = await asyncio.gather(
-            qdrant_coro, graph_coro, fts_coro, return_exceptions=True
+        qdrant_result, graph_result, keyword_result = await asyncio.gather(
+            qdrant_coro, graph_coro, keyword_coro, return_exceptions=True
         )
 
         if isinstance(qdrant_result, BaseException):
@@ -225,16 +222,16 @@ class SearchService:
         else:
             graph_ranked = graph_result
 
-        if isinstance(fts_result, BaseException):
-            logger.debug(f"FTS5 search failed: {fts_result}")
-            fts_ranked: list[str] = []
+        if isinstance(keyword_result, BaseException):
+            logger.debug(f"Keyword search failed: {keyword_result}")
+            keyword_ranked: list[str] = []
         else:
-            fts_ranked = fts_result
+            keyword_ranked = keyword_result
 
         qdrant_score_map = dict(qdrant_results)
         qdrant_ranked = [mid for mid, _ in qdrant_results]
 
-        rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, fts_ranked) if rl]
+        rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, keyword_ranked) if rl]
         if len(rrf_lists) > 1:
             ranking_score_map = self.rrf_scores(*rrf_lists, k=rrf_k)
             merged_ids = sorted(
@@ -260,7 +257,7 @@ class SearchService:
             ranking_score_map=ranking_score_map,
             qdrant_score_map=qdrant_score_map,
             qdrant_set=set(qdrant_ranked),
-            fts_set=set(fts_ranked),
+            keyword_set=set(keyword_ranked),
             graph_set=set(graph_ranked),
             rrf_applied=rrf_applied,
             project_id=project_id,
@@ -273,7 +270,7 @@ class SearchService:
             limit=limit,
         )
 
-    async def _search_qdrant_fts(
+    async def _search_qdrant_keyword(
         self,
         *,
         query: str,
@@ -296,10 +293,10 @@ class SearchService:
             limit=limit * 2,
             filters=filters or None,
         )
-        fts_coro = self._fts5_ranked(query, limit * 2, project_id)
+        keyword_coro = self._keyword_ranked(query, limit * 2, project_id)
 
-        qdrant_result, fts_result = await asyncio.gather(
-            qdrant_coro, fts_coro, return_exceptions=True
+        qdrant_result, keyword_result = await asyncio.gather(
+            qdrant_coro, keyword_coro, return_exceptions=True
         )
 
         if isinstance(qdrant_result, BaseException):
@@ -307,7 +304,7 @@ class SearchService:
                 raise qdrant_result
             if is_recoverable_vector_store_error(qdrant_result):
                 self._log_vector_store_failure(
-                    "Qdrant search unavailable; falling back to FTS5 results",
+                    "Qdrant search unavailable; falling back to keyword results",
                     qdrant_result,
                 )
             else:
@@ -316,17 +313,17 @@ class SearchService:
         else:
             qdrant_results = qdrant_result
 
-        if isinstance(fts_result, BaseException):
-            logger.debug(f"FTS5 search failed: {fts_result}")
-            fts_ranked: list[str] = []
+        if isinstance(keyword_result, BaseException):
+            logger.debug(f"Keyword search failed: {keyword_result}")
+            keyword_ranked: list[str] = []
         else:
-            fts_ranked = fts_result
+            keyword_ranked = keyword_result
 
         qdrant_ranked = [mid for mid, _ in qdrant_results]
         qdrant_score_map = dict(qdrant_results)
 
-        if qdrant_ranked and fts_ranked:
-            ranking_score_map = self.rrf_scores(qdrant_ranked, fts_ranked, k=rrf_k)
+        if qdrant_ranked and keyword_ranked:
+            ranking_score_map = self.rrf_scores(qdrant_ranked, keyword_ranked, k=rrf_k)
             merged_ids = sorted(
                 ranking_score_map,
                 key=lambda memory_id: ranking_score_map[memory_id],
@@ -337,9 +334,9 @@ class SearchService:
             merged_ids = qdrant_ranked
             ranking_score_map = qdrant_score_map.copy()
             rrf_applied = False
-        elif fts_ranked:
-            merged_ids = fts_ranked
-            ranking_score_map = self.rrf_scores(fts_ranked, k=rrf_k)
+        elif keyword_ranked:
+            merged_ids = keyword_ranked
+            ranking_score_map = self.rrf_scores(keyword_ranked, k=rrf_k)
             rrf_applied = False
         else:
             merged_ids = []
@@ -351,7 +348,7 @@ class SearchService:
             ranking_score_map=ranking_score_map,
             qdrant_score_map=qdrant_score_map,
             qdrant_set=set(qdrant_ranked),
-            fts_set=set(fts_ranked),
+            keyword_set=set(keyword_ranked),
             graph_set=None,
             rrf_applied=rrf_applied,
             project_id=project_id,
@@ -371,7 +368,7 @@ class SearchService:
         ranking_score_map: dict[str, float],
         qdrant_score_map: dict[str, float],
         qdrant_set: set[str],
-        fts_set: set[str],
+        keyword_set: set[str],
         graph_set: set[str] | None,
         rrf_applied: bool,
         project_id: str | None,
@@ -427,8 +424,8 @@ class SearchService:
                 sources.append("semantic")
             if graph_set and memory_id in graph_set:
                 sources.append("graph")
-            if memory_id in fts_set:
-                sources.append("fts5")
+            if memory_id in keyword_set:
+                sources.append("keyword")
 
             mem.search_via = "|".join(sources) or "unknown"
             mem.raw_semantic_score = raw_semantic_score
@@ -497,18 +494,17 @@ class SearchService:
 
         return merged[:limit]
 
-    async def _fts5_ranked(
+    async def _keyword_ranked(
         self,
         query: str,
         limit: int,
         project_id: str | None,
     ) -> list[str]:
-        """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
-        search = self._keyword_search or self._fts_searcher_factory().search
-        fts_results = await self._run_sqlite(search, query, limit, project_id)
-        return [mem_id for mem_id, _ in fts_results]
+        """Run keyword search and return ranked memory IDs for RRF merge."""
+        results = await self._run_storage(self._keyword_search, query, limit, project_id)
+        return [mem_id for mem_id, _ in results]
 
-    async def _fts5_fallback(
+    async def _keyword_fallback(
         self,
         query: str,
         limit: int,
@@ -518,16 +514,17 @@ class SearchService:
         tags_any: list[str] | None,
         tags_none: list[str] | None,
     ) -> list[Memory]:
-        """FTS5 keyword search fallback when vector search returns nothing."""
-        search = self._keyword_search or self._fts_searcher_factory().search
-        fts_results = await self._run_sqlite(search, query, limit * 2, project_id)
-        if not fts_results:
+        """Keyword search fallback when vector search returns nothing."""
+        keyword_results = await self._run_storage(
+            self._keyword_search, query, limit * 2, project_id
+        )
+        if not keyword_results:
             return []
 
         memories: list[Memory] = []
-        for mem_id, score in fts_results:
+        for mem_id, score in keyword_results:
             try:
-                mem = await self._run_sqlite(self._storage.get_memory, mem_id)
+                mem = await self._run_storage(self._storage.get_memory, mem_id)
             except ValueError:
                 continue
             if memory_type and mem.memory_type != memory_type:
@@ -539,7 +536,7 @@ class SearchService:
             if tags_none and any(t in (mem.tags or []) for t in tags_none):
                 continue
             mem.similarity = score
-            mem.search_via = "fts5"
+            mem.search_via = "keyword"
             memories.append(mem)
             if len(memories) >= limit:
                 break

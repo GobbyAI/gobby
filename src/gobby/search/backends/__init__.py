@@ -5,13 +5,12 @@ used by UnifiedSearcher:
 
 - AsyncSearchBackend: Protocol for async search backends
 - EmbeddingBackend: Embedding-based search (requires API)
-- FTS5SearchBackend: SQLite FTS5 keyword search (always available)
 
 Usage:
     from gobby.search.backends import AsyncSearchBackend
-    from gobby.search.fts5 import FTS5SearchBackend
+    from gobby.search.keyword import KeywordAsyncSearchBackend
 
-    backend: AsyncSearchBackend = FTS5SearchBackend(db, "tasks_fts", "tasks")
+    backend: AsyncSearchBackend = KeywordAsyncSearchBackend(db, "tasks")
     results = await backend.search_async("query", top_k=10)
 """
 

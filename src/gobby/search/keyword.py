@@ -7,8 +7,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from gobby.search.fts5 import sanitize_fts_query
-
 logger = logging.getLogger(__name__)
 
 SearchMode = Literal["keyword", "semantic"]
@@ -48,10 +46,7 @@ class KeywordSearchBackend(Protocol):
 @dataclass(frozen=True)
 class _TableConfig:
     table: str
-    sqlite_fts_table: str
-    sqlite_content_table: str | None
-    sqlite_id_column: str = "id"
-    sqlite_weights: tuple[float, ...] | None = None
+    legacy_fts_table: str
     postgres_columns: tuple[str, ...] = ()
     filters: Mapping[str, str] | None = None
 
@@ -59,9 +54,7 @@ class _TableConfig:
 _TABLE_CONFIGS: dict[str, _TableConfig] = {
     "tasks": _TableConfig(
         table="tasks",
-        sqlite_fts_table="tasks_fts",
-        sqlite_content_table="tasks",
-        sqlite_weights=(10.0, 5.0, 2.0, 1.0, 2.0),
+        legacy_fts_table="tasks_fts",
         postgres_columns=("title", "description"),
         filters={
             "project_id": "project_id",
@@ -73,44 +66,40 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
     ),
     "memories": _TableConfig(
         table="memories",
-        sqlite_fts_table="memories_fts",
-        sqlite_content_table="memories",
-        sqlite_weights=(10.0, 5.0, 1.0, 1.0),
+        legacy_fts_table="memories_fts",
         postgres_columns=("content", "tags_text"),
         filters={"project_id": "project_id"},
     ),
     "skills": _TableConfig(
         table="skills",
-        sqlite_fts_table="skills_fts",
-        sqlite_content_table=None,
-        sqlite_weights=(10.0, 5.0, 2.0, 2.0),
+        legacy_fts_table="skills_fts",
         postgres_columns=("name", "description", "content"),
     ),
     "code_symbols": _TableConfig(
         table="code_symbols",
-        sqlite_fts_table="code_symbols_fts",
-        sqlite_content_table="code_symbols",
+        legacy_fts_table="code_symbols_fts",
         postgres_columns=("name", "qualified_name", "signature", "docstring", "summary"),
         filters={"project_id": "project_id", "kind": "kind", "file_path": "file_path"},
     ),
     "code_content": _TableConfig(
         table="code_content_chunks",
-        sqlite_fts_table="code_content_fts",
-        sqlite_content_table="code_content_chunks",
+        legacy_fts_table="code_content_fts",
         postgres_columns=("content",),
         filters={"project_id": "project_id", "file_path": "file_path"},
     ),
 }
 
-_FTS_TABLE_TO_TABLE = {config.sqlite_fts_table: name for name, config in _TABLE_CONFIGS.items()}
+_LEGACY_TABLE_ALIAS_TO_TABLE = {
+    config.legacy_fts_table: name for name, config in _TABLE_CONFIGS.items()
+}
 
 
 def keyword_table_for_fts_table(fts_table: str) -> str:
-    """Return the backend-neutral table key for an FTS5 table."""
+    """Return the backend-neutral table key for a legacy keyword table alias."""
     try:
-        return _FTS_TABLE_TO_TABLE[fts_table]
+        return _LEGACY_TABLE_ALIAS_TO_TABLE[fts_table]
     except KeyError as exc:
-        raise ValueError(f"unsupported FTS table: {fts_table}") from exc
+        raise ValueError(f"unsupported keyword table alias: {fts_table}") from exc
 
 
 def pick_search_backend(
@@ -125,108 +114,6 @@ def pick_search_backend(
         )
     config = _table_config(table)
     return BM25SearchBackend(hub, config)
-
-
-class FTS5SearchBackend:
-    """SQLite FTS5 keyword backend."""
-
-    def __init__(self, hub: Any, table: str | _TableConfig) -> None:
-        self._hub = hub
-        self._config = _table_config(table) if isinstance(table, str) else table
-
-    def search(
-        self,
-        query: str,
-        limit: int,
-        *,
-        filters: Mapping[str, Any] | None = None,
-    ) -> list[SearchHit]:
-        fts_query = sanitize_fts_query(query)
-        if not fts_query:
-            return []
-
-        params: list[Any] = []
-        where: list[str] = []
-        match_placeholder = _add_param(self._hub, params, fts_query)
-        where.append(f"{self._config.sqlite_fts_table} MATCH {match_placeholder}")
-
-        content_alias = "ct"
-        if filters and self._config.sqlite_content_table:
-            where.extend(_filter_clauses(self._hub, params, content_alias, self._config, filters))
-
-        limit_placeholder = _add_param(self._hub, params, limit)
-        weights_csv = (
-            ", ".join(str(weight) for weight in self._config.sqlite_weights)
-            if self._config.sqlite_weights
-            else ""
-        )
-        bm25_expr = (
-            f"bm25({self._config.sqlite_fts_table}, {weights_csv})"
-            if weights_csv
-            else f"bm25({self._config.sqlite_fts_table})"
-        )
-
-        if self._config.sqlite_content_table:
-            sql = f"""
-                SELECT {content_alias}.{self._config.sqlite_id_column} AS id,
-                       {bm25_expr} AS score
-                  FROM {self._config.sqlite_fts_table} fts
-                  JOIN {self._config.sqlite_content_table} {content_alias}
-                    ON {content_alias}.rowid = fts.rowid
-                 WHERE {" AND ".join(where)}
-                 ORDER BY score ASC, id ASC
-                 LIMIT {limit_placeholder}
-            """
-        else:
-            sql = f"""
-                SELECT fts.rowid AS id, {bm25_expr} AS score
-                  FROM {self._config.sqlite_fts_table} fts
-                 WHERE {" AND ".join(where)}
-                 ORDER BY score ASC, id ASC
-                 LIMIT {limit_placeholder}
-            """
-
-        try:
-            rows = fetch_all(self._hub, sql, params)
-        except Exception as exc:
-            logger.debug("FTS5 search failed on %s: %s", self._config.sqlite_fts_table, exc)
-            return []
-
-        raw_scores = [float(row_value(row, "score")) for row in rows]
-        normalized = normalize_fts5_scores(raw_scores)
-        return [
-            SearchHit(id=str(row_value(row, "id")), score=score)
-            for row, score in zip(rows, normalized, strict=False)
-        ]
-
-    def get_stats(self) -> dict[str, Any]:
-        try:
-            row = fetch_one(
-                self._hub,
-                f"SELECT count(*) AS cnt FROM {self._config.sqlite_fts_table}",
-                [],
-            )
-            count = int(row_value(row, "cnt")) if row else 0
-        except Exception:
-            count = 0
-        return {
-            "backend_type": "fts5",
-            "fts_table": self._config.sqlite_fts_table,
-            "content_table": self._config.sqlite_content_table,
-            "document_count": count,
-            "fitted": True,
-        }
-
-    def clear(self) -> None:
-        if self._config.sqlite_content_table is None:
-            execute_statement(
-                self._hub,
-                f"INSERT INTO {self._config.sqlite_fts_table}"
-                f"({self._config.sqlite_fts_table}) VALUES ('delete-all')",
-                [],
-            )
-            return
-        execute_statement(self._hub, f"DELETE FROM {self._config.sqlite_fts_table}", [])
 
 
 class BM25SearchBackend:
@@ -346,15 +233,6 @@ def fetch_one(hub: Any, sql: str, params: Sequence[Any]) -> Any | None:
         return txn.execute(sql, params).fetchone()
 
 
-def execute_statement(hub: Any, sql: str, params: Sequence[Any]) -> None:
-    """Execute a statement through either database surface."""
-    if hasattr(hub, "execute"):
-        hub.execute(sql, tuple(params))
-        return
-    with hub.transaction() as txn:
-        txn.execute(sql, params)
-
-
 def row_value(row: Any, key: str) -> Any:
     """Read a column value from sqlite rows, dict rows, or tuple-like rows."""
     if isinstance(row, Mapping):
@@ -400,12 +278,6 @@ def sanitize_pg_search_query(query: str) -> str:
     """Sanitize user input for pg_search's BM25 query DSL."""
     cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_", "-") else " " for ch in query)
     return " ".join(token for token in cleaned.split() if token)
-
-
-def normalize_fts5_scores(raw_scores: list[float]) -> list[float]:
-    """Normalize FTS5 bm25 scores where lower negative scores rank higher."""
-    positive = [-score for score in raw_scores]
-    return normalize_positive_scores(positive)
 
 
 def normalize_positive_scores(raw_scores: list[float]) -> list[float]:

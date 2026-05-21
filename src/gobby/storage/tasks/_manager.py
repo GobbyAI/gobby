@@ -891,10 +891,10 @@ class LocalTaskManager(TaskDecompositionMixin):
         limit: int = 20,
         min_score: float = 0.0,
     ) -> list[tuple[Task, float]]:
-        """Search tasks using FTS5 full-text search.
+        """Search tasks using PostgreSQL keyword search.
 
         Single-query search with SQL filter push-down — all filters
-        are applied in the FTS5 JOIN query.
+        are applied in the keyword query.
 
         Args:
             query: Search query text
@@ -939,9 +939,9 @@ class LocalTaskManager(TaskDecompositionMixin):
         return results
 
     def reindex_search(self, project_id: str | None = None) -> dict[str, Any]:
-        """Force rebuild of the FTS5 task search index.
+        """Return task search index statistics.
 
-        Normally triggers keep the index in sync. Use this for repair.
+        PostgreSQL keyword indexes are maintained by the database extension.
 
         Args:
             project_id: Unused - kept for API compatibility.
