@@ -104,7 +104,7 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
     assert list(transaction_immediate.parameters) == ["self", "lock"]
 
     immediate_hints = get_type_hints(module.HubDatabase.transaction_immediate)
-    assert immediate_hints["lock"] is module.LockTarget
+    assert immediate_hints["lock"] == module.LockTarget | None
 
     for method in (
         "execute",

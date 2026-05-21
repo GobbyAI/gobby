@@ -6,13 +6,10 @@ against the hub database.
 """
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
 from gobby.mcp_proxy.tools.hub import create_hub_registry
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -28,37 +25,34 @@ def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
 
 
 @pytest.fixture
-def temp_hub_db(tmp_path: Path) -> Path:
-    """Create a temporary hub database with schema."""
-    db_path = tmp_path / "gobby-hub.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    return db_path
+def temp_hub_db(hub_db):
+    """Use a migrated hub database for hub tool tests."""
+    return hub_db
 
 
 @pytest.fixture
-def hub_registry(temp_hub_db: Path):
+def hub_registry(temp_hub_db):
     """Create a hub registry with a temp database."""
-    return create_hub_registry(hub_db_path=temp_hub_db)
+    return create_hub_registry(db=temp_hub_db)
 
 
 @pytest.fixture
-def populated_hub_db(temp_hub_db: Path) -> Path:
+def populated_hub_db(temp_hub_db):
     """Create a hub database with test data."""
-    db = LocalDatabase(temp_hub_db)
+    db = temp_hub_db
 
     # Insert test projects first (required for foreign keys)
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("project-alpha", "Project Alpha", "/path/alpha", None),
     )
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("project-beta", "Project Beta", "/path/beta", None),
     )
@@ -74,34 +68,52 @@ def populated_hub_db(temp_hub_db: Path) -> Path:
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-1", "project-alpha", "ext-1", "claude", "machine-1", "active"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-2", "project-beta", "ext-2", "gemini", "machine-1", "ended"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-3", "project-alpha", "ext-3", "claude", "machine-2", "ended"),
     )
 
-    return temp_hub_db
+    return db
 
 
 class TestListAllProjects:
     """Tests for list_all_projects tool."""
 
-    def test_list_all_projects_returns_names_and_paths(self, populated_hub_db: Path) -> None:
+    def test_list_all_projects_uses_supplied_hub_database(self, non_local_hub_db) -> None:
+        """Hub registry queries the active adapter, even when it is not LocalDatabase."""
+        non_local_hub_db.execute(
+            """
+            INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            ("active-db-project", "Active DB", "/path/active", None),
+        )
+        registry = create_hub_registry(db=non_local_hub_db)
+        tool = registry.get_tool("list_all_projects")
+
+        result = asyncio.run(tool())
+
+        assert result["success"] is True
+        assert any(project["project_id"] == "active-db-project" for project in result["projects"])
+
+    def test_list_all_projects_returns_names_and_paths(self, populated_hub_db) -> None:
         """Test that list_all_projects returns project names and repo paths."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_all_projects")
 
         result = asyncio.run(tool())
@@ -112,9 +124,10 @@ class TestListAllProjects:
         assert "Project Alpha" in names
         assert "Project Beta" in names
 
-    def test_list_all_projects_includes_repo_path(self, populated_hub_db: Path) -> None:
+    def test_list_all_projects_includes_repo_path(self, populated_hub_db) -> None:
         """Test that list_all_projects includes id, name, and repo_path."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_all_projects")
 
         result = asyncio.run(tool())
@@ -128,25 +141,25 @@ class TestListAllProjects:
         assert beta["name"] == "Project Beta"
         assert beta["repo_path"] == "/path/beta"
 
-    def test_list_all_projects_filters_system_by_default(self, temp_hub_db: Path) -> None:
+    def test_list_all_projects_filters_system_by_default(self, temp_hub_db) -> None:
         """Test that system projects are excluded by default."""
-        db = LocalDatabase(temp_hub_db)
+        db = temp_hub_db
         db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("real-project", "my-app", "/path/app", None),
         )
         db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("system-1", "_orphaned_test", None, None),
         )
 
-        registry = create_hub_registry(hub_db_path=temp_hub_db)
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_all_projects")
 
         result = asyncio.run(tool())
@@ -160,9 +173,10 @@ class TestListAllProjects:
         assert "my-app" in names
         assert "_orphaned_test" in names
 
-    def test_list_all_projects_empty_database(self, temp_hub_db: Path) -> None:
+    def test_list_all_projects_empty_database(self, temp_hub_db) -> None:
         """Test list_all_projects handles empty database gracefully."""
-        registry = create_hub_registry(hub_db_path=temp_hub_db)
+        db = temp_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_all_projects")
 
         result = asyncio.run(tool())
@@ -171,24 +185,24 @@ class TestListAllProjects:
         assert result["project_count"] == 0
         assert result["projects"] == []
 
-    def test_list_all_projects_missing_database(self, tmp_path: Path) -> None:
+    def test_list_all_projects_missing_database(self) -> None:
         """Test list_all_projects handles missing database."""
-        nonexistent = tmp_path / "nonexistent.db"
-        registry = create_hub_registry(hub_db_path=nonexistent)
+        registry = create_hub_registry(db=None)
         tool = registry.get_tool("list_all_projects")
 
         result = asyncio.run(tool())
 
         assert result["success"] is False
-        assert "not found" in result["error"]
+        assert "not available" in result["error"]
 
 
 class TestListCrossProjectTasks:
     """Tests for list_cross_project_tasks tool."""
 
-    def test_list_cross_project_tasks_all(self, populated_hub_db: Path) -> None:
+    def test_list_cross_project_tasks_all(self, populated_hub_db) -> None:
         """Test list_cross_project_tasks returns all tasks."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_tasks")
 
         result = asyncio.run(tool())
@@ -196,9 +210,10 @@ class TestListCrossProjectTasks:
         assert result["success"] is True
         assert result["count"] == 3
 
-    def test_list_cross_project_tasks_with_state_filter(self, populated_hub_db: Path) -> None:
+    def test_list_cross_project_tasks_with_state_filter(self, populated_hub_db) -> None:
         """Test list_cross_project_tasks with state filter."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_tasks")
 
         result = asyncio.run(tool(state="ready"))
@@ -210,9 +225,10 @@ class TestListCrossProjectTasks:
         assert tasks[0]["state"]["current_stage"] is None
         assert tasks[0]["state"]["is_closed"] is False
 
-    def test_list_cross_project_tasks_with_limit(self, populated_hub_db: Path) -> None:
+    def test_list_cross_project_tasks_with_limit(self, populated_hub_db) -> None:
         """Test list_cross_project_tasks respects limit."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_tasks")
 
         result = asyncio.run(tool(limit=2))
@@ -220,9 +236,10 @@ class TestListCrossProjectTasks:
         assert result["success"] is True
         assert result["count"] == 2
 
-    def test_list_cross_project_tasks_empty_database(self, temp_hub_db: Path) -> None:
+    def test_list_cross_project_tasks_empty_database(self, temp_hub_db) -> None:
         """Test list_cross_project_tasks handles empty database."""
-        registry = create_hub_registry(hub_db_path=temp_hub_db)
+        db = temp_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_tasks")
 
         result = asyncio.run(tool())
@@ -235,9 +252,10 @@ class TestListCrossProjectTasks:
 class TestListCrossProjectSessions:
     """Tests for list_cross_project_sessions tool."""
 
-    def test_list_cross_project_sessions_all(self, populated_hub_db: Path) -> None:
+    def test_list_cross_project_sessions_all(self, populated_hub_db) -> None:
         """Test list_cross_project_sessions returns all sessions."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_sessions")
 
         result = asyncio.run(tool())
@@ -249,9 +267,10 @@ class TestListCrossProjectSessions:
         assert "source" in session  # Not cli_type
         assert "created_at" in session
 
-    def test_list_cross_project_sessions_respects_limit(self, populated_hub_db: Path) -> None:
+    def test_list_cross_project_sessions_respects_limit(self, populated_hub_db) -> None:
         """Test list_cross_project_sessions respects limit parameter."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_sessions")
 
         result = asyncio.run(tool(limit=1))
@@ -259,9 +278,10 @@ class TestListCrossProjectSessions:
         assert result["success"] is True
         assert result["count"] == 1
 
-    def test_list_cross_project_sessions_empty_database(self, temp_hub_db: Path) -> None:
+    def test_list_cross_project_sessions_empty_database(self, temp_hub_db) -> None:
         """Test list_cross_project_sessions handles empty database."""
-        registry = create_hub_registry(hub_db_path=temp_hub_db)
+        db = temp_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_sessions")
 
         result = asyncio.run(tool())
@@ -274,9 +294,10 @@ class TestListCrossProjectSessions:
 class TestHubStats:
     """Tests for hub_stats tool."""
 
-    def test_hub_stats_returns_correct_counts(self, populated_hub_db: Path) -> None:
+    def test_hub_stats_returns_correct_counts(self, populated_hub_db) -> None:
         """Test hub_stats returns correct aggregate counts."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("hub_stats")
 
         result = asyncio.run(tool())
@@ -287,9 +308,10 @@ class TestHubStats:
         assert stats["tasks"]["total"] == 3
         assert stats["sessions"]["total"] == 3
 
-    def test_hub_stats_includes_state_breakdown(self, populated_hub_db: Path) -> None:
+    def test_hub_stats_includes_state_breakdown(self, populated_hub_db) -> None:
         """Test hub_stats includes task breakdown by state."""
-        registry = create_hub_registry(hub_db_path=populated_hub_db)
+        db = populated_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("hub_stats")
 
         result = asyncio.run(tool())
@@ -300,9 +322,10 @@ class TestHubStats:
         assert stats["tasks"]["by_state"]["closed"] == 1
         assert stats["tasks"]["by_state"]["in_progress"] == 1
 
-    def test_hub_stats_empty_database(self, temp_hub_db: Path) -> None:
+    def test_hub_stats_empty_database(self, temp_hub_db) -> None:
         """Test hub_stats handles empty database gracefully."""
-        registry = create_hub_registry(hub_db_path=temp_hub_db)
+        db = temp_hub_db
+        registry = create_hub_registry(db=db)
         tool = registry.get_tool("hub_stats")
 
         result = asyncio.run(tool())
@@ -313,13 +336,12 @@ class TestHubStats:
         assert stats["tasks"]["total"] == 0
         assert stats["sessions"]["total"] == 0
 
-    def test_hub_stats_missing_database(self, tmp_path: Path) -> None:
+    def test_hub_stats_missing_database(self) -> None:
         """Test hub_stats handles missing database."""
-        nonexistent = tmp_path / "nonexistent.db"
-        registry = create_hub_registry(hub_db_path=nonexistent)
+        registry = create_hub_registry(db=None)
         tool = registry.get_tool("hub_stats")
 
         result = asyncio.run(tool())
 
         assert result["success"] is False
-        assert "not found" in result["error"]
+        assert "not available" in result["error"]

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from gobby.config.features import ToolSummarizerConfig
     from gobby.llm.service import LLMService
 from gobby.prompts import PromptLoader
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ _llm_service: LLMService | None = None
 def init_summarizer_config(
     config: ToolSummarizerConfig,
     project_dir: str | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     llm_service: LLMService | None = None,
 ) -> None:
     """Initialize the summarizer with configuration."""

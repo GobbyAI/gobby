@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import (
         InterSessionMessage,
         InterSessionMessageManager,
@@ -67,7 +67,7 @@ class MailboxService:
     def __init__(
         self,
         *,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         message_manager: InterSessionMessageManager,
         session_manager: SessionManager,
         wake_dispatcher: WakeDispatcherProtocol | None = None,

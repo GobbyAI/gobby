@@ -5,13 +5,10 @@ with data from multiple projects.
 """
 
 import tempfile
-from pathlib import Path
 
 import pytest
 
 from gobby.mcp_proxy.tools.hub import create_hub_registry
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
 
 # Mark all tests in this module as integration tests
@@ -28,19 +25,8 @@ def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
 
 
 @pytest.fixture
-def hub_dir():
-    """Create a temporary hub directory."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
-
-
-@pytest.fixture
-def multi_project_hub(hub_dir):
+def multi_project_hub(hub_db):
     """Create a hub database with data from multiple projects."""
-    hub_db_path = hub_dir / "gobby-hub.db"
-    hub_db = LocalDatabase(hub_db_path)
-    run_migrations(hub_db)
-
     # Insert data for two projects
     for i, project_name in enumerate(["project-frontend", "project-backend"]):
         project_dir = tempfile.mkdtemp()
@@ -49,7 +35,7 @@ def multi_project_hub(hub_dir):
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (project_name, project_name.replace("-", " ").title(), project_dir),
         )
@@ -84,7 +70,7 @@ def multi_project_hub(hub_dir):
             hub_db.execute(
                 """
                 INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     f"sess-{project_name}-{k}",
@@ -96,8 +82,7 @@ def multi_project_hub(hub_dir):
                 ),
             )
 
-    hub_db.close()
-    return hub_db_path
+    return hub_db
 
 
 class TestHubQueryIntegration:
@@ -107,7 +92,7 @@ class TestHubQueryIntegration:
         """Test that list_all_projects returns all projects from hub."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_all_projects")
         assert tool is not None
 
@@ -124,7 +109,7 @@ class TestHubQueryIntegration:
         """Test that list_all_projects includes correct task and session counts."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_all_projects")
         assert tool is not None
 
@@ -143,7 +128,7 @@ class TestHubQueryIntegration:
         """Test that list_cross_project_tasks returns tasks from multiple projects."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_cross_project_tasks")
         assert tool is not None
 
@@ -161,7 +146,7 @@ class TestHubQueryIntegration:
         """Test that list_cross_project_tasks correctly filters by projected state."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_cross_project_tasks")
         assert tool is not None
 
@@ -179,7 +164,7 @@ class TestHubQueryIntegration:
         """Test that list_cross_project_tasks respects the limit parameter."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_cross_project_tasks")
         assert tool is not None
 
@@ -194,7 +179,7 @@ class TestHubQueryIntegration:
         """Test that list_cross_project_sessions returns sessions from multiple projects."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_cross_project_sessions")
         assert tool is not None
 
@@ -212,7 +197,7 @@ class TestHubQueryIntegration:
         """Test that list_cross_project_sessions respects the limit parameter."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("list_cross_project_sessions")
         assert tool is not None
 
@@ -225,7 +210,7 @@ class TestHubQueryIntegration:
         """Test that hub_stats returns accurate aggregate statistics."""
         import asyncio
 
-        registry = create_hub_registry(hub_db_path=multi_project_hub)
+        registry = create_hub_registry(db=multi_project_hub)
         tool = registry.get_tool("hub_stats")
         assert tool is not None
 
@@ -254,12 +239,11 @@ class TestHubQueryIntegration:
 class TestHubQueryEdgeCases:
     """Integration tests for hub query edge cases."""
 
-    def test_hub_tools_handle_missing_database(self, hub_dir) -> None:
+    def test_hub_tools_handle_missing_database(self) -> None:
         """Test that all hub tools handle missing database gracefully."""
         import asyncio
 
-        nonexistent = hub_dir / "nonexistent.db"
-        registry = create_hub_registry(hub_db_path=nonexistent)
+        registry = create_hub_registry(db=None)
 
         # Test all tools handle missing db
         for tool_name in [
@@ -272,18 +256,13 @@ class TestHubQueryEdgeCases:
             assert tool is not None
             result = asyncio.run(tool())
             assert result["success"] is False
-            assert "not found" in result["error"]
+            assert "not available" in result["error"]
 
-    def test_hub_tools_handle_empty_database(self, hub_dir) -> None:
+    def test_hub_tools_handle_empty_database(self, hub_db) -> None:
         """Test that all hub tools handle empty database gracefully."""
         import asyncio
 
-        hub_db_path = hub_dir / "empty.db"
-        db = LocalDatabase(hub_db_path)
-        run_migrations(db)
-        db.close()
-
-        registry = create_hub_registry(hub_db_path=hub_db_path)
+        registry = create_hub_registry(db=hub_db)
 
         # list_all_projects should return empty list
         tool = registry.get_tool("list_all_projects")
@@ -315,32 +294,27 @@ class TestHubQueryEdgeCases:
         assert result["stats"]["tasks"]["total"] == 0
         assert result["stats"]["sessions"]["total"] == 0
 
-    def test_projects_with_only_tasks_no_sessions(self, hub_dir) -> None:
+    def test_projects_with_only_tasks_no_sessions(self, hub_db) -> None:
         """Test that list_all_projects handles projects with only tasks."""
         import asyncio
 
-        hub_db_path = hub_dir / "partial.db"
-        db = LocalDatabase(hub_db_path)
-        run_migrations(db)
-
         # Insert project with only tasks, no sessions
-        db.execute(
+        hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("tasks-only-project", "Tasks Only", "/path/tasks"),
         )
-        db.execute(
+        hub_db.execute(
             """
             INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("task-only-1", "tasks-only-project", "A Task"),
         )
-        db.close()
 
-        registry = create_hub_registry(hub_db_path=hub_db_path)
+        registry = create_hub_registry(db=hub_db)
         tool = registry.get_tool("list_all_projects")
         assert tool is not None
         result = asyncio.run(tool())
@@ -352,32 +326,27 @@ class TestHubQueryEdgeCases:
         assert project["task_count"] == 1
         assert project["session_count"] == 0
 
-    def test_projects_with_only_sessions_no_tasks(self, hub_dir) -> None:
+    def test_projects_with_only_sessions_no_tasks(self, hub_db) -> None:
         """Test that list_all_projects handles projects with only sessions."""
         import asyncio
 
-        hub_db_path = hub_dir / "partial.db"
-        db = LocalDatabase(hub_db_path)
-        run_migrations(db)
-
         # Insert project with only sessions, no tasks
-        db.execute(
+        hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("sessions-only-project", "Sessions Only", "/path/sessions"),
         )
-        db.execute(
+        hub_db.execute(
             """
             INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("sess-only-1", "sessions-only-project", "ext-1", "claude", "machine-1", "active"),
         )
-        db.close()
 
-        registry = create_hub_registry(hub_db_path=hub_db_path)
+        registry = create_hub_registry(db=hub_db)
         tool = registry.get_tool("list_all_projects")
         assert tool is not None
         result = asyncio.run(tool())

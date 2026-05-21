@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -116,14 +116,14 @@ class SemanticToolSearch:
     Manages semantic search over MCP tools using embeddings.
 
     Vectors are stored in Qdrant. Tool metadata (name, description) is
-    looked up from the tools/mcp_servers SQLite tables for search results.
+    looked up from the tools/mcp_servers hub tables for search results.
     """
 
     TOOL_COLLECTION = "tool_embeddings"
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         embedding_dim: int = DEFAULT_EMBEDDING_DIM,
         openai_api_key: str | None = None,

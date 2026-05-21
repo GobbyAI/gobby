@@ -17,8 +17,8 @@ from gobby.config.app import DaemonConfig
 from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -36,7 +36,7 @@ class ServiceContainer:
 
     # Core Infrastructure
     config: DaemonConfig
-    database: DatabaseProtocol
+    database: HubDatabase
 
     # Core Managers
     session_manager: SessionManager | None
@@ -119,7 +119,7 @@ class ServiceContainer:
     _project_infra_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run daemon SQLite work on the bounded DB executor."""
+        """Run daemon database work on the bounded DB executor."""
         if self.db_executor is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self.db_executor.run(func, *args, **kwargs)

@@ -34,7 +34,7 @@ async def _run_db(server: HTTPServer, func: Callable[..., Any], *args: Any, **kw
     """Run database work through the server bridge.
 
     Args:
-        server: HTTP server that may expose an async ``run_db`` executor for SQLite work.
+        server: HTTP server that may expose an async ``run_db`` executor for database work.
         func: Synchronous callable to execute.
         *args: Positional arguments passed to ``func``.
         **kwargs: Keyword arguments passed to ``func``.

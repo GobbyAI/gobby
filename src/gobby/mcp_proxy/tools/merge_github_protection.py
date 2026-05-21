@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.worktrees.git import WorktreeGitManager
 
 _GITHUB_TOKEN_ENV_NAMES = (
@@ -52,7 +52,7 @@ def parse_github_remote(remote_url: str) -> tuple[str, str] | None:
     return parts[0], repo
 
 
-def github_token(db: DatabaseProtocol | None) -> str | None:
+def github_token(db: HubDatabase | None) -> str | None:
     for name in _GITHUB_TOKEN_ENV_NAMES:
         token = os.environ.get(name)
         if token:
