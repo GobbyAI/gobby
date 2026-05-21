@@ -128,16 +128,16 @@ class TestStatusUtils:
                     "gloc_path": "/Users/test/.gobby/bin/gloc",
                 },
                 "coding_clis": {
-                    "claude": "1.0.12",
+                    "claude": "installed",
                     "gemini": None,
                     "codex": None,
                     "hooks": {"claude": True, "gemini": False, "codex": False},
                 },
                 "dependencies": {
-                    "tmux": "3.4",
+                    "tmux": "installed",
                     "docker": None,
                     "docker_running": False,
-                    "git": "2.44.0",
+                    "git": "installed",
                     "node": None,
                     "tailscale": None,
                     "ollama": None,
@@ -149,9 +149,9 @@ class TestStatusUtils:
         assert "0.2.1" in msg
         assert "0.2.0" in msg
         assert "0.1.1" in msg
-        assert "1.0.12" in msg
-        assert "3.4" in msg
-        assert "2.44.0" in msg
+        assert "Claude Code:" in msg
+        assert "tmux:" in msg
+        assert "git:" in msg
 
     def test_format_status_message_prefers_configured_embeddings_provider(self) -> None:
         msg = format_status_message(

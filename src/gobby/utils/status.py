@@ -130,6 +130,31 @@ def _format_postgres_service_status(payload: Any) -> str | None:
     return f"{health} ({'; '.join(details)})"
 
 
+def _provider_model_count(provider_models: Any, provider: str) -> int | None:
+    if not isinstance(provider_models, dict):
+        return None
+    info = provider_models.get(provider)
+    if not isinstance(info, dict):
+        return None
+    count = info.get("model_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    return None
+
+
+def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name: str) -> str:
+    parts = []
+    if hooks.get(name):
+        parts.append("hooks installed")
+
+    model_count = _provider_model_count(provider_models, name)
+    if model_count is not None:
+        plural = "s" if model_count != 1 else ""
+        parts.append(f"{model_count} model{plural} available")
+
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 def format_status_message(
     *,
     running: bool,
@@ -264,14 +289,15 @@ def format_status_message(
     if deps_info and deps_info.get("coding_clis"):
         clis = deps_info["coding_clis"]
         hooks = clis.get("hooks", {})
+        provider_models = data.get("provider_models")
         lines.append("Coding CLIs:")
         for name, label in _CODING_CLI_LABELS:
             version = clis.get(name)
-            hook_str = " (hooks installed)" if hooks.get(name) else ""
+            details = _format_coding_cli_details(hooks, provider_models, name)
             if version:
-                lines.append(f"  {label + ':':<{_LW}}{version}{hook_str}")
+                lines.append(f"  {label + ':':<{_LW}}{version}{details}")
             else:
-                lines.append(f"  {label + ':':<{_LW}}not installed{hook_str}")
+                lines.append(f"  {label + ':':<{_LW}}not installed{details}")
         lines.append("")
 
     # ---- Services ----
@@ -341,15 +367,6 @@ def format_status_message(
             lines.append(f"  {'Embeddings:':<{_LW}}Ollama (stopped)")
         elif isinstance(lmstudio, dict):
             lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
-
-        provider_models = data.get("provider_models", {})
-        for provider, info in provider_models.items():
-            source = info.get("source", "failed")
-            count = info.get("model_count", 0)
-            detail = f"{count} models ({source})"
-            if info.get("error"):
-                detail += f" - {info['error']}"
-            lines.append(f"  {('Models ' + provider + ':'):<{_LW}}{detail}")
 
         lines.append("")
 
