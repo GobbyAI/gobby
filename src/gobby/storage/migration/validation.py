@@ -44,6 +44,9 @@ _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
     }
 )
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 class _Result(Protocol):
@@ -198,7 +201,7 @@ def _check_source_schema_baseline(
 ) -> None:
     version = _sqlite_schema_version(source)
     if version is None:
-        _record(checks, "schema baseline", True, "schema baseline skipped: no version table")
+        _record(checks, "schema baseline", False, "SQLite schema baseline missing")
         return
     if version != BASELINE_VERSION:
         _record(
@@ -768,7 +771,9 @@ def _row_to_dict(row: Any) -> dict[str, object]:
 def _jsonable(value: Any) -> object:
     if isinstance(value, bool):
         return int(value)
-    if isinstance(value, datetime | date):
+    if isinstance(value, datetime):
+        return _canonical_datetime(value)
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
@@ -776,6 +781,8 @@ def _jsonable(value: Any) -> object:
         return {"__bytes__": bytes(value).hex()}
     if isinstance(value, str):
         stripped = value.strip()
+        if timestamp := _canonical_datetime_string(stripped):
+            return timestamp
         if stripped.startswith(("{", "[")):
             try:
                 return _jsonable(json.loads(stripped))
@@ -787,6 +794,22 @@ def _jsonable(value: Any) -> object:
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
         return [_jsonable(item) for item in value]
     return value
+
+
+def _canonical_datetime(value: datetime) -> str:
+    return value.replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _canonical_datetime_string(value: str) -> str | None:
+    if not _TIMESTAMP_RE.match(value):
+        return None
+    normalized = value.replace(" ", "T")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return _canonical_datetime(datetime.fromisoformat(normalized))
+    except ValueError:
+        return None
 
 
 def _catalog_available(target: _Executable) -> bool:
