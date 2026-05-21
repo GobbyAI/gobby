@@ -840,7 +840,7 @@ call_tool("gobby-merge", "merge_apply", {"resolution_id": "<id>"})
 ## Config (`gobby-config`)
 
 7 tools for runtime config (the layered Pydantic config tree backed by
-SQLite overrides).
+PostgreSQL hub overrides).
 
 | Tool | Description |
 | :--- | :--- |
