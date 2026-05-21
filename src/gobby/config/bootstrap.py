@@ -1,10 +1,12 @@
 """Bootstrap configuration for pre-database settings.
 
-These settings are needed before the database is available:
-database_path, daemon_port, bind_host, websocket_port, ui_port, neo4j_password,
-hub_backend, database_url_ref, postgres_install_mode.
+These settings are needed before the PostgreSQL hub is available:
+daemon_port, bind_host, websocket_port, ui_port, neo4j_password, hub_backend,
+database_url_ref, postgres_install_mode. database_path remains only for legacy
+SQLite import and test compatibility.
 
-All other configuration is managed via the DB (config_store) + Pydantic defaults.
+All other configuration is managed via the PostgreSQL hub (config_store) +
+Pydantic defaults.
 """
 
 from __future__ import annotations

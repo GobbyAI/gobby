@@ -297,9 +297,9 @@ class DaemonConfig(BaseModel):
     2. DB config_store (runtime settings)
     3. Pydantic defaults (lowest)
 
-    Pre-DB bootstrap settings (daemon_port, bind_host, database_path,
-    websocket_port, ui_port, hub_backend, database_url, postgres_install_mode)
-    are read from ~/.gobby/bootstrap.yaml.
+    Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
+    hub_backend, database_url, postgres_install_mode, plus legacy database_path
+    compatibility) are read from ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -341,14 +341,17 @@ class DaemonConfig(BaseModel):
         "Add your Tailscale hostname (e.g., 'https://myhost.tail*.ts.net') for remote access.",
     )
 
-    # Local storage
+    # Hub connection settings
     database_path: str = Field(
         default="~/.gobby/gobby-hub.db",
-        description="Path to hub database for cross-project queries.",
+        description=(
+            "Legacy SQLite hub path kept for migrate-from-sqlite and test "
+            "compatibility; runtime hub access uses PostgreSQL database_url."
+        ),
     )
     hub_backend: Literal["sqlite", "postgres"] = Field(
         default="sqlite",
-        description="Hub database backend selected by bootstrap.yaml.",
+        description="Hub database backend selected by bootstrap.yaml; runtime installs use postgres.",
     )
     database_url: str | None = Field(
         default=None,
@@ -886,7 +889,8 @@ def load_config(
             deep_merge(config_dict, db_dict)
         _restore_bootstrap_backend_selection(config_dict, bootstrap)
     else:
-        # Phase 1: bootstrap.yaml for pre-DB settings (database_path, ports)
+        # Phase 1: bootstrap.yaml for pre-DB settings (ports, hub connection,
+        # legacy database_path compatibility)
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap = load_bootstrap(config_file)
