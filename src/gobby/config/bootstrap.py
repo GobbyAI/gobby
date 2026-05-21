@@ -32,6 +32,7 @@ POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
 POSTGRES_DATABASE_URL_REF = (
     f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
 )
+_POSTGRES_DATABASE_URL_CACHE: dict[tuple[int, str, str], str] = {}
 
 HubBackend = Literal["sqlite", "postgres"]
 PostgresInstallMode = Literal["docker", "native", "external"]
@@ -189,21 +190,16 @@ def _validate_bootstrap_file_permissions(path: Path) -> None:
 def store_postgres_database_url(database_url: str) -> str:
     """Store the bootstrap PostgreSQL DSN in the OS keyring."""
     keyring_backend = _keyring()
+    service = POSTGRES_DATABASE_URL_KEYRING_SERVICE
+    username = POSTGRES_DATABASE_URL_KEYRING_USERNAME
     try:
-        keyring_backend.set_password(
-            POSTGRES_DATABASE_URL_KEYRING_SERVICE,
-            POSTGRES_DATABASE_URL_KEYRING_USERNAME,
-            database_url,
-        )
+        keyring_backend.set_password(service, username, database_url)
     except Exception as exc:
         raise BootstrapConfigError(
             _keyring_error_message("store", POSTGRES_DATABASE_URL_REF, exc)
         ) from exc
     try:
-        stored_database_url = keyring_backend.get_password(
-            POSTGRES_DATABASE_URL_KEYRING_SERVICE,
-            POSTGRES_DATABASE_URL_KEYRING_USERNAME,
-        )
+        stored_database_url = keyring_backend.get_password(service, username)
     except Exception as exc:
         raise BootstrapConfigError(
             _keyring_error_message("read back", POSTGRES_DATABASE_URL_REF, exc)
@@ -213,6 +209,9 @@ def store_postgres_database_url(database_url: str) -> str:
             "failed to verify database_url in OS keyring entry "
             f"{POSTGRES_DATABASE_URL_REF}. {_keyring_guidance()}"
         )
+    _POSTGRES_DATABASE_URL_CACHE[
+        _postgres_database_url_cache_key(keyring_backend, service, username)
+    ] = stored_database_url
     return POSTGRES_DATABASE_URL_REF
 
 
@@ -220,6 +219,10 @@ def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
     """Resolve the bootstrap PostgreSQL DSN from the OS keyring."""
     service, username = _parse_postgres_database_url_ref(database_url_ref)
     keyring_backend = _keyring()
+    cache_key = _postgres_database_url_cache_key(keyring_backend, service, username)
+    cached_database_url = _POSTGRES_DATABASE_URL_CACHE.get(cache_key)
+    if cached_database_url is not None:
+        return cached_database_url
     try:
         database_url = keyring_backend.get_password(service, username)
     except Exception as exc:
@@ -228,7 +231,9 @@ def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
         raise BootstrapConfigError(
             f"database_url_ref keyring entry {database_url_ref} is missing. {_keyring_guidance()}"
         )
-    return str(database_url)
+    resolved_database_url = str(database_url)
+    _POSTGRES_DATABASE_URL_CACHE[cache_key] = resolved_database_url
+    return resolved_database_url
 
 
 def inspect_postgres_keyring(
@@ -301,6 +306,14 @@ def _keyring() -> Any:
                 f"{_keyring_guidance()}"
             )
     return keyring
+
+
+def _postgres_database_url_cache_key(
+    keyring_backend: Any,
+    service: str,
+    username: str,
+) -> tuple[int, str, str]:
+    return id(keyring_backend), service, username
 
 
 def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:

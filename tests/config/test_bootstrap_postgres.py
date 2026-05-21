@@ -89,6 +89,11 @@ def test_bootstrap_loads_postgres_url_from_keyring_ref(
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
     assert "database_url" not in yaml.safe_load(bootstrap_file.read_text())
 
+    second_bootstrap = load_bootstrap(str(bootstrap_file))
+
+    assert second_bootstrap.database_url == database_url
+    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
+
 
 def test_write_postgres_defaults_stores_database_url_ref(
     temp_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -114,6 +119,37 @@ def test_write_postgres_defaults_stores_database_url_ref(
     assert fake_keyring.set_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY, database_url)]
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
     assert read_bootstrap_database_url(temp_dir) == database_url
+    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
+
+
+def test_write_postgres_defaults_refreshes_cached_database_url(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
+
+    first_database_url = "postgresql://gobby:first@localhost:60891/gobby"
+    second_database_url = "postgresql://gobby:second@localhost:60891/gobby"
+    fake_keyring = FakeKeyring()
+    install_fake_keyring(monkeypatch, fake_keyring)
+
+    write_postgres_defaults(
+        gobby_home=temp_dir,
+        mode="docker",
+        database_url=first_database_url,
+    )
+    assert read_bootstrap_database_url(temp_dir) == first_database_url
+
+    write_postgres_defaults(
+        gobby_home=temp_dir,
+        mode="docker",
+        database_url=second_database_url,
+    )
+
+    assert read_bootstrap_database_url(temp_dir) == second_database_url
+    assert fake_keyring.set_calls == [
+        (KEYRING_SERVICE, DATABASE_URL_KEY, first_database_url),
+        (KEYRING_SERVICE, DATABASE_URL_KEY, second_database_url),
+    ]
     assert fake_keyring.get_calls == [
         (KEYRING_SERVICE, DATABASE_URL_KEY),
         (KEYRING_SERVICE, DATABASE_URL_KEY),
