@@ -527,6 +527,8 @@ class TestListRunningAgents:
         assert result["success"] is True
         assert result["count"] == 3
         assert len(result["agents"]) == 3
+        assert result["scope"] == "all"
+        runner.run_storage.list_active.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
     async def test_filter_by_parent_session(self):
@@ -543,7 +545,72 @@ class TestListRunningAgents:
 
         assert result["success"] is True
         assert result["count"] == 2
-        runner.run_storage.list_by_parent.assert_called_once_with("parent-1")
+        runner.run_storage.list_by_parent.assert_called_once_with(
+            "parent-1",
+            limit=100,
+            status=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_all_scope_ignores_current_session_context(self):
+        """Default listing is build-wide even when MCP seeds caller session context."""
+        from gobby.utils.session_context import session_context_for_test
+
+        runner = _make_runner_with_run_storage()
+        agents = self._make_agents()
+        runner.run_storage.list_active.return_value = agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        with session_context_for_test("caller-session"):
+            result = await list_running()
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        runner.run_storage.list_active.assert_called_once_with(limit=100)
+        runner.run_storage.list_by_parent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_parent_scope_uses_current_session_context_when_requested(self):
+        """Callers can still ask for direct children of the current session."""
+        from gobby.utils.session_context import session_context_for_test
+
+        runner = _make_runner_with_run_storage()
+        parent_agents = [a for a in self._make_agents() if a.parent_session_id == "parent-1"]
+        runner.run_storage.list_by_parent.return_value = parent_agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        with session_context_for_test("parent-1"):
+            result = await list_running(scope="parent")
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert result["scope"] == "parent"
+        runner.run_storage.list_by_parent.assert_called_once_with(
+            "parent-1",
+            limit=100,
+            status=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_running_status_uses_cli_equivalent_query(self):
+        """status='running' uses the same storage path as CLI --status running."""
+        runner = _make_runner_with_run_storage()
+        running_agents = [self._make_agents()[0]]
+        runner.run_storage.list_running.return_value = running_agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(status="running", limit=25)
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["status"] == "running"
+        runner.run_storage.list_running.assert_called_once_with(limit=25)
 
     @pytest.mark.asyncio
     async def test_list_includes_agent_identity(self):

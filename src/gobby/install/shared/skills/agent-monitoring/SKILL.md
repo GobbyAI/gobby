@@ -20,10 +20,15 @@ raw process internals.
 
 Use `gobby-agents` first:
 
-- `list_running_agents` for the active-agent overview
+- `list_running_agents` for the build-wide active-agent overview
 - `get_running_agent` for one active run
 - `list_agent_runs` for recent runs tied to a parent session
 - `get_agent_result` for completed run output and status
+
+`list_running_agents` defaults to build-wide scope. Use `scope="parent"` or
+`parent_session_id="<session>"` when you specifically need only direct children
+of one parent session. Use `status="running"` when comparing with
+`gobby agents runs list --status running`.
 
 Use `gobby-sessions` when the question is about the child session or terminal
 context:
@@ -37,7 +42,7 @@ schema, then call the tool.
 
 ## Fallbacks
 
-Treat raw database queries and direct `tmux` commands as debugging fallbacks.
+Treat raw SQLite/database queries and direct `tmux` commands as debugging fallbacks.
 Use them only after the MCP tools cannot answer the question or when you are
 fixing the monitoring stack itself. Prefer recording what the supported tools
 returned before falling back so the reason for bypassing them is explicit.
