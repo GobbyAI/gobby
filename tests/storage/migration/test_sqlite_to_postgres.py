@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,6 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from gobby.storage.migrations import BASELINE_VERSION
 
 pytestmark = pytest.mark.unit
 
@@ -152,6 +155,18 @@ def test_seed_bearing_tables_follow_postgres_baseline() -> None:
     assert {"projects", "sessions", "task_stages_registry", "task_type_default_stages"} <= tables
     assert "schema_migrations" not in tables
     assert "gobby_migration_state" not in tables
+
+
+def test_assert_source_schema_supported_rejects_same_version_schema_drift() -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)")
+    source.execute("INSERT INTO schema_migrations (version) VALUES (?)", (BASELINE_VERSION,))
+    source.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
+
+    with pytest.raises(migration.SqliteToPostgresMigrationError, match="fingerprint"):
+        migration._assert_source_schema_supported(source)
 
 
 def _record_copy(migration: Any, events: list[str]) -> Any:

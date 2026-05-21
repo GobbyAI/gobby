@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -70,8 +71,13 @@ class _PostgresFixture:
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
-def test_pgaudit_probe_excluded_unknown_table_fails() -> None:
+def test_pgaudit_probe_excluded_unknown_table_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     validation = importlib.import_module("gobby.storage.migration.validation")
+    monkeypatch.setattr(
+        validation,
+        "validate_sqlite_source_schema",
+        lambda _source: SimpleNamespace(ok=True, message="SQLite schema baseline test bypass"),
+    )
     source = _sqlite_source()
     target = _PostgresFixture(
         application_tables={"tasks": [{"id": 1, "title": "imported"}]},
