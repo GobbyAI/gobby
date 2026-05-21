@@ -375,9 +375,14 @@ def _write_compose_env(*, gobby_home: Path | None = None) -> Path:
 def _read_pgsearch_version_manifest() -> dict[str, str]:
     manifest_ref = resources.files("gobby").joinpath("data/postgres-pgsearch/version.json")
     data = json.loads(manifest_ref.read_text(encoding="utf-8"))
+    sha_by_arch = data.get("pg_search_sha256_by_arch", {})
+    debian_arch = _debian_arch(platform.machine())
+    sha256 = (sha_by_arch.get(debian_arch) if isinstance(sha_by_arch, dict) else None) or data[
+        "pg_search_sha256"
+    ]
     return {
         "pg_search_version": str(data["pg_search_version"]),
-        "pg_search_sha256": str(data["pg_search_sha256"]),
+        "pg_search_sha256": str(sha256),
         "postgres_major": str(data["postgres_major"]),
     }
 

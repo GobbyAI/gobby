@@ -1,5 +1,9 @@
 {
   "pg_search_version": "0.23.4",
   "pg_search_sha256": "fd4ec8fec076910f60824176adddd57d192877a9ed271c1994202fdf4edb77cf",
+  "pg_search_sha256_by_arch": {
+    "amd64": "fd4ec8fec076910f60824176adddd57d192877a9ed271c1994202fdf4edb77cf",
+    "arm64": "0716d85321905a75ef5e088a6350161b32304901e14b31827ab0b6dd06306d2e"
+  },
   "postgres_major": "17"
 }

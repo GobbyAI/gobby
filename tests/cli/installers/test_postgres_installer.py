@@ -150,6 +150,36 @@ def test_postgres_install_refreshes_stale_unified_compose(
     assert "qdrant" not in compose_file.read_text(encoding="utf-8")
 
 
+def test_pg_search_manifest_selects_current_arch_checksum(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    asset_root = tmp_path / "postgres-pgsearch"
+    asset_root.mkdir()
+    (asset_root / "version.json").write_text(
+        (
+            '{"pg_search_version":"0.23.4",'
+            '"pg_search_sha256":"amd64hash",'
+            '"pg_search_sha256_by_arch":{"amd64":"amd64hash","arm64":"arm64hash"},'
+            '"postgres_major":"17"}'
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeFiles:
+        def joinpath(self, relative_path: str) -> Path:
+            assert relative_path == "data/postgres-pgsearch/version.json"
+            return asset_root / "version.json"
+
+    monkeypatch.setattr(installer.resources, "files", lambda _package: _FakeFiles())
+    monkeypatch.setattr(installer.platform, "machine", lambda: "arm64")
+
+    manifest = installer._read_pgsearch_version_manifest()
+
+    assert manifest["pg_search_sha256"] == "arm64hash"
+
+
 @pytest.mark.parametrize(
     ("platform_info", "runbook"),
     [

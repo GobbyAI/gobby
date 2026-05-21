@@ -66,9 +66,17 @@ def test_source_tree_has_phase6_pgaudit_assets(repo_root: Path) -> None:
 def test_version_manifest_schema_is_canonical(repo_root: Path) -> None:
     manifest = json.loads(_read_source_asset(repo_root, "version.json"))
 
-    assert set(manifest) == {"pg_search_version", "pg_search_sha256", "postgres_major"}
+    assert set(manifest) == {
+        "pg_search_version",
+        "pg_search_sha256",
+        "pg_search_sha256_by_arch",
+        "postgres_major",
+    }
     assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["pg_search_version"])
     assert re.fullmatch(r"[0-9a-f]{64}", manifest["pg_search_sha256"])
+    assert set(manifest["pg_search_sha256_by_arch"]) == {"amd64", "arm64"}
+    for sha256 in manifest["pg_search_sha256_by_arch"].values():
+        assert re.fullmatch(r"[0-9a-f]{64}", sha256)
     assert manifest["postgres_major"] == "17"
 
 
@@ -212,7 +220,9 @@ def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
             == resource_root.joinpath(relative_path).read_bytes()
         )
 
-    manifest = json.loads(resource_root.joinpath("version.json").read_text())
+    from gobby.cli.installers.postgres import _read_pgsearch_version_manifest
+
+    manifest = _read_pgsearch_version_manifest()
     env_text = (tmp_path / "services/.env").read_text()
     assert f"GOBBY_PG_SEARCH_VERSION={manifest['pg_search_version']}" in env_text
     assert f"GOBBY_PG_SEARCH_SHA256={manifest['pg_search_sha256']}" in env_text
