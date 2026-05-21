@@ -17,19 +17,15 @@ from typing import Any, Protocol
 from gobby.storage.hub.postgres import _PRE_BASELINE_INFRA_TABLES
 from gobby.storage.migration.reseed import discover_identity_sequences, expected_sequence_state
 from gobby.storage.migration.schema import validate_sqlite_source_schema
+from gobby.storage.migration.tables import (
+    IGNORED_MIGRATION_TABLES,
+    is_sqlite_fts_table,
+    row_value,
+    sqlite_application_tables,
+)
 
 _POSTGRES_ONLY_TABLES: frozenset[str] = _PRE_BASELINE_INFRA_TABLES | frozenset(
     {"gobby_migration_state", "schema_migrations"}
-)
-_SQLITE_BOOKKEEPING_TABLES: frozenset[str] = frozenset({"schema_version", "schema_migrations"})
-_SQLITE_FTS_TABLES: frozenset[str] = frozenset(
-    {
-        "tasks_fts",
-        "memories_fts",
-        "code_symbols_fts",
-        "code_content_fts",
-        "skills_fts",
-    }
 )
 _CONTENT_HASH_TABLES: frozenset[str] = frozenset(
     {
@@ -156,7 +152,7 @@ def validate_migration(
     checks: list[ValidationCheckResult] = []
     source_tables = _sqlite_application_tables(source)
     target_tables = _postgres_tables(target)
-    target_comparison_tables = target_tables - _POSTGRES_ONLY_TABLES
+    target_comparison_tables = _postgres_comparison_tables(target_tables)
     comparison_tables = source_tables & target_comparison_tables
 
     _check_source_schema_baseline(source, checks)
@@ -469,7 +465,8 @@ def _check_unique_constraints(target: _Executable, checks: list[ValidationCheckR
 
 
 def _check_not_null_constraints(target: _Executable, checks: list[ValidationCheckResult]) -> None:
-    rows = _catalog_rows(target, _NOT_NULL_SQL, tuple(sorted(_POSTGRES_ONLY_TABLES)))
+    excluded = _POSTGRES_ONLY_TABLES | IGNORED_MIGRATION_TABLES
+    rows = _catalog_rows(target, _NOT_NULL_SQL, tuple(sorted(excluded)))
     if rows is None:
         _record(checks, "not null", True, "NOT NULL constraints skipped: no catalog")
         return
@@ -497,22 +494,11 @@ def _check_not_null_constraints(target: _Executable, checks: list[ValidationChec
 
 
 def _sqlite_application_tables(source: sqlite3.Connection) -> set[str]:
-    rows = source.execute(
-        """
-        SELECT name, sql
-          FROM sqlite_master
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-        """
-    ).fetchall()
-    tables: set[str] = set()
-    for row in rows:
-        name = str(_row_value(row, "name"))
-        ddl = str(_row_value(row, "sql") or "")
-        if name in _SQLITE_BOOKKEEPING_TABLES or _is_sqlite_fts_table(name, ddl):
-            continue
-        tables.add(name)
-    return tables
+    return sqlite_application_tables(source)
+
+
+def _postgres_comparison_tables(target_tables: set[str]) -> set[str]:
+    return target_tables - _POSTGRES_ONLY_TABLES - IGNORED_MIGRATION_TABLES
 
 
 def _postgres_tables(target: _Executable) -> set[str]:
@@ -816,20 +802,11 @@ def _string_sequence(value: Any) -> tuple[str, ...]:
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:
-    if row is None:
-        return None
-    try:
-        return row[key]
-    except (KeyError, TypeError, IndexError):
-        return row[index]
+    return row_value(row, key, index)
 
 
 def _is_sqlite_fts_table(name: str, ddl: str) -> bool:
-    if name in _SQLITE_FTS_TABLES:
-        return True
-    if any(name.startswith(f"{fts_table}_") for fts_table in _SQLITE_FTS_TABLES):
-        return True
-    return "USING fts5" in ddl
+    return is_sqlite_fts_table(name, ddl)
 
 
 def _record(

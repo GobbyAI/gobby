@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any
 
+from gobby.storage.migration.tables import sqlite_application_tables
 from gobby.storage.migrations import BASELINE_VERSION, _sqlite_baseline_sql
 
 
@@ -38,10 +39,21 @@ def validate_sqlite_source_schema(source: sqlite3.Connection) -> SqliteSchemaVal
             fingerprint,
             expected,
         )
-    if fingerprint not in expected:
+    if fingerprint not in expected and not _migration_table_set_matches_baseline(source):
         return SqliteSchemaValidation(
             False,
             "SQLite schema fingerprint mismatch: source schema drifted from supported baseline",
+            version,
+            fingerprint,
+            expected,
+        )
+    if fingerprint not in expected:
+        return SqliteSchemaValidation(
+            True,
+            (
+                f"SQLite schema baseline v{version} table set ok; raw DDL fingerprint differs "
+                "from flattened baseline"
+            ),
             version,
             fingerprint,
             expected,
@@ -80,6 +92,26 @@ def _baseline_fingerprint(version_table: str) -> str:
     conn = _baseline_connection(version_table)
     try:
         return sqlite_schema_fingerprint(conn)
+    finally:
+        conn.close()
+
+
+def _migration_table_set_matches_baseline(source: sqlite3.Connection) -> bool:
+    source_tables = sqlite_application_tables(source)
+    return source_tables in expected_sqlite_migration_table_sets()
+
+
+@cache
+def expected_sqlite_migration_table_sets() -> frozenset[frozenset[str]]:
+    return frozenset(
+        _baseline_table_set(table) for table in ("schema_migrations", "schema_version")
+    )
+
+
+def _baseline_table_set(version_table: str) -> frozenset[str]:
+    conn = _baseline_connection(version_table)
+    try:
+        return frozenset(sqlite_application_tables(conn))
     finally:
         conn.close()
 

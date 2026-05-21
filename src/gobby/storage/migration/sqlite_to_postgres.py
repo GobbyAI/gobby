@@ -25,8 +25,8 @@ from gobby.storage.migration.reseed import reseed_identity_sequences
 from gobby.storage.migration.schema import validate_sqlite_source_schema
 from gobby.storage.migration.validation import (
     _BM25_INDEXES,
-    _POSTGRES_ONLY_TABLES,
     MigrationValidationError,
+    _postgres_comparison_tables,
     _postgres_count,
     _postgres_tables,
     _sqlite_application_tables,
@@ -36,6 +36,10 @@ from gobby.storage.migration.validation import (
 from gobby.storage.migrations import MigrationUnsupportedError
 
 _BASELINE_INSERT_RE = re.compile(r'^\s*INSERT\s+INTO\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I | re.M)
+_POSTGRES_CREATE_TABLE_RE = re.compile(
+    r'^\s*CREATE\s+TABLE\s+(?:"?([A-Za-z_][A-Za-z0-9_]*)"?)\b',
+    re.I | re.M,
+)
 _IMPORT_COMPLETE_KEY = "imported_from_sqlite_at"
 _IMPORT_LOCK_KEY = "gobby_sqlite_to_postgres_import"
 _EXTERNAL_SENTINEL_MISSING = (
@@ -46,6 +50,18 @@ _EXTERNAL_SENTINEL_MISSING = (
 _OK = "\u2713"
 _FAIL = "\u2717"
 _InstallMode = Literal["docker", "native", "external"]
+_FRESH_BASELINE_STATES = {"fresh", "fresh_with_install_infra"}
+_IGNORED_SOURCE_COLUMNS: dict[str, frozenset[str]] = {
+    "code_indexed_projects": frozenset({"total_eligible_files"}),
+    "completion_subscribers": frozenset({"subscribed_at"}),
+    "workflow_states": frozenset(
+        {
+            "current_task_index",
+            "files_modified_this_task",
+            "task_list",
+        }
+    ),
+}
 
 
 @cache
@@ -55,7 +71,9 @@ def _seed_bearing_tables() -> tuple[str, ...]:
         .joinpath("postgres_baseline_schema.sql")
         .read_text()
     )
-    return tuple(sorted(set(_BASELINE_INSERT_RE.findall(baseline_sql)) - _POSTGRES_ONLY_TABLES))
+    return tuple(
+        sorted(_postgres_comparison_tables(set(_BASELINE_INSERT_RE.findall(baseline_sql))))
+    )
 
 
 class SqliteToPostgresMigrationError(RuntimeError):
@@ -138,8 +156,13 @@ def _run_dry_run(
     emit: Callable[[str], None],
 ) -> dict[str, Any]:
     with _connect_postgres(target) as pg:
-        _run_target_read_only_preflight(pg, install_mode=install_mode, emit=emit)
-        counts = _run_table_mapping_preflight(source, pg, emit=emit)
+        baseline_state = _run_target_read_only_preflight(pg, install_mode=install_mode, emit=emit)
+        target_tables = (
+            _postgres_baseline_comparison_tables()
+            if baseline_state in _FRESH_BASELINE_STATES
+            else None
+        )
+        counts = _run_table_mapping_preflight(source, pg, target_tables=target_tables, emit=emit)
     return _migration_result(
         rows=sum(counts.values()),
         tables=len(counts),
@@ -250,13 +273,14 @@ def _run_target_read_only_preflight(
     *,
     install_mode: _InstallMode,
     emit: Callable[[str], None],
-) -> None:
+) -> str:
     _emit_check(emit, True, "Postgres connectivity ok")
     _probe_pg_search_extension(target, emit=emit)
     state = _classify_baseline_state(target)
     _emit_check(emit, True, f"Postgres baseline state: {state}")
     if install_mode == "external":
         _probe_external_ownership_sentinel(target, emit=emit)
+    return state
 
 
 def _probe_pg_search_extension(
@@ -291,12 +315,17 @@ def _run_table_mapping_preflight(
     source: sqlite3.Connection,
     target: psycopg.Connection[Any],
     *,
+    target_tables: set[str] | None = None,
     emit: Callable[[str], None],
 ) -> dict[str, int]:
     source_tables = _sqlite_application_tables(source)
-    target_tables = _postgres_tables(cast(Any, target))
-    target_comparison_tables = target_tables - _POSTGRES_ONLY_TABLES
-    postgres_only = sorted(target_tables & _POSTGRES_ONLY_TABLES)
+    actual_target_tables = _postgres_tables(cast(Any, target))
+    target_comparison_tables = (
+        set(target_tables)
+        if target_tables is not None
+        else _postgres_comparison_tables(actual_target_tables)
+    )
+    postgres_only = sorted(actual_target_tables - target_comparison_tables)
     _emit_check(emit, True, f"Postgres-only exclusions ok: {', '.join(postgres_only) or 'none'}")
 
     missing = sorted(source_tables - target_comparison_tables)
@@ -319,6 +348,16 @@ def _run_table_mapping_preflight(
         f"source row counts enumerated: {sum(counts.values())} rows across {len(counts)} tables",
     )
     return counts
+
+
+@cache
+def _postgres_baseline_comparison_tables() -> set[str]:
+    baseline_sql = (
+        importlib.resources.files("gobby.storage")
+        .joinpath("postgres_baseline_schema.sql")
+        .read_text()
+    )
+    return _postgres_comparison_tables(set(_POSTGRES_CREATE_TABLE_RE.findall(baseline_sql)))
 
 
 def _apply_postgres_schema(target: str) -> None:
@@ -465,7 +504,12 @@ def _copy_columns(
 ) -> tuple[str, ...]:
     source_columns = _sqlite_columns(source, table)
     target_columns = _postgres_insertable_columns(target, table)
-    missing = [column for column in source_columns if column not in target_columns]
+    ignored = _IGNORED_SOURCE_COLUMNS.get(table, frozenset())
+    missing = [
+        column
+        for column in source_columns
+        if column not in target_columns and column not in ignored
+    ]
     if missing:
         raise SqliteToPostgresMigrationError(
             f"PostgreSQL table {table} is missing SQLite columns: {', '.join(missing)}"

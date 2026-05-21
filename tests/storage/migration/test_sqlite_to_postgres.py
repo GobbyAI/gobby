@@ -45,6 +45,16 @@ class _FakePostgres:
         return SimpleNamespace(fetchone=lambda: None)
 
 
+class _ColumnTarget:
+    def __init__(self, columns: set[str]) -> None:
+        self.columns = columns
+
+    def execute(self, statement: object, params: object = ()) -> SimpleNamespace:
+        _ = statement, params
+        rows = [{"column_name": column} for column in self.columns]
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
 def test_migrate_sqlite_to_postgres_runs_reseed_after_copy_before_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -226,6 +236,52 @@ def test_migrate_sqlite_to_postgres_dry_run_is_read_only(
     assert result["validation_artifact"] is None
 
 
+def test_migrate_sqlite_to_postgres_dry_run_uses_baseline_for_fresh_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = tmp_path / "gobby-hub.db"
+    source.write_bytes(b"sqlite fixture")
+    observed: dict[str, set[str] | None] = {}
+
+    @contextmanager
+    def _postgres_context(_target: str) -> Iterator[object]:
+        yield object()
+
+    def _mapping_preflight(
+        _source: sqlite3.Connection,
+        _target: object,
+        *,
+        target_tables: set[str] | None,
+        emit: object,
+    ) -> dict[str, int]:
+        _ = emit
+        observed["target_tables"] = target_tables
+        return {"tasks": 2}
+
+    monkeypatch.setattr(migration, "_assert_source_schema_supported", lambda *_args: None)
+    monkeypatch.setattr(migration, "_connect_postgres", _postgres_context)
+    monkeypatch.setattr(migration, "active_install_mode", lambda: "docker")
+    monkeypatch.setattr(
+        migration,
+        "_run_target_read_only_preflight",
+        lambda *_args, **_kwargs: "fresh_with_install_infra",
+    )
+    monkeypatch.setattr(migration, "_run_table_mapping_preflight", _mapping_preflight)
+
+    result = migration.migrate_sqlite_to_postgres(
+        source=source,
+        target="postgresql://gobby:secret@example.com/gobby",
+        dry_run=True,
+    )
+
+    assert result["dry_run"] is True
+    assert observed["target_tables"] is not None
+    assert "tasks" in observed["target_tables"]
+    assert "auth_sessions" not in observed["target_tables"]
+
+
 def test_copy_can_run_inside_existing_import_transaction(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -280,6 +336,55 @@ def test_assert_source_schema_supported_rejects_same_version_schema_drift() -> N
 
     with pytest.raises(migration.SqliteToPostgresMigrationError, match="fingerprint"):
         migration._assert_source_schema_supported(source)
+
+
+def test_assert_source_schema_supported_accepts_ignored_runtime_tables() -> None:
+    schema = importlib.import_module("gobby.storage.migration.schema")
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = schema._baseline_connection("schema_version")
+    source.row_factory = sqlite3.Row
+    source.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+    source.execute(
+        """
+        CREATE TABLE pending_approvals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+
+    try:
+        migration._assert_source_schema_supported(source)
+    finally:
+        source.close()
+
+
+def test_copy_columns_ignores_known_legacy_source_columns() -> None:
+    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute(
+        """
+        CREATE TABLE workflow_states (
+            session_id TEXT PRIMARY KEY,
+            workflow_name TEXT NOT NULL,
+            step TEXT NOT NULL,
+            current_task_index INTEGER,
+            task_list TEXT
+        )
+        """
+    )
+    target = _ColumnTarget({"session_id", "workflow_name", "step"})
+
+    try:
+        columns = migration._copy_columns(source, target, "workflow_states")
+    finally:
+        source.close()
+
+    assert columns == ("session_id", "workflow_name", "step")
 
 
 def _record_copy(migration: Any, events: list[str]) -> Any:
