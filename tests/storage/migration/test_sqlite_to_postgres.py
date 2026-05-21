@@ -400,6 +400,57 @@ def test_epoch_timestamp_strings_are_normalized_for_copy_and_validation() -> Non
     }
 
 
+def test_import_repairs_stale_sqlite_foreign_key_edges() -> None:
+    tables = importlib.import_module("gobby.storage.migration.tables")
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.executescript(
+        """
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
+        CREATE TABLE tools (
+            id TEXT PRIMARY KEY,
+            mcp_server_id TEXT NOT NULL,
+            name TEXT NOT NULL
+        );
+        CREATE TABLE sessions (id TEXT PRIMARY KEY);
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            parent_task_id TEXT,
+            created_in_session_id TEXT
+        );
+        INSERT INTO mcp_servers (id) VALUES ('server-ok');
+        INSERT INTO tools (id, mcp_server_id, name) VALUES
+            ('tool-ok', 'server-ok', 'ok'),
+            ('tool-orphan', 'server-missing', 'missing');
+        INSERT INTO tasks (id, parent_task_id, created_in_session_id) VALUES
+            ('task-1', 'task-missing', 'session-missing');
+        """
+    )
+
+    try:
+        assert validation._sqlite_count(source, "tools") == 1
+        assert (
+            tables.repair_orphan_reference_value(
+                source,
+                table="tasks",
+                column="parent_task_id",
+                value="task-missing",
+                cache={},
+            )
+            is None
+        )
+        assert validation._sqlite_rows(source, "tasks") == [
+            {
+                "id": "task-1",
+                "parent_task_id": None,
+                "created_in_session_id": None,
+            }
+        ]
+    finally:
+        source.close()
+
+
 def _record_copy(migration: Any, events: list[str]) -> Any:
     events.append("copy")
     return migration._CopyResult(rows=3, tables=2)

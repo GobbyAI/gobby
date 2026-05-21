@@ -20,8 +20,10 @@ from gobby.storage.migration.schema import validate_sqlite_source_schema
 from gobby.storage.migration.tables import (
     IGNORED_MIGRATION_TABLES,
     is_sqlite_fts_table,
+    repair_orphan_reference_value,
     row_value,
     sqlite_application_tables,
+    sqlite_import_where_clause,
 )
 from gobby.storage.migration.values import normalize_timestamp_like_value
 
@@ -510,7 +512,10 @@ def _postgres_tables(target: _Executable) -> set[str]:
 
 
 def _sqlite_count(source: sqlite3.Connection, table: str) -> int:
-    row = source.execute(f"SELECT COUNT(*) AS row_count FROM {_quote_identifier(table)}").fetchone()
+    row = source.execute(
+        f"SELECT COUNT(*) AS row_count FROM {_quote_identifier(table)} "
+        f"WHERE {sqlite_import_where_clause(table)}"
+    ).fetchone()
     return int(_row_value(row, "row_count"))
 
 
@@ -520,7 +525,27 @@ def _postgres_count(target: _Executable, table: str) -> int:
 
 
 def _sqlite_rows(source: sqlite3.Connection, table: str) -> Sequence[Any]:
-    return source.execute(f"SELECT * FROM {_quote_identifier(table)}").fetchall()
+    rows = source.execute(
+        f"SELECT * FROM {_quote_identifier(table)} WHERE {sqlite_import_where_clause(table)}"
+    ).fetchall()
+    return [_repair_sqlite_row(source, table, row) for row in rows]
+
+
+def _repair_sqlite_row(source: sqlite3.Connection, table: str, row: Any) -> Any:
+    keys = getattr(row, "keys", None)
+    if not callable(keys):
+        return row
+    cache: dict[tuple[str, str], bool] = {}
+    return {
+        str(key): repair_orphan_reference_value(
+            source,
+            table=table,
+            column=str(key),
+            value=row[key],
+            cache=cache,
+        )
+        for key in keys()
+    }
 
 
 def _postgres_rows(

@@ -23,6 +23,10 @@ from gobby.config.postgres_bootstrap import active_install_mode
 from gobby.storage.hub.postgres import PostgresHubDatabase, _classify_baseline_state
 from gobby.storage.migration.reseed import reseed_identity_sequences
 from gobby.storage.migration.schema import validate_sqlite_source_schema
+from gobby.storage.migration.tables import (
+    repair_orphan_reference_value,
+    sqlite_import_where_clause,
+)
 from gobby.storage.migration.validation import (
     _BM25_INDEXES,
     MigrationValidationError,
@@ -481,12 +485,16 @@ def _copy_table(
     columns: Sequence[str],
     batch_size: int,
 ) -> int:
-    query = f"SELECT {_identifier_list(columns)} FROM {_quote_identifier(table)}"
+    query = (
+        f"SELECT {_identifier_list(columns)} FROM {_quote_identifier(table)} "
+        f"WHERE {sqlite_import_where_clause(table)}"
+    )
     copy_query = sql.SQL("COPY {} ({}) FROM STDIN").format(
         sql.Identifier(table),
         sql.SQL(", ").join(sql.Identifier(column) for column in columns),
     )
     count = 0
+    repair_cache: dict[tuple[str, str], bool] = {}
     source_cursor = source.execute(query)
     with closing(source_cursor):
         with target.cursor() as pg_cursor:
@@ -495,12 +503,29 @@ def _copy_table(
                     for row in batch:
                         copy.write_row(
                             tuple(
-                                normalize_timestamp_like_value(column, row[column])
+                                _copy_value(source, table, column, row[column], repair_cache)
                                 for column in columns
                             )
                         )
                         count += 1
     return count
+
+
+def _copy_value(
+    source: sqlite3.Connection,
+    table: str,
+    column: str,
+    value: Any,
+    repair_cache: dict[tuple[str, str], bool],
+) -> Any:
+    repaired = repair_orphan_reference_value(
+        source,
+        table=table,
+        column=column,
+        value=value,
+        cache=repair_cache,
+    )
+    return normalize_timestamp_like_value(column, repaired)
 
 
 def _copy_columns(
