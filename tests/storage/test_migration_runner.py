@@ -203,8 +203,13 @@ def test_bookkeeping_table_rename_paths(tmp_path) -> None:
     _create_bookkeeping_table(divergent, "schema_version", [244])
     _create_bookkeeping_table(divergent, "schema_migrations", [245])
 
-    with pytest.raises(MigrationUnsupportedError, match="divergent"):
+    with pytest.raises(MigrationUnsupportedError, match="divergent") as exc_info:
         module._migrate_bookkeeping_table(divergent)
+
+    message = str(exc_info.value)
+    assert "PostgreSQL hub database" in message
+    assert "known-good backup" in message
+    assert "gobby-hub.db" not in message
 
     divergent.close()
 

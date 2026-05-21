@@ -366,8 +366,8 @@ def _migrate_bookkeeping_table(db: Any) -> None:
                 return
             raise MigrationUnsupportedError(
                 "Both schema_version and schema_migrations exist with divergent rows. "
-                "This indicates a corrupted bookkeeping state; restore ~/.gobby/gobby-hub.db "
-                "from a backup before continuing."
+                "This indicates a corrupted PostgreSQL migration bookkeeping state; restore "
+                "the PostgreSQL hub database from a known-good backup before continuing."
             )
 
 

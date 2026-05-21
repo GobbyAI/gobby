@@ -128,8 +128,8 @@ def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
     assert db.fetchall("SELECT version FROM schema_version") == []
 
 
-def test_migrations_recreate_missing_system_session(tmp_path) -> None:
-    """Existing baseline databases self-heal the bootstrapped system session on startup."""
+def test_sqlite_test_baseline_does_not_repair_mutated_fixture_database(tmp_path) -> None:
+    """The fixture-only SQLite baseline does not run runtime repair migrations."""
     db_path = tmp_path / "system_session_repair.db"
     db = LocalDatabase(db_path)
 
@@ -140,18 +140,11 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     applied = run_migrations(db)
 
     assert applied == 0
-    repaired = db.fetchone(
-        "SELECT id, external_id, source, title FROM sessions WHERE id = ?",
-        (SYSTEM_SESSION_ID,),
-    )
-    assert repaired is not None
-    assert repaired["external_id"] == "system"
-    assert repaired["source"] == "system"
-    assert repaired["title"] == "_system"
+    assert db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)) is None
 
 
-def test_migrations_repair_legacy_sessions_unique_index(tmp_path) -> None:
-    """Existing baseline DBs self-heal the sessions unique index after session_type rollout."""
+def test_sqlite_test_baseline_does_not_repair_legacy_runtime_indexes(tmp_path) -> None:
+    """The fixture-only SQLite baseline leaves mutated runtime indexes untouched."""
     db_path = tmp_path / "sessions_unique_index_repair.db"
     db = LocalDatabase(db_path)
 
@@ -178,7 +171,6 @@ def test_migrations_repair_legacy_sessions_unique_index(tmp_path) -> None:
         "machine_id",
         "source",
         "project_id",
-        "session_type",
     )
 
 
@@ -201,11 +193,10 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
         run_migrations(db)
 
     message = str(exc_info.value)
-    assert f"Database version {legacy_version}" in message
-    assert "current SQLite baseline 260" in message
-    assert "reset" in message
-    assert "manually recover" in message
-    assert "~/.gobby/gobby-hub.db" in message
+    assert "SQLite test baseline can only initialize an empty test database." in message
+    assert f"Database version {legacy_version}" not in message
+    assert "current SQLite baseline 260" not in message
+    assert "gobby-hub.db" not in message
 
 
 def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
@@ -505,8 +496,8 @@ def test_migrations_needed_checks_latest_schema_version(tmp_path) -> None:
     assert "WHERE status = 'pending'" in pending_index["sql"]
 
 
-def test_flattened_baseline_fts_tables_and_triggers(tmp_path) -> None:
-    """Fresh bootstrap creates baseline FTS virtual tables and sync triggers."""
+def test_sqlite_test_baseline_excludes_removed_runtime_fts_objects(tmp_path) -> None:
+    """The fixture-only SQLite baseline excludes removed runtime FTS objects."""
     db_path = tmp_path / "baseline_fts.db"
     db = LocalDatabase(db_path)
 
@@ -519,7 +510,7 @@ def test_flattened_baseline_fts_tables_and_triggers(tmp_path) -> None:
         "skills_fts",
         "memories_fts",
     ):
-        assert _table_exists(db, table), f"{table} missing"
+        assert not _table_exists(db, table), f"{table} should not exist"
 
     trigger_names = {
         row["name"] for row in db.fetchall("SELECT name FROM sqlite_master WHERE type = 'trigger'")
@@ -530,8 +521,8 @@ def test_flattened_baseline_fts_tables_and_triggers(tmp_path) -> None:
         "tasks_fts_ai",
         "memories_fts_ai",
     }
-    assert expected_triggers.issubset(trigger_names)
-    assert "memories_fts_au" in trigger_names
+    assert expected_triggers.isdisjoint(trigger_names)
+    assert "memories_fts_au" not in trigger_names
 
 
 def test_get_current_version_error(tmp_path) -> None:
