@@ -4,8 +4,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.storage.tasks._stage_test_helpers import set_stage_state
 
@@ -13,24 +12,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db_with_tasks(tmp_path):
-    """Create a database with some tasks for testing."""
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-
-    # Create project
-    project_id = "test-project-id"
-    with db.transaction() as conn:
-        conn.execute(
-            """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now'))
-            """,
-            (project_id, "Test Project", str(tmp_path)),
-        )
-
-    manager = LocalTaskManager(db)
+def db_with_tasks(hub_db, tmp_path):
+    """Create PostgreSQL-backed tasks for task-search testing."""
+    project = LocalProjectManager(hub_db).create(
+        name="task-search-test-project",
+        repo_path=str(tmp_path),
+    )
+    project_id = project.id
+    manager = LocalTaskManager(hub_db)
 
     # Create diverse tasks for search testing
     manager.create_task(
@@ -78,7 +67,7 @@ def db_with_tasks(tmp_path):
         labels=["docs"],
     )
 
-    return db, manager, project_id
+    return hub_db, manager, project_id
 
 
 class TestTaskSearch:
