@@ -83,6 +83,8 @@ instructions: |
     recording a successful merge result when a verify command is supplied. Use
     final=true only on the last campaign-level verification. Append a lifecycle
     event per step.
+    Preserve any required environment guards in verify commands, including
+    `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
     TDD red-phase tasks are different: when the task is a test-writing task
     whose entry criteria or review notes say the new tests are expected to
     fail before implementation, do not pass that expected-failing pytest command
@@ -94,6 +96,8 @@ instructions: |
     and the worktree's base_branch target_branch, run verify_in_worktree before
     recording success when a verify command is supplied, then record the
     merge_sha returned by merge_worktree.
+    Tell the worker to pass any guarded verify command through unchanged; do
+    not convert `GOBBY_TEST_PROTECT=1 uv run pytest ...` to unguarded pytest.
     Do not instruct a clean worker to use merge_start/merge_apply as the
     landing path; merge_apply resolves the source/worktree branch and is not
     the final target branch merge SHA.

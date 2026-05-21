@@ -194,6 +194,9 @@ Iterate the plan in order. For each step:
    code 0 as the gate. If a legacy worker did not run verification, the
    orchestrator must run the same command with `verify_in_worktree` before
    reporting success. Capture stdout/stderr in the campaign report on failure.
+   Preserve required environment guards in verify commands, including
+   `GOBBY_TEST_PROTECT=1` prefixes and `env GOBBY_TEST_PROTECT=1` wrappers,
+   when dispatching workers or rerunning verification.
 5. **Decide retry vs. escalate.**
    - Worker reports success + verify passes → mark step complete, move on.
    - Worker reports success + verify fails → re-dispatch the worker with the
