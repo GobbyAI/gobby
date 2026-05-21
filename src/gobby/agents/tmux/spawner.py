@@ -12,12 +12,16 @@ import asyncio
 import logging
 import re
 import shlex
-import tempfile
 import time
 import uuid
 from pathlib import Path
 
-from gobby.agents.constants import get_terminal_env_vars
+from gobby.agents.constants import (
+    GOBBY_SESSION_ID,
+    UV_CACHE_DIR,
+    ensure_agent_uv_cache_dir,
+    get_terminal_env_vars,
+)
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, get_sandbox_resolver
 from gobby.agents.spawners.auth_env import terminal_env_passthrough
 from gobby.agents.spawners.base import (
@@ -32,15 +36,6 @@ from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 _SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "droid"})
-
-
-def _spawn_uv_cache_dir(spawn_env: dict[str, str]) -> str:
-    """Return a writable uv cache path for this spawned agent."""
-    session_id = spawn_env.get("GOBBY_SESSION_ID") or "unknown-session"
-    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
-    if not safe_session_id:
-        safe_session_id = "unknown-session"
-    return str(Path(tempfile.gettempdir()) / "gobby" / "uv-cache" / safe_session_id)
 
 
 def _infer_auth_cli(command: list[str]) -> str | None:
@@ -141,8 +136,10 @@ class TmuxSpawner(TerminalSpawnerBase):
         if cli := _infer_auth_cli(command):
             for key, value in terminal_env_passthrough(cli).items():
                 spawn_env.setdefault(key, value)
-        if "UV_CACHE_DIR" not in spawn_env:
-            spawn_env["UV_CACHE_DIR"] = _spawn_uv_cache_dir(spawn_env)
+        if UV_CACHE_DIR not in spawn_env:
+            spawn_env[UV_CACHE_DIR] = ensure_agent_uv_cache_dir(
+                spawn_env.get(GOBBY_SESSION_ID) or "unknown-session"
+            )
 
         # Merge env with a clean spawn env
         clean_env = make_spawn_env(spawn_env)
