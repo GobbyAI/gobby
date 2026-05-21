@@ -11,7 +11,7 @@ from typing import Any
 
 import click
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 from ._detectors import (
@@ -314,15 +314,17 @@ def install(
 
     # Track results
     results: dict[str, dict[str, Any]] = {}
-    db: LocalDatabase | None = None
+    db: HubDatabase | None = None
     secret_store: SecretStore | None = None
 
     try:
-        config = load_full_config_from_db()
-        db = LocalDatabase(Path(config.database_path).expanduser())
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        load_full_config_from_db()
+        db = open_runtime_hub_database(apply_migrations=False)
         secret_store = SecretStore(db)
-    except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
-        # Missing config file, unreadable DB path, malformed config values.
+    except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
+        # Missing config file, unavailable hub, malformed config values.
         # The orchestration proceeds with db/secret_store=None — downstream
         # steps open their own DB via _ensure_db_and_secrets if they need it.
         logger.warning(

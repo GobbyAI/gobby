@@ -2,8 +2,7 @@
 
 import click
 
-from gobby.cli.utils import get_gobby_home
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.secrets import VALID_CATEGORIES, SecretStore
 
 
@@ -11,11 +10,10 @@ class _SecretStoreContext:
     """Context manager that ensures the DB is closed after use."""
 
     def __enter__(self) -> SecretStore:
-        db_path = get_gobby_home() / "gobby-hub.db"
-        if not db_path.exists():
-            click.echo("Error: Gobby database not found. Run 'gobby start' first.", err=True)
-            raise SystemExit(1)
-        self._db = LocalDatabase(str(db_path))
+        try:
+            self._db = open_runtime_hub_database(apply_migrations=False)
+        except (RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
         return SecretStore(self._db)
 
     def __exit__(self, *args: object) -> None:
@@ -23,16 +21,15 @@ class _SecretStoreContext:
 
 
 def _get_secret_store() -> SecretStore:
-    """Open the DB and return a SecretStore (no daemon required).
+    """Open the active hub and return a SecretStore (no daemon required).
 
     NOTE: For proper cleanup, prefer using _SecretStoreContext() as a context manager.
     Kept for backward compatibility with existing callers.
     """
-    db_path = get_gobby_home() / "gobby-hub.db"
-    if not db_path.exists():
-        click.echo("Error: Gobby database not found. Run 'gobby start' first.", err=True)
-        raise SystemExit(1)
-    db = LocalDatabase(str(db_path))
+    try:
+        db = open_runtime_hub_database(apply_migrations=False)
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     return SecretStore(db)
 
 

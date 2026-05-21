@@ -23,10 +23,17 @@ def test_repair_lifecycle_cli_requires_scope() -> None:
     assert "--task or --provenance" in result.output
 
 
-def test_repair_lifecycle_cli_dry_runs_by_default(temp_db, sample_project) -> None:
-    manager = LocalTaskManager(temp_db)
+def test_repair_lifecycle_cli_dry_runs_by_default(hub_db) -> None:
+    from gobby.storage.projects import LocalProjectManager
+
+    project = LocalProjectManager(hub_db).create(
+        name="test-project",
+        repo_path="/tmp/test-project",
+        github_url="https://github.com/test/test-project",
+    )
+    manager = LocalTaskManager(hub_db)
     task = manager.create_task(
-        project_id=sample_project["id"],
+        project_id=project.id,
         title="CLI repair task",
         task_type="task",
     )

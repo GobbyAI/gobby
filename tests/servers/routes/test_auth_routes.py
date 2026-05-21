@@ -18,6 +18,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
+def temp_db(hub_db):
+    return hub_db
+
+
+@pytest.fixture
 def task_manager(temp_db):
     return LocalTaskManager(temp_db)
 
@@ -33,10 +38,10 @@ def config_no_auth() -> DaemonConfig:
     return DaemonConfig()
 
 
-def _setup_auth_password(temp_db, password: str = "correctpassword") -> None:
+def _setup_auth_password(db, password: str = "correctpassword") -> None:
     """Store a password in the secrets table via ConfigStore.set_secret."""
-    config_store = ConfigStore(temp_db)
-    secret_store = SecretStore(temp_db)
+    config_store = ConfigStore(db)
+    secret_store = SecretStore(db)
     config_store.set_secret("auth.password", password, secret_store, source="user")
 
 
@@ -71,6 +76,24 @@ class TestAuthStatus:
         assert data["auth_required"] is True
         assert data["authenticated"] is False
 
+    def test_auth_required_with_hub_database_protocol(
+        self, non_local_hub_db, config_with_auth
+    ) -> None:
+        _setup_auth_password(non_local_hub_db)
+        server = create_http_server(
+            config=config_with_auth,
+            database=non_local_hub_db,
+            task_manager=LocalTaskManager(non_local_hub_db),
+        )
+        client = TestClient(server.app)
+
+        resp = client.get("/api/auth/status")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["auth_required"] is True
+        assert data["authenticated"] is False
+
 
 # ---------------------------------------------------------------------------
 # POST /api/auth/login
@@ -87,6 +110,25 @@ class TestAuthLogin:
         resp = client.post(
             "/api/auth/login", json={"username": "testuser", "password": "mypassword"}
         )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert "gobby_session" in resp.cookies
+
+    def test_login_success_with_hub_database_protocol(
+        self, non_local_hub_db, config_with_auth
+    ) -> None:
+        _setup_auth_password(non_local_hub_db, "mypassword")
+        server = create_http_server(
+            config=config_with_auth,
+            database=non_local_hub_db,
+            task_manager=LocalTaskManager(non_local_hub_db),
+        )
+        client = TestClient(server.app)
+
+        resp = client.post(
+            "/api/auth/login", json={"username": "testuser", "password": "mypassword"}
+        )
+
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
         assert "gobby_session" in resp.cookies

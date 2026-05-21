@@ -57,6 +57,19 @@ def mock_task_with_uuid():
     return task
 
 
+@pytest.fixture
+def hub_sample_project(hub_db):
+    """Create a sample project through the active hub database adapter."""
+    from gobby.storage.projects import LocalProjectManager
+
+    project = LocalProjectManager(hub_db).create(
+        name="test-project",
+        repo_path="/tmp/test-project",
+        github_url="https://github.com/test/test-project",
+    )
+    return project.to_dict()
+
+
 class TestResolveTaskIdWithSeqNum:
     """Tests for resolve_task_id with #N format."""
 
@@ -292,13 +305,13 @@ class TestIntegrationResolveTaskId:
     """Integration tests using real database for #N format resolution."""
 
     @pytest.mark.integration
-    def test_resolve_hash_format_integration(self, temp_db, sample_project) -> None:
+    def test_resolve_hash_format_integration(self, hub_db, hub_sample_project) -> None:
         """Test #N resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
 
-        manager = LocalTaskManager(temp_db)
-        project_id = sample_project["id"]
+        manager = LocalTaskManager(hub_db)
+        project_id = hub_sample_project["id"]
 
         # Create tasks
         task1 = manager.create_task(project_id=project_id, title="Task 1")
@@ -319,13 +332,13 @@ class TestIntegrationResolveTaskId:
         assert result.id == task3.id
 
     @pytest.mark.integration
-    def test_resolve_path_format_integration(self, temp_db, sample_project) -> None:
+    def test_resolve_path_format_integration(self, hub_db, hub_sample_project) -> None:
         """Test path format resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
 
-        manager = LocalTaskManager(temp_db)
-        project_id = sample_project["id"]
+        manager = LocalTaskManager(hub_db)
+        project_id = hub_sample_project["id"]
 
         # Create hierarchy: parent -> child -> grandchild
         parent = manager.create_task(project_id=project_id, title="Parent")
@@ -350,13 +363,13 @@ class TestIntegrationResolveTaskId:
         assert result.id == grandchild.id
 
     @pytest.mark.integration
-    def test_resolve_uuid_format_integration(self, temp_db, sample_project) -> None:
+    def test_resolve_uuid_format_integration(self, hub_db, hub_sample_project) -> None:
         """Test UUID format resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
 
-        manager = LocalTaskManager(temp_db)
-        project_id = sample_project["id"]
+        manager = LocalTaskManager(hub_db)
+        project_id = hub_sample_project["id"]
 
         task = manager.create_task(project_id=project_id, title="UUID Test Task")
 
@@ -366,13 +379,13 @@ class TestIntegrationResolveTaskId:
         assert result.id == task.id
 
     @pytest.mark.integration
-    def test_resolve_gt_format_deprecated_integration(self, temp_db, sample_project) -> None:
+    def test_resolve_gt_format_deprecated_integration(self, hub_db, hub_sample_project) -> None:
         """Test gt-* format shows deprecation error."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
 
-        manager = LocalTaskManager(temp_db)
-        project_id = sample_project["id"]
+        manager = LocalTaskManager(hub_db)
+        project_id = hub_sample_project["id"]
 
         manager.create_task(project_id=project_id, title="Test Task")
 
@@ -381,13 +394,13 @@ class TestIntegrationResolveTaskId:
         assert result is None
 
     @pytest.mark.integration
-    def test_resolve_nonexistent_seq_num_integration(self, temp_db, sample_project) -> None:
+    def test_resolve_nonexistent_seq_num_integration(self, hub_db, hub_sample_project) -> None:
         """Test non-existent #N returns None."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
 
-        manager = LocalTaskManager(temp_db)
-        project_id = sample_project["id"]
+        manager = LocalTaskManager(hub_db)
+        project_id = hub_sample_project["id"]
 
         manager.create_task(project_id=project_id, title="Task 1")
 

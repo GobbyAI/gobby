@@ -119,26 +119,17 @@ def mock_manager():
     return manager
 
 
-def test_get_task_manager_uses_postgres_hub(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Task CLI storage follows bootstrap-selected PostgreSQL hub storage."""
+def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task CLI storage follows the configured runtime hub storage."""
     db = MagicMock()
-    postgres_cls = MagicMock(return_value=db)
-    monkeypatch.setattr(
-        task_config_utils,
-        "load_config",
-        lambda: SimpleNamespace(
-            hub_backend="postgres",
-            database_url="postgresql://gobby:gobby@localhost/gobby",
-        ),
-    )
-    monkeypatch.setattr(task_config_utils, "PostgresHubDatabase", postgres_cls)
+    open_hub = MagicMock(return_value=db)
+    monkeypatch.setattr(task_config_utils, "open_runtime_hub_database", open_hub)
     manager_cls = MagicMock()
     monkeypatch.setattr(task_config_utils, "LocalTaskManager", manager_cls)
 
     task_config_utils.get_task_manager()
 
-    postgres_cls.assert_called_once_with("postgresql://gobby:gobby@localhost/gobby")
-    db.apply_migrations.assert_called_once_with()
+    open_hub.assert_called_once_with(apply_migrations=False)
     manager_cls.assert_called_once_with(db)
 
 
@@ -148,11 +139,11 @@ def test_get_task_manager_rejects_sqlite_bootstrap(
     """Task CLI does not fall back to removed SQLite runtime storage."""
     monkeypatch.setattr(
         task_config_utils,
-        "load_config",
-        lambda: SimpleNamespace(hub_backend="sqlite", database_url=None),
+        "open_runtime_hub_database",
+        MagicMock(side_effect=RuntimeError("hub_backend=sqlite is no longer supported")),
     )
 
-    with pytest.raises(ClickException, match="SQLite task storage is no longer supported"):
+    with pytest.raises(ClickException, match="hub_backend=sqlite is no longer supported"):
         task_config_utils.get_task_manager()
 
 

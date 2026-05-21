@@ -728,8 +728,8 @@ async def execute_cleanup(
     """Run the full memory cleanup pipeline.
 
     Finds stale, duplicate, code-derivable, and orphaned memories, then
-    optionally deletes them via MemoryManager (which handles SQLite, Qdrant,
-    and Neo4j cleanup).
+    optionally deletes them via MemoryManager (which handles the PostgreSQL hub,
+    Qdrant, and Neo4j cleanup).
 
     Args:
         memory_manager: MemoryManager instance (for delete + vector access).

@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class MetricsEventStore:
     period are rolled into metrics_events_archive as aggregate totals.
     """
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def record_event(
@@ -320,7 +320,7 @@ class MetricsEventStore:
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
 
         # UPSERT aggregated counts into archive.
-        # Use COALESCE to replace NULLs — SQLite treats NULL != NULL in UNIQUE constraints.
+        # Use COALESCE to keep nullable dimensions deterministic in conflict targets.
         self.db.execute(
             """
             INSERT INTO metrics_events_archive (

@@ -1,3 +1,5 @@
-database_path: ~/.gobby/gobby-hub.db
+hub_backend: postgres
+database_url_ref: keyring:gobby:postgres_database_url
+postgres_install_mode: docker
 bind_host: localhost
 daemon_port: 60887

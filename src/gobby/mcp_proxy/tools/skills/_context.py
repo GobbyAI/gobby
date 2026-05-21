@@ -15,7 +15,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -34,7 +34,7 @@ class RunDb(Protocol):
 class SkillsContext:
     """Shared dependencies for skill tool handlers."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
     storage: LocalSkillManager
     notifier: SkillChangeNotifier
     session_manager: SessionManager

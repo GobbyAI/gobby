@@ -130,7 +130,7 @@ class MergeConflict:
 
 
 class MergeResolutionManager:
-    """Manages merge resolutions and conflicts in local SQLite database."""
+    """Manages merge resolutions and conflicts in the hub database."""
 
     def __init__(self, db: HubDatabase):
         self.db = db

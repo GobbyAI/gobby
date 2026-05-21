@@ -14,8 +14,7 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEvent, TokenEventStore
 
@@ -140,9 +139,8 @@ def audit_tokens(
 
     project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
-        run_migrations(db)
         session_manager = SessionManager(db)
         store = TokenEventStore(db)
 
@@ -238,9 +236,8 @@ def audit_tokens(
 def token_stats(project_ref: str | None) -> None:
     """Show token event ledger statistics."""
     project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
-        run_migrations(db)
         store = TokenEventStore(db)
         breakdown = store.get_breakdown(project_id=project_id)
         total_rows = db.fetchone(

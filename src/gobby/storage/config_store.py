@@ -1,6 +1,6 @@
 """DB-first configuration storage.
 
-Stores config key-value pairs in SQLite as flattened dotted paths.
+Stores config key-value pairs in the hub database as flattened dotted paths.
 Values are JSON-encoded so types are preserved (strings, bools, numbers, lists).
 
 Resolution order: DB config_store > Pydantic defaults.
@@ -51,7 +51,7 @@ def is_secret_key_name(key: str) -> bool:
 
 
 class ConfigStore:
-    """Key-value config storage backed by SQLite.
+    """Key-value config storage backed by the hub database.
 
     Keys are flattened dotted paths (e.g. "llm_providers.claude.models").
     Values are JSON-encoded for type preservation.

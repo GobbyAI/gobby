@@ -212,8 +212,8 @@ class CronExecutor:
                     "SELECT repo_path FROM projects WHERE id = ?",
                     (job.project_id,),
                 ).fetchone()
-                if row and row[0]:
-                    project_ctx["project_path"] = row[0]
+                if row and row["repo_path"]:
+                    project_ctx["project_path"] = row["repo_path"]
             except Exception:
                 logger.debug(
                     f"Failed to resolve repo_path for project {job.project_id}", exc_info=True

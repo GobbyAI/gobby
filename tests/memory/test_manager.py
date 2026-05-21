@@ -17,9 +17,8 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.protocol import MemoryBackendProtocol
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -29,12 +28,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary database for testing."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(hub_db):
+    """Create a temporary hub database for testing."""
+    return hub_db
 
 
 @pytest.fixture
@@ -72,7 +68,7 @@ def mock_config():
 @pytest.fixture
 def mock_db():
     """Create a mock database."""
-    return MagicMock(spec=LocalDatabase)
+    return MagicMock(spec=HubDatabase)
 
 
 # =============================================================================

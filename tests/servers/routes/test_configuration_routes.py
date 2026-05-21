@@ -34,6 +34,11 @@ def real_config() -> DaemonConfig:
 
 
 @pytest.fixture
+def temp_db(hub_db):
+    return hub_db
+
+
+@pytest.fixture
 def task_manager(temp_db):
     return LocalTaskManager(temp_db)
 
@@ -108,6 +113,21 @@ class TestGetConfigValues:
         response = client.get("/api/config/values")
         data = response.json()
         assert "auth.password" in data["secret_keys"]
+
+    def test_values_accept_hub_database_protocol(
+        self, non_local_hub_db, real_config: DaemonConfig
+    ) -> None:
+        server = create_http_server(
+            config=real_config,
+            database=non_local_hub_db,
+            task_manager=LocalTaskManager(non_local_hub_db),
+        )
+        c = TestClient(server.app)
+
+        response = c.get("/api/config/values")
+
+        assert response.status_code == 200
+        assert response.json()["values"]["daemon_port"] == real_config.daemon_port
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +443,27 @@ class TestSecretsEndpoints:
         assert data["ok"] is True
         assert data["secret"]["name"] == "test_secret"
 
+    def test_secret_routes_accept_hub_database_protocol(
+        self, non_local_hub_db, real_config, mock_machine_id
+    ) -> None:
+        server = create_http_server(
+            config=real_config,
+            database=non_local_hub_db,
+            task_manager=LocalTaskManager(non_local_hub_db),
+        )
+        c = TestClient(server.app)
+
+        create_response = c.post(
+            "/api/config/secrets",
+            json={"name": "POSTGRES_ONLY", "value": "secret-value", "category": "llm"},
+        )
+        list_response = c.get("/api/config/secrets")
+
+        assert create_response.status_code == 200
+        assert list_response.status_code == 200
+        names = {secret["name"] for secret in list_response.json()["secrets"]}
+        assert "postgres_only" in names
+
     def test_create_secret_default_category(self, client: TestClient, mock_machine_id) -> None:
         response = client.post(
             "/api/config/secrets",
@@ -480,15 +521,14 @@ class TestSecretsEndpoints:
         assert response.status_code == 500
 
     def test_database_not_available(self, real_config) -> None:
-        """When database is not a LocalDatabase, _get_secret_store raises 503."""
+        """When database is not a hub adapter, _get_secret_store raises 503."""
         server = create_http_server(
             config=real_config,
             database="not-a-database",
         )
         c = TestClient(server.app)
         response = c.get("/api/config/secrets")
-        # The 503 from _get_secret_store is caught by the handler's except block
-        assert response.status_code == 500
+        assert response.status_code == 503
         assert "Database not available" in response.json()["detail"]
 
 

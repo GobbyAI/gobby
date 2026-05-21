@@ -791,7 +791,7 @@ def create_memory_registry(
         description="Import memories from .gobby/memories.jsonl into the database.",
     )
     async def sync_import() -> dict[str, Any]:
-        """Import memories from filesystem JSONL into SQLite."""
+        """Import memories from filesystem JSONL into the hub database."""
         if not memory_sync_manager:
             return {"success": False, "error": "Memory sync manager not available"}
         try:
@@ -807,7 +807,7 @@ def create_memory_registry(
         description="Export memories from the database to .gobby/memories.jsonl.",
     )
     async def sync_export() -> dict[str, Any]:
-        """Export memories from SQLite to filesystem JSONL for Git persistence."""
+        """Export memories from the hub database to filesystem JSONL for Git persistence."""
         if not memory_sync_manager:
             return {"success": False, "error": "Memory sync manager not available"}
         try:

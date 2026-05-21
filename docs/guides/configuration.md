@@ -60,8 +60,10 @@ ui_port: 60889
 neo4j_password: "gobbyneo4j"
 ```
 
-`database_path` is only relevant to legacy SQLite import/rollback workflows.
-Use `gobby postgres migrate-from-sqlite` to import an old `gobby-hub.db`.
+`database_path` is only relevant to legacy SQLite imports and
+operator-managed restore artifacts outside the current runtime. Use
+`gobby postgres migrate-from-sqlite` to import an old `gobby-hub.db`; do not
+use `database_path` or `gobby postgres uninstall` to restore SQLite as the hub.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.

@@ -33,7 +33,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 __all__ = ["create_skills_registry", "SkillsToolRegistry"]
 
@@ -45,7 +45,7 @@ class SkillsToolRegistry(InternalToolRegistry):
 
 
 def create_skills_registry(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     hub_manager: HubManager | None = None,
     search_config: SearchConfig | None = None,
@@ -67,7 +67,7 @@ def create_skills_registry(
         embedding_api_base: API base URL for embedding endpoint
         embedding_api_key: API key for embedding provider
         embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
-        run_db: Optional bounded executor bridge for SQLite storage calls.
+        run_db: Optional bounded executor bridge for blocking database calls.
 
     Returns:
         SkillsToolRegistry with skill management tools registered

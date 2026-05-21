@@ -106,12 +106,50 @@ def test_write_postgres_defaults_stores_database_url_ref(
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     persisted = yaml.safe_load(bootstrap_file.read_text())
-    assert persisted["hub_backend"] == "sqlite"
+    assert persisted["hub_backend"] == "postgres"
     assert "database_url" not in persisted
     assert persisted["database_url_ref"] == DATABASE_URL_REF
     assert persisted["postgres_install_mode"] == "docker"
     assert fake_keyring.set_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY, database_url)]
     assert read_bootstrap_database_url(temp_dir) == database_url
+
+
+def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Path) -> None:
+    from gobby.config.postgres_bootstrap import clear_postgres_fields
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    _write_bootstrap(
+        bootstrap_file,
+        f"hub_backend: postgres\ndatabase_url: {database_url}\npostgres_install_mode: docker\n",
+    )
+
+    clear_postgres_fields(temp_dir)
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert persisted["hub_backend"] == "postgres"
+    assert persisted["database_url"] == database_url
+    assert persisted["postgres_install_mode"] == "docker"
+
+
+def test_clear_postgres_fields_rejects_sqlite_runtime_rollback(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.postgres_bootstrap import clear_postgres_fields
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "hub_backend: sqlite\n"
+        "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+        "postgres_install_mode: docker\n",
+    )
+
+    with pytest.raises(BootstrapConfigError, match="cannot restore hub_backend=sqlite"):
+        clear_postgres_fields(temp_dir)
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert persisted["hub_backend"] == "sqlite"
+    assert persisted["database_url"] == "postgresql://gobby:secret@localhost:60891/gobby"
 
 
 def test_postgres_keyring_ref_requires_stored_database_url(

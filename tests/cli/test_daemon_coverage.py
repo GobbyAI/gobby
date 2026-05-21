@@ -181,9 +181,15 @@ class TestStopCommand:
 # ---------------------------------------------------------------------------
 class TestStatusCommand:
     @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
     @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
     def test_status_no_pid_file(
-        self, _fmt: MagicMock, mock_home: MagicMock, runner: CliRunner, tmp_path: Path
+        self,
+        _fmt: MagicMock,
+        _svc: MagicMock,
+        mock_home: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
     ) -> None:
         mock_home.return_value = tmp_path
         config = MagicMock()
@@ -192,9 +198,15 @@ class TestStatusCommand:
         assert result.exit_code == 0
 
     @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
     @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
     def test_status_invalid_pid_file(
-        self, _fmt: MagicMock, mock_home: MagicMock, runner: CliRunner, tmp_path: Path
+        self,
+        _fmt: MagicMock,
+        _svc: MagicMock,
+        mock_home: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
     ) -> None:
         mock_home.return_value = tmp_path
         (tmp_path / "gobby.pid").write_text("not-a-number")
@@ -266,14 +278,14 @@ class TestStatusCommand:
 # ---------------------------------------------------------------------------
 class TestGetMergeStatus:
     @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     def test_no_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
         mock_mgr_cls.return_value.get_active_resolution.return_value = None
         result = get_merge_status()
         assert result["active"] is False
 
     @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     def test_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
         resolution = MagicMock()
         resolution.id = "res-123"
@@ -292,7 +304,9 @@ class TestGetMergeStatus:
         assert result["pending_conflicts"] == 1
         assert result["total_conflicts"] == 2
 
-    @patch("gobby.storage.database.LocalDatabase", side_effect=RuntimeError("db error"))
+    @patch(
+        "gobby.storage.hub.runtime.open_runtime_hub_database", side_effect=RuntimeError("db error")
+    )
     def test_exception_returns_inactive(self, _db: MagicMock) -> None:
         result = get_merge_status()
         assert result["active"] is False

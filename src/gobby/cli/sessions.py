@@ -9,13 +9,13 @@ from typing import Any
 import click
 
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.sessions import SessionManager
 
 
 def get_session_manager() -> SessionManager:
     """Get initialized session manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return SessionManager(db)
 
 
@@ -384,12 +384,16 @@ def create_handoff(
     if session.project_id:
         from gobby.storage.projects import LocalProjectManager
 
-        project_manager = LocalProjectManager(LocalDatabase())
-        project = project_manager.get(session.project_id)
-        if project and project.repo_path:
-            project_repo = Path(project.repo_path)
-            if project_repo.exists():
-                git_cwd = project_repo
+        project_db = open_runtime_hub_database(apply_migrations=False)
+        try:
+            project_manager = LocalProjectManager(project_db)
+            project = project_manager.get(session.project_id)
+            if project and project.repo_path:
+                project_repo = Path(project.repo_path)
+                if project_repo.exists():
+                    git_cwd = project_repo
+        finally:
+            project_db.close()
 
     # Enrich with real-time git status
     if not handoff_ctx.git_status:
@@ -434,7 +438,7 @@ def create_handoff(
     try:
         from gobby.sessions.summarize import generate_session_summaries
 
-        _summary_db = LocalDatabase()
+        _summary_db = open_runtime_hub_database(apply_migrations=False)
 
         async def _gen_summary() -> dict[str, Any]:
             return await generate_session_summaries(
@@ -525,7 +529,7 @@ def restore_transcript(
     if not session_ref and not restore_all:
         raise click.UsageError("Provide a session reference or use --all")
 
-    with LocalDatabase() as db:
+    with runtime_hub_database(apply_migrations=False) as db:
         sm = SessionManager(db)
         results: list[dict[str, Any]] = []
 

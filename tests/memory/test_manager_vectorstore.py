@@ -13,47 +13,14 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
-from gobby.storage.database import LocalDatabase
 
 pytestmark = pytest.mark.unit
 
-_MEMORY_SCHEMA = """
-CREATE TABLE memories (
-    id TEXT PRIMARY KEY,
-    project_id TEXT,
-    memory_type TEXT NOT NULL DEFAULT 'fact',
-    content TEXT NOT NULL,
-    source_type TEXT NOT NULL DEFAULT 'agent',
-    source_session_id TEXT,
-    access_count INTEGER NOT NULL DEFAULT 0,
-    last_accessed_at TEXT,
-    tags TEXT,
-    media TEXT,
-    graph_processed INTEGER DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX idx_memories_content ON memories(content);
-CREATE INDEX idx_memories_project ON memories(project_id);
-
-CREATE TABLE memory_crossrefs (
-    source_id TEXT NOT NULL,
-    target_id TEXT NOT NULL,
-    similarity REAL NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (source_id, target_id)
-);
-"""
-
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary local memory database for testing."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    database.connection.executescript(_MEMORY_SCHEMA)
-    database.connection.commit()
-    yield database
-    database.close()
+def db(hub_db):
+    """Create a temporary hub database for testing."""
+    return hub_db
 
 
 @pytest.fixture

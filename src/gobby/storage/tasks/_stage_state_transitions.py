@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
@@ -179,7 +179,7 @@ class StageStateTransitions:
 
     def reset_holistic_failure_targets(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction | sqlite3.Connection,
         task_id: str,
         cited_subtasks: Sequence[str],
         *,
@@ -227,7 +227,7 @@ class StageStateTransitions:
 
     def reactivate_cited_worktrees(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction | sqlite3.Connection,
         cited_subtasks: Sequence[str],
         *,
         now: str,
@@ -250,7 +250,7 @@ class StageStateTransitions:
 
     def append_holistic_failure_comments(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction | sqlite3.Connection,
         task_id: str,
         cited_subtasks: Sequence[str],
         *,
@@ -283,7 +283,7 @@ class StageStateTransitions:
 
     def append_task_comment(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction | sqlite3.Connection,
         task_id: str,
         *,
         body: str,
@@ -302,7 +302,7 @@ class StageStateTransitions:
 
     def reset_task_from_stage(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction | sqlite3.Connection,
         task_id: str,
         stage_name: str,
         *,
@@ -585,7 +585,7 @@ def illegal(row: StageState, verb: str) -> IllegalStageTransitionError:
 
 
 def terminal_after_done(
-    conn: sqlite3.Connection,
+    conn: Transaction | sqlite3.Connection,
     task_id: str,
     stage_name: str,
 ) -> bool:
@@ -599,4 +599,4 @@ def terminal_after_done(
         """,
         (task_id, stage_name),
     ).fetchone()
-    return int(row["count"]) == 0
+    return bool(row is not None and int(row["count"]) == 0)

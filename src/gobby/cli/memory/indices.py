@@ -50,10 +50,10 @@ def reindex_embeddings(ctx: click.Context) -> None:
 @click.option("--dry-run", is_flag=True, help="Report orphans without deleting")
 @click.pass_context
 def reconcile(ctx: click.Context, dry_run: bool) -> None:
-    """Reconcile Qdrant and Neo4j with SQLite source of truth.
+    """Reconcile Qdrant and Neo4j with the PostgreSQL hub source of truth.
 
     Finds orphaned vectors and graph nodes whose memory IDs no longer
-    exist in SQLite, and optionally deletes them.
+    exist in the PostgreSQL hub, and optionally deletes them.
 
     Requires the Gobby daemon to be running (delegates via HTTP API).
 
@@ -79,7 +79,8 @@ def reconcile(ctx: click.Context, dry_run: bool) -> None:
 
     qdrant = result.get("qdrant", {})
     neo4j = result.get("neo4j", {})
-    click.echo(f"SQLite memories: {result.get('sqlite_count', '?')}")
+    storage_count = result.get("storage_count", result.get("sqlite_count", "?"))
+    click.echo(f"Hub memories: {storage_count}")
     click.echo(
         f"Qdrant: {qdrant.get('orphans_found', 0)} orphans found, "
         f"{qdrant.get('orphans_deleted', 0)} deleted"

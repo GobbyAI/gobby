@@ -6,14 +6,17 @@ import sqlite3
 from datetime import UTC, datetime
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _session_exists(conn: sqlite3.Connection, session_id: str | None) -> bool:
+def _session_exists(
+    conn: HubDatabase | Transaction | sqlite3.Connection,
+    session_id: str | None,
+) -> bool:
     if not session_id:
         return False
     row = conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone()
@@ -21,7 +24,7 @@ def _session_exists(conn: sqlite3.Connection, session_id: str | None) -> bool:
 
 
 def _close_task_in_txn(
-    conn: sqlite3.Connection,
+    conn: Transaction | sqlite3.Connection,
     task_id: str,
     *,
     db: HubDatabase | None = None,
@@ -89,7 +92,7 @@ def _close_task_in_txn(
 
 
 def _cascade_close_descendants(
-    conn: sqlite3.Connection,
+    conn: Transaction | sqlite3.Connection,
     task_id: str,
     closed_at: str,
     closed_in_session_id: str | None,

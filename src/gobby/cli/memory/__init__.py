@@ -7,7 +7,7 @@ import click
 from gobby.cli.utils import resolve_project_ref
 from gobby.config.app import DaemonConfig
 from gobby.memory.manager import MemoryManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 
 from .main import memory
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def get_memory_manager(ctx: click.Context) -> MemoryManager:
     """Get memory manager."""
     config: DaemonConfig = ctx.obj["config"]
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
 
     return MemoryManager(db, config.memory)
 
@@ -62,7 +62,6 @@ def resolve_memory_id(
 
 
 __all__ = [
-    "LocalDatabase",
     "MemoryManager",
     "get_memory_manager",
     "memory",

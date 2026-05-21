@@ -728,11 +728,13 @@ def install_default_mcp_servers() -> dict[str, Any]:
             for secret_name, extra_args in optional_secret_args.items():
                 if secret_store is None and not secret_store_init_failed:
                     try:
-                        from gobby.storage.database import LocalDatabase
+                        from gobby.storage.hub.runtime import open_runtime_hub_database
                         from gobby.storage.secrets import SecretStore
 
-                        secret_store = SecretStore(LocalDatabase())
-                    except (ImportError, OSError, sqlite3.Error) as exc:
+                        secret_store = SecretStore(
+                            open_runtime_hub_database(apply_migrations=False)
+                        )
+                    except (ImportError, OSError, RuntimeError, sqlite3.Error) as exc:
                         secret_store_init_failed = True
                         logger.warning(
                             "Failed to initialize secret store for optional MCP args: %s",
@@ -750,7 +752,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
                             secret_value = secret_store.get(secret_name)
                             if secret_value:
                                 args.extend(extra_args + [secret_value])
-                    except (OSError, sqlite3.Error) as exc:
+                    except (OSError, RuntimeError, sqlite3.Error) as exc:
                         logger.warning(
                             "Failed to read optional MCP secret %s: %s",
                             secret_name,
@@ -792,16 +794,19 @@ def install_default_mcp_servers() -> dict[str, Any]:
 
     # Sync .mcp.json to database so the daemon proxy can serve them
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
         from gobby.storage.mcp import LocalMCPManager
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-        db = LocalDatabase()
-        mcp_db = LocalMCPManager(db)
-        imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
-        mcp_db.normalize_bundled_servers()
-        if imported:
-            logger.info(f"Synced {imported} MCP servers to database")
+        db = open_runtime_hub_database(apply_migrations=False)
+        try:
+            mcp_db = LocalMCPManager(db)
+            imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
+            mcp_db.normalize_bundled_servers()
+            if imported:
+                logger.info(f"Synced {imported} MCP servers to database")
+        finally:
+            db.close()
     except Exception as e:
         logger.warning(f"Failed to sync MCP servers to database: {e}")
 

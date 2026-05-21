@@ -9,7 +9,7 @@ from typing import Any
 
 
 async def run_db(owner: Any, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Run SQLite work through the websocket server's bounded executor when available."""
+    """Run database work through the websocket server's bounded executor when available."""
     runner = getattr(owner, "run_db", None)
     if inspect.iscoroutinefunction(runner):
         return await runner(func, *args, **kwargs)

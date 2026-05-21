@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
     from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -71,7 +70,7 @@ class AgentCommand:
 class AgentCommandManager:
     """Manages agent commands in the database."""
 
-    def __init__(self, db: LocalDatabase | HubDatabase) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def create_command(

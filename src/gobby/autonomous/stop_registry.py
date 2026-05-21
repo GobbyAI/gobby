@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class StopRegistry:
     or the has_stop_signal() condition function.
     """
 
-    def __init__(self, db: "LocalDatabase"):
+    def __init__(self, db: "HubDatabase"):
         """Initialize the stop registry.
 
         Args:

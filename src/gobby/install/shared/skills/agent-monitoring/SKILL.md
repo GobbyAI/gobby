@@ -37,7 +37,7 @@ schema, then call the tool.
 
 ## Fallbacks
 
-Treat raw SQLite queries and direct `tmux` commands as debugging fallbacks. Use
-them only after the MCP tools cannot answer the question or when you are fixing
-the monitoring stack itself. Prefer recording what the supported tools returned
-before falling back so the reason for bypassing them is explicit.
+Treat raw database queries and direct `tmux` commands as debugging fallbacks.
+Use them only after the MCP tools cannot answer the question or when you are
+fixing the monitoring stack itself. Prefer recording what the supported tools
+returned before falling back so the reason for bypassing them is explicit.

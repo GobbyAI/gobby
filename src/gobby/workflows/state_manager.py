@@ -4,7 +4,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from .definitions import WorkflowInstance
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class WorkflowInstanceManager:
     """Manages CRUD operations for workflow instances (multi-workflow per session)."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
@@ -139,7 +139,7 @@ class SessionVariableManager:
 
     _DEFAULTS_CACHE_TTL = 10.0  # seconds
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._defaults_cache: dict[str, Any] | None = None
         self._defaults_cache_time: float = 0.0

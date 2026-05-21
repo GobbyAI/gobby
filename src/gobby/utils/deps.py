@@ -15,9 +15,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
-from gobby.config.bootstrap import load_bootstrap
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -376,7 +375,7 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
-def _detect_openai(db: LocalDatabase | None = None) -> str | None:
+def _detect_openai(db: HubDatabase | None = None) -> str | None:
     """Detect OpenAI embeddings from stored or environment credentials."""
     if db is not None:
         try:
@@ -390,7 +389,7 @@ def _detect_openai(db: LocalDatabase | None = None) -> str | None:
     return "openai" if os.environ.get("OPENAI_API_KEY") else None
 
 
-def _infer_from_env_or_none(dim: Any, db: LocalDatabase | None = None) -> str | None:
+def _infer_from_env_or_none(dim: Any, db: HubDatabase | None = None) -> str | None:
     """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
     normalized_dim = dim
     if isinstance(dim, str):
@@ -409,13 +408,9 @@ def get_configured_embedding_provider() -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import runtime_hub_database
 
-        db_path = Path(load_bootstrap().database_path).expanduser()
-        if not db_path.exists():
-            return _infer_from_env_or_none(dim=None)
-
-        with LocalDatabase(db_path) as db:
+        with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
             api_base = store.get("embeddings.api_base")
             dim = store.get("embeddings.dim")

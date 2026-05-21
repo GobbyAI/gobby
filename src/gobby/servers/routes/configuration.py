@@ -26,6 +26,7 @@ from gobby.config.app import (
 )
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
+from gobby.servers.routes._database import require_hub_database
 from gobby.servers.tool_approvals import (
     BUILT_IN_EXEMPTION_LABELS,
     DEFAULT_GLOBAL_APPROVAL_RULES,
@@ -117,22 +118,12 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     router = APIRouter(prefix="/api/config", tags=["configuration"])
 
     def _get_secret_store() -> SecretStore:
-        from gobby.storage.database import LocalDatabase
-
-        db = server.services.database
-        if not isinstance(db, LocalDatabase):
-            raise HTTPException(status_code=503, detail="Database not available")
-        return SecretStore(db)
+        return SecretStore(require_hub_database(server.services.database))
 
     def _get_config_store() -> ConfigStore:
         store = getattr(server.services, "config_store", None)
         if store is None:
-            from gobby.storage.database import LocalDatabase
-
-            db = server.services.database
-            if not isinstance(db, LocalDatabase):
-                raise HTTPException(status_code=503, detail="Database not available")
-            store = ConfigStore(db)
+            store = ConfigStore(require_hub_database(server.services.database))
         return store
 
     def _get_prompt_manager() -> LocalPromptManager:
@@ -363,6 +354,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
                     "categories": sorted(VALID_CATEGORIES),
                 }
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to list secrets: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -381,6 +374,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"ok": True, "secret": info.to_dict()})
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to save secret: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -693,7 +688,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
 
             # Restore is_secret flags from export bundle (batch update, chunked)
             if request.config_secret_keys:
-                # Validate keys are strings and chunk to avoid SQLite variable limits
+                # Validate keys are strings and chunk to avoid database parameter limits.
                 valid_keys = [k for k in request.config_secret_keys if isinstance(k, str) and k]
                 chunk_size = 500
                 with config_store.db.transaction() as conn:

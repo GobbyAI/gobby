@@ -12,7 +12,6 @@ import asyncio
 import logging
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -341,14 +340,11 @@ def _persist_embedding_config(
     For the "none" provider, writes null/zero values to disable semantic search.
     If openai_api_key is provided, stores it in SecretStore.
     """
-    from gobby.config.app import load_config
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
 
-    config = load_config()
-    db_path = Path(config.database_path).expanduser()
-    with LocalDatabase(db_path) as db:
+    with runtime_hub_database(apply_migrations=False) as db:
         store = ConfigStore(db)
 
         entries: dict[str, Any]

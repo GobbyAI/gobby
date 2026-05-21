@@ -238,7 +238,7 @@ class MemoryConfig(BaseModel):
         default="local",
         description=(
             "Storage backend for memories. Options: "
-            "'local' (default, direct SQLite via LocalMemoryManager), "
+            "'local' (default, PostgreSQL hub via LocalMemoryManager), "
             "'null' (no persistence, for testing)"
         ),
     )

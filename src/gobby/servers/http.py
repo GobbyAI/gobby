@@ -45,7 +45,7 @@ class HTTPServer:
     FastAPI HTTP server for Gobby daemon.
 
     Handles MCP tool proxying, session management, and admin endpoints.
-    Local-first version: no platform authentication, uses local SQLite storage.
+    Local-first version: no platform authentication, uses daemon-owned hub storage.
     """
 
     def __init__(
@@ -379,7 +379,7 @@ class HTTPServer:
         return None
 
     async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        """Run daemon SQLite work on the bounded DB executor."""
+        """Run daemon database work on the bounded DB executor."""
         return await self.services.run_db(func, *args, **kwargs)
 
     async def _terminate_streamable_http_sessions(self) -> None:

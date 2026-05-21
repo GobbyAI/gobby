@@ -24,6 +24,7 @@ import psycopg
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.postgres_bootstrap import InstallMode
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
@@ -85,11 +86,16 @@ def uninstall_postgres(
                 "database manually with `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` "
                 "inside the dedicated database, or drop and recreate the database."
             )
-        _clear_bootstrap_postgres_fields(gobby_home or Path("~/.gobby").expanduser())
+        home = gobby_home or _bootstrap.default_gobby_home()
+        _preserve_required_postgres_runtime(home)
         return {
             "success": True,
             "mode": "external",
-            "message": "External PostgreSQL bootstrap fields cleared; server left untouched.",
+            "message": (
+                "External PostgreSQL service cleanup completed; server left untouched; "
+                "runtime bootstrap preserved "
+                "because PostgreSQL is the only supported hub backend."
+            ),
         }
     raise click.ClickException(f"Unknown install mode: {mode}")
 
@@ -285,7 +291,8 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
 
 
 def _uninstall_docker(*, gobby_home: Path | None, remove_data: bool) -> dict[str, Any]:
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home or _bootstrap.default_gobby_home()
+    _preserve_required_postgres_runtime(home)
     services_dir = home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
@@ -318,22 +325,34 @@ def _uninstall_docker(*, gobby_home: Path | None, remove_data: bool) -> dict[str
     if remove_data:
         _remove_docker_volumes((POSTGRES_DATA_VOLUME, PGAUDIT_LOG_VOLUME))
 
-    _clear_bootstrap_postgres_fields(home)
-    return {"success": True, "mode": "docker", "data_removed": remove_data}
+    return {
+        "success": True,
+        "mode": "docker",
+        "data_removed": remove_data,
+        "message": (
+            "PostgreSQL Docker service cleanup completed; runtime bootstrap preserved "
+            "because PostgreSQL is the only supported hub backend."
+        ),
+    }
 
 
 def _uninstall_native(*, gobby_home: Path | None, remove_data: bool) -> dict[str, Any]:
-    home = gobby_home or Path("~/.gobby").expanduser()
-    _clear_bootstrap_postgres_fields(home)
+    home = gobby_home or _bootstrap.default_gobby_home()
+    _preserve_required_postgres_runtime(home)
     steps = [
         "Remove pg_search manually with your OS package manager if desired.",
         "Gobby does not run apt-get remove for native PostgreSQL installations.",
+        "Runtime bootstrap remains configured for PostgreSQL because it is required.",
     ]
     if remove_data:
         steps.append("Remove the native PostgreSQL data directory manually after taking backups.")
     return {
         "success": True,
         "mode": "native",
+        "message": (
+            "PostgreSQL native cleanup guidance emitted; runtime bootstrap preserved "
+            "because PostgreSQL is the only supported hub backend."
+        ),
         "manual_steps": steps,
         "data_removed": False,
     }
@@ -415,8 +434,11 @@ def _write_bootstrap_defaults(
     )
 
 
-def _clear_bootstrap_postgres_fields(gobby_home: Path) -> None:
-    _bootstrap.clear_postgres_fields(gobby_home)
+def _preserve_required_postgres_runtime(gobby_home: Path) -> None:
+    try:
+        _bootstrap.clear_postgres_fields(gobby_home)
+    except BootstrapConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _read_bootstrap_yaml(path: Path) -> dict[str, Any]:

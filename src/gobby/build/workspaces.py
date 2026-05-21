@@ -241,11 +241,11 @@ class _WorkspaceServices:
         if backend == "worktree" and artifacts.worktree_id:
             worktree = self.worktree_storage.get(artifacts.worktree_id)
             if worktree is not None and _is_recoverable_workspace(worktree, task.id, "worktree"):
-                return cast(str, worktree.branch_name)
+                return worktree.branch_name
         if backend == "clone" and artifacts.clone_id:
             clone = self.clone_storage.get(artifacts.clone_id)
             if clone is not None and _is_recoverable_workspace(clone, task.id, "clone"):
-                return cast(str, clone.branch_name)
+                return clone.branch_name
         return None
 
     def _ensure_worktree(
@@ -538,7 +538,7 @@ def _nearest_ancestor_integration_branch(
             return None
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         if artifacts.integration_branch:
-            return cast(str, artifacts.integration_branch)
+            return artifacts.integration_branch
         current_id = task.parent_task_id
     return None
 

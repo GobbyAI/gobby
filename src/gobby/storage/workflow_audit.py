@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import LocalDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 
@@ -35,7 +34,7 @@ class WorkflowAuditEntry:
 
 
 class WorkflowAuditManager:
-    """Manages workflow audit log entries in SQLite."""
+    """Manages workflow audit log entries in the hub database."""
 
     def __init__(self, db: HubDatabase | None = None):
         """Initialize the audit manager.
@@ -43,7 +42,11 @@ class WorkflowAuditManager:
         Args:
             db: Optional database instance. If None, creates a new one.
         """
-        self._db = db or LocalDatabase()
+        if db is None:
+            from gobby.storage.hub.runtime import open_runtime_hub_database
+
+            db = open_runtime_hub_database(apply_migrations=False)
+        self._db = db
 
     @property
     def db(self) -> HubDatabase:

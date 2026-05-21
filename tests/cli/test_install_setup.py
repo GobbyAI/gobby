@@ -84,11 +84,13 @@ class TestEnsureDaemonConfig:
         assert res["created"]
         assert res["source"] == "generated"
         assert target.exists()
+        assert "hub_backend: postgres" in target.read_text()
+        assert "database_url_ref: keyring:gobby:postgres_database_url" in target.read_text()
         assert "daemon_port: 60887" in target.read_text()
 
 
 class TestRunDaemonSetup:
-    @patch("gobby.cli.utils.init_local_storage")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
@@ -152,7 +154,7 @@ class TestRunDaemonSetup:
         assert mock_ide.call_count == 1
         assert mock_ide.call_args is not None
 
-    @patch("gobby.cli.utils.init_local_storage")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
@@ -204,7 +206,7 @@ class TestRunDaemonSetup:
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
         assert "--gobby-owned" in command
 
-    @patch("gobby.cli.utils.init_local_storage")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")

@@ -116,7 +116,7 @@ async def generate_session_summaries(
         set_handoff_ready: Update session status to handoff_ready.
         compact_only: Ignored (kept for API compatibility).
         full_only: Ignored (kept for API compatibility).
-        run_db: Optional bounded executor bridge for SQLite storage calls.
+        run_db: Optional bounded executor bridge for hub database storage calls.
 
     Returns:
         Dict with success status, markdown lengths, and context summary.

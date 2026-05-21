@@ -12,7 +12,7 @@ import json
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from websockets.asyncio.server import serve
@@ -90,7 +90,7 @@ class WebSocketServer(
                           If None, all connections are accepted (local-first mode).
             stop_registry: Optional StopRegistry for handling stop requests from clients.
             session_manager: Optional SessionManager for persisting web-chat sessions.
-            db_executor: Optional bounded executor for daemon SQLite work.
+            db_executor: Optional bounded executor for daemon database work.
             message_manager: Deprecated, ignored. Kept for backwards compatibility.
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
@@ -101,7 +101,7 @@ class WebSocketServer(
         self.auth_callback = auth_callback
         self.stop_registry = stop_registry
         self.internal_manager = internal_manager
-        self.session_manager = session_manager
+        self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
         self.daemon_config = daemon_config
         self.workflow_handler: WorkflowHookHandler | None = None
@@ -161,7 +161,7 @@ class WebSocketServer(
         self._cleanup_task: asyncio.Task[None] | None = None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run daemon SQLite work on the bounded DB executor."""
+        """Run daemon database work on the bounded DB executor."""
         if self.db_executor is None:
             raise RuntimeError("Database executor is not configured")
         return await self.db_executor.run(func, *args, **kwargs)

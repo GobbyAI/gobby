@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.template_writer import (
@@ -23,7 +23,7 @@ from gobby.workflows.template_writer import (
 logger = logging.getLogger(__name__)
 
 
-def has_gobby_name_collision(db: DatabaseProtocol, name: str) -> bool:
+def has_gobby_name_collision(db: HubDatabase, name: str) -> bool:
     """Check if a name collides with a bundled gobby definition.
 
     Args:

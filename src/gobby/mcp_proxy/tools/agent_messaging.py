@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.sessions.mailbox import WakeDispatcherProtocol
     from gobby.storage.agent_commands import AgentCommandManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
     from gobby.workflows.state_manager import SessionVariableManager
@@ -82,7 +82,7 @@ def add_messaging_tools(
     session_manager: SessionManager,
     command_manager: AgentCommandManager,
     session_var_manager: SessionVariableManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     broadcast_fn: BroadcastFn | None = None,
     wake_dispatcher: WakeDispatcherProtocol | None = None,
 ) -> None:

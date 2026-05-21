@@ -1,7 +1,7 @@
 """Memory backend protocol types.
 
 This module defines the abstraction layer that enables pluggable memory backends.
-Users can choose between Gobby's built-in SQLite backend or plug in external
+Users can choose Gobby's built-in PostgreSQL hub backend or plug in external
 memory systems.
 
 Types:

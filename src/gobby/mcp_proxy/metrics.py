@@ -5,7 +5,7 @@ from typing import Any
 
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.metrics_store import ToolMetrics, ToolMetricsStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.telemetry.instruments import get_telemetry_metrics
 
 logger = logging.getLogger(__name__)
@@ -19,19 +19,19 @@ class ToolMetricsManager:
     Manager for tracking tool call metrics.
 
     Refactored to a facade that dual-writes to OTel (for real-time observability)
-    and SQLite (for queryable analytics).
+    and hub database tables (for queryable analytics).
     """
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         event_store: MetricsEventStore | None = None,
     ):
         """
         Initialize the metrics manager.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database adapter for persistence
             event_store: Optional MetricsEventStore for per-event recording
         """
         self.store = ToolMetricsStore(db)
@@ -49,9 +49,9 @@ class ToolMetricsManager:
     ) -> None:
         """
         Record a tool call with its metrics.
-        Triple-writes to: SQLite aggregate table, event log, and OTel.
+        Triple-writes to: hub aggregate table, event log, and OTel.
         """
-        # 1. SQLite aggregate persistence (backward compat)
+        # 1. Hub database aggregate persistence.
         try:
             self.store.record_call(
                 server_name=server_name,
@@ -61,7 +61,7 @@ class ToolMetricsManager:
                 success=success,
             )
         except Exception as e:
-            logger.error(f"Failed to record call to SQLite: {e}")
+            logger.error(f"Failed to record call to hub database: {e}")
 
         # 2. Event log (per-event with session_id)
         try:

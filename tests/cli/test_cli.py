@@ -50,73 +50,50 @@ class TestFormatUptime:
 class TestIsPortAvailable:
     """Tests for is_port_available function."""
 
-    def test_available_port(self) -> None:
+    @patch("socket.socket")
+    def test_available_port(self, mock_socket: MagicMock) -> None:
         """Test checking an available port."""
-        # Port 0 always finds an available port
-        import socket
+        mock_sock = mock_socket.return_value
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("localhost", 0))
-        port = sock.getsockname()[1]
-        sock.close()
+        assert is_port_available(60887) is True
+        mock_sock.bind.assert_called_once_with(("localhost", 60887))
+        mock_sock.close.assert_called_once_with()
 
-        # After closing, the port should be available
-        assert is_port_available(port) is True
-
-    def test_unavailable_port(self) -> None:
+    @patch("socket.socket")
+    def test_unavailable_port(self, mock_socket: MagicMock) -> None:
         """Test that is_port_available returns False when port is used."""
-        import socket
+        mock_sock = mock_socket.return_value
+        mock_sock.bind.side_effect = OSError("address in use")
 
-        # Create a socket and bind it to a random port
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # MacOS/BSD needs SO_REUSEADDR to be FALSE for pure exclusivity in some cases,
-        # but standard behavior is if we bind AND listen, it should be unavailable.
-        # However, is_port_available uses SO_REUSEADDR.
-        # If we want to ensure it Returns False, we must ensure is_port_available's bind fails.
-        # If is_port_available uses SO_REUSEADDR, it CAN bind to a port that is TIME_WAIT,
-        # but typically NOT one that is LISTEN.
-        sock.bind(("localhost", 0))
-        sock.listen(1)
-        port = sock.getsockname()[1]
-
-        try:
-            assert is_port_available(port) is False
-        finally:
-            sock.close()
+        assert is_port_available(60887) is False
+        mock_sock.bind.assert_called_once_with(("localhost", 60887))
+        mock_sock.close.assert_called_once_with()
 
 
 class TestWaitForPortAvailable:
     """Tests for wait_for_port_available function."""
 
-    def test_port_immediately_available(self) -> None:
+    @patch("gobby.cli.utils.is_port_available", return_value=True)
+    def test_port_immediately_available(self, mock_available: MagicMock) -> None:
         """Test waiting for a port that's already available."""
-        # Use port 0 to get an available port
-        import socket
+        result = wait_for_port_available(60887, timeout=0.5)
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("localhost", 0))
-        port = sock.getsockname()[1]
-        sock.close()
-
-        # Should return True immediately
-        result = wait_for_port_available(port, timeout=0.5)
         assert result is True
+        mock_available.assert_called_once_with(60887, "localhost")
 
-    def test_port_never_available_timeout(self) -> None:
+    @patch("gobby.cli.utils.time.sleep")
+    @patch("gobby.cli.utils.time.time", side_effect=[0.0, 0.05, 0.11])
+    @patch("gobby.cli.utils.is_port_available", return_value=False)
+    def test_port_never_available_timeout(
+        self,
+        mock_available: MagicMock,
+        _mock_time: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
         """Test that wait_for_port_available returns False on timeout."""
-        import socket
-
-        # Bind a port and keep it busy
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("localhost", 0))
-        sock.listen(1)
-        port = sock.getsockname()[1]
-
-        try:
-            # Should return False after timeout
-            assert wait_for_port_available(port, timeout=0.1) is False
-        finally:
-            sock.close()
+        assert wait_for_port_available(60887, timeout=0.1) is False
+        mock_available.assert_called_once_with(60887, "localhost")
+        mock_sleep.assert_called_once_with(0.1)
 
 
 class TestCLIDetection:

@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
     from gobby.storage.hub.protocol import HubDatabase
 
 from gobby.storage.sql_dialect import is_postgres, json_text_expr
@@ -72,7 +71,7 @@ class InterSessionMessage:
         """Create instance from database row.
 
         Args:
-            row: SQLite row with message data
+            row: Database row with message data
 
         Returns:
             InterSessionMessage instance
@@ -130,11 +129,11 @@ class InterSessionMessageManager:
     enabling agent coordination and parent-child communication.
     """
 
-    def __init__(self, db: LocalDatabase | HubDatabase) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         """Initialize the message manager.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database instance for persistence
         """
         self.db = db
 

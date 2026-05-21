@@ -12,7 +12,7 @@ import yaml
 
 
 def default_gobby_home() -> Path:
-    return Path("~/.gobby").expanduser()
+    return Path(os.environ.get("GOBBY_HOME", "~/.gobby")).expanduser()
 
 
 def bootstrap_path(gobby_home: Path | None = None) -> Path:

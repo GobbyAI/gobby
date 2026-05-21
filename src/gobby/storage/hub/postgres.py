@@ -254,11 +254,11 @@ def _rewrite_sqlite_boolean_literals(sql: str) -> str:
             segment_start = i
             continue
         if sql[i] == "$":
-            end = _dollar_quote_end(sql, i)
-            if end is not None:
+            dollar_end = _dollar_quote_end(sql, i)
+            if dollar_end is not None:
                 i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-                out.append(sql[i:end])
-                i = end
+                out.append(sql[i:dollar_end])
+                i = dollar_end
                 segment_start = i
                 continue
         i += 1

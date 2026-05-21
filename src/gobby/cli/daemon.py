@@ -388,16 +388,17 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     click.echo("Starting Gobby daemon...")
     click.echo("")
 
-    # Initialize local storage
-    init_local_storage()
-    _step("Local storage initialized")
-
     # Start Docker services if compose file exists or --docker flag
     services_compose = gobby_dir / "services" / "docker-compose.yml"
     legacy_compose = gobby_dir / "services" / "neo4j" / "docker-compose.yml"
     if services_compose.exists() or legacy_compose.exists() or docker_flag:
         _services_start(gobby_dir)
         _step("Docker services started")
+
+    # Initialize runtime hub storage after services are up.
+    hub_db = init_local_storage()
+    hub_db.close()
+    _step("PostgreSQL hub initialized")
 
     # Kill existing gobby daemon processes
     killed_count = kill_all_gobby_daemons()
@@ -806,27 +807,30 @@ def get_merge_status() -> dict[str, Any]:
         - pending_conflicts: int - Number of unresolved conflicts
     """
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
-        db = LocalDatabase()
-        manager = MergeResolutionManager(db)
+        db = open_runtime_hub_database(apply_migrations=False)
+        try:
+            manager = MergeResolutionManager(db)
 
-        resolution = manager.get_active_resolution()
-        if not resolution:
-            return {"active": False}
+            resolution = manager.get_active_resolution()
+            if not resolution:
+                return {"active": False}
 
-        conflicts = manager.list_conflicts(resolution_id=resolution.id)
-        pending_count = sum(1 for c in conflicts if c.status == "pending")
+            conflicts = manager.list_conflicts(resolution_id=resolution.id)
+            pending_count = sum(1 for c in conflicts if c.status == "pending")
 
-        return {
-            "active": True,
-            "resolution_id": resolution.id,
-            "source_branch": resolution.source_branch,
-            "target_branch": resolution.target_branch,
-            "pending_conflicts": pending_count,
-            "total_conflicts": len(conflicts),
-        }
+            return {
+                "active": True,
+                "resolution_id": resolution.id,
+                "source_branch": resolution.source_branch,
+                "target_branch": resolution.target_branch,
+                "pending_conflicts": pending_count,
+                "total_conflicts": len(conflicts),
+            }
+        finally:
+            db.close()
     except Exception as e:
         logger.debug(f"Error getting merge status: {e}")
         return {"active": False, "error": str(e)}

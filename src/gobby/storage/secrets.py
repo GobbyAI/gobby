@@ -1,6 +1,6 @@
 """Secrets store with Fernet encryption tied to machine identity.
 
-Provides encrypted storage for API keys and sensitive values in SQLite.
+Provides encrypted storage for API keys and sensitive values in the hub database.
 Values are encrypted using a key derived from the machine ID, so secrets
 are bound to the current machine. Agents never see raw values — the daemon
 resolves `$secret:NAME` references internally at connection time.
@@ -101,7 +101,7 @@ def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
 
 
 class SecretStore:
-    """Encrypted secret storage backed by SQLite.
+    """Encrypted secret storage backed by the hub database.
 
     Secrets are encrypted with a Fernet key derived from the machine ID.
     The API is write-only from outside the daemon — values can be set and

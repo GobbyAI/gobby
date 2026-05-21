@@ -99,12 +99,18 @@ def status_cmd(as_json: bool) -> None:
     help=(
         "Docker mode: also delete the gobby_postgres_data and gobby_pgaudit_log "
         "named volumes. Native mode: print manual data-directory deletion steps. "
-        "External mode: refuses; Gobby never deletes server-side data."
+        "External mode: refuses; Gobby never deletes server-side data. "
+        "Does not restore the removed SQLite hub runtime."
     ),
 )
 def uninstall_cmd(remove_data: bool) -> None:
-    """Uninstall PostgreSQL using the recorded install mode."""
-    result = uninstall_postgres(mode=_active_install_mode(), remove_data=remove_data)
+    """Clean up PostgreSQL service artifacts using the recorded install mode."""
+    gobby_home = get_gobby_home()
+    result = uninstall_postgres(
+        mode=_active_install_mode(gobby_home=gobby_home),
+        gobby_home=gobby_home,
+        remove_data=remove_data,
+    )
     _render_uninstall_result(result)
 
 
@@ -218,21 +224,24 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
         _restore_bootstrap(backup_path)
         raise
 
-    click.echo("hub_backend set to postgres. To roll back:")
-    click.echo("  gobby stop && gobby postgres deactivate && gobby start")
+    click.echo("hub_backend set to postgres.")
+    click.echo("PostgreSQL is now the required hub runtime.")
+    click.echo("For validation-window recovery guidance:")
+    click.echo("  docs/runbooks/postgres-rollback.md")
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
 
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
-    """Deactivate PostgreSQL and return the hub runtime backend to SQLite."""
-    if _daemon_running():
-        raise click.ClickException("Stop the daemon first: gobby stop")
-    backup_path = _backup_bootstrap()
-    _set_bootstrap_field("hub_backend", "sqlite")
-    click.echo("hub_backend set to sqlite.")
-    click.echo(f"Bootstrap backup: {backup_path}")
+    """Deprecated compatibility command for the removed SQLite hub runtime."""
+    raise click.ClickException(
+        "PostgreSQL is the only supported hub runtime. "
+        "`gobby postgres deactivate` no longer writes hub_backend=sqlite. "
+        "hub_backend=sqlite cannot start under the Phase 7 runtime. "
+        "Use `gobby postgres migrate-from-sqlite` only for legacy imports, "
+        "and follow docs/runbooks/postgres-rollback.md for recovery exports."
+    )
 
 
 def _render_install_result(result: dict[str, Any]) -> None:
@@ -256,7 +265,7 @@ def _render_install_result(result: dict[str, Any]) -> None:
 
 def _render_uninstall_result(result: dict[str, Any]) -> None:
     if result.get("success"):
-        click.echo(result.get("message", "PostgreSQL uninstalled"))
+        click.echo(result.get("message", "PostgreSQL service cleanup completed"))
         if result.get("data_removed"):
             click.echo("  Docker data volumes removed")
         for step in result.get("manual_steps", []):

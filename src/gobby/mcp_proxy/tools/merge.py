@@ -36,7 +36,7 @@ from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
 from gobby.storage.merge_resolutions import ConflictStatus
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
@@ -71,7 +71,7 @@ def create_merge_registry(
     merge_resolver: MergeResolver,
     git_manager: WorktreeGitManager | None = None,
     worktree_manager: Any | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> InternalToolRegistry:
     """
     Create a merge tool registry with all merge-related tools.

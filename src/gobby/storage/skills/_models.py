@@ -94,7 +94,7 @@ class Skill:
         """Create a Skill from a database row.
 
         Args:
-            row: SQLite row with skill data
+            row: Database row with skill data
 
         Returns:
             Skill instance populated from the row

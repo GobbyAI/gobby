@@ -422,7 +422,7 @@ async def metric_snapshot_loop(
 ) -> None:
     """Background loop that snapshots OTel metrics every interval.
 
-    Captures get_all_metrics() output to SQLite for dashboard time-series charts.
+    Captures get_all_metrics() output to the PostgreSQL hub for dashboard time-series charts.
     Cleans old snapshots each tick to maintain 24h retention.
     """
     from gobby.storage.metric_snapshots import MetricSnapshotStorage
