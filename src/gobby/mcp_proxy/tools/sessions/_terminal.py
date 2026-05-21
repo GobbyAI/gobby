@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -231,6 +233,49 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
+def _capture_transcript_tail(
+    session_id: str,
+    session_manager: SessionManager,
+    lines: int,
+    *,
+    tmux_error: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return transcript tail fallback when no live tmux target is available."""
+    session = session_manager.get(session_id)
+    if session is None:
+        return None, "session_not_found"
+
+    transcript_path = getattr(session, "transcript_path", None)
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None, "missing_transcript_path"
+
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None, "transcript_not_found"
+
+    max_lines = max(1, lines)
+    tail: deque[str] = deque(maxlen=max_lines)
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for raw_line in handle:
+                tail.append(raw_line.rstrip("\n"))
+    except OSError as exc:
+        detail = str(exc) or type(exc).__name__
+        return None, f"transcript_read_failed: {detail}"
+
+    return (
+        {
+            "success": True,
+            "output": "\n".join(tail),
+            "via": "transcript",
+            "transcript_path": transcript_path,
+            "note": "No live tmux pane was capturable; returned transcript tail instead.",
+            "tmux_error": tmux_error,
+        },
+        None,
+    )
+
+
 async def _compact_live_web_chat_fallback(
     web_chat_session_registry: WebChatSessionRegistry | None,
     *session_ids: str | None,
@@ -424,7 +469,21 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
-            return {"success": False, "error": error}
+            fallback, transcript_error = _capture_transcript_tail(
+                session_id,
+                session_manager,
+                lines,
+                tmux_error=error,
+            )
+            if fallback is not None:
+                return fallback
+            return {
+                "success": False,
+                "error": error,
+                "error_code": "no_live_pane_or_transcript",
+                "tmux_error": error,
+                "transcript_error": transcript_error,
+            }
 
         assert target is not None
         assert tmux is not None
@@ -434,4 +493,4 @@ def register_terminal_tools(
                 "success": False,
                 "error": f"Failed to capture pane for session {session_id}",
             }
-        return {"success": True, "output": output}
+        return {"success": True, "output": output, "via": "tmux"}

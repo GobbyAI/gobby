@@ -34,6 +34,7 @@ class MockSession:
     project_id: str = "project-1"
     status: str = "active"
     agent_depth: int = 0
+    terminal_context: object | None = None
 
 
 @dataclass
@@ -58,6 +59,7 @@ class MockMessage:
             "priority": self.priority,
             "sent_at": self.sent_at,
             "read_at": self.read_at,
+            "delivered_at": self.delivered_at,
         }
 
     def to_brief(self) -> dict:
@@ -377,6 +379,75 @@ class TestSendMessage:
         assert result["wake_results"] == [
             {"session_id": "s-child", "delivered": True, "method": "fake"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_send_message_persists_when_live_wake_has_no_tmux_pane(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_command_manager,
+        mock_session_var_manager,
+        mock_db,
+    ) -> None:
+        """include_wakeup stores mailbox rows even when no live pane exists."""
+        from gobby.events.wake import WakeDispatcher
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        wake_dispatcher = WakeDispatcher(
+            session_manager=mock_session_manager,
+            ism_manager=mock_message_manager,
+            tmux_pane_sender=MagicMock(),
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            command_manager=mock_command_manager,
+            session_var_manager=mock_session_var_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+
+        created = MockMessage(id="msg-direct", delivered_at=None)
+        mock_message_manager.create_message.return_value = created
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-to": MockSession(
+                id="s-to",
+                project_id="proj-1",
+                terminal_context={"parent_pid": 12345},
+            ),
+        }.get(sid)
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "to_session": "s-to",
+                "include_wakeup": True,
+                "content": "hello",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["message_ids"] == ["msg-direct"]
+        assert result["message"]["delivered_at"] is None
+        assert result["wake_results"][0]["error_code"] == "no_tmux_pane"
+        mock_message_manager.mark_delivered.assert_not_called()
+
+        mock_message_manager.get_undelivered_messages.return_value = [created]
+        delivered = await registry.call(
+            "deliver_pending_messages",
+            {"target_session_id": "s-to"},
+        )
+
+        assert delivered["success"] is True
+        assert delivered["count"] == 1
+        mock_message_manager.mark_delivered.assert_called_once_with("msg-direct")
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_rejected(

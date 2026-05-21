@@ -301,6 +301,22 @@ class SessionMessageProcessor:
         # Always clean render state (may exist even if session wasn't fully registered)
         self._render_states.pop(session_id, None)
 
+    def _revive_expired_terminal_session(self, session_id: str) -> None:
+        """Repair false-expired terminal rows when transcript activity resumes."""
+        if not self.session_manager:
+            return
+        revive = getattr(self.session_manager, "revive_expired_terminal_session", None)
+        if not callable(revive):
+            return
+        try:
+            revive(session_id)
+        except Exception:
+            logger.debug(
+                "Failed to revive expired terminal session %s from transcript activity",
+                session_id,
+                exc_info=True,
+            )
+
     async def _loop(self) -> None:
         """Main processing loop."""
         while self._running:
@@ -372,6 +388,8 @@ class SessionMessageProcessor:
 
         if not new_lines:
             return
+
+        self._revive_expired_terminal_session(session_id)
 
         # Parse new lines
         parser = self._parsers.get(session_id)
@@ -470,6 +488,8 @@ class SessionMessageProcessor:
         if not isinstance(data, dict):
             logger.warning(f"JSON transcript is not an object: {transcript_path}")
             return
+
+        self._revive_expired_terminal_session(session_id)
 
         parser = self._parsers.get(session_id)
         if not parser or not isinstance(parser, GeminiTranscriptParser):

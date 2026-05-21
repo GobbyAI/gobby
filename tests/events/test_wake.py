@@ -294,6 +294,73 @@ class TestWakeDispatch:
         assert tmux_pane_sender.await_args is not None
 
     @pytest.mark.asyncio
+    async def test_expired_session_returns_structured_wake_failure(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Expired sessions are durable-mailbox only and report why live wake skipped."""
+        session_manager.get.return_value = FakeSession(id="sess-1", status="expired")
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+
+        result = await dispatcher.dispatch_live_wake("sess-1")
+
+        assert result["delivered"] is False
+        assert result["error_code"] == "session_expired"
+
+    @pytest.mark.asyncio
+    async def test_interactive_session_without_tmux_pane_reports_no_tmux_pane(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Terminal context without a pane gets a precise live wake diagnostic."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context={"parent_pid": 12345},
+        )
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        result = await dispatcher.dispatch_live_wake("sess-1")
+
+        assert result["delivered"] is False
+        assert result["method"] == "tmux_pane"
+        assert result["error_code"] == "no_tmux_pane"
+        tmux_pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_interactive_session_without_sender_reports_no_live_channel(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """A recorded pane still needs a configured live sender."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context={"tmux_pane": "%12"},
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+
+        result = await dispatcher.dispatch_live_wake("sess-1")
+
+        assert result["delivered"] is False
+        assert result["method"] == "tmux_pane"
+        assert result["error_code"] == "no_live_wake_channel"
+
+    @pytest.mark.asyncio
     async def test_unknown_session_logged_not_raised(
         self,
         session_manager: MagicMock,

@@ -44,6 +44,8 @@ class HookSessionManager(Protocol):
 
     def update_session_status(self, session_id: str, status: str) -> bool: ...
 
+    def revive_expired_terminal_session(self, session_id: str) -> Session | None: ...
+
     def register_session(
         self,
         external_id: str,

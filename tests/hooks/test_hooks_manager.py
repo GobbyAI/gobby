@@ -235,6 +235,41 @@ class TestHookManagerHandle:
         # Should fail open
         assert response.decision == "allow"
 
+    def test_non_session_end_hook_revives_expired_terminal_session(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        """Hook activity repairs false-expired terminal sessions before handling."""
+        manager = hook_manager_with_mocks
+        project_id = manager._resolve_project_id(None, str(temp_dir))
+        session = manager._session_manager.register(
+            external_id="codex-ext-1",
+            machine_id="test-machine-id",
+            source="codex",
+            project_id=project_id,
+            transcript_path=str(temp_dir / "codex.jsonl"),
+            terminal_context={"parent_pid": 99999},
+        )
+        manager._session_manager.update_status(session.id, "expired")
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="codex-ext-1",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir), "tool_name": "shell", "tool_input": {}},
+            machine_id="test-machine-id",
+            cwd=str(temp_dir),
+        )
+
+        response = manager.handle(event)
+
+        assert response.decision == "allow"
+        revived = manager._session_manager.get(session.id)
+        assert revived is not None
+        assert revived.status == "active"
+
 
 class TestHookManagerSessionStart:
     """Tests for session start handling."""

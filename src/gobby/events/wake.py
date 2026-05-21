@@ -121,45 +121,82 @@ class WakeDispatcher:
                 "delivered": False,
                 "method": None,
                 "error": "session_not_found",
+                "error_code": "session_not_found",
+                "error_message": f"Session {session_id} not found",
             }
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
         terminal_context = getattr(session, "terminal_context", None)
         session_type = getattr(session, "session_type", None)
+        status = getattr(session, "status", None)
+
+        if status == "expired":
+            return self._live_wake_failure(
+                session_id,
+                method=None,
+                error_code="session_expired",
+                error_message=f"Session {session_id} is expired",
+            )
 
         if session_type == "web_chat":
             return await self._dispatch_web_chat_wake(session_id)
 
         # Interactive session → try tmux pane wake after durable message storage.
         if agent_depth == 0:
-            if terminal_context and self._tmux_pane_sender:
-                tmux_pane = self._parse_tmux_pane(terminal_context)
-                if tmux_pane and self._should_send_pane_wake(session_id, session):
-                    tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
-                    try:
-                        await self._tmux_pane_sender(
-                            tmux_pane,
-                            CONTINUE_WAKE_SIGNAL,
-                            tmux_socket_path,
-                        )
-                        self._record_pane_wake(session_id, session)
-                        return {
-                            "session_id": session_id,
-                            "delivered": True,
-                            "method": "tmux_pane",
-                        }
-                    except Exception:
-                        logger.warning(
-                            f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
-                            exc_info=True,
-                        )
-                        return {
-                            "session_id": session_id,
-                            "delivered": False,
-                            "method": "tmux_pane",
-                            "error": "tmux_pane_wake_failed",
-                        }
-            return {"session_id": session_id, "delivered": False, "method": None}
+            if not terminal_context:
+                return self._live_wake_failure(
+                    session_id,
+                    method=None,
+                    error_code="no_live_wake_channel",
+                    error_message="Session has no terminal_context for live wake",
+                )
+            tmux_pane = self._parse_tmux_pane(terminal_context)
+            if not tmux_pane:
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="no_tmux_pane",
+                    error_message="Session terminal_context has no tmux_pane",
+                )
+            if not self._tmux_pane_sender:
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="no_live_wake_channel",
+                    error_message="No tmux pane sender is configured",
+                )
+            if not self._should_send_pane_wake(session_id, session):
+                return {
+                    "session_id": session_id,
+                    "delivered": False,
+                    "method": "tmux_pane",
+                    "skipped": "debounced",
+                }
+            tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+            try:
+                await self._tmux_pane_sender(
+                    tmux_pane,
+                    CONTINUE_WAKE_SIGNAL,
+                    tmux_socket_path,
+                )
+                self._record_pane_wake(session_id, session)
+                return {
+                    "session_id": session_id,
+                    "delivered": True,
+                    "method": "tmux_pane",
+                }
+            except Exception as exc:
+                detail = str(exc) or type(exc).__name__
+                logger.warning(
+                    f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
+                    exc_info=True,
+                )
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="tmux_pane_wake_failed",
+                    error_message=detail,
+                )
 
         # Terminal agent → try tmux, then SDK. Both are wake signals only.
         if terminal_context and self._tmux_sender:
@@ -199,9 +236,33 @@ class WakeDispatcher:
                         "delivered": False,
                         "method": "sdk",
                         "error": "sdk_resume_failed",
+                        "error_code": "sdk_resume_failed",
+                        "error_message": "SDK resume failed",
                     }
 
-        return {"session_id": session_id, "delivered": False, "method": None}
+        return self._live_wake_failure(
+            session_id,
+            method=None,
+            error_code="no_live_wake_channel",
+            error_message="No live wake channel is available for this session",
+        )
+
+    @staticmethod
+    def _live_wake_failure(
+        session_id: str,
+        *,
+        method: str | None,
+        error_code: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": method,
+            "error": error_code,
+            "error_code": error_code,
+            "error_message": error_message,
+        }
 
     async def _dispatch_web_chat_wake(self, session_id: str) -> dict[str, Any]:
         if self._web_chat_session_registry is None:

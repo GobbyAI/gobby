@@ -41,6 +41,7 @@ _DEFAULT_POLL_INTERVAL = 30.0
 @dataclass(frozen=True)
 class _TerminalLivenessRecord:
     session_id: str
+    source: str | None
     parent_pid: int | None
     tmux_pane: str | None
     tmux_socket_path: str | None
@@ -202,6 +203,14 @@ class SessionLivenessMonitor:
             if self._is_pid_alive(record.parent_pid):
                 continue
 
+            if self._is_weak_parent_pid_only_codex_record(record):
+                logger.debug(
+                    "Ignoring dead parent PID %s for Codex session %s with no tmux pane",
+                    record.parent_pid,
+                    record.session_id,
+                )
+                continue
+
             logger.info(
                 f"Detected dead parent PID {record.parent_pid} "
                 f"for session {record.session_id} - expiring",
@@ -221,7 +230,7 @@ class SessionLivenessMonitor:
         try:
             rows = self._session_manager.db.fetchall(
                 """
-                SELECT s.id, s.terminal_context
+                SELECT s.id, s.source, s.terminal_context
                 FROM sessions s
                 LEFT JOIN agent_runs ar ON ar.id = s.agent_run_id
                 WHERE s.status IN ('active', 'paused')
@@ -266,6 +275,7 @@ class SessionLivenessMonitor:
             result.append(
                 _TerminalLivenessRecord(
                     session_id=row["id"],
+                    source=self._row_value(row, "source"),
                     parent_pid=parent_pid,
                     tmux_pane=tmux_pane,
                     tmux_socket_path=tmux_socket_path,
@@ -285,6 +295,20 @@ class SessionLivenessMonitor:
             pid = int(value)
             return pid if pid > 0 else None
         return None
+
+    @staticmethod
+    def _row_value(row: Any, key: str) -> Any:
+        if isinstance(row, dict):
+            return row.get(key)
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    @staticmethod
+    def _is_weak_parent_pid_only_codex_record(record: _TerminalLivenessRecord) -> bool:
+        """Codex parent PID without tmux is not enough evidence to expire."""
+        return record.source == "codex" and record.tmux_pane is None
 
     @staticmethod
     def _is_pid_alive(pid: int) -> bool:

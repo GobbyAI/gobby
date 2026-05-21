@@ -254,6 +254,25 @@ class TestProcessSession:
         assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
+    async def test_process_session_revives_expired_terminal_on_new_lines(
+        self, mock_db, tmp_path
+    ) -> None:
+        """Transcript activity revives a false-expired terminal session."""
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text('{"type": "unknown"}\n')
+
+        processor.register_session("session-1", str(transcript))
+        mock_parser = MagicMock()
+        mock_parser.parse_lines = MagicMock(return_value=[])
+        processor._parsers["session-1"] = mock_parser
+
+        await processor._process_session("session-1", str(transcript))
+
+        session_manager.revive_expired_terminal_session.assert_called_once_with("session-1")
+
+    @pytest.mark.asyncio
     async def test_process_session_read_error(self, processor, tmp_path, caplog):
         """Should handle file read errors gracefully."""
         transcript = tmp_path / "transcript.jsonl"
