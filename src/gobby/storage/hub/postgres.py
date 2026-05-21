@@ -9,6 +9,7 @@ import re
 import threading
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Literal, cast
 
 import psycopg
@@ -690,6 +691,8 @@ def _normalize_row(row: Row | None) -> Row | None:
 
 
 def _normalize_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, dict | list):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return value

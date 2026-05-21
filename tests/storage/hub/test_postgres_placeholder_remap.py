@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from datetime import UTC, datetime
 
 import pytest
 
@@ -447,4 +448,23 @@ def test_postgres_cursor_normalizes_jsonb_values_to_sqlite_contract() -> None:
         "name": "profile",
         "skip_stages_json": '["merge","qa"]',
         "metadata_json": '{"a":1,"b":2}',
+    }
+
+
+def test_postgres_cursor_normalizes_datetime_values_to_sqlite_contract() -> None:
+    module = _postgres_module()
+    cursor = module._PostgresCursor(
+        _FakeResult(
+            [
+                {
+                    "id": "cron",
+                    "last_run_at": datetime(2026, 5, 21, 5, 30, tzinfo=UTC),
+                }
+            ]
+        )
+    )
+
+    assert cursor.fetchone() == {
+        "id": "cron",
+        "last_run_at": "2026-05-21T05:30:00+00:00",
     }
