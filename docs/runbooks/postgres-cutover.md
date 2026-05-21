@@ -157,8 +157,8 @@ cutover artifact. There is no generic yes flag and no `custom:` capture sink.
    gobby status
    gobby sessions list
    gobby tasks list
-   gobby memory search "foo"
-   gobby code search "bar"
+   gobby memory recall "foo"
+   gcode search "bar"
    ```
 
 5. Announce cutover complete and record the validation-window deadline from the
