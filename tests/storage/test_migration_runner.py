@@ -220,9 +220,10 @@ def test_bookkeeping_table_is_noop_for_postgres_schema_migrations_only() -> None
 
 
 def test_migration_runner_creates_schema_migrations_for_brand_new_sqlite(tmp_path) -> None:
-    sqlite_module = importlib.import_module("gobby.storage.hub.sqlite")
+    from gobby.storage.database import LocalDatabase
+
     migration_module = _migration_module()
-    db = sqlite_module.SqliteHubDatabase(str(tmp_path / "brand-new.db"))
+    db = LocalDatabase(tmp_path / "brand-new.db")
 
     try:
         migration_module.MigrationRunner(db).apply_pending()
