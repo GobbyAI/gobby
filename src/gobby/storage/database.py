@@ -229,7 +229,8 @@ class _ThreadConnectionLease:
 
 
 class LocalDatabase:
-    """SQLite database manager with connection pooling.
+    """
+    SQLite database manager with connection pooling.
 
     Thread-safe connection management using thread-local storage.
     """

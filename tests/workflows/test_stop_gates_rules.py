@@ -1282,6 +1282,49 @@ class TestClaimedTaskReconciliation:
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-review": "#11"}
 
+    def test_reconcile_repairs_lineage_claim_instead_of_pruning(self) -> None:
+        """A compact/continuation child keeps an active task owned by its parent."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = _make_task(
+            "uuid-anchor",
+            status="in_progress",
+            assignee="parent-sess",
+        )
+        session_manager = MagicMock()
+        session_manager.is_ancestor.side_effect = (
+            lambda ancestor, descendant: ancestor == "parent-sess" and descendant == "child-sess"
+        )
+        session_task_manager = MagicMock()
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-anchor": "#14853"},
+        }
+        reconcile_claimed_tasks(
+            variables,
+            "child-sess",
+            task_manager=task_manager,
+            session_manager=session_manager,
+            session_task_manager=session_task_manager,
+        )
+
+        assert variables["task_claimed"] is True
+        assert variables["claimed_tasks"] == {"uuid-anchor": "#14853"}
+        task_manager.claim_task.assert_called_once_with(
+            "uuid-anchor",
+            session_id="child-sess",
+            force=True,
+        )
+        session_task_manager.link_task.assert_called_once_with(
+            "child-sess",
+            "uuid-anchor",
+            "claimed",
+        )
+
     def test_reconcile_mixed_valid_and_stale(self) -> None:
         """Mix of valid and stale claims → only valid ones survive."""
         from unittest.mock import MagicMock
