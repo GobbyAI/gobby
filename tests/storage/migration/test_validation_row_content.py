@@ -60,6 +60,18 @@ class _PostgresRows:
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
+class _CatalogTarget:
+    def __init__(self) -> None:
+        self.params: object = None
+
+    def execute(self, sql: object, params: object = ()) -> _Result:
+        self.params = params
+        assert (
+            str(sql) == importlib.import_module("gobby.storage.migration.validation")._NOT_NULL_SQL
+        )
+        return _Result([])
+
+
 def test_validate_migration_detects_row_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     validation = importlib.import_module("gobby.storage.migration.validation")
     _allow_minimal_source_schema(monkeypatch, validation)
@@ -147,6 +159,19 @@ def test_validate_migration_rejects_source_with_schema_fingerprint_drift() -> No
 
     with pytest.raises(validation.MigrationValidationError, match="fingerprint"):
         validation.validate_migration(source, target)
+
+
+def test_not_null_catalog_exclusions_are_passed_as_one_array_parameter() -> None:
+    validation = importlib.import_module("gobby.storage.migration.validation")
+    target = _CatalogTarget()
+    checks: list[Any] = []
+
+    validation._check_not_null_constraints(target, checks)
+
+    assert isinstance(target.params, tuple)
+    assert len(target.params) == 1
+    assert "schema_migrations" in target.params[0]
+    assert checks[0].ok is True
 
 
 def _allow_minimal_source_schema(monkeypatch: pytest.MonkeyPatch, validation: Any) -> None:

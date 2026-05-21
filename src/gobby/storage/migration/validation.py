@@ -469,7 +469,7 @@ def _check_unique_constraints(target: _Executable, checks: list[ValidationCheckR
 
 def _check_not_null_constraints(target: _Executable, checks: list[ValidationCheckResult]) -> None:
     excluded = _POSTGRES_ONLY_TABLES | IGNORED_MIGRATION_TABLES
-    rows = _catalog_rows(target, _NOT_NULL_SQL, tuple(sorted(excluded)))
+    rows = _catalog_rows(target, _NOT_NULL_SQL, (sorted(excluded),))
     if rows is None:
         _record(checks, "not null", True, "NOT NULL constraints skipped: no catalog")
         return
