@@ -5,16 +5,82 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal, Protocol, cast
 
-from gobby.tasks.state_semantics import is_task_actively_claimed, projected_task_state
-
-if TYPE_CHECKING:
-    from gobby.agents.stall_classifier import StallClassifier
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager
-    from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.state_semantics import (
+    current_stage,
+    is_task_actively_claimed,
+    projected_task_state,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _AgentRun(Protocol):
+    id: str
+    task_id: str | None
+    child_session_id: str | None
+    claimed_session_id: str | None
+    provider: str
+    error: str | None
+
+
+class _AgentRunManager(Protocol):
+    def get(self, run_id: str) -> _AgentRun | None: ...
+
+
+class _StallClassifier(Protocol):
+    def is_provider_error(self, error_string: str | None) -> bool: ...
+
+
+class _Task(Protocol):
+    id: str
+    seq_num: int | None
+    dispatch_failure_count: int | None
+
+
+class _StageStates(Protocol):
+    def fail_stage(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        reason: str,
+        by_session_id: str | None,
+    ) -> Any: ...
+
+    def get(self, task_id: str, stage_name: str) -> Any | None: ...
+
+
+class _TaskManager(Protocol):
+    db: Any
+    stage_states: _StageStates
+
+    def list_tasks(
+        self,
+        *,
+        claimed_by_session_id: str | None = ...,
+        closed: bool | None = ...,
+    ) -> list[_Task]: ...
+
+    def get_task(self, task_id: str) -> _Task | None: ...
+
+    def release_task_claim(
+        self,
+        task_id: str,
+        *,
+        dispatch_failure_count: int | None = ...,
+        escalated_at: str | None = ...,
+        escalation_reason: str | None = ...,
+    ) -> _Task: ...
+
+
+def _stage_name(stage: Any) -> str | None:
+    if isinstance(stage, dict):
+        raw = stage.get("stage_name") or stage.get("name")
+    else:
+        raw = getattr(stage, "stage_name", None) or getattr(stage, "name", None)
+    return raw if isinstance(raw, str) and raw else None
 
 
 def get_task_failure_threshold() -> int:
@@ -34,9 +100,9 @@ class TaskRecoveryHandler:
 
     def __init__(
         self,
-        task_manager: LocalTaskManager | None,
-        agent_run_manager: LocalAgentRunManager,
-        stall_classifier: StallClassifier,
+        task_manager: Any | None,
+        agent_run_manager: _AgentRunManager,
+        stall_classifier: _StallClassifier,
         failure_threshold: int | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
@@ -45,7 +111,7 @@ class TaskRecoveryHandler:
         )
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be a positive integer")
-        self._task_manager = task_manager
+        self._task_manager = cast(_TaskManager | None, task_manager)
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
         self._failure_threshold = failure_threshold
@@ -56,7 +122,7 @@ class TaskRecoveryHandler:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
-    async def resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, Task] | None:
+    async def resolve_claimed_task_for_run(self, db_run: _AgentRun) -> tuple[str, _Task] | None:
         """Resolve the task still owned by this run, if any."""
         if not self._task_manager:
             return None
@@ -84,7 +150,7 @@ class TaskRecoveryHandler:
 
     async def recover_task_from_terminal_agent(
         self,
-        db_run: AgentRun,
+        db_run: _AgentRun,
         *,
         outcome: Literal["failed", "cancelled"],
     ) -> None:
@@ -140,11 +206,18 @@ class TaskRecoveryHandler:
                 )
                 return
 
+            await self._release_dispatch_mutex_for_run(db_run)
             failure_count = task.dispatch_failure_count or 0
             if not is_provider:
                 failure_count += 1
 
             if not is_provider and failure_count >= self._failure_threshold:
+                await self._fail_current_stage(
+                    task_id,
+                    task,
+                    reason="agent_run_failed",
+                    by_session_id=db_run.child_session_id or db_run.claimed_session_id,
+                )
                 await self._run_sqlite(
                     self._task_manager.release_task_claim,
                     task_id,
@@ -160,6 +233,12 @@ class TaskRecoveryHandler:
                 )
                 return
 
+            await self._fail_current_stage(
+                task_id,
+                task,
+                reason="provider_startup_failed" if is_provider else "agent_run_failed",
+                by_session_id=db_run.child_session_id or db_run.claimed_session_id,
+            )
             await self._run_sqlite(
                 self._task_manager.release_task_claim,
                 task_id,
@@ -174,7 +253,66 @@ class TaskRecoveryHandler:
         except Exception as e:
             logger.warning("Failed to recover task for agent %s: %s", db_run.id, e)
 
-    def _clear_claim_session_variables(self, db_run: AgentRun, task_id: str) -> None:
+    async def _fail_current_stage(
+        self,
+        task_id: str,
+        task: _Task,
+        *,
+        reason: str,
+        by_session_id: str | None,
+    ) -> None:
+        """Return the active in-progress stage to ready through the stage state machine."""
+        if not self._task_manager:
+            return
+        stage_name = _stage_name(current_stage(task))
+        if stage_name is None:
+            return
+        try:
+            await self._run_sqlite(
+                self._task_manager.stage_states.fail_stage,
+                task_id,
+                stage_name,
+                reason=reason,
+                by_session_id=by_session_id,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ != "IllegalStageTransitionError":
+                raise
+            fresh = await self._run_sqlite(
+                self._task_manager.stage_states.get,
+                task_id,
+                stage_name,
+            )
+            if fresh is None or getattr(fresh, "state", None) != "ready":
+                raise
+
+    async def _release_dispatch_mutex_for_run(self, db_run: _AgentRun) -> None:
+        if not self._task_manager:
+            return
+        db = getattr(self._task_manager, "db", None)
+        if db is None:
+            return
+        cleared = await self._run_sqlite(
+            self._clear_dispatch_mutex_by_run_id,
+            db,
+            db_run.id,
+        )
+        if cleared:
+            logger.info(
+                "Released dispatch mutex for failed agent %s before task recovery",
+                db_run.id,
+            )
+
+    @staticmethod
+    def _clear_dispatch_mutex_by_run_id(db: Any, run_id: str) -> int:
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM task_dispatch_mutex WHERE run_id = ?",
+                (run_id,),
+            )
+            return int(cursor.rowcount)
+
+    def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:
         """Remove recovered task from any agent-owned session claim variables."""
         if not self._task_manager:
             return
