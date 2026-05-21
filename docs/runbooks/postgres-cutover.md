@@ -1,10 +1,10 @@
 # PostgreSQL Cutover Runbook
 
-This runbook covers the cold cutover from SQLite to PostgreSQL, the mandatory
-pre-activation gates, and the validation-window capture needed before any
-rollback or deactivation. Once `gobby postgres activate` succeeds, PostgreSQL is
-the live write target. Writes made during the validation window are at risk on
-rollback and must be captured before deactivation.
+This runbook covers the cold import from legacy SQLite to PostgreSQL, the
+mandatory pre-activation gates, and the validation-window capture needed before
+any operator-managed recovery. Once `gobby postgres activate` succeeds,
+PostgreSQL is the only supported hub runtime. Writes made during the validation
+window are at risk during recovery and must be captured before any restore path.
 
 ## Post-Phase-5 Audit Reference
 
@@ -112,16 +112,17 @@ keyring entry and rewrites the file with mode `0600`; startup fails when
 `bootstrap.yaml` has broader permissions or the referenced keyring value is
 missing.
 
-During the validation-window rollback path, `gobby postgres deactivate` flips
-`hub_backend` back to `sqlite` and leaves the keyring-backed DSN available for a
-future retry. If the keyring entry was deleted, recreate it by rerunning the
-matching `gobby postgres install --mode ... --dsn ...` command while the daemon
-is stopped.
+`gobby postgres deactivate` is retained only as a compatibility command and
+exits before writing `hub_backend=sqlite`. Phase 7 startup rejects
+`hub_backend=sqlite`; keep `hub_backend=postgres` in `bootstrap.yaml`. If the
+keyring entry was deleted, recreate it by rerunning the matching
+`gobby postgres install --mode ... --dsn ...` command while the daemon is
+stopped.
 
 After the validation window closes, the steady-state PostgreSQL runtime still
-uses the same keyring reference. A later rollback requires a reverse migration
-from PostgreSQL to SQLite and a valid keyring entry until the reverse migration
-is complete; there is no supported plaintext bootstrap fallback.
+uses the same keyring reference. A later rollback requires product-supported
+reverse migration tooling and a valid keyring entry until that process is
+complete; there is no supported plaintext bootstrap fallback.
 
 ## Validation Capture
 
@@ -207,7 +208,7 @@ During the validation window, monitor and record:
 
 ## Export Audit Window
 
-Before rollback or deactivation, export PostgreSQL-side writes made during the
+Before recovery, export PostgreSQL-side writes made during the
 validation window. Use `activated_at`, `deadline_at`, `capture_kind`, and
 `capture_value` from the cutover artifact.
 

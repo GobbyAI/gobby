@@ -1,15 +1,21 @@
 # PostgreSQL Rollback Runbook
 
-Use this runbook only during the post-cutover validation window. Roll back when
+Use this runbook only during the post-cutover validation window. Trigger it when
 any validation-window regression cannot be fixed forward within 2 hours, or when
 any data corruption is detected.
 
-Writes made to PostgreSQL during the validation window are at risk on rollback
-and are not merged back into SQLite automatically. The export step below
-preserves evidence for forensic analysis and possible later partial-merge work;
-it does not recover the writes into SQLite.
+Phase 7 does not support restarting Gobby against the legacy SQLite hub runtime.
+`gobby postgres deactivate` is retained only as a compatibility command and
+exits before writing `hub_backend=sqlite`. This runbook captures PostgreSQL-side
+writes before a fix-forward or operator-managed restore path; it does not switch
+the current runtime back to SQLite.
 
-## Before Deactivation
+Writes made to PostgreSQL during the validation window are at risk during
+recovery and are not merged back into a legacy SQLite backup automatically. The
+export step below preserves evidence for forensic analysis and possible later
+partial-merge work; it does not recover the writes into SQLite.
+
+## Before Recovery
 
 1. Stop the daemon:
 
@@ -55,7 +61,7 @@ Select exactly one export path from `capture_kind`.
 ### `capture_kind="pgaudit-managed"`
 
 Docker mode stores the pgAudit append-only log inside Gobby's PostgreSQL
-container. Export the audit lines for the validation window before deactivation:
+container. Export the audit lines for the validation window before recovery:
 
 ```bash
 docker exec gobby-postgres /usr/local/bin/pg_audit_export.sh \
@@ -138,32 +144,34 @@ psql "$DATABASE_URL" \
   > "$artifact_dir/tasks-updated-during-window.csv"
 ```
 
-The operator is expected to rely on the pre-cutover SQLite backup for recovery.
+The operator is expected to rely on the pre-cutover SQLite backup only for an
+operator-managed legacy restore path outside the current Phase 7 runtime.
 The rollback ticket must include the acknowledgement block so the audit chain is
 intact.
 
-## Deactivate PostgreSQL
+## Recovery After Export
 
-1. After the export artifact exists, flip the runtime backend back to SQLite:
-
-   ```bash
-   gobby postgres deactivate
-   ```
-
-   `deactivate` updates `hub_backend=sqlite` and writes a bootstrap backup. The
-   pre-cutover SQLite database is untouched, so no restore is needed when the
-   rollback occurs inside the validation window. The PostgreSQL DSN remains in
-   the OS keyring as `keyring:gobby:postgres_database_url`; leave
-   `bootstrap.yaml` as a keyring reference and do not add a plaintext
+1. Keep the current bootstrap on PostgreSQL. Do not run
+   `gobby postgres deactivate`; if invoked, the command exits with an error and
+   does not write `hub_backend=sqlite`. Phase 7 startup rejects
+   `hub_backend=sqlite`; leave `bootstrap.yaml` using the PostgreSQL keyring
+   reference (`keyring:gobby:postgres_database_url`) and do not add a plaintext
    `database_url`.
 
-2. Start the daemon:
+2. Choose the recovery path:
+
+   - Preferred: fix forward against the PostgreSQL hub, then restart the daemon.
+   - If a rollback is unavoidable: use the exported artifacts and the
+     pre-cutover SQLite backup only in an operator-managed restore path outside
+     the current Phase 7 runtime.
+
+3. Start the daemon after the selected recovery path is in place:
 
    ```bash
    gobby start
    ```
 
-3. Run smoke checks against the restored SQLite runtime:
+4. Run smoke checks against the recovered environment:
 
    ```bash
    gobby status
@@ -173,24 +181,24 @@ intact.
    gcode search "bar"
    ```
 
-4. Attach the complete artifact directory to the rollback or post-mortem task:
+5. Attach the complete artifact directory to the rollback or post-mortem task:
 
    ```text
    cutover-ticket.json
    validation-window-pgaudit.log, WAL archive export, or no-rollback acknowledgement
    targeted pg_dump / SQL / CSV forensic exports
-   bootstrap backup path printed by gobby postgres deactivate
+   recovery path selected after export
    smoke-check results after restart
    ```
 
-5. File a task to re-migrate after the blocking regression or corruption cause
-   is fixed.
+6. File a task to repair the blocking regression or corruption cause and re-run
+   import/cutover if an operator-managed legacy restore path was used.
 
 ## After the Validation Window
 
 This rollback path is only for the validation window. If the window closes
-without rollback, a later rollback requires a reverse migration from PostgreSQL
-to SQLite. The keyring-backed DSN remains required until that reverse migration
-is complete; deleting the keyring entry or writing a plaintext fallback to
-`bootstrap.yaml` is not a supported steady-state rollback path. That reverse
-migration is out of scope for this runbook.
+without recovery, a later rollback requires product-supported reverse migration
+tooling. The keyring-backed DSN remains required until that process is complete;
+deleting the keyring entry or writing a plaintext fallback to `bootstrap.yaml`
+is not a supported steady-state rollback path. That reverse migration is out of
+scope for this runbook.

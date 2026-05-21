@@ -218,21 +218,23 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
         _restore_bootstrap(backup_path)
         raise
 
-    click.echo("hub_backend set to postgres. To roll back:")
-    click.echo("  gobby stop && gobby postgres deactivate && gobby start")
+    click.echo("hub_backend set to postgres.")
+    click.echo("PostgreSQL is now the required hub runtime.")
+    click.echo("For validation-window recovery guidance:")
+    click.echo("  docs/runbooks/postgres-rollback.md")
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
 
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
-    """Deactivate PostgreSQL and return the hub runtime backend to SQLite."""
-    if _daemon_running():
-        raise click.ClickException("Stop the daemon first: gobby stop")
-    backup_path = _backup_bootstrap()
-    _set_bootstrap_field("hub_backend", "sqlite")
-    click.echo("hub_backend set to sqlite.")
-    click.echo(f"Bootstrap backup: {backup_path}")
+    """Deprecated compatibility command for the removed SQLite hub runtime."""
+    raise click.ClickException(
+        "PostgreSQL is the only supported hub runtime. "
+        "`gobby postgres deactivate` no longer writes hub_backend=sqlite. "
+        "Use `gobby postgres migrate-from-sqlite` only for legacy imports, "
+        "and follow docs/runbooks/postgres-rollback.md for recovery exports."
+    )
 
 
 def _render_install_result(result: dict[str, Any]) -> None:
