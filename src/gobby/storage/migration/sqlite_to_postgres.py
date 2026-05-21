@@ -191,19 +191,21 @@ def _copy_validate_and_mark(
     reset_seeded_tables: bool,
     emit: Callable[[str], None],
 ) -> tuple[_CopyResult, Path | None]:
-    _assert_target_ready_for_import(source, target, emit=emit)
-    _fail_if_import_complete_marker(target)
-    if reset_seeded_tables:
-        _reset_seed_bearing_tables(target)
-    _drop_bm25_indexes(target)
-    copy_result = _copy_sqlite_rows_to_postgres(source, target, batch_size, log_path)
-    _recreate_bm25_indexes(target)
-    reseed_identity_sequences(target)
-    try:
-        report = validate_migration(source, cast(Any, target), emit=emit)
-    except MigrationValidationError as exc:
-        raise SqliteToPostgresMigrationError(str(exc)) from exc
-    _write_import_complete_marker(target)
+    with target.transaction():
+        _acquire_import_lock(target)
+        _assert_target_ready_for_import(source, target, emit=emit)
+        _fail_if_import_complete_marker(target)
+        if reset_seeded_tables:
+            _reset_seed_bearing_tables(target)
+        _drop_bm25_indexes(target)
+        copy_result = _copy_sqlite_rows_to_postgres(source, target, batch_size, log_path)
+        _recreate_bm25_indexes(target)
+        reseed_identity_sequences(target)
+        try:
+            report = validate_migration(source, cast(Any, target), emit=emit)
+        except MigrationValidationError as exc:
+            raise SqliteToPostgresMigrationError(str(exc)) from exc
+        _write_import_complete_marker(target)
     return copy_result, report.artifact_path
 
 
