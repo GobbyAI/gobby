@@ -215,7 +215,7 @@ class TaskSyncManager:
 
     def import_from_jsonl(self, project_id: str | None = None) -> None:
         """
-        Import tasks from JSONL file into SQLite.
+        Import tasks from JSONL file into the hub database.
         Uses Last-Write-Wins conflict resolution based on updated_at.
 
         Args:
@@ -329,7 +329,7 @@ class TaskSyncManager:
                         if should_update:
                             state = data.get("state") or {}
 
-                            # Handle commits array (stored as JSON in SQLite)
+                            # Handle commits array stored as JSON in the hub.
                             commits_json = (
                                 json.dumps(data["commits"]) if data.get("commits") else None
                             )
@@ -342,7 +342,7 @@ class TaskSyncManager:
                             validation_criteria = validation.get("criteria")
                             validation_override_reason = validation.get("override_reason")
 
-                            # Handle labels (stored as JSON in SQLite)
+                            # Handle labels stored as JSON in the hub.
                             labels_raw = data.get("labels")
                             labels_json = json.dumps(labels_raw) if labels_raw else None
 

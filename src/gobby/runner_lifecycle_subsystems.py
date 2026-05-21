@@ -165,21 +165,21 @@ async def _initialize_vector_store(
         )
         qdrant_count = await runner.vector_store.count()
         if qdrant_count == 0 and runner.memory_manager:
-            sqlite_memories = runner.memory_manager.storage.list_memories(limit=10000)
-            if sqlite_memories:
+            hub_memories = runner.memory_manager.storage.list_memories(limit=10000)
+            if hub_memories:
                 embed_fn = runner.memory_manager.embed_fn
                 if embed_fn:
                     logger.info(
                         f"Qdrant empty, scheduling background rebuild from "
-                        f"{len(sqlite_memories)} SQLite memories..."
+                        f"{len(hub_memories)} hub memories..."
                     )
-                    memory_dicts = [{"id": m.id, "content": m.content} for m in sqlite_memories]
+                    memory_dicts = [{"id": m.id, "content": m.content} for m in hub_memories]
                     runner._vector_rebuild_task = asyncio.create_task(
                         rebuild_vector_store(runner.vector_store, memory_dicts, embed_fn),
                         name="vector-store-rebuild",
                     )
                     if tracker:
-                        tracker.schedule(f"Vector store rebuild ({len(sqlite_memories)} memories)")
+                        tracker.schedule(f"Vector store rebuild ({len(hub_memories)} memories)")
                 else:
                     logger.warning("No embed_fn configured, skipping VectorStore rebuild")
         if tracker:
