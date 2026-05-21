@@ -11,6 +11,7 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.agents.constants import UV_CACHE_DIR
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
@@ -90,6 +91,22 @@ def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     tmux_config = getattr(daemon_config, "tmux", None)
 
     return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
+
+
+def _sandbox_config_for_spawn(
+    sandbox_config: SandboxConfig | None,
+    env_vars: dict[str, str],
+) -> SandboxConfig | None:
+    """Include the spawned agent's uv cache in sandbox writable paths."""
+    if sandbox_config is None:
+        return None
+
+    uv_cache_dir = env_vars.get(UV_CACHE_DIR)
+    if not uv_cache_dir or uv_cache_dir in sandbox_config.extra_write_paths:
+        return sandbox_config
+
+    extra_write_paths = [*sandbox_config.extra_write_paths, uv_cache_dir]
+    return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
 
 
 @dataclass
@@ -228,18 +245,19 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     # Resolve sandbox config if provided
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         # Claude uses its own sandbox resolver
         from gobby.agents.sandbox import ClaudeSandboxResolver
 
         resolver = ClaudeSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         cmd.extend(sandbox_args)
 
     # Merge env vars: spawn context + sandbox
@@ -337,15 +355,16 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         resolver = GeminiSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
 
     # Build command for fresh Gemini session (not resume)
     # Session context is injected via additionalContext at SessionStart by the daemon.
@@ -452,15 +471,16 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         resolver = QwenSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
 
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
@@ -561,14 +581,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         resolver = CodexSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, _ = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, _ = resolver.resolve(sandbox_config, paths)
 
     cmd, _cmd_env = build_cli_command(
         cli="codex",
