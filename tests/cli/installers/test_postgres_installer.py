@@ -130,6 +130,26 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "docker" in payload_text
 
 
+def test_postgres_install_refreshes_stale_unified_compose(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    services_dir = tmp_path / "services"
+    services_dir.mkdir()
+    compose_file = services_dir / "docker-compose.yml"
+    compose_file.write_text("services:\n  qdrant: {}\n", encoding="utf-8")
+    bundled_compose = tmp_path / "bundled-compose.yml"
+    bundled_compose.write_text("services:\n  postgres: {}\n", encoding="utf-8")
+    monkeypatch.setattr(installer, "_COMPOSE_SRC", bundled_compose)
+
+    result = installer._ensure_unified_compose(services_dir)
+
+    assert result == compose_file
+    assert "postgres" in compose_file.read_text(encoding="utf-8")
+    assert "qdrant" not in compose_file.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("platform_info", "runbook"),
     [

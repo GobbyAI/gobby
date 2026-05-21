@@ -341,9 +341,8 @@ def _uninstall_native(*, gobby_home: Path | None, remove_data: bool) -> dict[str
 
 def _ensure_unified_compose(services_dir: Path) -> Path:
     dest = services_dir / "docker-compose.yml"
-    if not dest.exists():
-        services_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_COMPOSE_SRC, dest)
+    services_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_COMPOSE_SRC, dest)
     return dest
 
 
