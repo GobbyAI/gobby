@@ -89,7 +89,7 @@ def uninstall_postgres(
         return {
             "success": True,
             "mode": "external",
-            "message": "External PostgreSQL bootstrap fields cleared; server left untouched.",
+            "message": "External PostgreSQL service cleanup completed; server left untouched.",
         }
     raise click.ClickException(f"Unknown install mode: {mode}")
 

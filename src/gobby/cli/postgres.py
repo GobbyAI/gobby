@@ -99,11 +99,12 @@ def status_cmd(as_json: bool) -> None:
     help=(
         "Docker mode: also delete the gobby_postgres_data and gobby_pgaudit_log "
         "named volumes. Native mode: print manual data-directory deletion steps. "
-        "External mode: refuses; Gobby never deletes server-side data."
+        "External mode: refuses; Gobby never deletes server-side data. "
+        "Does not restore the removed SQLite hub runtime."
     ),
 )
 def uninstall_cmd(remove_data: bool) -> None:
-    """Uninstall PostgreSQL using the recorded install mode."""
+    """Clean up PostgreSQL service artifacts using the recorded install mode."""
     result = uninstall_postgres(mode=_active_install_mode(), remove_data=remove_data)
     _render_uninstall_result(result)
 
@@ -259,7 +260,7 @@ def _render_install_result(result: dict[str, Any]) -> None:
 
 def _render_uninstall_result(result: dict[str, Any]) -> None:
     if result.get("success"):
-        click.echo(result.get("message", "PostgreSQL uninstalled"))
+        click.echo(result.get("message", "PostgreSQL service cleanup completed"))
         if result.get("data_removed"):
             click.echo("  Docker data volumes removed")
         for step in result.get("manual_steps", []):
