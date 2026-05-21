@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -49,7 +48,7 @@ class StageStateManifestOps:
         holder = by_session_id or "system"
         snapshot = self.rows.current_stage(task_id)
         with self.mutexes.mutex(task_id, holder, "initialize_manifest", expected_stage=snapshot):
-            existing = cast(list[StageState], self.rows.list_for_task(task_id))
+            existing = self.rows.list_for_task(task_id)
             if existing:
                 if [
                     (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds)
@@ -119,7 +118,7 @@ class StageStateManifestOps:
                     "initialize_manifest",
                     by_actor=holder,
                 )
-            return cast(list[StageState], self.rows.list_for_task(task_id))
+            return self.rows.list_for_task(task_id)
 
     def _update_stage_caps(
         self,
@@ -145,7 +144,7 @@ class StageStateManifestOps:
                         spec.stage_name,
                     ),
                 )
-        return cast(list[StageState], self.rows.list_for_task(task_id))
+        return self.rows.list_for_task(task_id)
 
     def _can_insert_future_stages(
         self,
@@ -243,7 +242,7 @@ class StageStateManifestOps:
                 "initialize_manifest",
                 by_actor=holder,
             )
-        return cast(list[StageState], self.rows.list_for_task(task_id))
+        return self.rows.list_for_task(task_id)
 
     def add_stage(
         self,

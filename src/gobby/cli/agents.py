@@ -20,20 +20,20 @@ import httpx
 
 from gobby.cli.utils import resolve_session_id
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
 def get_agent_run_manager() -> LocalAgentRunManager:
     """Get initialized agent run manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalAgentRunManager(db)
 
 
 def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
     """Get initialized workflow definition manager for agent definitions."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -114,7 +114,7 @@ def resolve_agent_run_id(run_ref: str) -> str:
         return run_ref
 
     # Try prefix match
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     rows = db.fetchall(
         "SELECT id FROM agent_runs WHERE id LIKE ? LIMIT 5",
         (f"{run_ref}%",),
@@ -744,8 +744,6 @@ def check_agent(
 @click.option("--session", "-s", "session_id", help="Filter by parent session ID")
 def agent_stats(session_id: str | None) -> None:
     """Show agent run statistics."""
-    db = LocalDatabase()
-
     if session_id:
         try:
             session_id = resolve_session_id(session_id)
@@ -758,6 +756,7 @@ def agent_stats(session_id: str | None) -> None:
         click.echo(f"Agent Statistics for session {session_id[:12]}:")
         click.echo(f"  Total Runs: {total}")
     else:
+        db = open_runtime_hub_database(apply_migrations=False)
         # Global stats
         row = db.fetchone(
             """
@@ -799,7 +798,7 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
 
     if dry_run:
         # Show what would be cleaned up
-        db = LocalDatabase()
+        db = open_runtime_hub_database(apply_migrations=False)
         stale_running = db.fetchall(
             """
             SELECT * FROM agent_runs

@@ -16,11 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from .bootstrap_io import bootstrap_path as default_bootstrap_path
 from .bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 
 logger = logging.getLogger(__name__)
 
-# Default bootstrap file location
+# Default bootstrap file location. Kept as a string for compatibility with callers
+# that import the constant; load_bootstrap() resolves GOBBY_HOME dynamically.
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
 POSTGRES_DATABASE_URL_KEYRING_SERVICE = "gobby"
 POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
@@ -83,10 +85,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
     Returns:
         BootstrapConfig with values from file or defaults.
     """
-    if path is None:
-        path = DEFAULT_BOOTSTRAP_PATH
-
-    bootstrap_path = Path(path).expanduser()
+    bootstrap_path = default_bootstrap_path() if path is None else Path(path).expanduser()
 
     # If caller passed a non-bootstrap path (e.g. legacy config.yaml path),
     # try bootstrap.yaml in the same directory first.

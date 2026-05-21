@@ -8,15 +8,18 @@ import signal
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import psutil
 
 from gobby.config.app import DaemonConfig, UIConfig, load_config
-from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 _UI_LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -24,11 +27,11 @@ _UI_LOG_BACKUP_COUNT = 3
 
 
 def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
-    """Load full DaemonConfig from DB config_store + Pydantic defaults.
+    """Load full DaemonConfig from the active hub config_store.
 
-    Opens the database directly (using bootstrap.yaml for db_path),
-    creates a ConfigStore, and calls load_config with it. Use this
-    when CLI commands need the full config without a running daemon.
+    Opens the PostgreSQL runtime hub, creates a ConfigStore, and calls
+    load_config with it. Use this when CLI commands need the full config
+    without a running daemon.
 
     Args:
         config_file: Optional path to a YAML config file. When provided, its
@@ -39,25 +42,30 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
         Fully resolved DaemonConfig (DB > config file > bootstrap > defaults).
     """
     from gobby.storage.config_store import ConfigStore
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
 
-    bootstrap_config = load_config(config_file)
-    db_path = Path(bootstrap_config.database_path).expanduser()
+    try:
+        bootstrap_config = load_config(config_file)
+    except Exception as exc:
+        logger.warning("Failed to load bootstrap config: %s", exc)
+        return DaemonConfig()
 
-    if not db_path.exists():
+    if bootstrap_config.hub_backend != "postgres" or not bootstrap_config.database_url:
         return bootstrap_config
 
-    db = LocalDatabase(db_path)
     try:
-        config_store = ConfigStore(db)
-        secret_store = SecretStore(db)
-        return load_config(
-            config_file=config_file,
-            config_store=config_store,
-            secret_resolver=secret_store.get,
-        )
-    finally:
-        db.close()
+        with runtime_hub_database(config_file) as db:
+            config_store = ConfigStore(db)
+            secret_store = SecretStore(db)
+            return load_config(
+                config_file=config_file,
+                config_store=config_store,
+                secret_resolver=secret_store.get,
+            )
+    except Exception as exc:
+        logger.warning("Failed to load config from PostgreSQL hub: %s", exc)
+        return bootstrap_config
 
 
 def get_gobby_home() -> Path:
@@ -118,7 +126,9 @@ def resolve_project_ref(project_ref: str | None, exit_on_not_found: bool = True)
         ctx = get_project_context(cwd=Path.cwd())
         return ctx.get("id") if ctx else None
 
-    db = LocalDatabase()
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
         manager = LocalProjectManager(db)
 
@@ -140,11 +150,13 @@ def resolve_project_ref(project_ref: str | None, exit_on_not_found: bool = True)
     return None
 
 
-def get_active_session_id(db: LocalDatabase | None = None) -> str | None:
+def get_active_session_id(db: "HubDatabase | None" = None) -> str | None:
     """Get the most recent active session ID."""
     close_db = False
     if db is None:
-        db = LocalDatabase()
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        db = open_runtime_hub_database(apply_migrations=False)
         close_db = True
 
     try:
@@ -178,7 +190,9 @@ def resolve_session_id(session_ref: str | None, project_id: str | None = None) -
     Raises:
         click.ClickException: If session not found or ambiguous
     """
-    db = LocalDatabase()
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
         # If no reference provided, try to find active session
         if not session_ref:
@@ -204,7 +218,9 @@ def resolve_session_id(session_ref: str | None, project_id: str | None = None) -
 
 def list_project_names() -> list[str]:
     """List all project names for shell completion."""
-    db = LocalDatabase()
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
         manager = LocalProjectManager(db)
         return [p.name for p in manager.list()]
@@ -427,24 +443,16 @@ def kill_all_gobby_daemons() -> int:
     return killed_count
 
 
-def init_local_storage() -> "LocalDatabase":
-    """Initialize hub SQLite storage and run migrations.
+def init_local_storage() -> "HubDatabase":
+    """Initialize the active PostgreSQL hub storage.
 
     Returns:
-        The initialized database instance.
+        The initialized database instance. The caller owns the returned handle.
     """
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
-    config = load_config()
-    hub_db_path = Path(config.database_path).expanduser()
-
-    # Ensure hub db directory exists
-    hub_db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    hub_db = LocalDatabase(hub_db_path)
-    run_migrations(hub_db)
-    logger.debug(f"Database: {hub_db_path}")
+    hub_db = open_runtime_hub_database()
+    logger.debug("Database: PostgreSQL hub")
     return hub_db
 
 

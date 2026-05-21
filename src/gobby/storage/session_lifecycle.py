@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.sql_dialect import is_postgres, older_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
     return tuple(guards)
 
 
-def _table_column_rows(db: HubDatabase, table_name: str) -> list[dict[str, object]]:
+def _table_column_rows(db: HubDatabase, table_name: str) -> list[Row]:
     if is_postgres(db):
         return db.fetchall(
             """

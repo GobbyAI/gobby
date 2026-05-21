@@ -43,7 +43,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
 )
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._artifacts import (
     TaskArtifactManager,
     TaskArtifacts,
@@ -135,7 +135,12 @@ async def run_heartbeat(
         logger.info("Dispatcher heartbeat skipped: %s", readiness_reason)
         return _unavailable(HeartbeatResult(), readiness_reason)
 
-    resolved_db = db or LocalDatabase()
+    if db is None:
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        resolved_db = open_runtime_hub_database(apply_migrations=False)
+    else:
+        resolved_db = db
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         sweep_expired_leases(mutex_storage)

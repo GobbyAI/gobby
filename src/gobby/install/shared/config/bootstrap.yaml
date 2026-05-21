@@ -1,6 +1,8 @@
 # Gobby bootstrap — settings needed before the database is available.
 # All other configuration is managed via the web UI or gobby-config MCP tools.
-database_path: "~/.gobby/gobby-hub.db"
+hub_backend: "postgres"
+database_url_ref: "keyring:gobby:postgres_database_url"
+postgres_install_mode: "docker"
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888

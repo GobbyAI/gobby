@@ -106,7 +106,7 @@ def test_write_postgres_defaults_stores_database_url_ref(
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     persisted = yaml.safe_load(bootstrap_file.read_text())
-    assert persisted["hub_backend"] == "sqlite"
+    assert persisted["hub_backend"] == "postgres"
     assert "database_url" not in persisted
     assert persisted["database_url_ref"] == DATABASE_URL_REF
     assert persisted["postgres_install_mode"] == "docker"

@@ -30,7 +30,7 @@ VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
     """Delete all workflow definitions and reinstall from bundled templates."""
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
     type_label = workflow_type or "all"
     if not force:
@@ -39,7 +39,7 @@ def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
             abort=True,
         )
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
 
     # 1. Hard-delete existing rows
     with db.transaction() as conn:

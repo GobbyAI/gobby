@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,35 +9,32 @@ from gobby.cli.auth import auth
 
 @pytest.fixture
 def mock_stores():
+    @contextmanager
+    def fake_hub():
+        yield MagicMock()
+
     with (
-        patch("gobby.cli.auth.get_gobby_home") as mock_home,
-        patch("gobby.cli.auth.LocalDatabase"),
+        patch("gobby.cli.auth.runtime_hub_database", return_value=fake_hub()),
         patch("gobby.cli.auth.ConfigStore") as mock_config,
         patch("gobby.cli.auth.SecretStore") as mock_secret,
     ):
-        mock_home_path = MagicMock()
-        mock_final_path = MagicMock()
-        mock_final_path.exists.return_value = True
-        mock_home_path.__truediv__.return_value = mock_final_path
-        mock_home.return_value = mock_home_path
-
         config_inst = mock_config.return_value
         secret_inst = mock_secret.return_value
 
-        yield config_inst, secret_inst, mock_final_path
+        yield config_inst, secret_inst
 
 
 def test_auth_no_db(mock_stores):
-    config, secret, path = mock_stores
-    path.exists.return_value = False
+    config, secret = mock_stores
     runner = CliRunner()
-    result = runner.invoke(auth, [])
+    with patch("gobby.cli.auth.runtime_hub_database", side_effect=RuntimeError("hub missing")):
+        result = runner.invoke(auth, [])
     assert result.exit_code == 1
-    assert "Error: Gobby database not found" in result.output
+    assert "hub missing" in result.output
 
 
 def test_auth_remove_not_configured(mock_stores):
-    config, secret, path = mock_stores
+    config, secret = mock_stores
     config.get.return_value = None
     runner = CliRunner()
     result = runner.invoke(auth, ["--remove"])
@@ -45,7 +43,7 @@ def test_auth_remove_not_configured(mock_stores):
 
 
 def test_auth_remove_configured(mock_stores):
-    config, secret, path = mock_stores
+    config, secret = mock_stores
     config.get.return_value = "admin"
     runner = CliRunner()
     result = runner.invoke(auth, ["--remove"])
@@ -56,7 +54,7 @@ def test_auth_remove_configured(mock_stores):
 
 
 def test_auth_setup_new(mock_stores):
-    config, secret, path = mock_stores
+    config, secret = mock_stores
     config.get.return_value = None
     runner = CliRunner()
     # Provide username, password, confirm password
@@ -68,7 +66,7 @@ def test_auth_setup_new(mock_stores):
 
 
 def test_auth_reset_password(mock_stores):
-    config, secret, path = mock_stores
+    config, secret = mock_stores
     config.get.return_value = "admin"
     runner = CliRunner()
     # Provide password, confirm password

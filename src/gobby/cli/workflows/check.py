@@ -129,9 +129,10 @@ def audit_workflow(
     json_format: bool,
 ) -> None:
     """View workflow audit log (explainability/debugging)."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
-    audit_manager = WorkflowAuditManager()
+    audit_manager = WorkflowAuditManager(open_runtime_hub_database(apply_migrations=False))
 
     session_id = common.resolve_session_id(session_id)
 

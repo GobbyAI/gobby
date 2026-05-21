@@ -16,12 +16,12 @@ import click
 import httpx
 
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 
 
 def get_clone_manager() -> LocalCloneManager:
     """Get initialized clone manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalCloneManager(db)
 
 

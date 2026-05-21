@@ -40,7 +40,7 @@ __all__ = (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def _ensure_db_and_secrets(
-    db: LocalDatabase | None,
+    db: HubDatabase | None,
     secret_store: SecretStore | None,
-) -> Generator[tuple[LocalDatabase, SecretStore]]:
+) -> Generator[tuple[HubDatabase, SecretStore]]:
     """Yield (db, secret_store), opening the DB only when this call created it.
 
     When the caller passes a pre-built ``db`` we use it as-is and do NOT close
@@ -63,20 +63,15 @@ def _ensure_db_and_secrets(
     ``gobby.cli`` package, mirroring the pattern used by the original
     in-function bootstrap blocks.
     """
-    from gobby.cli.utils import load_full_config_from_db
-    from gobby.storage.database import LocalDatabase as _LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.secrets import SecretStore as _SecretStore
 
     owns_db = False
-    local_db: LocalDatabase | None = db
+    local_db: HubDatabase | None = db
     local_store: SecretStore | None = secret_store
     try:
         if local_db is None:
-            config = load_full_config_from_db()
-            # LocalDatabase() defaults to ~/.gobby/gobby-hub.db and would
-            # silently bypass a custom database_path — use the resolved path
-            # explicitly.
-            local_db = _LocalDatabase(Path(config.database_path).expanduser())
+            local_db = open_runtime_hub_database(apply_migrations=False)
             owns_db = True
         if local_store is None:
             local_store = _SecretStore(local_db)
@@ -180,7 +175,7 @@ _API_KEY_PROMPTS = [
 def _prompt_hub_api_keys(
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> dict[str, Any]:
     """Prompt for skill-hub API keys driven by resolved SkillsConfig.hubs.
@@ -289,7 +284,7 @@ def _prompt_hub_api_keys(
 def _prompt_api_keys(
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> dict[str, Any]:
     """Prompt for API keys and store them in the secret store.
@@ -478,7 +473,7 @@ def _run_voice_install(
     voice_flag: bool = False,
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> None:
     """Interactive voice chat setup.
@@ -620,7 +615,7 @@ def _echo_install_summary(
     results: dict[str, dict[str, Any]],
     no_interactive_flag: bool,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> bool:
     """Print install summary, next steps, and API key prompts. Returns True if all succeeded."""

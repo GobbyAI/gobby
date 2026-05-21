@@ -882,7 +882,7 @@ class TestSkillsHub:
         )
         assert result.exit_code == 1
 
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.cli.skills.open_runtime_hub_database")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.cli.utils.load_full_config_from_db")
     def test_hub_add_success(
@@ -892,7 +892,6 @@ class TestSkillsHub:
         mock_db_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        mock_config.return_value.database_path = "/tmp/test.db"
         mock_store_cls.return_value.get.return_value = None
         result = runner.invoke(
             skills,
@@ -903,7 +902,7 @@ class TestSkillsHub:
         assert result.exit_code == 0
         assert "Added hub" in result.output
 
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.cli.skills.open_runtime_hub_database")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.cli.utils.load_full_config_from_db")
     def test_hub_add_already_exists(
@@ -913,7 +912,6 @@ class TestSkillsHub:
         mock_db_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        mock_config.return_value.database_path = "/tmp/test.db"
         mock_store_cls.return_value.get.return_value = "skillsmp"
         result = runner.invoke(
             skills,

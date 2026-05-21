@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.agents import LocalAgentRunManager
@@ -125,9 +125,9 @@ def reset_current_non_ready_stage(
 def get_effective_claim_owner(task: Task, db: HubDatabase) -> str | None:
     """Return the canonical owning session for a task during the migration."""
     if task.claimed_by_session_id:
-        return cast("str", task.claimed_by_session_id)
+        return task.claimed_by_session_id
     if task.assignee and _session_exists(db, task.assignee):
-        return cast("str", task.assignee)
+        return task.assignee
     return None
 
 

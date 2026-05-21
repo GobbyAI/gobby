@@ -34,7 +34,6 @@ def mock_manager() -> Generator[MagicMock]:
 
 def test_memory_package_exports_compatibility_symbols() -> None:
     from gobby.cli.memory import (
-        LocalDatabase,
         MemoryManager,
         __all__,
         _get_daemon_client,
@@ -49,7 +48,6 @@ def test_memory_package_exports_compatibility_symbols() -> None:
     assert callable(_get_daemon_client)
     assert callable(resolve_memory_id)
     assert callable(resolve_project_ref)
-    assert LocalDatabase is not None
     assert MemoryManager is not None
     assert "_get_daemon_client" not in __all__
     assert "time" not in __all__
@@ -69,10 +67,11 @@ class TestGetMemoryManager:
         mock_ctx.obj = {"config": mock_config}
 
         with (
-            patch("gobby.cli.memory.LocalDatabase"),
+            patch("gobby.cli.memory.open_runtime_hub_database") as mock_open,
             patch("gobby.cli.memory.MemoryManager") as mock_mm,
         ):
             result = get_memory_manager(mock_ctx)
+            mock_open.assert_called_once_with(apply_migrations=False)
             mock_mm.assert_called_once()
             assert mock_mm.call_count == 1
             assert mock_mm.call_args is not None

@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, runtime_checkable
@@ -70,79 +70,7 @@ _DB_CONNECTION_WARNING_THRESHOLD = 32
 
 @runtime_checkable
 class DatabaseProtocol(HubDatabase, Protocol):
-    """Protocol defining the database interface for storage managers."""
-
-    @property
-    def db_path(self) -> Any:
-        """Return database path."""
-        ...
-
-    @property
-    def connection(self) -> sqlite3.Connection:
-        """Get database connection (for reads)."""
-        ...
-
-    def execute(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> Cursor:
-        """Execute SQL statement."""
-        ...
-
-    def executemany(self, sql: str, params_list: Iterable[Sequence[Any]]) -> Cursor:
-        """Execute SQL statement with multiple parameter sets."""
-        ...
-
-    def fetchone(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> Row | None:
-        """Execute query and fetch one row."""
-        ...
-
-    def fetchall(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> list[Row]:
-        """Execute query and fetch all rows."""
-        ...
-
-    def safe_update(
-        self,
-        table: str,
-        values: Mapping[str, Any],
-        where: str,
-        where_params: Sequence[Any] = (),
-    ) -> Cursor:
-        """Safely execute an UPDATE statement with dynamic columns."""
-        ...
-
-    def transaction(self) -> AbstractContextManager[Any]:
-        """Context manager for database transactions."""
-        ...
-
-    def transaction_immediate(
-        self,
-        lock: LockTarget | None = None,
-    ) -> AbstractContextManager[Any]:
-        """Context manager for IMMEDIATE transactions (write-intent).
-
-        Acquires write lock at BEGIN, preventing concurrent read-modify-write races.
-        Use for atomic read-then-update patterns where deferred locking is insufficient.
-        """
-        ...
-
-    def close(self) -> None:
-        """Close database connection."""
-        ...
-
-    @property
-    def connection_count(self) -> int:
-        """Return the number of currently tracked open connections."""
-        ...
+    """Backward-compatible alias for the active hub database contract."""
 
 
 # Production database path (constant for comparison in safety checks)

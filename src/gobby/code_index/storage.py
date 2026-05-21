@@ -31,7 +31,7 @@ class CodeIndexStorage:
 
     def __init__(self, db: DatabaseProtocol | HubDatabase) -> None:
         """Initialize storage against a legacy DB or HubDatabase seam."""
-        self.db = cast(DatabaseProtocol, db)
+        self.db: DatabaseProtocol = db
 
     # ── Symbols ──────────────────────────────────────────────────────
 
@@ -188,7 +188,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     def delete_symbols_for_project(self, project_id: str) -> int:
         """Delete all symbols for a project."""
@@ -197,7 +197,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_symbols WHERE project_id = ?",
                 (project_id,),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     # ── Files ────────────────────────────────────────────────────────
 
@@ -362,7 +362,7 @@ class CodeIndexStorage:
                 "UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = ?",
                 (file_id,),
             )
-            return cast(int, cursor.rowcount) > 0
+            return cursor.rowcount > 0
 
     def mark_graph_synced(self, file_id: str) -> bool:
         """Mark a file's graph edges as synced. Returns True if updated."""
@@ -374,7 +374,7 @@ class CodeIndexStorage:
                    WHERE id = ?""",
                 (now, file_id),
             )
-            return cast(int, cursor.rowcount) > 0
+            return cursor.rowcount > 0
 
     def mark_graph_sync_attempted(self, file_id: str) -> bool:
         """Mark that a graph sync was attempted, even if it later fails."""
@@ -386,7 +386,7 @@ class CodeIndexStorage:
                    WHERE id = ?""",
                 (now, file_id),
             )
-            return cast(int, cursor.rowcount) > 0
+            return cursor.rowcount > 0
 
     def reset_graph_sync_for_project(self, project_id: str) -> int:
         """Mark every file in a project as needing graph rebuild."""
@@ -397,7 +397,7 @@ class CodeIndexStorage:
                    WHERE project_id = ?""",
                 (project_id,),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     # ── Imports & Calls ─────────────────────────────────────────────
 
@@ -507,7 +507,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_imports WHERE project_id = ? AND source_file = ?",
                 (project_id, file_path),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     def delete_calls_for_file(self, project_id: str, file_path: str) -> int:
         """Delete call relations for a file. Returns count deleted."""
@@ -516,7 +516,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_calls WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     def delete_file(self, project_id: str, file_path: str) -> None:
         """Delete a file record (symbols deleted separately)."""
@@ -533,7 +533,7 @@ class CodeIndexStorage:
                 "DELETE FROM code_indexed_files WHERE project_id = ?",
                 (project_id,),
             )
-            return cast(int, cursor.rowcount)
+            return cursor.rowcount
 
     # ── Projects ─────────────────────────────────────────────────────
 
@@ -639,7 +639,7 @@ class CodeIndexStorage:
                 "UPDATE code_symbols SET summary = ? WHERE id = ?",
                 (summary, symbol_id),
             )
-            return cast(int, cursor.rowcount) > 0
+            return cursor.rowcount > 0
 
     # ── Counts ───────────────────────────────────────────────────────
 

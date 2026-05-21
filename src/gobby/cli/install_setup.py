@@ -231,8 +231,12 @@ def ensure_daemon_config() -> dict[str, Any]:
 
     import yaml
 
+    from gobby.config.bootstrap import POSTGRES_DATABASE_URL_REF
+
     defaults = {
-        "database_path": "~/.gobby/gobby-hub.db",
+        "hub_backend": "postgres",
+        "database_url_ref": POSTGRES_DATABASE_URL_REF,
+        "postgres_install_mode": "docker",
         "daemon_port": 60887,
         "bind_host": "localhost",
         "websocket_port": 60888,
@@ -257,11 +261,11 @@ def run_daemon_setup(project_path: Path) -> None:
 
     db = None
     try:
-        from gobby.cli.utils import init_local_storage
+        from gobby.storage.hub.runtime import open_runtime_hub_database
 
-        db = init_local_storage()
-        click.echo("Database initialized")
-    except (OSError, PermissionError, ValueError) as e:
+        db = open_runtime_hub_database()
+        click.echo("PostgreSQL hub initialized")
+    except (OSError, PermissionError, RuntimeError, ValueError) as e:
         click.echo(f"Warning: Database init failed ({type(e).__name__}): {e}")
 
     if db is not None:

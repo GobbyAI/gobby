@@ -9,7 +9,7 @@ This module provides the SkillManager class which coordinates:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.search import SearchConfig
 from gobby.skills.search import SearchFilters, SkillSearch, SkillSearchResult
@@ -86,7 +86,7 @@ class SkillManager:
         self._notifier.add_listener(self._on_skill_change)
 
         # Initialize storage with notifier
-        self._storage = LocalSkillManager(cast("DatabaseProtocol", db), notifier=self._notifier)
+        self._storage = LocalSkillManager(db, notifier=self._notifier)
 
         # Initialize search with config and embedding settings
         self._search = SkillSearch(
