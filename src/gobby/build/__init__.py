@@ -11,6 +11,7 @@ from gobby.build.controls import (
     build_stop_target,
 )
 from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
+from gobby.build.observability import explain_dispatch, get_build_status, list_build_history
 from gobby.build.service import (
     BuildControlResult,
     BuildLifecycleEvent,
@@ -36,6 +37,9 @@ __all__ = [
     "DispatcherTickSummary",
     "build",
     "build_clean_target",
+    "explain_dispatch",
+    "get_build_status",
+    "list_build_history",
     "build_restart_target",
     "build_resume",
     "build_resume_target",

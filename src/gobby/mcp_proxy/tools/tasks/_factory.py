@@ -11,6 +11,9 @@ from gobby.mcp_proxy.tools.task_dependencies import create_dependency_registry
 from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
+from gobby.mcp_proxy.tools.tasks._build_observability import (
+    create_build_observability_registry,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
@@ -87,6 +90,9 @@ def create_task_registry(
 
     # Merge read-only stage manifest tools (mutating stage tools live in gobby-tasks-ops)
     registry.merge_from(create_stage_read_registry(ctx))
+
+    # Merge read-only build observability tools (build_task lives in gobby-tasks-ops)
+    registry.merge_from(create_build_observability_registry(ctx))
 
     # Merge commit linking tools (sync tools removed — CLI only)
     from gobby.tasks.commits import auto_link_commits as auto_link_commits_fn

@@ -231,6 +231,8 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
         "projects",
         "sessions",
         "agent_runs",
+        "build_runs",
+        "build_history_events",
         "tasks",
         "task_dependencies",
         "task_stages_registry",
@@ -302,6 +304,10 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
     )
     assert "content_blocks_json" in _column_names(db, "chat_messages")
     assert "project_id" in _column_names(db, "chat_attachments")
+    assert {"token_hash", "expires_at", "remember_me"}.issubset(
+        _column_names(db, "auth_sessions")
+    )
+    assert "token" not in _column_names(db, "auth_sessions")
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")

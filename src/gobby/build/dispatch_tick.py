@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.database import DatabaseProtocol
 
@@ -48,7 +49,9 @@ async def kick_dispatcher_tick(
             "dispatcher_tick_skipped",
             extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
         )
-        return DispatcherTickSummary(reason="dispatcher_cron_disabled")
+        summary = DispatcherTickSummary(reason="dispatcher_cron_disabled")
+        _record_dispatcher_tick_history(db, project_id, summary)
+        return summary
 
     if db is None:
         return DispatcherTickSummary(ticks=0, reason="database_missing")
@@ -76,6 +79,7 @@ async def kick_dispatcher_tick(
             break
     if woke_system_jobs:
         _wake_existing_system_job(CronJobStorage(db), PIPELINE_HEARTBEAT_CRON_JOB_NAME)
+    _record_dispatcher_tick_history(db, project_id, summary)
     return summary
 
 
@@ -94,3 +98,37 @@ def _wake_existing_system_job(storage: CronJobStorage, name: str) -> None:
     if job is None or not job.is_system:
         return
     storage.wake_system_job(job.id)
+
+
+def _record_dispatcher_tick_history(
+    db: DatabaseProtocol | None,
+    project_id: str | None,
+    summary: DispatcherTickSummary,
+) -> None:
+    if db is None or project_id is None:
+        return
+    payload = {
+        "ticks": summary.ticks,
+        "scanned": summary.scanned,
+        "executed": summary.executed,
+        "skipped": summary.skipped,
+        "cap_reached": summary.cap_reached,
+        "reason": summary.reason,
+    }
+    run = best_effort_record_run(
+        db,
+        project_id=project_id,
+        action="dispatcher_tick",
+        status="completed" if summary.reason is None else "skipped",
+        actor="dispatcher",
+        summary=payload,
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        event_type="dispatcher_tick",
+        action="dispatcher_tick",
+        message=summary.reason,
+        payload=payload,
+    )

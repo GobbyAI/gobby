@@ -439,6 +439,52 @@ CREATE TABLE project_lifecycle_events (
 CREATE INDEX idx_project_lifecycle_events_project
     ON project_lifecycle_events(project_id, created_at);
 
+CREATE TABLE build_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    input_ref TEXT,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'started'
+        CHECK (status IN ('started', 'completed', 'failed', 'skipped')),
+    actor TEXT NOT NULL DEFAULT 'build',
+    summary_json TEXT,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+
+CREATE INDEX idx_build_runs_project_started
+    ON build_runs(project_id, started_at DESC);
+
+CREATE INDEX idx_build_runs_root_started
+    ON build_runs(root_task_id, started_at DESC);
+
+CREATE INDEX idx_build_runs_input_started
+    ON build_runs(project_id, input_ref, started_at DESC);
+
+CREATE TABLE build_history_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT REFERENCES build_runs(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL,
+    action TEXT,
+    message TEXT,
+    payload_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_build_history_events_project
+    ON build_history_events(project_id, created_at DESC);
+
+CREATE INDEX idx_build_history_events_root
+    ON build_history_events(root_task_id, created_at DESC);
+
+CREATE INDEX idx_build_history_events_run
+    ON build_history_events(run_id, created_at DESC);
+
 CREATE TABLE expansion_runs (
     id TEXT PRIMARY KEY,
     parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

@@ -388,6 +388,9 @@ exist.
 | `POST` | `/api/build/resume` | Resume lifecycle automation. |
 | `POST` | `/api/build/clean` | Clean lifecycle automation artifacts. |
 | `POST` | `/api/build/restart` | Restart lifecycle automation. |
+| `GET` | `/api/build/status` | Read compact build state for a task tree or build input. |
+| `GET` | `/api/build/dispatch/explain` | Explain dispatcher eligibility without mutation. |
+| `GET` | `/api/build/history` | List recent build run and event history. |
 
 `POST /api/build` accepts `input_ref`, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,

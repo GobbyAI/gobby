@@ -91,6 +91,18 @@ def test_postgres_baseline_declares_migration_and_cutover_tables() -> None:
     )
 
 
+def test_postgres_baseline_has_flattened_auth_session_token_hashes() -> None:
+    sql = _schema_text()
+
+    _assert_matches(
+        sql,
+        r"CREATE\s+TABLE\s+auth_sessions\s*\([^;]*token_hash\s+TEXT\s+PRIMARY\s+KEY",
+        "auth_sessions must use token_hash as the primary key in the flattened baseline",
+    )
+    assert "DROP COLUMN token" not in sql
+    assert "CREATE TABLE auth_sessions" in sql
+
+
 def test_postgres_baseline_preserves_nanosecond_span_ranges() -> None:
     sql = _schema_text()
 

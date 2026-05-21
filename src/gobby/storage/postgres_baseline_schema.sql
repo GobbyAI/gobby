@@ -445,6 +445,52 @@ CREATE TABLE project_lifecycle_events (
 CREATE INDEX idx_project_lifecycle_events_project
     ON project_lifecycle_events(project_id, created_at);
 
+CREATE TABLE build_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    input_ref TEXT,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'started'
+        CHECK (status IN ('started', 'completed', 'failed', 'skipped')),
+    actor TEXT NOT NULL DEFAULT 'build',
+    summary_json JSONB,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_build_runs_project_started
+    ON build_runs(project_id, started_at DESC);
+
+CREATE INDEX idx_build_runs_root_started
+    ON build_runs(root_task_id, started_at DESC);
+
+CREATE INDEX idx_build_runs_input_started
+    ON build_runs(project_id, input_ref, started_at DESC);
+
+CREATE TABLE build_history_events (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id TEXT REFERENCES build_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    event_type TEXT NOT NULL,
+    action TEXT,
+    message TEXT,
+    payload_json JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_build_history_events_project
+    ON build_history_events(project_id, created_at DESC);
+
+CREATE INDEX idx_build_history_events_root
+    ON build_history_events(root_task_id, created_at DESC);
+
+CREATE INDEX idx_build_history_events_run
+    ON build_history_events(run_id, created_at DESC);
+
 CREATE TABLE expansion_runs (
     id TEXT PRIMARY KEY,
     parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,

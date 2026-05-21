@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Literal
 
@@ -40,6 +40,11 @@ from gobby.build.workspaces import (
     ensure_task_parent_integration_workspace,
 )
 from gobby.config.build import Isolation
+from gobby.storage.build_history import (
+    best_effort_finish_run,
+    best_effort_record_event,
+    best_effort_start_run,
+)
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks import (
     LocalTaskManager,
@@ -64,6 +69,69 @@ async def build(
     services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
+    run = best_effort_start_run(
+        db,
+        project_id=project_id,
+        input_ref=input_ref,
+        action="build",
+        actor="build",
+        summary={"quick": opts.quick, "isolation": opts.isolation},
+    )
+    try:
+        result = await _build_impl(
+            input_ref,
+            opts,
+            db=db,
+            project_id=project_id,
+            services=services,
+        )
+    except Exception as exc:
+        best_effort_finish_run(
+            db,
+            run.id if run is not None else None,
+            status="failed",
+            error=str(exc),
+        )
+        best_effort_record_event(
+            db,
+            run_id=run.id if run is not None else None,
+            project_id=project_id,
+            event_type="build_failed",
+            action="build",
+            message=str(exc),
+            payload={"input_ref": input_ref},
+        )
+        raise
+    best_effort_finish_run(
+        db,
+        run.id if run is not None else None,
+        status="completed",
+        root_task_id=result.task_id,
+        summary=asdict(result),
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        root_task_id=result.task_id,
+        task_id=result.task_id,
+        event_type="build_completed",
+        action="build",
+        message="gobby build",
+        payload=asdict(result),
+    )
+    return result
+
+
+async def _build_impl(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    services: object | None = None,
+) -> BuildResult:
+    """Start lifecycle automation after history instrumentation is installed."""
 
     opts = resolve_build_profile_options(opts, db=db, project_id=project_id)
     skip_stages = _validate_skip_stages(opts.skip_stages)

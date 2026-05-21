@@ -375,6 +375,9 @@ point.
 | Tool | Description |
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
+| `get_build_status` | Read compact task-tree build state, agents, mutexes, artifact health, events, and recent history. |
+| `explain_dispatch` | Explain dispatcher eligibility and the action that would be chosen without mutating state. |
+| `list_build_history` | Read recent `build_runs` and `build_history_events` rows for a task tree or build input. |
 
 `build_task` requires `input_ref` and accepts the MCP-native automation options
 exposed by its schema: `quick`, `skip_stages`, `isolation` (`none`, `worktree`,

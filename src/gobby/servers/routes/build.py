@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +24,11 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
+from gobby.build.observability import (
+    explain_dispatch,
+    get_build_status,
+    list_build_history,
+)
 from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
@@ -290,6 +295,58 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 services=server.services,
             )
             return result.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/status")
+    async def get_status(
+        input_ref: str,
+        history_limit: int = Query(5, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """Return compact build status for a task tree or build input."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return get_build_status(
+                input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                history_limit=history_limit,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/dispatch/explain")
+    async def get_dispatch_explain(
+        task_id: str,
+        max_active_agents: int | None = Query(default=None, ge=1),
+    ) -> dict[str, Any]:
+        """Explain dispatcher eligibility and proposed action without mutation."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return explain_dispatch(
+                task_id,
+                db=server.services.database,
+                project_id=project_id,
+                max_active_agents=max_active_agents,
+                services=server.services,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/history")
+    async def get_history(
+        input_ref: str,
+        limit: int = Query(20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """List recent build run and event rows."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return list_build_history(
+                input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                limit=limit,
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

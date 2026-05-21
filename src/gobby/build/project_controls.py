@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from gobby.build.results import BuildControlResult, BuildLifecycleEvent
 from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.database import DatabaseProtocol
 
@@ -58,6 +59,23 @@ def _set_dispatcher_enabled(
         event=event_name,
         reason=reason,
         by_actor="build",
+    )
+    run = best_effort_record_run(
+        db,
+        project_id=project_id,
+        action=event_name,
+        status="completed",
+        actor="build",
+        summary={"enabled": enabled, "cron_job_id": updated.id},
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        event_type="project_build_control",
+        action=event_name,
+        message=reason,
+        payload={"enabled": enabled, "cron_job_id": updated.id},
     )
     return BuildControlResult(
         project_id=project_id,

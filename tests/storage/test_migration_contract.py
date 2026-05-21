@@ -72,6 +72,12 @@ def test_legacy_migrations_list_is_empty_in_source_and_runtime() -> None:
     assert assignments[0].value.elts == []
 
 
+def test_no_postgres_sql_migrations_are_pending_after_flattening() -> None:
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+
+    assert sorted(path.name for path in migrations_dir.glob("*.sql")) == []
+
+
 def test_legacy_migrations_guard_rejects_callable_and_string_entries(monkeypatch) -> None:
     import gobby.storage.migrations as module
 

@@ -21,6 +21,7 @@ from gobby.build.dispatch_tick import (
 )
 from gobby.clones.git import CloneGitManager
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
+from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
@@ -126,7 +127,7 @@ async def build_stop_target(
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
     stages_reset = _reset_current_stages(db, tasks, reason="build_stop")
 
-    return BuildTargetControlResult(
+    result = BuildTargetControlResult(
         action="stop",
         project_id=project_id,
         root_task_id=root.id,
@@ -137,6 +138,8 @@ async def build_stop_target(
         claims_released=claims_released,
         stages_reset=stages_reset,
     )
+    _record_target_history(db, result, input_ref=input_ref)
+    return result
 
 
 async def build_resume_target(
@@ -161,7 +164,7 @@ async def build_resume_target(
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
     tick = await _kick_dispatcher_tick(db, project_id, services=services)
 
-    return BuildTargetControlResult(
+    result = BuildTargetControlResult(
         action="resume",
         project_id=project_id,
         root_task_id=root.id,
@@ -171,6 +174,8 @@ async def build_resume_target(
         claims_released=claims_released,
         dispatcher_tick=tick,
     )
+    _record_target_history(db, result, input_ref=input_ref)
+    return result
 
 
 async def build_clean_target(
@@ -196,7 +201,7 @@ async def build_clean_target(
     blocked = _clean_blockers(tasks, agents, force=force)
 
     if dry_run:
-        return BuildTargetControlResult(
+        result = BuildTargetControlResult(
             action="clean",
             project_id=project_id,
             root_task_id=root.id,
@@ -207,6 +212,8 @@ async def build_clean_target(
             force=force,
             blocked_reasons=blocked,
         )
+        _record_target_history(db, result, input_ref=input_ref)
+        return result
 
     if blocked:
         raise ValueError("; ".join(blocked))
@@ -229,7 +236,7 @@ async def build_clean_target(
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
     stages_reset = _reset_current_stages(db, tasks, reason="build_clean")
 
-    return BuildTargetControlResult(
+    result = BuildTargetControlResult(
         action="clean",
         project_id=project_id,
         root_task_id=root.id,
@@ -242,6 +249,8 @@ async def build_clean_target(
         stages_reset=stages_reset,
         branches_deleted=branches_deleted,
     )
+    _record_target_history(db, result, input_ref=input_ref)
+    return result
 
 
 def cleanup_successful_merge_artifacts(
@@ -328,6 +337,7 @@ async def build_restart_target(
             services=services,
         )
         preview.action = "restart"
+        _record_target_history(db, preview, input_ref=input_ref)
         return preview
 
     stop_result = await build_stop_target(
@@ -357,6 +367,7 @@ async def build_restart_target(
         clean_result.escalations_cleared = escalations_cleared
         clean_result.dispatch_failures_reset = dispatch_failures_reset
         clean_result.dispatcher_tick = None
+        _record_target_history(db, clean_result, input_ref=input_ref)
         return clean_result
     resume_result = await build_resume_target(
         input_ref,
@@ -372,6 +383,7 @@ async def build_restart_target(
     clean_result.escalations_cleared = escalations_cleared
     clean_result.dispatch_failures_reset = dispatch_failures_reset
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
+    _record_target_history(db, clean_result, input_ref=input_ref)
     return clean_result
 
 
@@ -943,6 +955,35 @@ def _project_path(db: DatabaseProtocol, project_id: str) -> Path:
     if project is not None and project.repo_path:
         return Path(project.repo_path)
     return Path.cwd()
+
+
+def _record_target_history(
+    db: DatabaseProtocol,
+    result: BuildTargetControlResult,
+    *,
+    input_ref: str,
+) -> None:
+    summary = result.to_dict()
+    run = best_effort_record_run(
+        db,
+        project_id=result.project_id,
+        root_task_id=result.root_task_id,
+        input_ref=input_ref,
+        action=result.action,
+        status="completed",
+        actor="build",
+        summary=summary,
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=result.project_id,
+        root_task_id=result.root_task_id,
+        event_type="task_build_control",
+        action=result.action,
+        message=f"gobby build {result.action}",
+        payload=summary,
+    )
 
 
 __all__ = [

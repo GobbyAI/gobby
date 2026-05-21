@@ -393,3 +393,52 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     assert call.kwargs["dry_run"] is True
     assert call.kwargs["force"] is True
     assert call.kwargs["no_resume"] is True
+
+
+def test_get_api_build_status_returns_observability_payload() -> None:
+    payload = {"ok": True, "root": {"task_id": "task-1"}}
+
+    with patch("gobby.servers.routes.build.get_build_status", return_value=payload) as status:
+        response = _client().get("/api/build/status", params={"input_ref": "#1"})
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    assert status.call_args.kwargs["project_id"] == "project-1"
+    assert status.call_args.kwargs["history_limit"] == 5
+
+
+def test_get_api_build_dispatch_explain_returns_payload() -> None:
+    payload = {"ok": True, "eligible": True, "proposed_action": {"action": "start_stage"}}
+
+    with patch("gobby.servers.routes.build.explain_dispatch", return_value=payload) as explain:
+        response = _client().get(
+            "/api/build/dispatch/explain",
+            params={"task_id": "#1", "max_active_agents": 2},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    assert explain.call_args.kwargs["project_id"] == "project-1"
+    assert explain.call_args.kwargs["max_active_agents"] == 2
+
+
+def test_get_api_build_history_returns_payload() -> None:
+    payload = {"ok": True, "root_task_id": "task-1", "runs": [], "events": []}
+
+    with patch("gobby.servers.routes.build.list_build_history", return_value=payload) as history:
+        response = _client().get("/api/build/history", params={"input_ref": "#1", "limit": 3})
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    assert history.call_args.kwargs["limit"] == 3
+
+
+def test_get_api_build_status_returns_400_for_invalid_ref() -> None:
+    with patch(
+        "gobby.servers.routes.build.get_build_status",
+        side_effect=ValueError("build input not found: #missing"),
+    ):
+        response = _client().get("/api/build/status", params={"input_ref": "#missing"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "build input not found: #missing"
