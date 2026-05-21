@@ -800,6 +800,17 @@ def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> N
     assert "Prefer worker-side verification" in skill
 
 
+def test_merge_orchestrator_preserves_guarded_verify_commands() -> None:
+    instructions = " ".join(_agent()["instructions"].split())
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
+
+    assert "Preserve any required environment guards" in instructions
+    assert "GOBBY_TEST_PROTECT=1 uv run pytest" in instructions
+    assert "env GOBBY_TEST_PROTECT=1" in instructions
+    assert "Preserve required environment guards" in skill
+    assert "GOBBY_TEST_PROTECT=1" in skill
+
+
 def test_merge_orchestrator_does_not_green_gate_tdd_red_phase_pytest() -> None:
     instructions = " ".join(_agent()["instructions"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())

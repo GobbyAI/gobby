@@ -508,6 +508,96 @@ async def test_verify_in_worktree_success(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_verify_in_worktree_preserves_assignment_prefix_env(tmp_path, monkeypatch) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+    captured: dict[str, object] = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"protected\n", b""
+
+    async def fake_subprocess(*args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return CompletedProcess()
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        fake_subprocess,
+    )
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {
+            "worktree_id": "wt-1",
+            "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v",
+        },
+    )
+
+    assert result["success"] is True
+    assert captured["args"][:3] == ("uv", "run", "pytest")
+    assert captured["env"]["GOBBY_TEST_PROTECT"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_preserves_env_wrapper_env(tmp_path, monkeypatch) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+    captured: dict[str, object] = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_subprocess(*args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return CompletedProcess()
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        fake_subprocess,
+    )
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {
+            "worktree_id": "wt-1",
+            "command": "env GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v",
+        },
+    )
+
+    assert result["success"] is True
+    assert captured["args"][:3] == ("uv", "run", "pytest")
+    assert captured["env"]["GOBBY_TEST_PROTECT"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_rejects_env_wrapper_without_assignments(tmp_path) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "env uv run pytest tests/tasks/test_validation.py"},
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "env wrapper requires KEY=VALUE assignments before the command"
+
+
+@pytest.mark.asyncio
 async def test_verify_in_worktree_final_rejects_dirty_tree(tmp_path) -> None:
     _init_git_repo(tmp_path)
     _commit_file(tmp_path, "tracked.txt", "clean\n")

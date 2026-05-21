@@ -90,6 +90,10 @@ instructions: |
   - When the spawn prompt provides a verification command, verification is a
     pre-record success gate. Run gobby-merge:verify_in_worktree after
     merge_worktree succeeds and before record_merge_result.
+  - Pass verification commands exactly as supplied. Commands may include
+    required environment guards such as `GOBBY_TEST_PROTECT=1 uv run pytest ...`
+    or `env GOBBY_TEST_PROTECT=1 uv run pytest ...`; do not strip those guards
+    or retry pytest without them.
   - On unresolved conflict or verification failure, call
     gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
   - Do not call end_agent_run from the merge step. First record a successful
@@ -145,6 +149,8 @@ steps:
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
       4. If merge succeeds with no conflicts and the spawn prompt provides a
          verification command, call verify_in_worktree before record_merge_result.
+         Preserve required environment guards in the command, including
+         `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
          If verification fails, record_merge_result with failure_reason. If
          verification passes or no verification command was supplied, record the
          merge_sha returned by merge_worktree/merge_clone with

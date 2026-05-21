@@ -258,6 +258,21 @@ def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     assert "call verify_in_worktree before record_merge_result" in merge_status
 
 
+def test_merge_worker_preserves_guarded_verification_commands() -> None:
+    agent = _agent("merge-worker")
+    text = " ".join(
+        [
+            agent["instructions"],
+            _step(agent, "merge")["status_message"],
+        ]
+    )
+
+    assert "Pass verification commands exactly as supplied" in text
+    assert "GOBBY_TEST_PROTECT=1 uv run pytest" in text
+    assert "env GOBBY_TEST_PROTECT=1 uv run pytest" in text
+    assert "retry pytest without them" in text
+
+
 @pytest.mark.asyncio
 async def test_merge_worker_allows_verify_before_recording_result(tmp_path: Path) -> None:
     db = _test_db(tmp_path)

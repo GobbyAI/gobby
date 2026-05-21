@@ -36,6 +36,16 @@ _ALLOWED_VERIFICATION_COMMANDS = {
 _ALLOWED_GIT_VERIFICATION_SUBCOMMANDS = {"diff", "ls-files", "rev-parse", "status"}
 _BLOCKED_GIT_DIFF_FLAGS = {"--ext-diff", "--no-index"}
 _SAFE_ENV_KEYS = {"HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR"}
+_BLOCKED_VERIFICATION_ENV_KEYS = {
+    "BASH_ENV",
+    "ENV",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "PATH",
+    "PYTHONHOME",
+    "PYTHONPATH",
+}
+_BLOCKED_VERIFICATION_ENV_PREFIXES = ("DYLD_",)
 
 
 class WorktreeManagerProtocol(Protocol):
@@ -116,6 +126,58 @@ def _verification_environment() -> dict[str, str]:
     if "NO_COLOR" in os.environ:
         env["NO_COLOR"] = os.environ["NO_COLOR"]
     return env
+
+
+def _is_env_assignment(token: str) -> bool:
+    key, separator, _ = token.partition("=")
+    if not separator or not key:
+        return False
+    if not (key[0].isalpha() or key[0] == "_"):
+        return False
+    return all(char.isalnum() or char == "_" for char in key)
+
+
+def _reject_verification_env_key(key: str) -> str | None:
+    if key in _BLOCKED_VERIFICATION_ENV_KEYS:
+        return f"verification environment variable '{key}' is not permitted"
+    if any(key.startswith(prefix) for prefix in _BLOCKED_VERIFICATION_ENV_PREFIXES):
+        return f"verification environment variable '{key}' is not permitted"
+    return None
+
+
+def _consume_env_assignments(tokens: list[str]) -> tuple[dict[str, str], list[str], str | None]:
+    env: dict[str, str] = {}
+    index = 0
+    while index < len(tokens) and _is_env_assignment(tokens[index]):
+        key, _, value = tokens[index].partition("=")
+        rejection = _reject_verification_env_key(key)
+        if rejection:
+            return {}, [], rejection
+        env[key] = value
+        index += 1
+
+    return env, tokens[index:], None
+
+
+def _normalize_verification_command(
+    argv: list[str],
+) -> tuple[list[str], dict[str, str], str | None]:
+    if argv[0] == "env":
+        env, command_argv, rejection = _consume_env_assignments(argv[1:])
+        if rejection:
+            return [], {}, rejection
+        if not env:
+            return [], {}, "env wrapper requires KEY=VALUE assignments before the command"
+        if not command_argv:
+            return [], {}, "verification command is required after environment assignments"
+        return command_argv, env, None
+
+    env, command_argv, rejection = _consume_env_assignments(argv)
+    if rejection:
+        return [], {}, rejection
+    if env and not command_argv:
+        return [], {}, "verification command is required after environment assignments"
+    return command_argv, env, None
 
 
 def _reject_git_verification_args(args: list[str]) -> str | None:
@@ -507,6 +569,9 @@ def register_merge_landscape_tools(
             return {"success": False, "error": f"failed to parse command: {exc}"}
         if not argv:
             return {"success": False, "error": "command is required"}
+        argv, command_env, rejection = _normalize_verification_command(argv)
+        if rejection:
+            return {"success": False, "error": rejection}
         rejection = _reject_verification_command(argv)
         if rejection:
             return {"success": False, "error": rejection}
@@ -515,6 +580,7 @@ def register_merge_landscape_tools(
         if err or not wt_path:
             return {"success": False, "error": err}
         safe_env = _verification_environment()
+        safe_env.update(command_env)
 
         try:
             proc = await asyncio.create_subprocess_exec(
