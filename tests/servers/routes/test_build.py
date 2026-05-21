@@ -202,7 +202,7 @@ def test_post_api_build_stop_preserves_project_wide_control() -> None:
 
 
 def test_post_api_build_resume_kicks_dispatcher() -> None:
-    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent, DispatcherTickSummary
 
     control_result = BuildControlResult(
         project_id="project-1",
@@ -220,14 +220,117 @@ def test_post_api_build_resume_kicks_dispatcher() -> None:
 
     with (
         patch("gobby.servers.routes.build.build_resume", return_value=control_result) as resume,
-        patch("gobby.servers.routes.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
+        patch(
+            "gobby.servers.routes.build._kick_dispatcher_tick",
+            new=AsyncMock(return_value=DispatcherTickSummary(ticks=1, scanned=2, executed=1)),
+        ) as tick,
     ):
         response = _client().post("/api/build/resume", json={})
 
     assert response.status_code == 200
-    assert response.json()["enabled"] is True
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["enabled"] is True
+    assert data["result"]["dispatcher_tick"]["executed"] == 1
+    assert data["result"]["dispatch"]["status"] == "dispatched"
     resume.assert_called_once()
     tick.assert_awaited_once()
+
+
+def test_post_api_build_resume_task_ref_returns_success_envelope() -> None:
+    from gobby.build import DispatcherTickSummary
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="resume",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        automation_updated=1,
+        dispatcher_tick=DispatcherTickSummary(ticks=1, scanned=2, executed=1, skipped=1),
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_resume_target",
+        new=AsyncMock(return_value=target_result),
+    ) as resume:
+        response = _client().post("/api/build/resume", json={"input_ref": "#1"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["action"] == "resume"
+    assert data["result"]["affected_tasks"][0]["ref"] == "#1"
+    assert data["result"]["dispatch"] == {
+        "status": "dispatched",
+        "executed": 1,
+        "scanned": 2,
+        "skipped": 1,
+        "reason": None,
+        "cap_reached": False,
+    }
+    resume.assert_awaited_once()
+
+
+def test_post_api_build_resume_task_ref_returns_no_op_envelope() -> None:
+    from gobby.build import DispatcherTickSummary
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="resume",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        automation_updated=1,
+        dispatcher_tick=DispatcherTickSummary(
+            ticks=1,
+            scanned=3,
+            executed=0,
+            skipped=3,
+            reason="no_ready_tasks",
+        ),
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_resume_target",
+        new=AsyncMock(return_value=target_result),
+    ):
+        response = _client().post("/api/build/resume", json={"input_ref": "#1"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["dispatch"] == {
+        "status": "no_op",
+        "executed": 0,
+        "scanned": 3,
+        "skipped": 3,
+        "reason": "no_ready_tasks",
+        "cap_reached": False,
+    }
+
+
+def test_post_api_build_resume_returns_error_envelope() -> None:
+    with patch(
+        "gobby.servers.routes.build.build_resume_target",
+        new=AsyncMock(side_effect=ValueError("task ref not found: #missing")),
+    ):
+        response = _client().post("/api/build/resume", json={"input_ref": "#missing"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "success": False,
+        "result": None,
+        "error": "task ref not found: #missing",
+        "error_code": "BUILD_RESUME_ERROR",
+    }
 
 
 def test_post_api_build_stop_accepts_task_ref() -> None:

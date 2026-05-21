@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from gobby.build import (
@@ -146,6 +147,42 @@ def _result_json(result: BuildControlResult | BuildTargetControlResult) -> dict[
     return asdict(result)
 
 
+def _success_envelope(result: dict[str, Any]) -> dict[str, Any]:
+    return {"success": True, "result": result, "error": None}
+
+
+def _error_envelope(message: str, error_code: str) -> dict[str, Any]:
+    return {"success": False, "result": None, "error": message, "error_code": error_code}
+
+
+def _resume_result_json(
+    result: BuildControlResult | BuildTargetControlResult,
+    *,
+    dispatcher_tick: Any | None = None,
+) -> dict[str, Any]:
+    payload = _result_json(result)
+    if dispatcher_tick is not None:
+        payload["dispatcher_tick"] = asdict(dispatcher_tick)
+    _add_dispatch_summary(payload)
+    return payload
+
+
+def _add_dispatch_summary(payload: dict[str, Any]) -> None:
+    tick = payload.get("dispatcher_tick")
+    if not isinstance(tick, dict):
+        return
+    executed = tick.get("executed")
+    executed_count = executed if isinstance(executed, int) else 0
+    payload["dispatch"] = {
+        "status": "dispatched" if executed_count > 0 else "no_op",
+        "executed": executed_count,
+        "scanned": tick.get("scanned", 0),
+        "skipped": tick.get("skipped", 0),
+        "reason": tick.get("reason"),
+        "cap_reached": tick.get("cap_reached", False),
+    }
+
+
 def create_build_router(server: HTTPServer) -> APIRouter:
     """Create the build API router."""
     router = APIRouter(prefix="/api/build", tags=["build"])
@@ -189,28 +226,31 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @router.post("/resume")
-    async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/resume", response_model=None)
+    async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Resume project-wide dispatcher ticks or task-scoped automation."""
         try:
             project_id = server.resolve_project_id(project_id=None, cwd=None)
             if request_data.input_ref is None:
                 result = build_resume(db=server.services.database, project_id=project_id)
-                await _kick_dispatcher_tick(
+                tick = await _kick_dispatcher_tick(
                     server.services.database,
                     project_id,
                     services=server.services,
                 )
-                return _result_json(result)
+                return _success_envelope(_resume_result_json(result, dispatcher_tick=tick))
             target_result = await build_resume_target(
                 request_data.input_ref,
                 db=server.services.database,
                 project_id=project_id,
                 services=server.services,
             )
-            return _result_json(target_result)
+            return _success_envelope(_resume_result_json(target_result))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_RESUME_ERROR"),
+            )
 
     @router.post("/clean")
     async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any]:
