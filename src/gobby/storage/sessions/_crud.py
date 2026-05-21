@@ -48,7 +48,7 @@ def _update_existing_session(
             parent_session_id = COALESCE(?, parent_session_id),
             terminal_context = COALESCE(?, terminal_context),
             workflow_name = COALESCE(?, workflow_name),
-            is_local = CASE WHEN ? THEN 1 ELSE is_local END,
+            is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
             sandbox_enabled = COALESCE(?, sandbox_enabled),
             sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
             status = 'active',
@@ -62,7 +62,7 @@ def _update_existing_session(
             parent_session_id,
             terminal_context_json,
             workflow_name,
-            int(is_local),
+            is_local,
             sandbox_enabled,
             sandbox_policy_hash,
             now,
@@ -378,12 +378,12 @@ class _SessionCRUDMixin:
                 """
                 UPDATE sessions
                 SET model = COALESCE(?, model),
-                    is_local = CASE WHEN ? THEN 1 ELSE is_local END,
+                    is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
                     chat_mode = COALESCE(?, chat_mode),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, int(is_local), chat_mode, now, session.id),
+                (model, is_local, chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:

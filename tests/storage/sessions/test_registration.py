@@ -1,10 +1,20 @@
 """Focused tests for session storage behavior."""
 
+import inspect
+
 import pytest
 
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+from gobby.storage.sessions import _crud as session_crud
 
 pytestmark = pytest.mark.unit
+
+
+def test_session_registration_boolean_case_is_postgres_safe() -> None:
+    source = inspect.getsource(session_crud)
+
+    assert "CASE WHEN ? THEN 1 ELSE is_local END" not in source
+    assert "CASE WHEN ? THEN TRUE ELSE is_local END" in source
 
 
 class TestSessionManagerRegistration:

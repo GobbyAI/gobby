@@ -306,7 +306,7 @@ class LocalExpansionRunManager:
                 json.dumps(task_id_map),
                 json.dumps(created_task_ids),
                 json.dumps(checkpoints) if checkpoints is not None else None,
-                1 if completed else 0,
+                completed,
                 now,
                 now,
                 run_id,
