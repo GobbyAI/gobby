@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+import os
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
+from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.storage.database import LocalDatabase
@@ -454,8 +456,30 @@ def _run_migration_list(
     return applied
 
 
+def _run_test_sqlite_baseline(db: LocalDatabase, schema_path: Path) -> int:
+    """Apply the fixture-only SQLite baseline used by legacy LocalDatabase tests."""
+    current_version = get_current_version(db)
+    if current_version >= BASELINE_VERSION:
+        return 0
+    if current_version != 0:
+        raise MigrationUnsupportedError(
+            "SQLite test baseline can only initialize an empty test database."
+        )
+
+    schema_sql = schema_path.read_text(encoding="utf-8")
+    with db.transaction() as conn:
+        conn.executescript(schema_sql)
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
+    return 1
+
+
 def run_migrations(db: LocalDatabase) -> int:
     """Reject runtime SQLite migrations after the PostgreSQL cutover."""
+    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
+        test_schema = os.environ.get("GOBBY_SQLITE_TEST_SCHEMA_PATH")
+        if test_schema:
+            return _run_test_sqlite_baseline(db, Path(test_schema))
+
     _ = db
     raise MigrationUnsupportedError(
         "SQLite runtime migrations were removed. Use `gobby postgres migrate-from-sqlite` "

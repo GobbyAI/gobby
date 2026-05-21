@@ -11,6 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from filelock import FileLock
 
+os.environ.setdefault(
+    "GOBBY_SQLITE_TEST_SCHEMA_PATH",
+    str(Path(__file__).parent / "fixtures" / "sqlite_test_schema.sql"),
+)
+
 # Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
 # postgres_db). Tests that don't use them pay no runtime cost; the session
 # fixtures only fire on first request.
