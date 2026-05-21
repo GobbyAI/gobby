@@ -358,7 +358,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Request body for setting a session variable."""
 
         name: str
-        value: str | int | float | bool | None = None
+        value: Any = None
         session_id: str
 
     class GetVariableRequest(BaseModel):
