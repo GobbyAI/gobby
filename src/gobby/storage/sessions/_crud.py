@@ -246,7 +246,7 @@ class _SessionCRUDMixin:
                             status, created_at, updated_at, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,

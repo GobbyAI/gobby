@@ -52,7 +52,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = 1, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = TRUE, updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
         return self.get(session_id)
@@ -62,7 +62,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = 0, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = FALSE, updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
 
