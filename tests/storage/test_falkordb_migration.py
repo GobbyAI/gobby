@@ -67,8 +67,18 @@ def test_migration_preserves_auth_secret_when_other_config_reference_survives(
     from gobby.storage.migrations import migrate_neo4j_config_to_falkordb
 
     _seed_neo4j_config(temp_db)
-    ConfigStore(temp_db).set("llm_providers.test.api_key", "$secret:auth", source="test")
+    ConfigStore(temp_db).set("mock.test.auth", "$secret:auth", source="test")
 
     migrate_neo4j_config_to_falkordb(temp_db)
 
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM config_store WHERE key = ?",
+            ("databases.neo4j.auth",),
+        )
+        is None
+    )
+    assert temp_db.fetchone("SELECT value FROM config_store WHERE key = ?", ("mock.test.auth",))[
+        "value"
+    ] == json.dumps("$secret:auth")
     assert temp_db.fetchone("SELECT 1 FROM secrets WHERE name = ?", ("auth",)) is not None
