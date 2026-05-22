@@ -93,8 +93,37 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
     assert metadata["migration_marker"]["present"] is True
     assert metadata["dump_sha256"] == hashlib.sha256(b"PGDMP").hexdigest()
     assert f"{metadata['dump_sha256']}  {backup.POSTGRES_DUMP_NAME}" in sums_path.read_text()
+    assert result["dump_sha256"] == metadata["dump_sha256"]
+    assert result["sha256_verified"] is True
     assert any(command[:3] == ["docker", "exec", "gobby-postgres"] for command in commands)
     assert any(command[-2:] == ["pg_restore", "--list"] for command in commands)
+
+
+def test_create_docker_backup_uses_configured_pg_dump_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    _patch_common(monkeypatch, backup, mode="docker")
+    monkeypatch.setenv("GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS", "17")
+    timeouts: list[int] = []
+
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if args[:3] == ["docker", "exec", "gobby-postgres"]:
+            timeouts.append(kwargs["timeout"])
+            kwargs["stdout"].write(b"PGDMP")
+        elif args[:4] == ["docker", "exec", "-i", "gobby-postgres"]:
+            assert kwargs["stdin"].read() == b"PGDMP"
+        else:
+            raise AssertionError(f"unexpected command: {args}")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(backup.subprocess, "run", _run)
+
+    backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
+
+    assert timeouts == [17]
 
 
 def test_create_native_backup_uses_local_postgres_tools(
@@ -179,6 +208,8 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     result = backup.restore_postgres_backup(backup_dir, clean=True, gobby_home=tmp_path)
 
     assert result["verified"] is True
+    assert result["dump_sha256"] == digest
+    assert result["sha256_verified"] is True
     assert commands[0][-2:] == ["pg_restore", "--list"]
     assert commands[1][4:8] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
     assert "--if-exists" in commands[1]

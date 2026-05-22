@@ -271,7 +271,13 @@ def _assigned_agent_for_entry(entry: ManifestEntry) -> str | None:
     if entry.assigned_agent:
         return entry.assigned_agent
     if entry.implementation_domain:
-        return AGENT_BY_IMPLEMENTATION_DOMAIN[entry.implementation_domain]
+        agent = AGENT_BY_IMPLEMENTATION_DOMAIN.get(entry.implementation_domain)
+        if agent is None:
+            raise ValueError(
+                f"Unsupported implementation_domain {entry.implementation_domain!r} "
+                f"for manifest entry source_section={entry.source_section!r}"
+            )
+        return agent
     return None
 
 

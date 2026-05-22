@@ -332,18 +332,31 @@ def _render_migration_result(result: dict[str, Any]) -> None:
 
 
 def _render_backup_result(result: dict[str, Any]) -> None:
-    click.echo(f"PostgreSQL backup created: {result['backup_dir']}")
-    click.echo(f"  Dump:     {result['dump_path']}")
-    click.echo(f"  Metadata: {result['metadata_path']}")
-    click.echo(f"  SHA256:   {result['dump_sha256']}")
-    click.echo("  Verified: pg_restore --list")
+    click.echo(f"PostgreSQL backup created: {result.get('backup_dir', '<unknown>')}")
+    if dump_path := result.get("dump_path"):
+        click.echo(f"  Dump:       {dump_path}")
+    if metadata_path := result.get("metadata_path"):
+        click.echo(f"  Metadata:   {metadata_path}")
+    if sha256s_path := result.get("sha256s_path"):
+        click.echo(f"  SHA256SUMS: {sha256s_path}")
+    if dump_sha256 := result.get("dump_sha256"):
+        click.echo(f"  SHA256:     {dump_sha256}")
+    if result.get("verified"):
+        click.echo("  Verified: pg_restore --list")
+    if result.get("sha256_verified"):
+        click.echo("  Verified: SHA256SUMS")
 
 
 def _render_restore_result(result: dict[str, Any]) -> None:
     probes = cast(dict[str, Any], result.get("probes", {}))
     migration = cast(dict[str, Any], probes.get("migration_marker", {}))
     click.echo("PostgreSQL restore completed.")
-    click.echo(f"  Target:    {result['database_url']}")
+    if database_url := result.get("database_url"):
+        click.echo(f"  Target:    {database_url}")
+    if dump_sha256 := result.get("dump_sha256"):
+        click.echo(f"  SHA256:    {dump_sha256}")
+    if result.get("sha256_verified"):
+        click.echo("  Verified: SHA256SUMS")
     click.echo(f"  pg_search: {'yes' if probes.get('pg_search_present') else 'no'}")
     click.echo(f"  pgaudit:   {'yes' if probes.get('pgaudit_present') else 'no'}")
     click.echo(f"  Migration: {'complete' if migration.get('present') else 'missing'}")

@@ -275,6 +275,33 @@ class TestAddToGraph:
         assert vector_call_kwargs["entity_key"] == entity_key(None, "Josh")
         assert "node_key" not in vector_call_kwargs
 
+    async def test_add_to_graph_succeeds_without_embed_fn(
+        self,
+        mock_neo4j: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_prompt_loader: MagicMock,
+    ) -> None:
+        """add_to_graph still writes graph nodes when embeddings are unavailable."""
+        service = KnowledgeGraphService(
+            neo4j_client=mock_neo4j,
+            llm_provider=mock_llm,
+            embed_fn=None,
+            prompt_loader=mock_prompt_loader,
+        )
+        mock_llm.generate_json = AsyncMock(
+            side_effect=[
+                {"entities": [{"entity": "Josh", "entity_type": "person"}]},
+                {"relations": []},
+                {"relations_to_delete": []},
+            ]
+        )
+
+        result = await service.add_to_graph("Josh is a person")
+
+        assert result.status is KnowledgeGraphStatus.SUCCESS
+        mock_neo4j.merge_node.assert_called_once()
+        mock_neo4j.set_node_vector.assert_not_called()
+
     async def test_add_to_graph_deletes_outdated_relations(
         self,
         service: KnowledgeGraphService,

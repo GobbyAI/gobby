@@ -51,7 +51,7 @@ its sibling guide tasks close.
 
 | Surface | Current role |
 | --- | --- |
-| `gobby build [INPUT|ACTION] [REF]` | CLI entry point for starting or controlling build automation |
+| `gobby build [INPUT\|ACTION] [REF]` | CLI entry point for starting or controlling build automation |
 | `gobby-tasks-ops:build_task` | MCP entry point for starting lifecycle automation; requires `input_ref` |
 | `POST /api/build` | HTTP entry point for the same shared build service |
 | `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation |
