@@ -1132,11 +1132,13 @@ async def test_build_leaf_rejects_non_automated_category(
 
 @pytest.mark.asyncio
 async def test_build_task_ref_automates_existing_expansion_output(
+    monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
     from gobby.storage.expansion_runs import LocalExpansionRunManager
 
+    _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1171,8 +1173,23 @@ async def test_build_task_ref_automates_existing_expansion_output(
     )
 
     assert result.task_id == parent.id
+    assert result.initial_lifecycle == "development"
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == [
+        "development",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ]
     assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (child.id,)) is not None
+    parent_rows = task_manager.stage_states.list_for_task(parent.id)
     child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in parent_rows] == [
+        "development",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ]
     assert [row.stage_name for row in child_rows] == ["development", "pr", "merge"]
 
 

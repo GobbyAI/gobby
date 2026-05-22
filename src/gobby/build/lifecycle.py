@@ -342,12 +342,21 @@ async def _build_epic(
             project_id=project_id,
             services=services,
         )
-    specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "epic")
+    manifest_input_kind: InputKind = (
+        "expanded_epic" if _has_existing_expansion_output(task_manager, task) else "epic"
+    )
+    specs = _initialize_stage_manifest(
+        task_manager,
+        task,
+        opts,
+        skip_stages,
+        manifest_input_kind,
+    )
     cascade_specs = (
         resolve_stage_manifest_specs(
             task_manager,
             task,
-            "epic",
+            manifest_input_kind,
             replace(opts, no_merge=False),
             skip_stages,
         )
@@ -578,6 +587,16 @@ def _reset_task_ref_expansion_output(
 
     service = ExpansionService(task_manager=task_manager, llm_service=None)
     service.reset_expansion_output(task.id)
+
+
+def _has_existing_expansion_output(task_manager: LocalTaskManager, task: Task) -> bool:
+    if task.task_type != "epic":
+        return False
+
+    from gobby.tasks.expansion_service import ExpansionService
+
+    service = ExpansionService(task_manager=task_manager, llm_service=None)
+    return service.find_existing_expansion_output(task.id) is not None
 
 
 def _current_stage_name(
