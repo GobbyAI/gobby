@@ -40,12 +40,37 @@ class TestDockerComposeServices:
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         assert "qdrant" in data["services"]
 
-    def test_compose_has_neo4j_service(self) -> None:
-        """Compose file defines a neo4j service."""
+    def test_compose_has_falkordb_service(self) -> None:
+        """Compose file defines a falkordb service."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "neo4j" in data["services"]
+        assert "falkordb" in data["services"]
+        assert "neo4j" not in data["services"]
+
+    def test_falkordb_service_contract(self) -> None:
+        """FalkorDB service uses the expected image, ports, auth, and healthcheck."""
+        from gobby.cli.installers.qdrant import _COMPOSE_SRC
+
+        data = yaml.safe_load(_COMPOSE_SRC.read_text())
+        falkordb = data["services"]["falkordb"]
+
+        assert falkordb["image"] == "falkordb/falkordb:latest"
+        assert "16379:6379" in falkordb["ports"]
+        assert "13000:3000" in falkordb["ports"]
+        assert (
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
+            in falkordb["environment"]
+        )
+        assert (
+            "GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
+            in falkordb["environment"]
+        )
+        assert falkordb["volumes"] == ["gobby_falkordb_data:/data"]
+        assert falkordb["healthcheck"]["test"] == [
+            "CMD-SHELL",
+            'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG',
+        ]
 
     def test_qdrant_ports(self) -> None:
         """Qdrant service exposes HTTP and gRPC ports."""
@@ -89,30 +114,24 @@ class TestDockerComposeServices:
         assert "qdrant" in profiles
         assert "all" in profiles
 
-    def test_neo4j_has_profiles(self) -> None:
-        """Neo4j service has docker compose profiles."""
+    def test_falkordb_has_profiles(self) -> None:
+        """FalkorDB service has docker compose profiles."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        profiles = data["services"]["neo4j"]["profiles"]
-        assert "neo4j" in profiles
+        profiles = data["services"]["falkordb"]["profiles"]
+        assert "falkordb" in profiles
         assert "all" in profiles
 
-    def test_compose_has_neo4j_volume(self) -> None:
-        """Compose file defines gobby_neo4j_data volume with explicit name."""
+    def test_compose_has_falkordb_volume(self) -> None:
+        """Compose file defines gobby_falkordb_data volume with explicit name."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "gobby_neo4j_data" in data.get("volumes", {})
-        assert data["volumes"]["gobby_neo4j_data"]["name"] == "gobby_neo4j_data"
-
-    def test_compose_has_neo4j_logs_volume(self) -> None:
-        """Compose file defines gobby_neo4j_logs volume to prevent anonymous volumes."""
-        from gobby.cli.installers.qdrant import _COMPOSE_SRC
-
-        data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "gobby_neo4j_logs" in data.get("volumes", {})
-        assert data["volumes"]["gobby_neo4j_logs"]["name"] == "gobby_neo4j_logs"
+        assert "gobby_falkordb_data" in data.get("volumes", {})
+        assert data["volumes"]["gobby_falkordb_data"]["name"] == "gobby_falkordb_data"
+        assert "gobby_neo4j_data" not in data.get("volumes", {})
+        assert "gobby_neo4j_logs" not in data.get("volumes", {})
 
     def test_compose_has_qdrant_volume(self) -> None:
         """Compose file defines gobby_qdrant_data volume with explicit name."""

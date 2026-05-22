@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks._models import Task
 
 logger = logging.getLogger(__name__)
+IMPLEMENTATION_DOMAIN_SCHEMA_ENUM: list[Any] = sorted(IMPLEMENTATION_DOMAINS)
 
 
 # =============================================================================
@@ -61,7 +62,7 @@ class TaskCreateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Required for code tasks; routes implementation to the matching developer.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+        json_schema_extra={"enum": IMPLEMENTATION_DOMAIN_SCHEMA_ENUM},
     )
     assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
@@ -98,7 +99,7 @@ class TaskUpdateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Code task implementation domain.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+        json_schema_extra={"enum": IMPLEMENTATION_DOMAIN_SCHEMA_ENUM},
     )
     allow_automation: bool | None = Field(
         default=None,
