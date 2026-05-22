@@ -152,13 +152,13 @@ class TestInitHubDatabase:
         assert result is db
         run_migrations.assert_not_called()
 
-    def test_open_protected_test_database_logs_unsupported_migrations(
+    def test_open_protected_test_database_reraises_unsupported_migrations(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Unsupported protected SQLite migrations are logged and skipped."""
+        """Unsupported protected SQLite migrations are logged and re-raised."""
         from gobby.runner_init import helpers
         from gobby.storage.migrations import MigrationUnsupportedError
 
@@ -176,9 +176,9 @@ class TestInitHubDatabase:
                 side_effect=MigrationUnsupportedError("unsupported baseline"),
             ),
         ):
-            result = helpers.open_protected_test_database(config)
+            with pytest.raises(MigrationUnsupportedError, match="unsupported baseline"):
+                helpers.open_protected_test_database(config)
 
-        assert result is db
         assert "Protected test SQLite migrations unsupported" in caplog.text
         assert "unsupported baseline" in caplog.text
 

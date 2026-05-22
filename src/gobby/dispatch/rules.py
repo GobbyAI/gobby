@@ -720,7 +720,7 @@ def _development_agent(task: object, stage: object, context: object) -> str:
         )
     if _field(task, "category") == "code":
         implementation_domain = _field(task, "implementation_domain")
-        if implementation_domain in IMPLEMENTATION_DOMAINS:
+        if implementation_domain is not None and implementation_domain in IMPLEMENTATION_DOMAINS:
             return AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
     if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"

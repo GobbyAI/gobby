@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Final, Protocol
 
 from gobby.storage.session_models import Session
 
@@ -24,6 +24,7 @@ _SESSION_UNIQUE_REQUIRED_COLUMNS = (
     "sessions.source",
     "sessions.project_id",
 )
+PRESERVE_IS_LOCAL: Final = -1
 
 
 def is_session_unique_conflict(exc: BaseException) -> bool:
@@ -50,7 +51,7 @@ def update_existing_session(
     parent_session_id: str | None,
     terminal_context_json: str | None,
     workflow_name: str | None,
-    is_local: bool,
+    is_local: bool | None,
     sandbox_enabled: bool | None,
     sandbox_policy_hash: str | None,
     now: str,
@@ -64,7 +65,11 @@ def update_existing_session(
             parent_session_id = COALESCE(?, parent_session_id),
             terminal_context = COALESCE(?, terminal_context),
             workflow_name = COALESCE(?, workflow_name),
-            is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
+            is_local = CASE
+                WHEN ? = -1 THEN is_local
+                WHEN ? THEN TRUE
+                ELSE FALSE
+            END,
             sandbox_enabled = COALESCE(?, sandbox_enabled),
             sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
             status = 'active',
@@ -78,7 +83,8 @@ def update_existing_session(
             parent_session_id,
             terminal_context_json,
             workflow_name,
-            is_local,
+            PRESERVE_IS_LOCAL if is_local is None else int(is_local),
+            0 if is_local is None else int(is_local),
             sandbox_enabled,
             sandbox_policy_hash,
             now,

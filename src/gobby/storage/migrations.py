@@ -481,10 +481,11 @@ def _run_test_sqlite_startup_repairs(db: LocalDatabase) -> None:
 
     repair_legacy_sqlite_auth_sessions(db)
 
-    table = db.fetchone(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        ("task_dispatch_mutex",),
-    )
+    with db.transaction() as conn:
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("task_dispatch_mutex",),
+        ).fetchone()
     if table is None:
         return
 

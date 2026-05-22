@@ -58,17 +58,17 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    assert BASELINE_VERSION == 260
-    assert latest_known_version() == 260
+    assert BASELINE_VERSION == 261
+    assert latest_known_version() == 261
     assert MIGRATIONS == []
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
     assert applied == 1
-    assert get_current_version(db) == 260
+    assert get_current_version(db) == 261
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [260]
+    assert versions == [261]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
@@ -95,9 +95,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 260
+    assert get_current_version(db) == 261
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [260]
+    assert versions == [261]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -226,7 +226,7 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
     message = str(exc_info.value)
     assert "SQLite test baseline can only initialize an empty test database." in message
     assert f"Database version {legacy_version}" not in message
-    assert "current SQLite baseline 260" not in message
+    assert "current SQLite baseline 261" not in message
     assert "gobby-hub.db" not in message
 
 
@@ -251,7 +251,7 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
 
 
 def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
-    """The v260 baseline includes representative storage domains."""
+    """The v261 baseline includes representative storage domains."""
     db_path = tmp_path / "baseline_tables.db"
     db = LocalDatabase(db_path)
 
@@ -296,7 +296,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
 
 
 def test_flattened_baseline_launch_columns(tmp_path) -> None:
-    """The v260 baseline exposes the canonical post-flattening columns."""
+    """The v261 baseline exposes the canonical post-flattening columns."""
     db_path = tmp_path / "baseline_columns.db"
     db = LocalDatabase(db_path)
 
@@ -365,7 +365,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
 
 
 def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
-    """The v260 baseline includes indexes and FK semantics formerly added by migrations."""
+    """The v261 baseline includes indexes and FK semantics formerly added by migrations."""
     db_path = tmp_path / "baseline_indexes.db"
     db = LocalDatabase(db_path)
 
@@ -452,7 +452,7 @@ def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
 
 
 def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
-    """The v260 baseline contains the repaired stage registry and zero-based defaults."""
+    """The v261 baseline contains the repaired stage registry and zero-based defaults."""
     db_path = tmp_path / "baseline_stages.db"
     db = LocalDatabase(db_path)
 
