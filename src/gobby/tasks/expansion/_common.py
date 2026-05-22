@@ -34,21 +34,27 @@ _FRONTEND_SIGNALS = frozenset(
         "css",
         "eslint",
         "frontend",
+        "jsx",
         "lighthouse",
         "playwright",
         "react",
         "routing",
         "storybook",
         "svelte",
+        "tailwind",
+        "tsx",
+        "typescript",
         "ui",
         "vite",
         "vue",
+        "web",
         "webpack",
     }
 )
 _DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
     r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
-    r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
+    r"jsx|next\.?js|playwright|react|routing|storybook|svelte|tailwind|tsx|"
+    r"typescript|ui|vite|vue|web|webpack)\b|(?:^|[\\/])web[\\/]|app\.tsx",
     flags=re.IGNORECASE,
 )
 _DETERMINISTIC_AGENT_BY_CATEGORY = {

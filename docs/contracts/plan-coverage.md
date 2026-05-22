@@ -129,7 +129,7 @@ regex; `kind: manifest` exempts it from the `**Acceptance:**` requirement.
 
 ```yaml
 - title: <human-readable title>
-  category: <code|config|docs|refactor|test|research|planning|manual>
+  category: <code|config|docs|refactor|test>
   task_type: <feature|bug|chore|...>
   depends_on: [<section-id>, ...]
   validation_criteria: <one-line pass/fail>
@@ -147,7 +147,7 @@ Entry schema (one entry per `kind: deliverable` section):
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | str | Human-readable title for the synthesized leaf |
-| `category` | enum | One of `VALID_CATEGORIES` |
+| `category` | enum | One of the development-forward categories: `code`, `config`, `docs`, `refactor`, `test` |
 | `task_type` | enum | Task-type tag for the synthesized leaf |
 | `depends_on` | list[str] | References `source_section` IDs of other manifest entries |
 | `validation_criteria` | str | One-line pass/fail |
@@ -174,8 +174,10 @@ The single category policy is:
   `additional_skills: ["test-driven-development"]`, label `tdd:required`, and
   validation criteria requiring red, green, refactor/final-green, exact command,
   and test-quality audit evidence.
-- `test`, `refactor`, `docs`, `research`, `planning`, and `manual` are not
-  TDD-eligible. Manifest entries for these categories must use `tdd: false`.
+- `test`, `refactor`, and `docs` are not TDD-eligible. Manifest entries for
+  these categories must use `tdd: false`.
+- `research`, `planning`, and `manual` are valid direct task categories, but
+  expansion manifests reject them.
 - `category: test` is valid for standalone test infrastructure,
   characterization, parity, or regression suites that are deliverables in
   their own right. These entries expand as single tasks and must carry their

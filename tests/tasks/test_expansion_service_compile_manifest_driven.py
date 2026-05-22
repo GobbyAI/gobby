@@ -13,6 +13,7 @@ import pytest
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.expansion._contract import _assigned_agent_for_entry
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -47,6 +48,18 @@ def _parse_manifest_plan(tmp_path: Path) -> PlanDocument:
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
+
+
+def test_manifest_entry_rejects_unknown_implementation_domain(tmp_path: Path) -> None:
+    plan_doc = _parse_manifest_plan(tmp_path)
+    entry = replace(
+        plan_doc.manifest_entries[0],
+        assigned_agent=None,
+        implementation_domain="mobile",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported implementation_domain 'mobile'"):
+        _assigned_agent_for_entry(entry)
 
 
 _MANIFEST_PLAN = """

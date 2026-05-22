@@ -42,6 +42,8 @@ class TemplatingMixin:
     ) -> dict[str, Any]:
         """Build evaluation context for condition checking."""
         raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
+        if not isinstance(raw_tool_input, dict):
+            raw_tool_input = {}
 
         # For MCP call_tool, unwrap nested arguments so rule conditions
         # can reference inner tool params (commit_sha, reason, etc.) directly.

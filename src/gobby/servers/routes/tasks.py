@@ -23,7 +23,6 @@ from gobby.storage.tasks._models import (
 )
 from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._stage_views import stage_state_view
-from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 if TYPE_CHECKING:
@@ -61,7 +60,6 @@ class TaskCreateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Required for code tasks; routes implementation to the matching developer.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
     )
     assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
@@ -98,7 +96,6 @@ class TaskUpdateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Code task implementation domain.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
     )
     allow_automation: bool | None = Field(
         default=None,

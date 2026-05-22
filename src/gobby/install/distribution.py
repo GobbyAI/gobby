@@ -8,8 +8,9 @@ import shutil
 import subprocess  # nosec B404 # hardcoded helper version probes
 from dataclasses import dataclass
 
+from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
-from gobby.utils.native_bin import native_bin_name
+from gobby.utils.native_bin import is_native_bin_usable, local_native_bin_path, native_bin_name
 
 HOMEBREW_DISTRIBUTION = "homebrew"
 GOBBY_DISTRIBUTION_ENV = "GOBBY_DISTRIBUTION"
@@ -46,7 +47,7 @@ def is_homebrew_distribution() -> bool:
 
 
 def verify_homebrew_managed_bins() -> list[HomebrewHelperStatus]:
-    """Verify Homebrew helper binaries are on PATH and satisfy pinned minimums."""
+    """Verify helper binaries satisfy pinned minimums for Homebrew distribution."""
     statuses = [_inspect_homebrew_helper(name) for name in HOMEBREW_HELPERS]
     failures = [status for status in statuses if not status.ok]
     if failures:
@@ -57,6 +58,10 @@ def verify_homebrew_managed_bins() -> list[HomebrewHelperStatus]:
 def _inspect_homebrew_helper(name: str) -> HomebrewHelperStatus:
     formula = HOMEBREW_HELPER_FORMULAE[name]
     minimum = MANAGED_BIN_VERSION_PINS[name]
+    local_status = _inspect_local_managed_helper(name, formula, minimum)
+    if local_status is not None:
+        return local_status
+
     path = _which_path_only(name)
     if path is None:
         return HomebrewHelperStatus(
@@ -81,7 +86,7 @@ def _inspect_homebrew_helper(name: str) -> HomebrewHelperStatus:
             reason="unversioned",
         )
 
-    if not _version_at_least(version, minimum):
+    if not is_at_least_version(version, minimum):
         return HomebrewHelperStatus(
             name=name,
             formula=formula,
@@ -97,6 +102,29 @@ def _inspect_homebrew_helper(name: str) -> HomebrewHelperStatus:
         formula=formula,
         minimum_version=minimum,
         path=path,
+        version=version,
+        ok=True,
+    )
+
+
+def _inspect_local_managed_helper(
+    name: str,
+    formula: str,
+    minimum: str,
+) -> HomebrewHelperStatus | None:
+    path = local_native_bin_path(name)
+    if not is_native_bin_usable(path):
+        return None
+
+    version = _probe_helper_version(str(path))
+    if version is None or not is_at_least_version(version, minimum):
+        return None
+
+    return HomebrewHelperStatus(
+        name=name,
+        formula=formula,
+        minimum_version=minimum,
+        path=str(path),
         version=version,
         ok=True,
     )
@@ -131,26 +159,8 @@ def _probe_helper_version(path: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _version_at_least(version: str, minimum: str) -> bool:
-    current = _version_tuple(version)
-    floor = _version_tuple(minimum)
-    if current is None or floor is None:
-        return False
-    return current >= floor
-
-
-def _version_tuple(version: str) -> tuple[int, int, int, int] | None:
-    match = re.match(r"v?(\d+(?:\.\d+){0,3})", version.strip())
-    if not match:
-        return None
-    parts = [int(part) for part in match.group(1).split(".")]
-    while len(parts) < 4:
-        parts.append(0)
-    return (parts[0], parts[1], parts[2], parts[3])
-
-
 def _format_homebrew_helper_failures(failures: list[HomebrewHelperStatus]) -> str:
-    sections = ["Homebrew-managed Gobby requires Brew-installed helper binaries on PATH."]
+    sections = ["Homebrew-managed Gobby requires helper binaries satisfying pinned floors."]
     for failure in failures:
         sections.append(_format_homebrew_helper_failure(failure))
     return "\n\n".join(sections)

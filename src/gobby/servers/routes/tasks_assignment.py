@@ -100,7 +100,8 @@ class TaskAssignmentNotifier:
         try:
             send_result = await mailbox.send(
                 from_session_id=SYSTEM_SESSION_ID,
-                to_session_id=target_session_id,
+                target="session",
+                target_id=target_session_id,
                 content=content,
                 priority="high",
                 message_type="task_assignment",
