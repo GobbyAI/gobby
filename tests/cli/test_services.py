@@ -3,6 +3,7 @@
 import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -10,27 +11,99 @@ import pytest
 
 from gobby.cli.services import (
     ensure_local_embedding_service_ready,
+    get_falkordb_status,
     get_local_embedding_service_failure_reason,
-    get_neo4j_status,
-    is_neo4j_healthy,
-    is_neo4j_installed,
+    is_falkordb_healthy,
+    is_falkordb_installed,
     is_qdrant_healthy,
     try_autoload_embedding_model,
 )
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
-class TestIsNeo4jInstalled:
-    """Tests for is_neo4j_installed()."""
+def _seed_falkordb_config(db_path: Path, *, host: str = "localhost", port: int = 16379) -> None:
+    db = LocalDatabase(db_path)
+    try:
+        run_migrations(db)
+        store = ConfigStore(db)
+        store.set("databases.falkordb.host", host, source="test")
+        store.set("databases.falkordb.port", port, source="test")
+    finally:
+        db.close()
 
-    def test_installed_when_dir_exists(self, tmp_path: Path) -> None:
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
-        assert is_neo4j_installed(gobby_home=tmp_path) is True
 
-    def test_not_installed_when_dir_missing(self, tmp_path: Path) -> None:
-        assert is_neo4j_installed(gobby_home=tmp_path) is False
+class _FakeRedisClient:
+    def __init__(
+        self,
+        *,
+        ping_result: bool = True,
+        ping_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self.ping_result = ping_result
+        self.ping_error = ping_error
+        self.close_error = close_error
+        self.ping_count = 0
+        self.close_count = 0
+
+    async def ping(self) -> bool:
+        self.ping_count += 1
+        if self.ping_error is not None:
+            raise self.ping_error
+        return self.ping_result
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class _RedisFactory:
+    def __init__(self, client: _FakeRedisClient) -> None:
+        self.client = client
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs: object) -> _FakeRedisClient:
+        self.calls.append(kwargs)
+        return self.client
+
+
+class TestIsFalkorDBInstalled:
+    """Tests for is_falkordb_installed()."""
+
+    def test_installed_when_config_has_host_and_port(self, tmp_path: Path) -> None:
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+
+        assert is_falkordb_installed(gobby_home=tmp_path) is True
+
+    def test_not_installed_when_config_missing(self, tmp_path: Path) -> None:
+        assert is_falkordb_installed(gobby_home=tmp_path) is False
+
+    def test_no_bootstrap_uses_tmp_home_db(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+
+        import gobby.cli.services as services
+        from gobby.cli.installers import falkor
+
+        resolved_paths: list[Path] = []
+        original_resolver = falkor._resolve_falkordb_db_path
+
+        def track_resolver(home: Path) -> Path:
+            path = original_resolver(home)
+            resolved_paths.append(path)
+            return path
+
+        monkeypatch.setattr(falkor, "_resolve_falkordb_db_path", track_resolver)
+        monkeypatch.setattr(services, "get_gobby_home", lambda: Path.home() / ".gobby")
+
+        assert services.is_falkordb_installed(gobby_home=tmp_path) is True
+        assert resolved_paths == [tmp_path / "gobby-hub.db"]
 
 
 @pytest.fixture
@@ -60,62 +133,67 @@ async def _run_inline(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-class TestIsNeo4jHealthy:
-    """Tests for is_neo4j_healthy()."""
+class TestIsFalkorDBHealthy:
+    """Tests for is_falkordb_healthy()."""
 
     @pytest.mark.asyncio
-    async def test_healthy_when_reachable(self, mock_async_client: AsyncMock) -> None:
-        mock_async_client.get = AsyncMock(return_value=httpx.Response(200))
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            assert await is_neo4j_healthy("http://localhost:8474") is True
+    async def test_healthy_when_ping_succeeds(self) -> None:
+        client = _FakeRedisClient(ping_result=True)
+        redis_factory = _RedisFactory(client)
+        redis_module = SimpleNamespace(Redis=redis_factory)
+
+        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
+            assert await is_falkordb_healthy("localhost", 16379, "secret") is True
+
+        assert redis_factory.calls == [
+            {"host": "localhost", "port": 16379, "password": "secret", "socket_timeout": 5}
+        ]
+        assert client.ping_count == 1
+        assert client.close_count == 1
 
     @pytest.mark.asyncio
-    async def test_unhealthy_when_unreachable(self, mock_async_client: AsyncMock) -> None:
-        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            assert await is_neo4j_healthy("http://localhost:8474") is False
+    async def test_unhealthy_when_ping_fails(self) -> None:
+        client = _FakeRedisClient(ping_error=ConnectionError("refused"))
+        redis_factory = _RedisFactory(client)
+        redis_module = SimpleNamespace(Redis=redis_factory)
+
+        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
+            assert await is_falkordb_healthy("localhost", 16379, "secret") is False
+
+        assert client.ping_count == 1
+        assert client.close_count == 1
 
     @pytest.mark.asyncio
-    async def test_unhealthy_when_server_error(self, mock_async_client: AsyncMock) -> None:
-        mock_async_client.get = AsyncMock(return_value=httpx.Response(500))
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            assert await is_neo4j_healthy("http://localhost:8474") is False
+    async def test_unhealthy_when_close_fails(self) -> None:
+        client = _FakeRedisClient(ping_result=True, close_error=RuntimeError("close failed"))
+        redis_factory = _RedisFactory(client)
+        redis_module = SimpleNamespace(Redis=redis_factory)
+
+        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
+            assert await is_falkordb_healthy("localhost", 16379, "secret") is True
+
+        assert client.ping_count == 1
+        assert client.close_count == 1
 
     @pytest.mark.asyncio
-    async def test_server_error_logs_debug_without_warning(
-        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_async_client.get = AsyncMock(return_value=httpx.Response(500))
-        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
-
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            assert await is_neo4j_healthy("http://localhost:8474") is False
-
-        assert any(
-            record.levelno == logging.DEBUG
-            and "Neo4j health check failed: http://localhost:8474 returned 500"
-            in record.getMessage()
-            for record in caplog.records
-        )
-        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
-
-    @pytest.mark.asyncio
-    async def test_unhealthy_when_no_url(self) -> None:
-        assert await is_neo4j_healthy(None) is False
+    async def test_unhealthy_when_host_or_port_missing(self) -> None:
+        assert await is_falkordb_healthy(None, 16379, "secret") is False
+        assert await is_falkordb_healthy("localhost", None, "secret") is False
 
     @pytest.mark.asyncio
     async def test_unreachable_probe_does_not_log_warning(
-        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        client = _FakeRedisClient(ping_error=ConnectionError("refused"))
+        redis_module = SimpleNamespace(Redis=_RedisFactory(client))
         caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
 
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            assert await is_neo4j_healthy("http://localhost:8474") is False
+        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
+            assert await is_falkordb_healthy("localhost", 16379, "secret") is False
 
         assert any(
             record.levelno == logging.DEBUG
-            and "Neo4j health check failed: http://localhost:8474 unreachable: ConnectError: refused"
+            and "FalkorDB health check failed: localhost:16379 unreachable: ConnectionError: refused"
             in record.getMessage()
             for record in caplog.records
         )
@@ -162,38 +240,34 @@ class TestIsQdrantHealthy:
         assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
-class TestGetNeo4jStatus:
-    """Tests for get_neo4j_status()."""
+class TestGetFalkorDBStatus:
+    """Tests for get_falkordb_status()."""
 
     @pytest.mark.asyncio
-    async def test_status_installed_and_healthy(
-        self, tmp_path: Path, mock_async_client: AsyncMock
-    ) -> None:
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
-        mock_async_client.get = AsyncMock(return_value=httpx.Response(200))
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            status = await get_neo4j_status(gobby_home=tmp_path, neo4j_url="http://localhost:8474")
+    async def test_status_installed_and_healthy(self, tmp_path: Path) -> None:
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+
+        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)):
+            status = await get_falkordb_status(gobby_home=tmp_path, password="secret")
+
         assert status["installed"] is True
         assert status["healthy"] is True
-        assert status["url"] == "http://localhost:8474"
+        assert status["url"] == "redis://localhost:16379"
 
     @pytest.mark.asyncio
     async def test_status_not_installed(self, tmp_path: Path) -> None:
-        status = await get_neo4j_status(gobby_home=tmp_path, neo4j_url=None)
+        status = await get_falkordb_status(gobby_home=tmp_path)
         assert status["installed"] is False
         assert status["healthy"] is False
         assert status["url"] is None
 
     @pytest.mark.asyncio
-    async def test_status_installed_but_unhealthy(
-        self, tmp_path: Path, mock_async_client: AsyncMock
-    ) -> None:
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
-        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
-            status = await get_neo4j_status(gobby_home=tmp_path, neo4j_url="http://localhost:8474")
+    async def test_status_installed_but_unhealthy(self, tmp_path: Path) -> None:
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+
+        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=False)):
+            status = await get_falkordb_status(gobby_home=tmp_path, password="secret")
+
         assert status["installed"] is True
         assert status["healthy"] is False
 

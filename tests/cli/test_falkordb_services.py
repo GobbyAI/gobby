@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -23,6 +24,29 @@ def _seed_falkordb_config(db_path: Path) -> None:
         store.set("databases.falkordb.port", 6379, source="test")
     finally:
         db.close()
+
+
+class _FakeRedisClient:
+    def __init__(self) -> None:
+        self.ping_count = 0
+        self.close_count = 0
+
+    async def ping(self) -> bool:
+        self.ping_count += 1
+        return True
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class _RedisFactory:
+    def __init__(self, client: _FakeRedisClient) -> None:
+        self.client = client
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs: object) -> _FakeRedisClient:
+        self.calls.append(kwargs)
+        return self.client
 
 
 class TestIsFalkorDBInstalled:
@@ -71,8 +95,11 @@ class TestFalkorDBHealthAndStatus:
     async def test_health_uses_redis_ping_with_auth_when_password_present(self) -> None:
         from gobby.cli.services import is_falkordb_healthy
 
-        completed = object()
-        with patch("gobby.cli.services.asyncio.to_thread", return_value=completed) as to_thread:
+        client = _FakeRedisClient()
+        redis_factory = _RedisFactory(client)
+        redis_module = SimpleNamespace(Redis=redis_factory)
+
+        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
             assert (
                 await is_falkordb_healthy(
                     host="localhost",
@@ -82,18 +109,11 @@ class TestFalkorDBHealthAndStatus:
                 is True
             )
 
-        call_args = to_thread.call_args.args
-        assert call_args[0].__name__ == "run"
-        assert call_args[1] == [
-            "redis-cli",
-            "-h",
-            "localhost",
-            "-p",
-            "6379",
-            "-a",
-            "secret",
-            "PING",
+        assert redis_factory.calls == [
+            {"host": "localhost", "port": 6379, "password": "secret", "socket_timeout": 5}
         ]
+        assert client.ping_count == 1
+        assert client.close_count == 1
 
     @pytest.mark.asyncio
     async def test_status_reports_installed_health_and_endpoint(self, tmp_path: Path) -> None:
@@ -107,6 +127,5 @@ class TestFalkorDBHealthAndStatus:
         assert status == {
             "installed": True,
             "healthy": True,
-            "host": "localhost",
-            "port": 6379,
+            "url": "redis://localhost:6379",
         }

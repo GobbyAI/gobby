@@ -83,20 +83,27 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
     else:
         logger.debug("Qdrant URL is not configured; vector health check skipped")
 
-    if runner.memory_manager and db_cfg.neo4j.url:
-        from gobby.cli.services import is_neo4j_healthy
+    falkordb_cfg = getattr(db_cfg, "falkordb", None)
+    falkordb_host = getattr(falkordb_cfg, "host", None) if falkordb_cfg is not None else None
+    falkordb_port = getattr(falkordb_cfg, "port", None) if falkordb_cfg is not None else None
+    falkordb_password = (
+        getattr(falkordb_cfg, "requirepass", None) if falkordb_cfg is not None else None
+    )
+    if runner.memory_manager and falkordb_host and falkordb_port:
+        from gobby.cli.services import is_falkordb_healthy
 
-        if not await is_neo4j_healthy(db_cfg.neo4j.url):
+        if not await is_falkordb_healthy(falkordb_host, falkordb_port, falkordb_password):
             logger.warning(
-                f"Neo4j configured but unreachable at {db_cfg.neo4j.url} — graph features disabled"
+                f"FalkorDB configured but unreachable at {falkordb_host}:{falkordb_port} — "
+                "graph features disabled"
             )
             runner.memory_manager.clear_graph_clients()
             if tracker:
-                tracker.error("Neo4j", f"unreachable at {db_cfg.neo4j.url}")
+                tracker.error("FalkorDB", f"unreachable at {falkordb_host}:{falkordb_port}")
         elif tracker:
-            tracker.complete("Neo4j healthy")
+            tracker.complete("FalkorDB healthy")
     elif runner.memory_manager:
-        logger.debug("Neo4j URL is not configured; graph health check skipped")
+        logger.debug("FalkorDB host/port is not configured; graph health check skipped")
 
 
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
