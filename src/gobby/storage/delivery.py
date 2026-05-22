@@ -52,6 +52,7 @@ UNIT_COLUMNS = frozenset(
     }
 )
 CAMPAIGN_JSON_COLUMNS = frozenset({"structured_pr_verdict"})
+CAMPAIGN_DEFAULT_COLUMNS = frozenset({"state", "delivery_mode", "merge_strategy"})
 UNIT_JSON_COLUMNS = frozenset({"protection_json", "gate_snapshot_json"})
 
 
@@ -213,6 +214,8 @@ class TaskDeliveryStateManager:
         cleaned: dict[str, Any] = {}
         for column, value in fields.items():
             if column not in CAMPAIGN_COLUMNS:
+                continue
+            if column in CAMPAIGN_DEFAULT_COLUMNS and value is None:
                 continue
             cleaned[column] = (
                 _encode_json(value)
