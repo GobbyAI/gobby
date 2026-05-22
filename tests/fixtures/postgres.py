@@ -24,13 +24,61 @@ from typing import Any
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.postgres import (
     _BASELINE_BOOKKEEPING_TABLES,
     PostgresHubDatabase,
 )
 
+_TEST_SCHEMA_PREFIX = "gobby_test_"
+
+
+def _schema_looks_test_only(schema: str) -> bool:
+    return schema.startswith(_TEST_SCHEMA_PREFIX)
+
+
+def _enforce_safe_test_schema(schema: str) -> None:
+    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
+        return
+    if _schema_looks_test_only(schema):
+        return
+    pytest.fail(
+        "Refusing to run PostgreSQL tests outside a gobby_test_* schema while GOBBY_TEST_PROTECT=1."
+    )
+
+
+def _adapt_seed_value(value: Any) -> Any:
+    if isinstance(value, dict | list):
+        return Jsonb(value)
+    return value
+
+
+def _adapt_seed_rows(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    return [tuple(_adapt_seed_value(value) for value in row) for row in rows]
+
+
 logger = logging.getLogger(__name__)
+
+
+def _configured_postgres_database_url() -> str | None:
+    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
+        return None
+    try:
+        from gobby.config.bootstrap import load_bootstrap
+
+        return load_bootstrap().database_url
+    except Exception as exc:
+        logger.warning("Failed to load bootstrap PostgreSQL DSN for tests: %s", exc)
+        return None
+
+
+@pytest.fixture(scope="session")
+def postgres_database_url() -> str:
+    url = os.environ.get("DATABASE_URL") or _configured_postgres_database_url()
+    if not url:
+        pytest.skip("DATABASE_URL or configured bootstrap database_url is required")
+    return url
 
 
 def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
@@ -110,6 +158,7 @@ def _reset_schema(
     `PostgresHubDatabase.apply_migrations()` produces on a fresh schema —
     that is the invariant acceptance 2.2.3 enforces.
     """
+    _enforce_safe_test_schema(schema)
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
         all_tables = {
@@ -135,28 +184,26 @@ def _reset_schema(
                         sql.SQL("INSERT INTO {} VALUES ({})").format(
                             sql.Identifier(table), placeholders
                         ),
-                        rows,
+                        _adapt_seed_rows(rows),
                     )
 
 
 @pytest.fixture(scope="session")
-def postgres_schema(worker_id: str) -> Iterator[str]:
+def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]:
     """Create a unique schema for this xdist worker; drop it on teardown.
 
     Schema name layout: `gobby_test_<epoch>_<pid>_<worker>_<nonce>` — six
     underscore-delimited parts so `_cleanup_orphaned_schemas` can recover
     the creation epoch from `parts[2]` even when the worker id is `master`.
 
-    Skips the whole test if `DATABASE_URL` is not configured, so test runs
-    outside the postgres-enabled environment short-circuit cleanly instead
-    of crashing inside fixture setup.
+    Uses `DATABASE_URL` when configured, otherwise falls back to the local
+    Gobby bootstrap database_url under `GOBBY_TEST_PROTECT=1`.
     """
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        pytest.skip("DATABASE_URL is required for postgres_schema-backed tests")
+    url = postgres_database_url
     created_epoch = int(time.time())
     nonce = uuid.uuid4().hex[:6]
-    schema = f"gobby_test_{created_epoch}_{os.getpid()}_{worker_id}_{nonce}"
+    schema = f"{_TEST_SCHEMA_PREFIX}{created_epoch}_{os.getpid()}_{worker_id}_{nonce}"
+    _enforce_safe_test_schema(schema)
     _cleanup_orphaned_schemas(url)
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
@@ -174,6 +221,7 @@ def postgres_schema(worker_id: str) -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def postgres_canonical_seed(
+    postgres_database_url: str,
     postgres_schema: str,
 ) -> dict[str, list[tuple[Any, ...]]]:
     """One-time per-worker capture of fresh-baseline seed rows.
@@ -184,7 +232,7 @@ def postgres_canonical_seed(
     the source of truth for `_reset_schema`'s re-INSERT step on every
     per-test reset.
     """
-    url = os.environ["DATABASE_URL"]
+    url = postgres_database_url
     db = PostgresHubDatabase(url + f"?options=-csearch_path%3D{postgres_schema}")
     try:
         db.apply_migrations()
@@ -197,6 +245,7 @@ def postgres_canonical_seed(
 
 @pytest.fixture
 def postgres_db(
+    postgres_database_url: str,
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
 ) -> Iterator[PostgresHubDatabase]:
@@ -205,7 +254,7 @@ def postgres_db(
     Both entry and exit resets receive the same canonical seed snapshot
     captured once per worker by `postgres_canonical_seed`.
     """
-    base_url = os.environ["DATABASE_URL"]
+    base_url = postgres_database_url
     scoped_url = base_url + f"?options=-csearch_path%3D{postgres_schema}"
     # apply_migrations is idempotent; the session-scoped seed fixture ran it
     # before this test was created, so this call is a no-op.
