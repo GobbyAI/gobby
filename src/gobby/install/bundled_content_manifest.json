@@ -200,7 +200,7 @@
     "workflows/qa.yaml": "55acbc85b42555b411418680948e6557a5132dc89380391826e348ab55deca7b",
     "workflows/review.yaml": "ca0a547d2636909ecb292f50c594d5dccbf7282d76a3bb4e96d5fb115c1a92ad",
     "workflows/rules/CLAUDE.md": "bdd7cca29c865ecf734bd328892c51fd0b7ae311d70dbb1b90f061a4844327aa",
-    "workflows/rules/agent-monitoring/require-agent-monitoring-skill.yaml": "5682e14aee8649cef4db00c8bc3f0531096466fac87ec767b855c210a5daae82",
+    "workflows/rules/agent-monitoring/require-agent-monitoring-skill.yaml": "6ef381342cae6021ae962bfb06209c4772940c2329fba746d277d936f501f98d",
     "workflows/rules/auto-task/guide-task-continuation.yaml": "a4944ed0361d4f39944bc0d917a052e87aa10993834f80ae98ba9372a6af85bf",
     "workflows/rules/auto-task/inject-autonomous-mode.yaml": "4e91e140a8c2ae552b6970ef4777c026d91916235f86deb9b5e030e4e8daf07a",
     "workflows/rules/auto-task/notify-task-tree-complete.yaml": "baf80d53cb1e1388a733e11b100c245c453fc1d92315104d7bf63b72dd98e68f",

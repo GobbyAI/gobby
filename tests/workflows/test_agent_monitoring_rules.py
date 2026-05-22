@@ -57,17 +57,19 @@ class TestRequireAgentMonitoringSkill:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.event.value == "before_tool"
-        assert "not skill_loaded('agent-monitoring')" in (body.when or "")
+        assert "skill_loaded('agent-monitoring')" in (body.when or "")
+        assert "skill_loaded('build-coordinator')" in (body.when or "")
         assert "list_running_agents" in (body.when or "")
         assert "capture_output" in (body.when or "")
         assert "tmux capture-pane" in (body.when or "")
         assert "gobby-hub.db" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.'
+        expected_reason = (
+            'Call get_skill(name="agent-monitoring") or '
+            'get_skill(name="build-coordinator") on gobby-skills, then continue.'
         )
+        assert body.effects[0].reason == expected_reason
 
     @pytest.mark.asyncio
     async def test_blocks_monitoring_schema_before_skill_load(self, db) -> None:
@@ -106,6 +108,28 @@ class TestRequireAgentMonitoringSkill:
             event,
             session_id="sid",
             variables={"loaded_skills": ["agent-monitoring"]},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_skips_monitoring_schema_after_build_coordinator_load(self, db) -> None:
+        _sync_bundled(db)
+        event = _event(
+            {
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "mcp_tool": "get_tool_schema",
+                "tool_input": {
+                    "server_name": "gobby-agents",
+                    "tool_name": "list_running_agents",
+                },
+            }
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["build-coordinator"]},
         )
 
         assert response.decision == "allow"

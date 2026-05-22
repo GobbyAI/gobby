@@ -2,12 +2,15 @@ tags: [agent-monitoring, enforcement, gobby, default]
 
 rules:
   require-agent-monitoring-skill:
-    description: "Require agent-monitoring skill before inspecting agent progress"
+    description: "Require monitoring guidance before inspecting agent progress"
     event: before_tool
     enabled: true
     priority: 23
     when: >
-      not skill_loaded('agent-monitoring')
+      not (
+        skill_loaded('agent-monitoring')
+        or skill_loaded('build-coordinator')
+      )
       and (
         (
           (
@@ -71,4 +74,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.'
+        reason: 'Call get_skill(name="agent-monitoring") or get_skill(name="build-coordinator") on gobby-skills, then continue.'
