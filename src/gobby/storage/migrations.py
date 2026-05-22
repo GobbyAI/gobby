@@ -460,6 +460,7 @@ def _run_test_sqlite_baseline(db: LocalDatabase, schema_path: Path) -> int:
     """Apply the fixture-only SQLite baseline used by legacy LocalDatabase tests."""
     current_version = get_current_version(db)
     if current_version >= BASELINE_VERSION:
+        _run_test_sqlite_startup_repairs(db)
         return 0
     if current_version != 0:
         raise MigrationUnsupportedError(
@@ -471,6 +472,20 @@ def _run_test_sqlite_baseline(db: LocalDatabase, schema_path: Path) -> int:
         conn.executescript(schema_sql)
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (BASELINE_VERSION,))
     return 1
+
+
+def _run_test_sqlite_startup_repairs(db: LocalDatabase) -> None:
+    """Run lightweight repair steps expected by legacy SQLite tests."""
+    table = db.fetchone(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("task_dispatch_mutex",),
+    )
+    if table is None:
+        return
+
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    TaskDispatchMutexManager(db).sweep_expired()
 
 
 def run_migrations(db: LocalDatabase) -> int:

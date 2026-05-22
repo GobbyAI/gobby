@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -87,6 +88,9 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     database_url = getattr(config, "database_url", None)
     if not database_url:
+        test_db = _init_protected_test_database(config)
+        if test_db is not None:
+            return test_db
         raise ValueError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -95,3 +99,26 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     postgres_db.apply_migrations()
     logger.info("Database: PostgreSQL hub")
     return postgres_db
+
+
+def _init_protected_test_database(config: DatabasePathConfig) -> Any | None:
+    safe_path = os.environ.get("GOBBY_DATABASE_PATH")
+    if os.environ.get("GOBBY_TEST_PROTECT") != "1" or not safe_path:
+        return None
+
+    config_path = getattr(config, "database_path", None)
+    if not isinstance(config_path, str):
+        return None
+    if Path(config_path).expanduser().resolve() != Path(safe_path).expanduser().resolve():
+        return None
+
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.migrations import MigrationUnsupportedError, run_migrations
+
+    db = LocalDatabase(config_path)
+    try:
+        run_migrations(db)
+    except MigrationUnsupportedError:
+        pass
+    logger.info("Database: protected test SQLite hub")
+    return db

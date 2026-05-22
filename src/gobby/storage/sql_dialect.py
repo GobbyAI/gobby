@@ -68,13 +68,13 @@ def json_array_contains_condition(
 
 def older_than_now_expr(db: object, column: str, param: str, unit: IntervalUnit) -> str:
     if not is_postgres(db):
-        return f"{column} < strftime('%Y-%m-%dT%H:%M:%S', 'now', '-' || {param} || ' {unit}s')"
+        return f"julianday({column}) < julianday('now', '-' || {param} || ' {unit}s')"
     return f"{column} < NOW() - ({param}::double precision * INTERVAL '1 {unit}')"
 
 
 def newer_than_now_expr(db: object, column: str, param: str, unit: IntervalUnit) -> str:
     if not is_postgres(db):
-        return f"{column} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-' || {param} || ' {unit}s')"
+        return f"julianday({column}) >= julianday('now', '-' || {param} || ' {unit}s')"
     return f"{column} >= NOW() - ({param}::double precision * INTERVAL '1 {unit}')"
 
 

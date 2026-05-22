@@ -1,6 +1,4 @@
-"""
-CRUD commands for task management.
-"""
+"""CRUD commands for task management."""
 
 import json
 from pathlib import Path

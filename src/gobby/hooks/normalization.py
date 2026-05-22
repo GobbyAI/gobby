@@ -676,7 +676,7 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
             tool_name = canonical
 
     # 1a. Parse mcp__<server>__<tool> prefix for ALL native MCP calls
-    if tool_name.startswith("mcp__") and "mcp_tool" not in data:
+    if tool_name.startswith("mcp__"):
         parts = tool_name.split("__", 2)  # ["mcp", "server", "tool"]
         if len(parts) == 3:
             data.setdefault("mcp_server", parts[1])
@@ -686,7 +686,7 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
     if tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
         inner_server = tool_input.get("server_name")
         inner_tool = tool_input.get("tool_name")
-        if tool_name.startswith("mcp__"):
+        if tool_name.startswith("mcp__") and (inner_server or inner_tool):
             # The gobby call_tool wrapper is not the semantic target. Clear
             # prefix-parsed wrapper fields, then set the inner target when present.
             data.pop("mcp_server", None)

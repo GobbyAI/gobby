@@ -496,7 +496,9 @@ class TestEnsureModel:
 
         mock_whisper_model = MagicMock()
 
-        with patch("faster_whisper.WhisperModel", return_value=mock_whisper_model) as mock_cls:
+        with patch(
+            "gobby.voice.stt._load_whisper_model", return_value=mock_whisper_model
+        ) as mock_cls:
             model = await stt._ensure_model()
 
             assert model is mock_whisper_model
@@ -537,7 +539,7 @@ class TestEnsureModel:
             return await original_to_thread(fn, *args, **kwargs)
 
         with patch("gobby.voice.stt.asyncio.to_thread", side_effect=slow_to_thread):
-            with patch("faster_whisper.WhisperModel", return_value=mock_whisper_model):
+            with patch("gobby.voice.stt._load_whisper_model", return_value=mock_whisper_model):
                 first = asyncio.create_task(stt._ensure_model())
                 await wait_for_async_condition(load_started.is_set, description="model load start")
                 second = asyncio.create_task(stt._ensure_model())

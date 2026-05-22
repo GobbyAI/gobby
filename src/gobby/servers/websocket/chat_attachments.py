@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
@@ -112,13 +112,13 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
 
 
 def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    session_manager = owner.session_manager
+    session_manager = getattr(owner, "session_manager", None)
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
-    db = session_manager.db
+    db = getattr(session_manager, "db", None)
     if db is None:
         raise ValueError("Attachment storage requires session_manager.db")
-    return db
+    return cast(DatabaseProtocol, db)
 
 
 def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:

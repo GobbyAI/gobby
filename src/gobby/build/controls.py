@@ -275,7 +275,7 @@ def cleanup_successful_merge_artifacts(
         db,
         cleanup_project_id,
         artifacts_to_delete,
-        force=True,
+        force=False,
     )
     if any(artifact.deferred for artifact in artifacts):
         _branches_deleted = 0

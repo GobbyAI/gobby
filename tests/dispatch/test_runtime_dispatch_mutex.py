@@ -97,6 +97,11 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(dispatcher, "reload_candidate", lambda *a, **k: candidate)
     monkeypatch.setattr(dispatcher, "build_context", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dispatcher.DispatchWriteSetGuard,
+        "load",
+        lambda *a, **k: SimpleNamespace(has_overlap=lambda *a, **k: None),
+    )
 
     result = await dispatcher.run_heartbeat(db=SimpleNamespace(), project_id="project-1")
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
 from gobby.storage.sql_dialect import is_postgres, older_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused', 'handoff_ready')
+        AND id != ?
         AND (
             {updated_stale_sql}
             OR (
@@ -98,7 +100,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
             )
         )
         """,  # nosec B608 - cutoff expressions are selected by storage dialect.
-        (timeout_hours, timeout_hours),
+        (SYSTEM_SESSION_ID, timeout_hours, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -127,9 +129,10 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status = 'handoff_ready'
+        AND id != ?
         AND {updated_stale_sql}
         """,  # nosec B608 - cutoff expression is selected by storage dialect.
-        (timeout_minutes,),
+        (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -157,9 +160,10 @@ def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -
         UPDATE sessions
         SET status = 'paused'
         WHERE status = 'active'
+        AND id != ?
         AND {updated_stale_sql}
         """,  # nosec B608 - cutoff expression is selected by storage dialect.
-        (timeout_minutes,),
+        (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -188,10 +192,11 @@ def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused')
+        AND id != ?
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
         """,  # nosec B608 - cutoff expression is selected by storage dialect.
-        (timeout_hours,),
+        (SYSTEM_SESSION_ID, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -218,6 +223,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     base_where = f"""
         status = 'expired'
+        AND id != ?
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
     """  # nosec B608 - cutoff expression is selected by storage dialect.
@@ -227,7 +233,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         FROM sessions
         WHERE {base_where}
         """,
-        params,
+        (SYSTEM_SESSION_ID, *params),
     )
     candidate_count = row["count"] if row else 0
     reference_guards = "\n        AND ".join(_build_empty_session_prune_reference_guards(db))
@@ -237,7 +243,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         WHERE {base_where}
         {f"AND {reference_guards}" if reference_guards else ""}
         """,
-        params,
+        (SYSTEM_SESSION_ID, *params),
     )
     count = cursor.rowcount or 0
     skipped = max(candidate_count - count, 0)

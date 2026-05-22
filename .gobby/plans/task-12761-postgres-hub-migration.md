@@ -3653,7 +3653,7 @@ Type changes:
   tdd: false
   source_section: '4.6'
 - title: Audit PostgreSQL concurrency semantics under MVCC
-  category: research
+  category: docs
   task_type: feature
   depends_on:
   - '3.4'
@@ -3741,7 +3741,7 @@ Type changes:
   tdd: true
   source_section: '6.0'
 - title: Post-Phase-5 concurrency re-audit
-  category: research
+  category: docs
   task_type: feature
   depends_on:
   - '5.1'
@@ -3754,13 +3754,13 @@ Type changes:
   - covers:12761:6.0a:6.0a.2
   assigned_agent: backend-developer
   tdd: false
-  source_section: 6.0a
+  source_section: '6.0a'
 - title: Cutover runbook
   category: docs
   task_type: feature
   depends_on:
   - '6.0'
-  - 6.0a
+  - '6.0a'
   validation_criteria: Satisfy acceptance items 6.1.1, 6.1.2.
   labels:
   - covers:12761:6.1:6.1.1

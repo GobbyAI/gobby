@@ -26,6 +26,22 @@ class _WhisperModelProto(Protocol):
 logger = logging.getLogger(__name__)
 
 
+def _load_whisper_model(
+    model_size: str,
+    *,
+    device: str,
+    compute_type: str,
+) -> _WhisperModelProto:
+    from faster_whisper import WhisperModel
+
+    model: _WhisperModelProto = WhisperModel(
+        model_size,
+        device=device,
+        compute_type=compute_type,
+    )
+    return model
+
+
 class WhisperSTT:
     """Local speech-to-text using faster-whisper."""
 
@@ -85,14 +101,11 @@ class WhisperSTT:
             )
 
             def _load() -> _WhisperModelProto:
-                from faster_whisper import WhisperModel
-
-                model: _WhisperModelProto = WhisperModel(
+                return _load_whisper_model(
                     self._config.whisper_model_size,
                     device=self._config.whisper_device,
                     compute_type=self._config.whisper_compute_type,
                 )
-                return model
 
             self._model = await asyncio.to_thread(_load)
             logger.info("Whisper model loaded successfully")

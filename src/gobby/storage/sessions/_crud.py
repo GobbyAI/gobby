@@ -17,62 +17,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
-
-
-def _is_session_unique_conflict(exc: sqlite3.IntegrityError) -> bool:
-    return "UNIQUE constraint failed: sessions.external_id" in str(exc)
-
-
-def _update_existing_session(
-    manager: _SessionCRUDHost,
-    conn: Any,
-    existing: Session,
-    *,
-    title: str | None,
-    transcript_path: str | None,
-    git_branch: str | None,
-    parent_session_id: str | None,
-    terminal_context_json: str | None,
-    workflow_name: str | None,
-    is_local: bool,
-    sandbox_enabled: bool | None,
-    sandbox_policy_hash: str | None,
-    now: str,
-) -> Session:
-    conn.execute(
-        """
-        UPDATE sessions SET
-            title = COALESCE(?, title),
-            transcript_path = COALESCE(?, transcript_path),
-            git_branch = COALESCE(?, git_branch),
-            parent_session_id = COALESCE(?, parent_session_id),
-            terminal_context = COALESCE(?, terminal_context),
-            workflow_name = COALESCE(?, workflow_name),
-            is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
-            sandbox_enabled = COALESCE(?, sandbox_enabled),
-            sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
-            status = 'active',
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            title,
-            transcript_path,
-            git_branch,
-            parent_session_id,
-            terminal_context_json,
-            workflow_name,
-            is_local,
-            sandbox_enabled,
-            sandbox_policy_hash,
-            now,
-            existing.id,
-        ),
-    )
-    updated = manager.get(existing.id)
-    if updated is None:
-        raise RuntimeError(f"Session {existing.id} disappeared during update")
-    return updated
+from ._upsert import is_session_unique_conflict, update_existing_session
 
 
 class _SessionCRUDHost(Protocol):
@@ -208,7 +153,7 @@ class _SessionCRUDMixin:
                         existing = self.get(existing.id)
 
             if existing:
-                session = _update_existing_session(
+                session = update_existing_session(
                     self,
                     conn,
                     existing,
@@ -272,7 +217,7 @@ class _SessionCRUDMixin:
                         ),
                     )
                 except sqlite3.IntegrityError as exc:
-                    if not _is_session_unique_conflict(exc):
+                    if not is_session_unique_conflict(exc):
                         raise
                     conflicting = self.find_by_external_id(
                         external_id,
@@ -296,7 +241,7 @@ class _SessionCRUDMixin:
                         conflicting.id,
                         external_id,
                     )
-                    session = _update_existing_session(
+                    session = update_existing_session(
                         self,
                         conn,
                         conflicting,

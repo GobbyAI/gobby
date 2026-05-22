@@ -34,6 +34,8 @@ def register_commits_tools(
 
     from gobby.utils.session_context import resolve_session_ref
 
+    db_handle = db if db is not None else getattr(session_manager, "db", None)
+
     def _resolve_session_id(ref: str) -> str:
         return resolve_session_ref(session_manager, ref)
 
@@ -215,13 +217,13 @@ Args:
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            if db is None:
+            if db_handle is None:
                 return {
                     "success": False,
                     "error": "Database not available",
                     "session_id": session.id,
                 }
-            session_var_manager = SessionVariableManager(db)
+            session_var_manager = SessionVariableManager(db_handle)
             session_var_manager.set_variable(session.id, "stop_reason", "completed")
         except Exception as e:
             logger.warning(f"Failed to set stop_reason for session {session.id}: {e}")
