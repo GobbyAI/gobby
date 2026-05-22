@@ -47,7 +47,7 @@ class KnowledgeGraphService:
         self,
         neo4j_client: Neo4jClient,
         llm_provider: LLMProvider,
-        embed_fn: Callable[..., Any],
+        embed_fn: Callable[..., Any] | None,
         prompt_loader: PromptLoader,
         vector_store: VectorStore | None = None,
         code_link_min_score: float = 0.82,
@@ -211,36 +211,37 @@ class KnowledgeGraphService:
                 partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
 
         entity_embeddings: dict[str, list[float]] = {}
-        for entity in entities:
-            try:
-                embedding = await self._embed_fn(entity.name)
-                entity_embeddings[entity.entity_key] = embedding
-                await self._writer.set_entity_vector(
-                    entity_key=entity.entity_key,
-                    embedding=embedding,
-                )
-                made_progress = True
-            except Neo4jConnectionError as e:
-                logger.warning(
-                    "Neo4j unreachable during set_node_vector for memory %s: %s",
-                    memory_ref,
-                    e,
-                )
-                return self._connection_failure_result(
-                    e,
-                    made_progress=made_progress,
-                    partial_errors=partial_errors,
-                    entities=len(entities),
-                    relationships=len(relationships),
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to set embedding for %s in memory %s: %s",
-                    entity.name,
-                    memory_ref,
-                    e,
-                )
-                partial_errors.append(f"set_embedding:{entity.name}:{e}")
+        if self._embed_fn is not None:
+            for entity in entities:
+                try:
+                    embedding = await self._embed_fn(entity.name)
+                    entity_embeddings[entity.entity_key] = embedding
+                    await self._writer.set_entity_vector(
+                        entity_key=entity.entity_key,
+                        embedding=embedding,
+                    )
+                    made_progress = True
+                except Neo4jConnectionError as e:
+                    logger.warning(
+                        "Neo4j unreachable during set_node_vector for memory %s: %s",
+                        memory_ref,
+                        e,
+                    )
+                    return self._connection_failure_result(
+                        e,
+                        made_progress=made_progress,
+                        partial_errors=partial_errors,
+                        entities=len(entities),
+                        relationships=len(relationships),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to set embedding for %s in memory %s: %s",
+                        entity.name,
+                        memory_ref,
+                        e,
+                    )
+                    partial_errors.append(f"set_embedding:{entity.name}:{e}")
 
         if memory_id:
             try:
@@ -263,7 +264,7 @@ class KnowledgeGraphService:
                 logger.warning("Failed to link entities to memory %s: %s", memory_ref, e)
                 partial_errors.append(f"mentioned_in:{memory_id}:{e}")
 
-        if project_id and self._vector_store and entity_embeddings:
+        if project_id and self._vector_store and self._embed_fn is not None and entity_embeddings:
             try:
                 await self._link_entities_to_code(entities, entity_embeddings, project_id)
                 made_progress = True

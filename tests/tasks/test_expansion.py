@@ -320,3 +320,33 @@ def test_normalize_selects_best_fit_agent_from_registry(
     assert leaf["assigned_agent"] == "frontend-developer"
     assert leaf["additional_skills"] == []
     assert "## Agent Selection" not in leaf["description"]
+
+
+def test_normalize_selects_frontend_from_web_tsx_signals(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    _store_agent(service, "backend-developer", "Backend storage and MCP implementation")
+    _store_agent(service, "frontend-developer", "Frontend UI, React, CSS, and Playwright")
+    epic = _parent(service, sample_project)
+
+    spec = service.normalize_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["route"]}],
+            "tasks": [
+                {
+                    "id": "route",
+                    "phase_id": "phase-1",
+                    "title": "Migrate route",
+                    "category": "code",
+                    "description": "Update implementation.",
+                    "affected_files": ["web/src/routes/App.tsx"],
+                }
+            ],
+            "dependencies": [],
+        },
+        task=epic,
+        plan_file=None,
+    )
+
+    assert spec["tasks"][0]["assigned_agent"] == "frontend-developer"

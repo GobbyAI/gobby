@@ -17,6 +17,7 @@ from pathlib import Path
 import click
 
 from gobby.cli.installers.git_hooks import install_git_hooks
+from gobby.cli.installers.postgres import _active_install_mode
 from gobby.cli.postgres_backup import (
     POSTGRES_BACKUP_ARCHIVE_PREFIX,
     backup_payload_paths,
@@ -375,6 +376,7 @@ def _do_pack(
     """Inner pack logic, separated for try/finally lifecycle management."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
+        backup_result: dict[str, object] | None = None
 
         # Export Docker volumes to temp dir
         for vol in docker_volumes_to_export:
@@ -389,10 +391,16 @@ def _do_pack(
         if include_postgres:
             click.echo("  Creating PostgreSQL logical backup...")
             backup_dir = tmp / "postgres"
-            backup = create_postgres_backup(output_dir=backup_dir, gobby_home=get_gobby_home())
+            backup_result = create_postgres_backup(
+                output_dir=backup_dir, gobby_home=get_gobby_home()
+            )
             for archive_name, path in backup_payload_paths(backup_dir):
                 items.append((archive_name, path))
-            click.echo(f"    Done ({_human_size(Path(backup['dump_path']).stat().st_size)})")
+            dump_path = backup_result.get("dump_path")
+            if isinstance(dump_path, str):
+                click.echo(f"    Done ({_human_size(Path(dump_path).stat().st_size)})")
+            else:
+                click.echo("    Done")
 
         # Write manifest
         manifest = {
@@ -402,6 +410,9 @@ def _do_pack(
             "items": [name for name, _ in items],
             "docker_volumes": docker_volumes_to_export,
             "postgres_backup": include_postgres,
+            "postgres_install_mode": (
+                backup_result.get("mode") if isinstance(backup_result, dict) else None
+            ),
         }
         manifest_path = tmp / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -588,7 +599,11 @@ def unpack(
         if postgres_members and no_postgres:
             click.echo("  Skipped PostgreSQL restore")
         elif postgres_members:
-            if services_were_running or (not no_docker and docker_archives):
+            if (
+                services_were_running
+                or (not no_docker and docker_archives)
+                or _postgres_restore_requires_docker_services()
+            ):
                 click.echo("  Starting Docker services before PostgreSQL restore...")
                 _start_docker_services()
                 services_started = True
@@ -635,3 +650,10 @@ def _human_size(size: int) -> str:
             return f"{size:.1f}{unit}" if unit != "B" else f"{size}{unit}"
         size //= 1024
     return f"{size:.1f}TB"
+
+
+def _postgres_restore_requires_docker_services() -> bool:
+    try:
+        return _active_install_mode(gobby_home=get_gobby_home()) == "docker"
+    except Exception:
+        return False

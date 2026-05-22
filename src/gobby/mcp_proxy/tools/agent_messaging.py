@@ -166,6 +166,7 @@ def add_messaging_tools(
 
             resolved_target_id = target_id
             if normalized_target == "session":
+                assert target_id is not None
                 resolved_target_id = _resolve(target_id)
 
             send_result = await mailbox.send(

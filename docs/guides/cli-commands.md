@@ -362,7 +362,7 @@ gobby plan coverage --plan PLAN.md --plan-id ID --plan-hash HASH \
 | `--plan PATH` | Plan file to evaluate. |
 | `--plan-id ID` | Stable plan identifier. |
 | `--plan-hash HASH` | Expected plan content hash. |
-| `--task-tree db|matrix-file` | Choose DB-backed task tree or matrix-file input. |
+| `--task-tree db\|matrix-file` | Choose DB-backed task tree or matrix-file input. |
 | `--root-task TASK` | Root task ref for `db` mode. |
 | `--project-id PROJECT` | Project UUID for `db` mode. |
 | `--matrix-file PATH` | Matrix file for `matrix-file` mode. |

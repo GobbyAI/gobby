@@ -68,6 +68,15 @@ class TestKnowledgeGraphServiceInitialization:
 
         assert manager._kg_service is not None
 
+    def test_kg_service_created_without_vector_dependencies(self) -> None:
+        """KnowledgeGraphService can run without vector search dependencies."""
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=_mock_llm_service(),
+        )
+
+        assert manager._kg_service is not None
+
     def test_kg_service_uses_configured_provider_and_model(self) -> None:
         """KnowledgeGraphService wiring should honor memory.kg provider/model."""
         provider = AsyncMock()
