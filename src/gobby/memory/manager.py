@@ -86,9 +86,6 @@ class MemoryManager:
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
-        self._falkordb_graph_search = falkordb_graph_search
-        self._falkordb_graph_min_score = falkordb_graph_min_score
-        self._falkordb_rrf_k = falkordb_rrf_k
 
         self.storage = LocalMemoryManager(db)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
