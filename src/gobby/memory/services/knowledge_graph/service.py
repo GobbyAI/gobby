@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.falkor_client import FalkorConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 
 from .code_linker import KnowledgeGraphCodeLinker
 from .extraction import KnowledgeGraphExtractor
@@ -119,8 +119,15 @@ class KnowledgeGraphService:
         8. Link entities to source memory via MENTIONED_IN
         9. Cross-link entities to code symbols via RELATES_TO_CODE
         """
-        await self._ensure_graph_schema()
         memory_ref = memory_id or "<unknown>"
+        try:
+            await self._ensure_graph_schema()
+        except (FalkorConnectionError, FalkorQueryError, TimeoutError) as e:
+            logger.warning("Knowledge-graph schema unavailable for memory %s: %s", memory_ref, e)
+            return KnowledgeGraphResult(
+                status=KnowledgeGraphStatus.RETRYABLE_FAILURE,
+                errors=[str(e)],
+            )
 
         try:
             extracted_entities = await self._extract_entities(content)
