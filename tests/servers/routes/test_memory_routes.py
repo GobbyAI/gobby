@@ -443,13 +443,13 @@ class TestEntityGraph:
 
     def test_entity_graph_no_neo4j(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns 404 when no Neo4j."""
-        mock_server.memory_manager._neo4j_client = None
+        mock_server.memory_manager._falkor_client = None
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 404
 
     def test_entity_graph_success(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns graph data."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(
             return_value={"entities": [], "relationships": []}
         )
@@ -459,14 +459,14 @@ class TestEntityGraph:
 
     def test_entity_graph_unreachable(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns 502 when Neo4j unreachable."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(return_value=None)
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 502
 
     def test_entity_graph_server_error(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns 500 on error."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(
             side_effect=RuntimeError("Neo4j error")
         )
@@ -490,13 +490,13 @@ class TestEntityNeighbors:
 
     def test_neighbors_no_neo4j(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{entity_key}/neighbors returns 404 when no Neo4j."""
-        mock_server.memory_manager._neo4j_client = None
+        mock_server.memory_manager._falkor_client = None
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 404
 
     def test_neighbors_success(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{entity_key}/neighbors returns neighbors."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(
             return_value={"entities": [], "relationships": []}
         )
@@ -506,14 +506,14 @@ class TestEntityNeighbors:
 
     def test_neighbors_unreachable(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{entity_key}/neighbors returns 502 when unreachable."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(return_value=None)
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 502
 
     def test_neighbors_server_error(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{entity_key}/neighbors returns 500 on error."""
-        mock_server.memory_manager._neo4j_client = MagicMock()
+        mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(
             side_effect=RuntimeError("Neo4j error")
         )

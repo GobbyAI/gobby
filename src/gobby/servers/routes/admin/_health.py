@@ -319,12 +319,12 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             try:
                 from gobby.cli.services import is_neo4j_healthy, is_neo4j_installed
 
-                neo4j_client = getattr(server.memory_manager, "_neo4j_client", None)
-                neo4j_url = neo4j_client.base_url if neo4j_client else None
+                falkor_client = getattr(server.memory_manager, "_falkor_client", None)
+                neo4j_url = falkor_client.base_url if falkor_client else None
                 installed = is_neo4j_installed()
                 healthy = await is_neo4j_healthy(neo4j_url) if neo4j_url else False
                 memory_stats["neo4j"] = {
-                    "configured": neo4j_client is not None,
+                    "configured": falkor_client is not None,
                     "installed": installed,
                     "healthy": healthy,
                     "url": neo4j_url,
