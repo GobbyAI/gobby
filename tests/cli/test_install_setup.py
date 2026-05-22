@@ -32,6 +32,7 @@ from gobby.cli.install_setup import (
 )
 from gobby.cli.installers.hook_commands import build_hook_command
 from gobby.install.distribution import HomebrewHelperStatus
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
 
@@ -392,7 +393,7 @@ class TestGsqzHelpers:
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
     @patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value="1.0.0")
-    @patch("gobby.cli.install_setup._get_installed_gsqz_version", return_value="0.9.0")
+    @patch("gobby.cli.install_setup._get_installed_gsqz_version", return_value="0.1.0")
     @patch("gobby.cli.install_setup._install_gsqz_from_github", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gsqz(
@@ -443,6 +444,62 @@ class TestGcodeHelpers:
             res = _install_gcode()
             assert res["installed"] is True
             assert res["method"] == "submodule"
+
+    @patch("gobby.cli.install_setup.sys.platform", "darwin")
+    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
+    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.0")
+    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.8.1")
+    @patch("gobby.cli.install_setup._install_gcode_from_submodule")
+    def test_install_gcode_skips_when_installed_version_satisfies_pin(
+        self, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
+    ):
+        with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gcode").write_bytes(b"\x00")
+
+            res = _install_gcode()
+
+        assert res == {"installed": False, "skipped": True, "version": "0.8.1"}
+        mock_submodule.assert_not_called()
+
+    @patch("gobby.cli.install_setup.sys.platform", "darwin")
+    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
+    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.0")
+    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.7.9")
+    @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
+    @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
+    def test_install_gcode_installs_when_installed_version_is_below_pin(
+        self, mock_path, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
+    ):
+        with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gcode").write_bytes(b"\x00")
+
+            res = _install_gcode()
+
+        assert res["installed"] is True
+        assert res["method"] == "submodule"
+
+    @patch("gobby.cli.install_setup.sys.platform", "darwin")
+    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
+    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.0")
+    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.8.1")
+    @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
+    @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
+    def test_install_gcode_force_bypasses_pin_skip(
+        self, mock_path, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
+    ):
+        with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gcode").write_bytes(b"\x00")
+
+            res = _install_gcode(force=True)
+
+        assert res["installed"] is True
+        assert res["version"] == MANAGED_BIN_VERSION_PINS["gcode"]
 
     @patch("gobby.cli.install_setup.urlopen")
     def test_get_latest_gcode_version(self, mock_url):
