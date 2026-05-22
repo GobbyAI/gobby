@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from gobby.build.claim_recovery import recover_safe_build_claims
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage
@@ -55,6 +56,8 @@ async def kick_dispatcher_tick(
 
     if db is None:
         return DispatcherTickSummary(ticks=0, reason="database_missing")
+
+    recover_safe_build_claims(db, project_id=project_id)
 
     from gobby.dispatch.dispatcher import run_heartbeat
 
