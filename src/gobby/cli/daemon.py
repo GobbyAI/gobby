@@ -72,13 +72,16 @@ def _services_start(gobby_home: Path) -> None:
     profiles: list[str] = []
     try:
         from gobby.config.app import load_config
+        from gobby.config.bootstrap import load_bootstrap
+
+        bootstrap = load_bootstrap()
+        config = load_config()
         from gobby.config.persistence import is_falkordb_enabled
 
-        config = load_config()
+        env["GOBBY_FALKORDB_PASSWORD"] = bootstrap.falkordb_password
 
         # Determine which profiles to start
         if is_falkordb_enabled(config.databases):
-            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.requirepass or ""
             profiles.append("falkordb")
         if config.databases.qdrant.url:
             profiles.append("qdrant")

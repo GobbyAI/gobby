@@ -30,9 +30,9 @@ from ._install_prompts import (
     _echo_uninstall_summary,
     _prompt_api_keys,
     _run_embedding_install,
+    _run_falkordb_install,
+    _run_falkordb_uninstall,
     _run_git_hooks_install,
-    _run_neo4j_install,
-    _run_neo4j_uninstall,
     _run_qdrant_install,
     _run_standard_cli_install,
     _run_standard_cli_uninstall,
@@ -44,16 +44,16 @@ from .installers import (
     install_codex,
     install_droid,
     install_embedding,
+    install_falkordb,
     install_gemini,
     install_git_hooks,
-    install_neo4j,
     install_qdrant,
     install_qwen,
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
+    uninstall_falkordb,
     uninstall_gemini,
-    uninstall_neo4j,
     uninstall_qwen,
 )
 from .utils import get_install_dir, load_full_config_from_db
@@ -62,6 +62,10 @@ logger = logging.getLogger(__name__)
 
 # Re-export for backwards compatibility (tests import from here)
 _ensure_daemon_config = ensure_daemon_config
+_run_neo4j_install = _run_falkordb_install
+_NEO4J_MIGRATION_MESSAGE = (
+    "Neo4j has been replaced by FalkorDB. Use --falkordb or --falkordb-password."
+)
 
 # Re-exports from extracted modules (tests import these from gobby.cli.install)
 __all__ = [
@@ -78,6 +82,16 @@ __all__ = [
     "install",
     "uninstall",
 ]
+
+
+def _fail_legacy_neo4j_option(
+    ctx: click.Context,
+    param: click.Option,
+    value: object,
+) -> None:
+    _ = (ctx, param)
+    if value:
+        raise click.UsageError(_NEO4J_MIGRATION_MESSAGE)
 
 
 @click.command("install")
@@ -129,13 +143,35 @@ __all__ = [
     "--no-ext-services",
     "no_ext_services_flag",
     is_flag=True,
-    help="Skip Docker service installation (Qdrant, Neo4j)",
+    help="Skip Docker service installation (Qdrant, FalkorDB)",
+)
+@click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    help="Install FalkorDB knowledge graph backend only",
+)
+@click.option(
+    "--falkordb-password",
+    "falkordb_password",
+    default=None,
+    help="Set a custom FalkorDB password (default: auto-generated)",
+)
+@click.option(
+    "--neo4j",
+    "neo4j_flag",
+    is_flag=True,
+    hidden=True,
+    expose_value=False,
+    callback=_fail_legacy_neo4j_option,
 )
 @click.option(
     "--neo4j-password",
     "neo4j_password",
     default=None,
-    help="Set a custom Neo4j password (default: auto-generated)",
+    hidden=True,
+    expose_value=False,
+    callback=_fail_legacy_neo4j_option,
 )
 @click.option(
     "--project",
@@ -202,7 +238,6 @@ def install(
     hooks_flag: bool,
     all_flag: bool,
     no_ext_services_flag: bool,
-    neo4j_password: str | None,
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
@@ -211,6 +246,9 @@ def install(
     embedding_dim: int | None,
     no_interactive_flag: bool,
     working_dir: Path | None,
+    falkordb_flag: bool = False,
+    falkordb_password: str | None = None,
+    neo4j_password: str | None = None,
 ) -> None:
     """Install Gobby hooks to AI coding CLIs and Git.
 
@@ -221,6 +259,8 @@ def install(
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+    if falkordb_password is None and neo4j_password is not None:
+        falkordb_password = neo4j_password
 
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
@@ -232,6 +272,7 @@ def install(
         and not codex_flag
         and not droid_flag
         and not hooks_flag
+        and not falkordb_flag
         and not all_flag
     ):
         all_flag = True
@@ -373,15 +414,17 @@ def install(
             secret_store=secret_store,
         )
 
-        # Docker services (Qdrant + Neo4j, installed by default if Docker available)
+        # Docker services (Qdrant + FalkorDB, installed by default if Docker available)
         # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
         if is_full_install:
             if not no_ext_services_flag and selected_embedding_provider != "none":
                 _run_qdrant_install(install_qdrant, results)
-                _run_neo4j_install(install_neo4j, neo4j_password, results)
+                _run_falkordb_install(install_falkordb, falkordb_password, results)
             elif selected_embedding_provider == "none":
-                click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
+                click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
                 click.echo("")
+        elif falkordb_flag:
+            _run_falkordb_install(install_falkordb, falkordb_password, results)
 
         # Migration detection
         if mode == "global":
@@ -440,16 +483,24 @@ def install(
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
 )
 @click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    help="Uninstall FalkorDB knowledge graph backend",
+)
+@click.option(
     "--neo4j",
     "neo4j_flag",
     is_flag=True,
-    help="Uninstall Neo4j knowledge graph backend",
+    hidden=True,
+    expose_value=False,
+    callback=_fail_legacy_neo4j_option,
 )
 @click.option(
     "--volumes",
     "volumes_flag",
     is_flag=True,
-    help="Also remove Docker volumes (data loss, use with --neo4j)",
+    help="Also remove Docker volumes (data loss, use with --falkordb)",
 )
 @click.option(
     "--project",
@@ -473,7 +524,7 @@ def uninstall(
     droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
-    neo4j_flag: bool,
+    falkordb_flag: bool,
     volumes_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
@@ -494,7 +545,7 @@ def uninstall(
         and not codex_flag
         and not droid_flag
         and not all_flag
-        and not neo4j_flag
+        and not falkordb_flag
     ):
         all_flag = True
 
@@ -605,9 +656,9 @@ def uninstall(
         click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
         click.echo("")
 
-    # Neo4j
-    if neo4j_flag:
-        _run_neo4j_uninstall(uninstall_neo4j, volumes_flag, results)
+    # FalkorDB
+    if falkordb_flag:
+        _run_falkordb_uninstall(uninstall_falkordb, volumes_flag, results)
 
     # Summary
     all_success = _echo_uninstall_summary(results)

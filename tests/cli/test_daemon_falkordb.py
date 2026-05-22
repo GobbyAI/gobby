@@ -38,5 +38,5 @@ def test_services_start_uses_falkordb_config_and_password(tmp_path: Path) -> Non
     assert "--profile" in cmd
     assert "falkordb" in cmd
     assert "neo4j" not in cmd
-    assert mock_run.call_args.kwargs["env"]["FALKORDB_ARGS"] == "--requirepass secret"
+    assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "secret"
     assert "GOBBY_NEO4J_PASSWORD" not in mock_run.call_args.kwargs["env"]
