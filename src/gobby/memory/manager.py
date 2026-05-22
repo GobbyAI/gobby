@@ -9,7 +9,7 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.backends.storage_adapter import StorageAdapter
 from gobby.memory.components.ingestion import IngestionService
 from gobby.memory.context import build_memory_context
-from gobby.memory.neo4j_client import Neo4jClient
+from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
@@ -54,7 +54,7 @@ class MemoryManager:
     Wires storage (LocalMemoryManager + async backend), search (SearchService),
     indexing/lifecycle (IndexingService), cross-references (CrossrefService),
     image ingestion (IngestionService), dedup (DedupService), and the
-    Neo4j knowledge graph (KnowledgeGraphService).
+    FalkorDB knowledge graph (KnowledgeGraphService).
 
     Public API is intentionally broad and stable; this class delegates the
     heavy lifting to the per-concern services above.
@@ -68,13 +68,14 @@ class MemoryManager:
         vector_store: VectorStore | None = None,
         embed_fn: Callable[..., Any] | None = None,
         *,
-        neo4j_url: str | None = None,
-        neo4j_auth: str | None = None,
-        neo4j_database: str = "neo4j",
-        neo4j_graph_search: bool = True,
-        neo4j_graph_min_score: float = 0.5,
+        falkordb_host: str | None = None,
+        falkordb_port: int = 16379,
+        falkordb_password: str | None = None,
+        falkordb_graph_name: str = "gobby_kg",
+        falkordb_graph_search: bool = True,
+        falkordb_graph_min_score: float = 0.5,
         rrf_k: int = 60,
-        neo4j_rrf_k: int = 60,
+        falkordb_rrf_k: int = 60,
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -85,9 +86,9 @@ class MemoryManager:
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
-        self._neo4j_graph_search = neo4j_graph_search
-        self._neo4j_graph_min_score = neo4j_graph_min_score
-        self._neo4j_rrf_k = neo4j_rrf_k
+        self._falkordb_graph_search = falkordb_graph_search
+        self._falkordb_graph_min_score = falkordb_graph_min_score
+        self._falkordb_rrf_k = falkordb_rrf_k
 
         self.storage = LocalMemoryManager(db)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
@@ -98,14 +99,15 @@ class MemoryManager:
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
-        if neo4j_url:
-            self._neo4j_client: Neo4jClient | None = Neo4jClient(
-                url=neo4j_url,
-                auth=neo4j_auth,
-                database=neo4j_database,
+        if falkordb_host:
+            self._falkor_client: FalkorClient | None = FalkorClient(
+                host=falkordb_host,
+                port=falkordb_port,
+                password=falkordb_password,
+                graph_name=falkordb_graph_name,
             )
         else:
-            self._neo4j_client = None
+            self._falkor_client = None
 
         self._embeddings_available: bool | None = None
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
@@ -125,14 +127,14 @@ class MemoryManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize DedupService: {e}")
 
-        if llm_service and self._neo4j_client:
+        if llm_service and self._falkor_client:
             try:
                 from gobby.prompts.loader import PromptLoader
 
                 provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
-                    neo4j_client=self._neo4j_client,
+                    falkor_client=self._falkor_client,
                     llm_provider=provider,
                     embed_fn=embed_fn,
                     prompt_loader=prompt_loader,
@@ -153,10 +155,10 @@ class MemoryManager:
             kg_service=self._kg_service,
             keyword_search=self._keyword_search,
             config=config,
-            neo4j_graph_search=neo4j_graph_search,
-            neo4j_graph_min_score=neo4j_graph_min_score,
+            falkordb_graph_search=falkordb_graph_search,
+            falkordb_graph_min_score=falkordb_graph_min_score,
             rrf_k=rrf_k,
-            neo4j_rrf_k=neo4j_rrf_k,
+            falkordb_rrf_k=falkordb_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
             run_db=run_db,
         )
@@ -184,23 +186,20 @@ class MemoryManager:
         return await self._run_db(func, *args, **kwargs)
 
     async def close(self) -> None:
-        """Close underlying clients (Neo4j httpx.AsyncClient, etc.)."""
-        if self._neo4j_client:
+        """Close underlying graph clients."""
+        if self._falkor_client:
             try:
-                await self._neo4j_client.close()
+                await self._falkor_client.close()
             except Exception as e:
-                logger.warning(f"Failed to close Neo4j client: {e}")
-            self._neo4j_client = None
-            self._kg_service = None
-            self._search_service.kg_service = None
-            self._indexing_service.kg_service = None
+                logger.warning(f"Failed to close FalkorDB client: {e}")
+            self.clear_graph_clients()
 
     def clear_graph_clients(self) -> None:
-        """Disable graph features by clearing Neo4j client and KG service."""
-        self._neo4j_client = None
+        """Disable graph features by clearing FalkorDB client and KG service references."""
+        self._falkor_client = None
         self._kg_service = None
-        self._search_service.kg_service = None
-        self._indexing_service.kg_service = None
+        self._search_service._kg_service = None
+        self._indexing_service._kg_service = None
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -224,9 +223,9 @@ class MemoryManager:
         self._ingestion_service.llm_service = service
 
     @property
-    def neo4j_client(self) -> Neo4jClient | None:
-        """Shared Neo4j client for graph-backed subsystems, when configured."""
-        return self._neo4j_client
+    def falkor_client(self) -> FalkorClient | None:
+        """Shared FalkorDB client for graph-backed subsystems, when configured."""
+        return self._falkor_client
 
     def _keyword_search(
         self,
@@ -488,7 +487,7 @@ class MemoryManager:
         tags_none: list[str] | None = None,
         min_score: float | None = None,
     ) -> list[Memory]:
-        """Retrieve memories via VectorStore + optional Neo4j graph search."""
+        """Retrieve memories via VectorStore + optional FalkorDB graph search."""
         return await self._search_service.search(
             query=query,
             project_id=project_id,
@@ -521,7 +520,7 @@ class MemoryManager:
         min_score: float = 0.5,
         project_id: str | None = None,
     ) -> list[str]:
-        """Search Neo4j graph for memory IDs via entity vector similarity."""
+        """Search FalkorDB graph for memory IDs via entity vector similarity."""
         return await self._search_service._search_graph_for_memories(
             query_embedding=query_embedding,
             limit=limit,
@@ -554,7 +553,7 @@ class MemoryManager:
         )
 
     async def delete_memory(self, memory_id: str) -> bool:
-        """Delete a memory from storage, VectorStore, and Neo4j."""
+        """Delete a memory from storage, VectorStore, and FalkorDB."""
         existing_memory = self.get_memory(memory_id)
         result = self.storage.delete_memory(memory_id)
         if result and self._vector_store:
@@ -592,7 +591,7 @@ class MemoryManager:
         return result
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with memory storage."""
+        """Reconcile Qdrant and FalkorDB with memory storage."""
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
 
     def count_memories(self, project_id: str | None = None) -> int:
@@ -786,7 +785,7 @@ class MemoryManager:
         )
 
     async def clear_knowledge_graph(self, project_id: str | None = None) -> dict[str, Any]:
-        """Clear the Neo4j knowledge-graph projection and requeue affected memories."""
+        """Clear the FalkorDB knowledge-graph projection and requeue affected memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
         cleared = await self._kg_service.clear_graph(project_id=project_id)
@@ -799,7 +798,7 @@ class MemoryManager:
         limit: int = MAX_REINDEX_LIMIT,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
-        """Rebuild the Neo4j knowledge-graph projection from stored memories."""
+        """Rebuild the FalkorDB knowledge-graph projection from stored memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
 
@@ -908,14 +907,17 @@ class MemoryManager:
         limit: int = DEFAULT_GRAPH_LIMIT,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get the Neo4j entity graph for visualization."""
+        """Get the FalkorDB entity graph for visualization."""
         if self._kg_service:
             return await self._kg_service.get_entity_graph(limit=limit, project_id=project_id)
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_graph(limit=limit, project_id=project_id)
+                return await self._falkor_client.get_entity_graph(
+                    limit=limit,
+                    project_id=project_id,
+                )
             except Exception as e:
-                logger.warning(f"Neo4j query failed: {e}")
+                logger.warning(f"FalkorDB query failed: {e}")
                 return None
         return None
 
@@ -924,20 +926,20 @@ class MemoryManager:
         entity_key: str,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get neighbors for a single Neo4j entity."""
+        """Get neighbors for a single FalkorDB entity."""
         if self._kg_service:
             return await self._kg_service.get_entity_neighbors(
                 entity_key,
                 project_id=project_id,
             )
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_neighbors(
+                return await self._falkor_client.get_entity_neighbors(
                     entity_key,
                     project_id=project_id,
                 )
             except Exception as e:
-                logger.warning(f"Neo4j query failed: {e}")
+                logger.warning(f"FalkorDB query failed: {e}")
                 return None
         return None
 

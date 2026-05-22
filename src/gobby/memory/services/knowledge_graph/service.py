@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.neo4j_client import Neo4jConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError
 
 from .code_linker import KnowledgeGraphCodeLinker
 from .extraction import KnowledgeGraphExtractor
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.llm.base import LLMProvider
-    from gobby.memory.neo4j_client import Neo4jClient
+    from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
     from gobby.prompts.loader import PromptLoader
 
@@ -34,10 +34,10 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeGraphService:
-    """Manages knowledge graph extraction, Neo4j projection, and graph reads.
+    """Manages knowledge graph extraction, FalkorDB projection, and graph reads.
 
     Args:
-        neo4j_client: Neo4j HTTP client for graph operations
+        falkor_client: FalkorDB client for graph operations
         llm_provider: LLM provider for entity/relationship extraction
         embed_fn: Async function to generate embeddings for entity names
         prompt_loader: PromptLoader for rendering extraction prompts
@@ -45,7 +45,7 @@ class KnowledgeGraphService:
 
     def __init__(
         self,
-        neo4j_client: Neo4jClient,
+        falkor_client: FalkorClient,
         llm_provider: LLMProvider,
         embed_fn: Callable[..., Any] | None,
         prompt_loader: PromptLoader,
@@ -55,7 +55,7 @@ class KnowledgeGraphService:
         embedding_dim: int = 768,
         model: str | None = None,
     ) -> None:
-        self._neo4j = neo4j_client
+        self._falkor = falkor_client
         self._llm = llm_provider
         self._embed_fn = embed_fn
         self._prompt_loader = prompt_loader
@@ -65,12 +65,12 @@ class KnowledgeGraphService:
         self._embedding_dim = embedding_dim
         self._model = model
 
-        self._writer = KnowledgeGraphWriter(neo4j_client)
+        self._writer = KnowledgeGraphWriter(falkor_client)
         self._extractor = KnowledgeGraphExtractor(llm_provider, prompt_loader, model=model)
-        self._maintenance = KnowledgeGraphMaintenance(neo4j_client)
-        self._reader = KnowledgeGraphReader(neo4j_client, embed_fn, embedding_dim=embedding_dim)
+        self._maintenance = KnowledgeGraphMaintenance(falkor_client)
+        self._reader = KnowledgeGraphReader(falkor_client, embed_fn, embedding_dim=embedding_dim)
         self._code_linker = KnowledgeGraphCodeLinker(
-            neo4j_client,
+            falkor_client,
             vector_store,
             code_link_min_score=code_link_min_score,
             code_symbol_collection_prefix=code_symbol_collection_prefix,
@@ -106,14 +106,14 @@ class KnowledgeGraphService:
         memory_id: str | None = None,
         project_id: str | None = None,
     ) -> KnowledgeGraphResult:
-        """Extract entities and relationships from content and merge into Neo4j.
+        """Extract entities and relationships from content and merge into FalkorDB.
 
         Pipeline:
         1. Extract entities via LLM
         2. Extract relationships via LLM
         3. Fetch existing relationships for overlap detection
         4. Delete outdated relationships via LLM decision
-        5. Merge nodes and relationships into Neo4j
+        5. Merge nodes and relationships into FalkorDB
         6. Add _Entity label for vector index compatibility
         7. Set embedding vectors on nodes
         8. Link entities to source memory via MENTIONED_IN
@@ -162,9 +162,9 @@ class KnowledgeGraphService:
             try:
                 await self._writer.merge_entity(entity)
                 made_progress = True
-            except Neo4jConnectionError as e:
+            except FalkorConnectionError as e:
                 logger.warning(
-                    "Neo4j unreachable during merge_node for memory %s: %s",
+                    "FalkorDB unreachable during merge_node for memory %s: %s",
                     memory_ref,
                     e,
                 )
@@ -188,9 +188,9 @@ class KnowledgeGraphService:
             try:
                 await self._writer.merge_relationship(rel)
                 made_progress = True
-            except Neo4jConnectionError as e:
+            except FalkorConnectionError as e:
                 logger.warning(
-                    "Neo4j unreachable during merge_relationship for memory %s: %s",
+                    "FalkorDB unreachable during merge_relationship for memory %s: %s",
                     memory_ref,
                     e,
                 )
@@ -221,9 +221,9 @@ class KnowledgeGraphService:
                         embedding=embedding,
                     )
                     made_progress = True
-                except Neo4jConnectionError as e:
+                except FalkorConnectionError as e:
                     logger.warning(
-                        "Neo4j unreachable during set_node_vector for memory %s: %s",
+                        "FalkorDB unreachable during set_node_vector for memory %s: %s",
                         memory_ref,
                         e,
                     )
@@ -247,9 +247,9 @@ class KnowledgeGraphService:
             try:
                 await self._link_entities_to_memory(entities, memory_id, project_id=project_id)
                 made_progress = True
-            except Neo4jConnectionError as e:
+            except FalkorConnectionError as e:
                 logger.warning(
-                    "Neo4j unreachable during MENTIONED_IN link for memory %s: %s",
+                    "FalkorDB unreachable during MENTIONED_IN link for memory %s: %s",
                     memory_ref,
                     e,
                 )
@@ -324,7 +324,7 @@ class KnowledgeGraphService:
         """Build a deterministic or retryable failure result."""
         status = (
             KnowledgeGraphStatus.RETRYABLE_FAILURE
-            if isinstance(error, Neo4jConnectionError)
+            if isinstance(error, FalkorConnectionError)
             else KnowledgeGraphStatus.DETERMINISTIC_FAILURE
         )
         return KnowledgeGraphResult(status=status, errors=[str(error)])
@@ -338,7 +338,7 @@ class KnowledgeGraphService:
         entities: int,
         relationships: int,
     ) -> KnowledgeGraphResult:
-        """Build a result for a Neo4j connectivity failure."""
+        """Build a result for a FalkorDB connectivity failure."""
         status = (
             KnowledgeGraphStatus.PARTIAL_FAILURE
             if made_progress or partial_errors
@@ -369,14 +369,14 @@ class KnowledgeGraphService:
         new_relations: list[Relationship],
         project_id: str | None,
     ) -> None:
-        """Find and delete outdated relationships from Neo4j."""
+        """Find and delete outdated relationships from FalkorDB."""
         entity_keys = [e.entity_key for e in entities]
         if not entity_keys:
             return
 
         try:
             existing = await self._fetch_existing_relations(entity_keys)
-        except Neo4jConnectionError:
+        except FalkorConnectionError:
             return
 
         if not existing:
@@ -407,15 +407,15 @@ class KnowledgeGraphService:
         memory_id: str,
         project_id: str | None = None,
     ) -> None:
-        """Remove a Memory node and all its MENTIONED_IN edges from Neo4j."""
+        """Remove a Memory node and all its MENTIONED_IN edges from FalkorDB."""
         await self._maintenance.remove_memory_from_graph(memory_id, project_id=project_id)
 
     async def remove_memories_from_graph(self, memory_ids: set[str]) -> int:
-        """Batch-remove Memory nodes and their MENTIONED_IN edges from Neo4j."""
+        """Batch-remove Memory nodes and their MENTIONED_IN edges from FalkorDB."""
         return await self._maintenance.remove_memories_from_graph(memory_ids)
 
     async def get_all_memory_node_ids(self) -> set[str]:
-        """Return all memory_id values from Memory nodes in Neo4j."""
+        """Return all memory_id values from Memory nodes in FalkorDB."""
         return await self._maintenance.get_all_memory_node_ids()
 
     async def remove_orphaned_entities(
