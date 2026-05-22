@@ -131,7 +131,7 @@ class TestDaemonDockerFlag:
         ):
             mock_config.return_value = MagicMock(
                 databases=MagicMock(
-                    neo4j=MagicMock(url="http://localhost:8474", auth="neo4j:password"),
+                    falkordb=MagicMock(requirepass="password"),
                     qdrant=MagicMock(url=None),
                 ),
             )
