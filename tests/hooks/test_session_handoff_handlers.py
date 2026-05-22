@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -218,6 +219,90 @@ class TestSessionStartHandoff:
         )
         assert mock_sv_mgr.merge_variables.call_count >= 1
         assert mock_sv_mgr.merge_variables.call_args is not None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_compact_handoff_refreshes_existing_parent_summary_before_injecting(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Existing parent summaries must be refreshed before /compact handoff injection."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
+
+        stale_parent = MagicMock()
+        stale_parent.id = "parent-sess-123"
+        stale_parent.seq_num = 42
+        stale_parent.summary_markdown = "# Old\nStale coordinator handoff"
+        stale_parent.terminal_context = mock_parent_for_find.terminal_context
+
+        refreshed_parent = MagicMock()
+        refreshed_parent.id = "parent-sess-123"
+        refreshed_parent.seq_num = 42
+        refreshed_parent.summary_markdown = "# Fresh\nCurrent compact handoff"
+        refreshed_parent.terminal_context = mock_parent_for_find.terminal_context
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            stale_parent,  # initial parent fetch before summary refresh
+            refreshed_parent,  # parent refetch after summary generation
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        dispatch_calls: list[tuple[str, bool, Any, bool]] = []
+
+        def dispatch_summary(
+            session_id: str,
+            background: bool,
+            done_event: Any,
+            set_handoff_ready: bool,
+        ) -> None:
+            dispatch_calls.append((session_id, background, done_event, set_handoff_ready))
+            done_event.set()
+
+        handlers = EventHandlers(**mock_dependencies)
+        handlers._dispatch_session_summaries_fn = dispatch_summary
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert len(dispatch_calls) == 1
+        assert dispatch_calls[0][0] == "parent-sess-123"
+        assert dispatch_calls[0][1] is True
+        assert dispatch_calls[0][3] is False
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-456",
+            {
+                "session_summary": "# Fresh\nCurrent compact handoff",
+                "full_session_summary": "# Fresh\nCurrent compact handoff",
+            },
+        )
+        merged_payloads = [args[1] for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list]
+        assert all(
+            "# Old\nStale coordinator handoff" not in payload.values()
+            for payload in merged_payloads
+        )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_compact_handoff_ignores_stale_parent_from_different_terminal(
