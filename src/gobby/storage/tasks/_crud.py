@@ -502,9 +502,119 @@ def cascade_build_state_to_subtree(
             except DispatchMutexUnavailableError:
                 logger.info("Skipping busy task %s during build cascade", task_id)
             except ManifestAlreadyInitializedError:
-                logger.info("Skipping progressed task %s during build cascade", task_id)
+                if not _remove_pristine_omitted_stages_for_build_cascade(
+                    db,
+                    stage_states,
+                    task_id,
+                    specs,
+                ):
+                    logger.info("Skipping progressed task %s during build cascade", task_id)
 
     return len(update_params)
+
+
+def _remove_pristine_omitted_stages_for_build_cascade(
+    db: HubDatabase,
+    stage_states: StageStatesManager,
+    task_id: str,
+    desired_specs: Iterable[StageManifestSpec],
+) -> bool:
+    """Remove skipped ready stages from an existing build manifest.
+
+    Build cascades may reshape already-created descendant manifests when a
+    resumed expanded epic skips a delivery stage such as ``pr``. Only pristine
+    ready rows are removable; progressed work stays untouched.
+    """
+
+    existing_rows = stage_states.list_for_task(task_id)
+    desired = sorted(desired_specs, key=lambda spec: spec.position)
+    if not existing_rows or not desired:
+        return False
+
+    existing_names = [row.stage_name for row in existing_rows]
+    desired_names = [spec.stage_name for spec in desired]
+    if existing_names == desired_names:
+        return False
+    if not _is_subsequence(desired_names, existing_names):
+        return False
+
+    desired_name_set = set(desired_names)
+    omitted_rows = [row for row in existing_rows if row.stage_name not in desired_name_set]
+    if not omitted_rows or not all(_is_pristine_ready_stage(row) for row in omitted_rows):
+        return False
+
+    current = stage_states.current_stage(task_id)
+    omitted_names = {row.stage_name for row in omitted_rows}
+    removed_current = current is not None and current.stage_name in omitted_names
+    remaining_rows = [row for row in existing_rows if row.stage_name in desired_name_set]
+    if removed_current and not any(row.state != "done" for row in remaining_rows):
+        return False
+
+    previous_shape = ",".join(existing_names)
+    desired_by_name = {spec.stage_name: spec for spec in desired}
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as conn:
+        conn.executemany(
+            "DELETE FROM task_stage_states WHERE task_id = ? AND stage_name = ?",
+            [(task_id, row.stage_name) for row in omitted_rows],
+        )
+        for row in remaining_rows:
+            spec = desired_by_name[row.stage_name]
+            conn.execute(
+                """
+                UPDATE task_stage_states
+                   SET position = ?,
+                       max_work_attempts = ?,
+                       max_review_rounds = ?,
+                       updated_at = ?
+                 WHERE task_id = ? AND stage_name = ?
+                """,
+                (
+                    spec.position,
+                    spec.max_work_attempts,
+                    spec.max_review_rounds,
+                    now,
+                    task_id,
+                    row.stage_name,
+                ),
+            )
+        if removed_current:
+            conn.execute(
+                """
+                UPDATE tasks
+                   SET assignee = NULL,
+                       claimed_by_session_id = NULL,
+                       updated_at = ?
+                 WHERE id = ?
+                """,
+                (now, task_id),
+            )
+
+    TaskLifecycleEventManager(db).record_lifecycle_event(
+        task_id,
+        from_state=f"manifest:{previous_shape}",
+        to_state=f"manifest:{','.join(desired_names)}",
+        reason="build_cascade_remove_skipped_stages",
+        by_actor="build",
+    )
+    return True
+
+
+def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
+    cursor = iter(haystack)
+    return all(any(candidate == stage_name for candidate in cursor) for stage_name in needle)
+
+
+def _is_pristine_ready_stage(row: Any) -> bool:
+    return (
+        row.state == "ready"
+        and row.entered_at is None
+        and row.completed_at is None
+        and row.work_attempt_count == 0
+        and row.review_round_count == 0
+        and row.artifact_refs is None
+        and row.notes is None
+    )
 
 
 def update_task(
