@@ -24,7 +24,7 @@ _USER_SOURCE_BOOST = 1.2
 
 
 class SearchService:
-    """Encapsulates memory search across Qdrant, Neo4j graph, and keyword search."""
+    """Encapsulates memory search across Qdrant, FalkorDB graph, and keyword search."""
 
     def __init__(
         self,
@@ -35,10 +35,10 @@ class SearchService:
         kg_service: KnowledgeGraphService | None,
         keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]],
         config: MemoryConfig,
-        neo4j_graph_search: bool,
-        neo4j_graph_min_score: float,
+        falkordb_graph_search: bool,
+        falkordb_graph_min_score: float,
         rrf_k: int,
-        neo4j_rrf_k: int,
+        falkordb_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
@@ -48,10 +48,10 @@ class SearchService:
         self._kg_service = kg_service
         self._keyword_search = keyword_search
         self._config = config
-        self._neo4j_graph_search = neo4j_graph_search
-        self._neo4j_graph_min_score = neo4j_graph_min_score
+        self._falkordb_graph_search = falkordb_graph_search
+        self._falkordb_graph_min_score = falkordb_graph_min_score
         self._rrf_k = rrf_k
-        self._neo4j_rrf_k = neo4j_rrf_k
+        self._falkordb_rrf_k = falkordb_rrf_k
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
 
@@ -105,7 +105,7 @@ class SearchService:
         tags_none: list[str] | None = None,
         min_score: float | None = None,
     ) -> list[Memory]:
-        """Retrieve memories via VectorStore + optional Neo4j graph search."""
+        """Retrieve memories via VectorStore + optional FalkorDB graph search."""
         if query and self._vector_store and self._embed_fn:
             from gobby.search.keywords import extract_keywords
 
@@ -118,7 +118,7 @@ class SearchService:
             if project_id:
                 filters["project_id"] = project_id
 
-            use_graph = self._kg_service is not None and self._neo4j_graph_search
+            use_graph = self._kg_service is not None and self._falkordb_graph_search
 
             if use_graph:
                 memories = await self._search_with_graph(
@@ -181,8 +181,8 @@ class SearchService:
         half_life: float,
         effective_min_score: float,
     ) -> list[Memory]:
-        graph_min_score = self._neo4j_graph_min_score
-        rrf_k = self._neo4j_rrf_k
+        graph_min_score = self._falkordb_graph_min_score
+        rrf_k = self._falkordb_rrf_k
 
         vector_store = self._require_vector_store()
         qdrant_coro = vector_store.search(
@@ -458,7 +458,7 @@ class SearchService:
         min_score: float = 0.5,
         project_id: str | None = None,
     ) -> list[str]:
-        """Search Neo4j graph for memory IDs via entity vector similarity."""
+        """Search FalkorDB graph for memory IDs via entity vector similarity."""
         kg_service = self._require_kg_service()
         entity_results = await kg_service.search_entities_by_vector(
             query_embedding=query_embedding,

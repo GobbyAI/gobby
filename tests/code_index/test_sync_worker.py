@@ -264,7 +264,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
 
 @pytest.mark.asyncio
 async def test_sync_graph_routes_relation_reads_through_run_db() -> None:
-    """Graph relation reads use the injected DB runner before Neo4j writes."""
+    """Graph relation reads use the injected DB runner before FalkorDB writes."""
     storage = MagicMock()
     storage.get_imports_for_file.return_value = [{"source_file": "a.py", "target_module": "b"}]
     storage.get_calls_for_file.return_value = []
