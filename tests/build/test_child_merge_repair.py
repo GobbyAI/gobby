@@ -8,7 +8,12 @@ import pytest
 from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.options import BuildOptions
 from gobby.build.service import build
-from gobby.build.workspaces import _integration_branch, ensure_epic_integration_workspaces
+from gobby.build.workspaces import (
+    BuildWorkspaceError,
+    _integration_branch,
+    _refresh_clean_git_dir,
+    ensure_epic_integration_workspaces,
+)
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -243,6 +248,57 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
 
     assert _git(integration_path, "rev-parse", "HEAD") == target_head
     assert (integration_path / "after-child-merge.txt").read_text() == "landed on target\n"
+
+
+def test_epic_integration_workspace_refresh_aborts_timeout_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "integration"
+    workspace.mkdir()
+    branch_name = "gobby/integration/phase"
+    base_ref = "main"
+    calls: list[tuple[str, ...]] = []
+
+    def completed(
+        args: list[str],
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+    def fake_git(
+        repo_path: Path,
+        args: list[str],
+        *,
+        timeout: int,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_path == workspace
+        calls.append(tuple(args))
+        if args == ["status", "--porcelain"]:
+            return completed(args)
+        if args == ["branch", "--show-current"]:
+            return completed(args, stdout=f"{branch_name}\n")
+        if args == ["merge-base", "--is-ancestor", base_ref, "HEAD"]:
+            return completed(args, returncode=1)
+        if args == ["merge-base", "--is-ancestor", "HEAD", base_ref]:
+            return completed(args, returncode=1)
+        if args == ["merge", "--no-edit", base_ref]:
+            assert env == {"GOBBY_MERGE": "1"}
+            raise subprocess.TimeoutExpired(["git", *args], timeout)
+        if args == ["merge", "--abort"]:
+            return completed(args)
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr("gobby.build.workspaces._git", fake_git)
+
+    with pytest.raises(BuildWorkspaceError, match="git merge timed out"):
+        _refresh_clean_git_dir(workspace, branch_name, base_ref)
+
+    assert ("merge", "--abort") in calls
 
 
 def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(

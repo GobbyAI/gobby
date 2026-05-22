@@ -41,6 +41,7 @@ dependencies = [
     "msgspec>=0.20.0",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
+    "falkordb>=1.1.0",
     "qdrant-client>=1.12.0",
     # python-multipart <0.0.27 has CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
     "python-multipart>=0.0.27",
