@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_IMPLEMENTATION_DOMAIN_SCHEMA_EXTRA: dict[str, Any] = {"enum": sorted(IMPLEMENTATION_DOMAINS)}
+
 
 # =============================================================================
 # Request/Response models
@@ -61,7 +63,7 @@ class TaskCreateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Required for code tasks; routes implementation to the matching developer.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+        json_schema_extra=_IMPLEMENTATION_DOMAIN_SCHEMA_EXTRA,
     )
     assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
@@ -98,7 +100,7 @@ class TaskUpdateRequest(BaseModel):
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Code task implementation domain.",
-        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+        json_schema_extra=_IMPLEMENTATION_DOMAIN_SCHEMA_EXTRA,
     )
     allow_automation: bool | None = Field(
         default=None,
