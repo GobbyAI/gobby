@@ -159,15 +159,13 @@ class TestAddToGraph:
         )
         _mock_graph_extraction(mock_llm)
 
-        try:
-            result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
-        except FalkorConnectionError as exc:
-            assert str(exc) == "schema unavailable"
-        else:
-            assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
-            assert result.errors == ["schema unavailable"]
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == ["schema unavailable"]
 
         assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
         mock_falkor.merge_node.assert_not_awaited()
         mock_falkor.merge_relationship.assert_not_awaited()
         mock_falkor.set_node_vector.assert_not_awaited()
@@ -185,25 +183,24 @@ class TestAddToGraph:
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
         schema_error: Exception,
     ) -> None:
         """Constraint readiness failures must not be swallowed before graph writes."""
         mock_falkor.ensure_memory_graph_schema = AsyncMock(side_effect=schema_error)
         _mock_graph_extraction(mock_llm)
 
-        try:
-            result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
-        except (FalkorQueryError, TimeoutError) as exc:
-            assert type(exc) is type(schema_error)
-            assert str(exc) == str(schema_error)
-        else:
-            assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
-            assert result.errors == [str(schema_error)]
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == [str(schema_error)]
 
         assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
         mock_falkor.merge_node.assert_not_awaited()
         mock_falkor.merge_relationship.assert_not_awaited()
         mock_falkor.set_node_vector.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
 
     async def test_add_to_graph_extracts_entities(
         self,
