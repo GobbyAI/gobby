@@ -397,11 +397,12 @@ class HookManagerFactory:
     def _create_database(config: Any | None) -> HubDatabase:
         import os
 
-        if os.environ.get("GOBBY_TEST_PROTECT") == "1" and getattr(config, "database_path", None):
+        database_path = getattr(config, "database_path", None) if config is not None else None
+        if os.environ.get("GOBBY_TEST_PROTECT") == "1" and database_path:
             from gobby.storage.database import LocalDatabase
             from gobby.storage.migrations import run_migrations
 
-            db = LocalDatabase(config.database_path)
+            db = LocalDatabase(database_path)
             run_migrations(db)
             return db
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableSet
 from typing import Any, Protocol
 
 from gobby.mcp_proxy.models import HealthState
@@ -14,7 +14,7 @@ class _HealthConnection(Protocol):
     @property
     def is_connected(self) -> bool: ...
 
-    def health_check(self, timeout: float) -> Awaitable[bool]: ...
+    def health_check(self, timeout: float = 5.0) -> Coroutine[Any, Any, bool]: ...
 
 
 class _HealthStatus(Protocol):
@@ -28,18 +28,27 @@ class _HealthStatus(Protocol):
 
 
 class _HealthManager(Protocol):
-    _connections: dict[str, _HealthConnection]
-    _health_check_interval: float
-    _reconnect_tasks: set[asyncio.Task[Any]]
-    _running: bool
-    health: dict[str, _HealthStatus]
+    @property
+    def _connections(self) -> Mapping[str, _HealthConnection]: ...
 
-    def _reconnect(self, server_name: str) -> Awaitable[None]: ...
+    @property
+    def _health_check_interval(self) -> float: ...
+
+    @property
+    def _reconnect_tasks(self) -> MutableSet[asyncio.Task[None]]: ...
+
+    @property
+    def _running(self) -> bool: ...
+
+    @property
+    def health(self) -> Mapping[str, _HealthStatus]: ...
+
+    def _reconnect(self, server_name: str) -> Coroutine[Any, Any, None]: ...
 
 
 def _reconnect_done_callback(
-    task: asyncio.Task[Any],
-    reconnect_tasks: set[asyncio.Task[Any]],
+    task: asyncio.Task[None],
+    reconnect_tasks: MutableSet[asyncio.Task[None]],
     logger: logging.Logger,
 ) -> None:
     reconnect_tasks.discard(task)

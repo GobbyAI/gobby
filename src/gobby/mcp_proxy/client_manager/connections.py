@@ -34,7 +34,7 @@ def _dedupe_configs_by_name(configs: list[MCPServerConfig]) -> list[MCPServerCon
 
 
 async def _acquire_connection_lock(manager: Any, server_name: str) -> asyncio.Lock:
-    lock = manager._lazy_connector.get_connection_lock(server_name)
+    lock = cast(asyncio.Lock, manager._lazy_connector.get_connection_lock(server_name))
     try:
         await asyncio.wait_for(lock.acquire(), timeout=manager.connection_timeout)
     except TimeoutError as exc:
