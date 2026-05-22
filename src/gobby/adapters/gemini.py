@@ -30,8 +30,17 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
+from gobby.adapters.capabilities import (
+    GEMINI_EVENT_MAP,
+    GEMINI_HOOK_ALIASES,
+    ContextChannel,
+    get_provider_capabilities,
+)
+from gobby.adapters.degradation import (
+    record_unsupported_response_fields,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -53,34 +62,10 @@ class GeminiAdapter(BaseAdapter):
 
     # Event type mapping: Gemini CLI hook names -> unified HookEventType
     # Gemini CLI uses PascalCase hook names in the payload's "hook_event_name" field
-    EVENT_MAP: dict[str, HookEventType] = {
-        "SessionStart": HookEventType.SESSION_START,
-        "SessionEnd": HookEventType.SESSION_END,
-        "BeforeAgent": HookEventType.BEFORE_AGENT,
-        "AfterAgent": HookEventType.AFTER_AGENT,
-        "BeforeTool": HookEventType.BEFORE_TOOL,
-        "AfterTool": HookEventType.AFTER_TOOL,
-        "BeforeToolSelection": HookEventType.BEFORE_TOOL_SELECTION,  # Gemini-only
-        "BeforeModel": HookEventType.BEFORE_MODEL,  # Gemini-only
-        "AfterModel": HookEventType.AFTER_MODEL,  # Gemini-only
-        "PreCompress": HookEventType.PRE_COMPACT,  # Gemini calls it PreCompress
-        "Notification": HookEventType.NOTIFICATION,
-    }
+    EVENT_MAP: dict[str, HookEventType] = dict(GEMINI_EVENT_MAP)
 
     # Reverse mapping for response translation
-    HOOK_EVENT_NAME_MAP: dict[str, str] = {
-        "session_start": "SessionStart",
-        "session_end": "SessionEnd",
-        "before_agent": "BeforeAgent",
-        "after_agent": "AfterAgent",
-        "before_tool": "BeforeTool",
-        "after_tool": "AfterTool",
-        "before_tool_selection": "BeforeToolSelection",
-        "before_model": "BeforeModel",
-        "after_model": "AfterModel",
-        "pre_compact": "PreCompress",
-        "notification": "Notification",
-    }
+    HOOK_EVENT_NAME_MAP: dict[str, str] = dict(GEMINI_HOOK_ALIASES)
 
     # Tool name mapping: Gemini tool names -> normalized names
     # Gemini uses different tool names than Claude Code
@@ -327,6 +312,15 @@ class GeminiAdapter(BaseAdapter):
             Dict in Gemini CLI's expected format.
         """
         should_continue = response.decision != "deny"
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_type)
+        record_unsupported_response_fields(
+            response,
+            provider=self.source,
+            hook_type=hook_type,
+            capability=capability,
+            event_logger=logger,
+        )
         normalized_reason = normalize_adapter_response_reason(
             response,
             adapter_name=self.__class__.__name__,
@@ -345,6 +339,9 @@ class GeminiAdapter(BaseAdapter):
         hook_event_name = self._response_hook_event_name(hook_type)
         resolved_hook_type = hook_event_name or hook_type
         session_start_hook = resolved_hook_type == "SessionStart"
+        context_channel = (
+            capability.context_channel if capability else ContextChannel.ADDITIONAL_CONTEXT
+        )
 
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
@@ -364,8 +361,8 @@ class GeminiAdapter(BaseAdapter):
 
         # Add session/terminal context for hooks that support additionalContext
         # Parity with Claude Code: inject on SessionStart, BeforeAgent, BeforeTool, AfterTool
-        hooks_with_context = {"SessionStart", "BeforeAgent", "BeforeTool", "AfterTool"}
-        if resolved_hook_type in hooks_with_context and response.metadata:
+        hooks_with_metadata_context = {"SessionStart", "BeforeAgent", "BeforeTool", "AfterTool"}
+        if resolved_hook_type in hooks_with_metadata_context and response.metadata:
             session_id = response.metadata.get("session_id")
 
             if session_id:
@@ -379,7 +376,7 @@ class GeminiAdapter(BaseAdapter):
                 if context_lines:
                     context_parts.append(("metadata", "\n".join(context_lines)))
 
-        if resolved_hook_type in hooks_with_context and context_parts and hook_event_name:
+        if resolved_hook_type in hooks_with_metadata_context and context_parts and hook_event_name:
             hook_specific["hookEventName"] = hook_event_name
 
         # Handle BeforeModel-specific output (llm_request modification)
@@ -390,11 +387,14 @@ class GeminiAdapter(BaseAdapter):
         if resolved_hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
 
-        if context_parts:
-            hook_specific["additionalContext"] = truncate_additional_context(
+        if context_parts and context_channel is ContextChannel.ADDITIONAL_CONTEXT:
+            hook_specific["additionalContext"] = truncate_context_for_adapter(
                 "\n\n".join(part for _, part in context_parts),
+                provider=self.source,
+                hook_type=hook_type,
+                destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
                 contributor_sizes={label: len(part) for label, part in context_parts},
-                logger=logger,
+                event_logger=logger,
             )
 
         # Only add hookSpecificOutput if there's content

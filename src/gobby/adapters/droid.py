@@ -17,6 +17,11 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
+from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
+from gobby.adapters.degradation import (
+    record_unsupported_response_fields,
+    truncate_context_for_adapter,
+)
 from gobby.adapters.droid_contract import (
     DROID_EVENT_MAP,
     DROID_HOOK_EVENT_NAME_MAP,
@@ -24,7 +29,6 @@ from gobby.adapters.droid_contract import (
     get_droid_contract,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -91,7 +95,13 @@ class DroidAdapter(BaseAdapter):
         """Build Droid additionalContext content for supported events."""
 
         contract = get_droid_contract(hook_type)
-        if not contract or not contract.allows_additional_context:
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_type)
+        if (
+            not contract
+            or not capability
+            or capability.context_channel is not ContextChannel.ADDITIONAL_CONTEXT
+        ):
             return None
 
         parts: list[tuple[str, str]] = []
@@ -117,10 +127,13 @@ class DroidAdapter(BaseAdapter):
         if not parts:
             return None
 
-        return truncate_additional_context(
+        return truncate_context_for_adapter(
             "\n\n".join(part for _, part in parts),
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
             contributor_sizes={label: len(part) for label, part in parts},
-            logger=logger,
+            event_logger=logger,
         )
 
     def translate_from_hook_response(
@@ -131,6 +144,15 @@ class DroidAdapter(BaseAdapter):
         """Convert HookResponse to Droid's expected hook JSON shape."""
 
         contract = get_droid_contract(hook_type)
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_type)
+        record_unsupported_response_fields(
+            response,
+            provider=self.source,
+            hook_type=hook_type,
+            capability=capability,
+            event_logger=logger,
+        )
         hook_event_name = contract.hook_event_name if contract else "Unknown"
         additional_context = self._build_additional_context(response, hook_type=hook_type)
 
