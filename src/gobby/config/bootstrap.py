@@ -37,7 +37,8 @@ POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
 POSTGRES_DATABASE_URL_REF = (
     f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
 )
-_POSTGRES_DATABASE_URL_CACHE: dict[tuple[Any, str, str], str] = {}
+PostgresDatabaseUrlCacheKey = tuple[str, str, str]
+_POSTGRES_DATABASE_URL_CACHE: dict[PostgresDatabaseUrlCacheKey, str] = {}
 _POSTGRES_DATABASE_URL_CACHE_LOCK = threading.RLock()
 
 HubBackend = Literal["postgres"]
@@ -337,8 +338,8 @@ def _postgres_database_url_cache_key(
     keyring_backend: Any,
     service: str,
     username: str,
-) -> tuple[Any, str, str]:
-    return keyring_backend, service, username
+) -> PostgresDatabaseUrlCacheKey:
+    return _keyring_backend_cache_key(keyring_backend), service, username
 
 
 def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
@@ -355,17 +356,27 @@ def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
 
 
 def _keyring_backend_name(keyring_backend: Any) -> str:
-    get_keyring = getattr(keyring_backend, "get_keyring", None)
-    if callable(get_keyring):
-        try:
-            keyring_backend = get_keyring()
-        except Exception:
-            pass
+    keyring_backend = _resolved_keyring_backend(keyring_backend)
     backend_name = getattr(keyring_backend, "name", None)
     class_name = f"{keyring_backend.__class__.__module__}.{keyring_backend.__class__.__qualname__}"
     if isinstance(backend_name, str) and backend_name.strip():
         return f"{backend_name} ({class_name})"
     return class_name
+
+
+def _keyring_backend_cache_key(keyring_backend: Any) -> str:
+    resolved_backend = _resolved_keyring_backend(keyring_backend)
+    return f"{_keyring_backend_name(resolved_backend)}@{id(resolved_backend):x}"
+
+
+def _resolved_keyring_backend(keyring_backend: Any) -> Any:
+    get_keyring = getattr(keyring_backend, "get_keyring", None)
+    if callable(get_keyring):
+        try:
+            return get_keyring()
+        except Exception:
+            pass
+    return keyring_backend
 
 
 def _is_fail_keyring_backend(keyring_backend: Any) -> bool:

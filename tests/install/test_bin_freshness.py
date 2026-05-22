@@ -208,6 +208,30 @@ class TestBinUpdater:
         assert record.last_status == "up_to_date"
         assert client.downloads == 0
 
+    def test_github_newer_installed_version_records_without_downloading(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = _db(tmp_path)
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        _write_binary(bin_dir, spec)
+        _write_stamp(bin_dir, spec, "0.4.2")
+        client = FakeClient(asset=_asset(spec, "0.4.1"))
+
+        record = update_managed_bin(
+            db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "up_to_date"
+        assert record.installed_version == "0.4.2"
+        assert client.downloads == 0
+
     def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(self, tmp_path: Path) -> None:
         db = _db(tmp_path)
         bin_dir = tmp_path / "bin"

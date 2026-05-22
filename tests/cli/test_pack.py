@@ -113,7 +113,7 @@ class TestPackCommand:
             dump.write_bytes(b"dump")
             metadata.write_text(json.dumps({"dump_sha256": "a" * 64}), encoding="utf-8")
             sums.write_text(f"{'a' * 64}  gobby.dump\n", encoding="utf-8")
-            return {"dump_path": str(dump), "backup_dir": str(output_dir)}
+            return {"dump_path": str(dump), "backup_dir": str(output_dir), "mode": "docker"}
 
         with patch("gobby.cli.pack.create_postgres_backup", side_effect=_backup):
             out_path = tmp_path / "out.tar.gz"
@@ -128,6 +128,7 @@ class TestPackCommand:
         assert "gobby/postgres/SHA256SUMS" in names
         assert "gobby/docker-volumes/gobby_postgres_data.tar.gz" not in names
         assert manifest["postgres_backup"] is True
+        assert manifest["postgres_install_mode"] == "docker"
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=True)
@@ -291,11 +292,16 @@ class TestUnpackCommand:
             assert (source / "gobby.dump").read_bytes() == b"dump"
             return {"verified": True}
 
-        with patch("gobby.cli.pack.restore_postgres_backup", side_effect=_restore):
+        with (
+            patch("gobby.cli.pack.restore_postgres_backup", side_effect=_restore),
+            patch("gobby.cli.pack._active_install_mode", return_value="docker"),
+            patch("gobby.cli.pack._start_docker_services") as start_services,
+        ):
             result = runner.invoke(unpack, [str(archive), "--force"])
 
         assert result.exit_code == 0
         assert len(calls) == 1
+        start_services.assert_called_once()
         assert "Restored PostgreSQL logical dump" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")

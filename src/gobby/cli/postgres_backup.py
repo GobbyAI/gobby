@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess  # nosec B404 # fixed pg_dump/pg_restore/docker commands
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ POSTGRES_BACKUP_ARCHIVE_PREFIX = "gobby/postgres"
 
 _POSTGRES_CONTAINER = "gobby-postgres"
 _SUBPROCESS_TIMEOUT_SECONDS = 600
+_DOCKER_PG_DUMP_TIMEOUT_ENV = "GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS"
 
 
 def postgres_backup_configured(*, gobby_home: Path | None = None) -> bool:
@@ -87,6 +89,7 @@ def create_postgres_backup(
         "database_url": _redact_dsn(database_url),
         "mode": mode,
         "verified": True,
+        "sha256_verified": True,
     }
 
 
@@ -104,8 +107,8 @@ def restore_postgres_backup(
 
     metadata = _read_metadata_for_dump(dump_path)
     expected_sha256 = _expected_dump_sha256(dump_path, metadata)
+    actual_sha256 = _sha256_file(dump_path)
     if expected_sha256:
-        actual_sha256 = _sha256_file(dump_path)
         if actual_sha256 != expected_sha256:
             raise click.ClickException(
                 "PostgreSQL dump checksum mismatch: "
@@ -126,6 +129,9 @@ def restore_postgres_backup(
         "mode": mode,
         "clean": clean,
         "verified": True,
+        "dump_sha256": actual_sha256,
+        "expected_dump_sha256": expected_sha256,
+        "sha256_verified": bool(expected_sha256 and actual_sha256 == expected_sha256),
         "probes": probes,
     }
 
@@ -195,7 +201,7 @@ def _run_pg_dump(*, mode: InstallMode, database_url: str, dump_path: Path) -> No
                     command,
                     stdout=output,
                     stderr=subprocess.PIPE,
-                    timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                    timeout=_docker_pg_dump_timeout_seconds(),
                 )
         except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
             raise click.ClickException(f"Docker pg_dump failed: {exc}") from exc
@@ -424,6 +430,21 @@ def _run_checked(
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
         raise click.ClickException(f"{action} failed: {exc}") from exc
     _raise_for_subprocess_error(result, action)
+
+
+def _docker_pg_dump_timeout_seconds() -> int:
+    raw_timeout = os.environ.get(_DOCKER_PG_DUMP_TIMEOUT_ENV)
+    if raw_timeout is None or raw_timeout.strip() == "":
+        return _SUBPROCESS_TIMEOUT_SECONDS
+    try:
+        timeout = int(raw_timeout)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"{_DOCKER_PG_DUMP_TIMEOUT_ENV} must be a positive integer"
+        ) from exc
+    if timeout <= 0:
+        raise click.ClickException(f"{_DOCKER_PG_DUMP_TIMEOUT_ENV} must be a positive integer")
+    return timeout
 
 
 def _raise_for_subprocess_error(result: subprocess.CompletedProcess[Any], action: str) -> None:

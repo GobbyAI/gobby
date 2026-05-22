@@ -345,7 +345,12 @@ class TestSendMessageBroadcast:
 
         result = await messaging_registry_with_broadcast.call(
             "send_message",
-            {"from_session": "s-from", "to_session": "s-to", "content": "hello"},
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hello",
+            },
         )
 
         assert result["success"] is True
@@ -388,6 +393,9 @@ class TestSendMessageBroadcast:
             "s-child-1": MockSession(id="s-child-1", project_id="proj-1"),
             "s-child-2": MockSession(id="s-child-2", project_id="proj-1"),
         }.get(sid)
+        mock_db.fetchone.side_effect = lambda sql, params=(): (
+            {"id": "proj-1"} if "FROM projects" in sql else None
+        )
         mock_db.fetchall.return_value = [
             {
                 "child_session_id": "s-child-1",
@@ -417,7 +425,8 @@ class TestSendMessageBroadcast:
             "send_message",
             {
                 "from_session": "s-from",
-                "send_to_all": True,
+                "target": "project",
+                "target_id": "proj-1",
                 "content": "hello agents",
             },
         )
@@ -448,7 +457,12 @@ class TestSendMessageBroadcast:
 
         result = await messaging_registry_with_broadcast.call(
             "send_message",
-            {"from_session": "no-such", "to_session": "s-to", "content": "hi"},
+            {
+                "from_session": "no-such",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hi",
+            },
         )
 
         assert result["success"] is False

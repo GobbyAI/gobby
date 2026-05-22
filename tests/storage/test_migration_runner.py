@@ -3,11 +3,12 @@ from __future__ import annotations
 import importlib
 from contextlib import contextmanager
 from pathlib import Path
+from types import MethodType
 
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import MigrationUnsupportedError
+from gobby.storage.migrations import Migration, MigrationUnsupportedError
 
 pytestmark = pytest.mark.unit
 
@@ -74,6 +75,65 @@ class _PostgresBookkeepingHub:
         if "to_regclass" in sql:
             return _Result([{"table_exists": params[0] in self.tables}])
         raise AssertionError(f"unexpected query: {sql}")
+
+
+class _PostgresMigrationHub:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.tables = {"schema_migrations"}
+        self.applied: list[int] = []
+
+    @contextmanager
+    def transaction(self):
+        yield self
+
+    def execute(self, sql: str, params=()):
+        if "to_regclass" in sql:
+            return _Result([{"table_exists": params[0] in self.tables}])
+        raise AssertionError(f"unexpected query: {sql}")
+
+
+def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    module = _migration_module()
+    hub = _PostgresMigrationHub()
+    runner = module.MigrationRunner(hub)
+    migration = Migration(
+        version=262,
+        name="add_needed_column",
+        shared_path=Path("unused.sql"),
+        sqlite_path=None,
+        postgres_path=None,
+    )
+
+    def ensure_schema_migrations_table(self) -> None:
+        return None
+
+    def read_applied_versions(self) -> set[int]:
+        return set()
+
+    def discover_migrations(self) -> list[Migration]:
+        return [migration]
+
+    def run_migration(self, txn, discovered: Migration) -> None:
+        assert txn is hub
+        assert discovered is migration
+
+    def record_applied_version(self, txn, version: int) -> None:
+        assert txn is hub
+        hub.applied.append(version)
+
+    runner._ensure_schema_migrations_table = MethodType(ensure_schema_migrations_table, runner)
+    runner._read_applied_versions = MethodType(read_applied_versions, runner)
+    runner._discover_migrations = MethodType(discover_migrations, runner)
+    runner._run_migration = MethodType(run_migration, runner)
+    runner._record_applied_version = MethodType(record_applied_version, runner)
+
+    with caplog.at_level("WARNING", logger="gobby.storage.migrations"):
+        runner.apply_pending()
+
+    assert hub.applied == [262]
+    assert "Applying PostgreSQL migration 262_add_needed_column" in caplog.text
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

@@ -28,7 +28,6 @@ class AuthStore:
 
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
-        self._repair_legacy_sqlite_sessions()
 
     def create_session(self, remember_me: bool = False) -> tuple[str, datetime]:
         """Create a new auth session.
@@ -82,55 +81,54 @@ class AuthStore:
         now = datetime.now(UTC).isoformat()
         self.db.execute("DELETE FROM auth_sessions WHERE expires_at < ?", (now,))
 
-    def _repair_legacy_sqlite_sessions(self) -> None:
-        """Convert legacy SQLite auth_sessions.token rows to token_hash."""
-        if self.db.dialect != "sqlite":
-            return
 
-        try:
-            columns = [row["name"] for row in self.db.fetchall("PRAGMA table_info(auth_sessions)")]
-        except Exception:
-            logger.debug("Auth session repair skipped; auth_sessions table unavailable")
-            return
+def repair_legacy_sqlite_auth_sessions(db: HubDatabase) -> None:
+    """Convert legacy SQLite auth_sessions.token rows to token_hash during startup repair."""
+    if db.dialect != "sqlite":
+        return
 
-        if not columns or "token_hash" in columns or "token" not in columns:
-            return
+    try:
+        columns = [row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")]
+    except Exception:
+        logger.debug("Auth session repair skipped; auth_sessions table unavailable")
+        return
 
-        rows = self.db.fetchall(
-            "SELECT token, created_at, expires_at, remember_me FROM auth_sessions"
+    if not columns or "token_hash" in columns or "token" not in columns:
+        return
+
+    rows = db.fetchall("SELECT token, created_at, expires_at, remember_me FROM auth_sessions")
+    with db.transaction() as conn:
+        conn.execute("DROP TABLE IF EXISTS auth_sessions_new")
+        conn.execute(
+            """
+            CREATE TABLE auth_sessions_new (
+                token_hash TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                remember_me INTEGER NOT NULL DEFAULT 0
+            )
+            """
         )
-        with self.db.transaction() as conn:
-            conn.execute("DROP TABLE IF EXISTS auth_sessions_new")
+        for row in rows:
+            token = row["token"]
+            if not token:
+                continue
             conn.execute(
                 """
-                CREATE TABLE auth_sessions_new (
-                    token_hash TEXT PRIMARY KEY,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    expires_at TEXT NOT NULL,
-                    remember_me INTEGER NOT NULL DEFAULT 0
+                INSERT OR REPLACE INTO auth_sessions_new (
+                    token_hash, created_at, expires_at, remember_me
                 )
-                """
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    _hash_token(str(token)),
+                    row["created_at"],
+                    row["expires_at"],
+                    row["remember_me"],
+                ),
             )
-            for row in rows:
-                token = row["token"]
-                if not token:
-                    continue
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO auth_sessions_new (
-                        token_hash, created_at, expires_at, remember_me
-                    )
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        _hash_token(str(token)),
-                        row["created_at"],
-                        row["expires_at"],
-                        row["remember_me"],
-                    ),
-                )
-            conn.execute("DROP TABLE auth_sessions")
-            conn.execute("ALTER TABLE auth_sessions_new RENAME TO auth_sessions")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)"
-            )
+        conn.execute("DROP TABLE auth_sessions")
+        conn.execute("ALTER TABLE auth_sessions_new RENAME TO auth_sessions")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)"
+        )
