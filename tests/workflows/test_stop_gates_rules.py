@@ -1298,6 +1298,16 @@ class TestClaimedTaskReconciliation:
         session_manager.is_ancestor.side_effect = (
             lambda ancestor, descendant: ancestor == "parent-sess" and descendant == "child-sess"
         )
+        parent_session = MagicMock()
+        parent_session.parent_session_id = None
+        parent_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        child_session = MagicMock()
+        child_session.parent_session_id = "parent-sess"
+        child_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        session_manager.get.side_effect = lambda sid: {
+            "parent-sess": parent_session,
+            "child-sess": child_session,
+        }[sid]
         session_task_manager = MagicMock()
 
         variables: dict[str, object] = {
@@ -1324,6 +1334,48 @@ class TestClaimedTaskReconciliation:
             "uuid-anchor",
             "claimed",
         )
+
+    def test_reconcile_prunes_lineage_claim_from_different_terminal(self) -> None:
+        """A stale child lineage alone cannot preserve a task claim."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = _make_task(
+            "uuid-anchor",
+            status="in_progress",
+            assignee="parent-sess",
+        )
+        session_manager = MagicMock()
+        session_manager.is_ancestor.side_effect = (
+            lambda ancestor, descendant: ancestor == "parent-sess" and descendant == "child-sess"
+        )
+        parent_session = MagicMock()
+        parent_session.parent_session_id = None
+        parent_session.terminal_context = {"tmux_pane": "%5815", "tmux_socket_path": "/tmp/tmux"}
+        child_session = MagicMock()
+        child_session.parent_session_id = "parent-sess"
+        child_session.terminal_context = {"tmux_pane": "%5867", "tmux_socket_path": "/tmp/tmux"}
+        session_manager.get.side_effect = lambda sid: {
+            "parent-sess": parent_session,
+            "child-sess": child_session,
+        }[sid]
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-anchor": "#14853"},
+        }
+        reconcile_claimed_tasks(
+            variables,
+            "child-sess",
+            task_manager=task_manager,
+            session_manager=session_manager,
+        )
+
+        assert variables["task_claimed"] is False
+        assert variables["claimed_tasks"] == {}
+        task_manager.claim_task.assert_not_called()
 
     def test_reconcile_mixed_valid_and_stale(self) -> None:
         """Mix of valid and stale claims → only valid ones survive."""

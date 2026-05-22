@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Any
 
+from gobby.sessions.handoff_identity import terminal_context_matches_session
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
     get_claimed_session_id,
@@ -60,8 +61,20 @@ def find_parent_session(
                     break
             if not parent:
                 handler.logger.warning(f"No handoff_ready parent found for /{session_source}")
+                input_data["source"] = "startup"
+                return None, "startup"
 
         if parent:
+            child_terminal_context = input_data.get("terminal_context")
+            if not terminal_context_matches_session(parent, child_terminal_context):
+                handler.logger.warning(
+                    "Ignoring %s handoff parent %s; terminal context does not match child",
+                    session_source,
+                    parent.id,
+                )
+                input_data["source"] = "startup"
+                return None, "startup"
+
             parent_session_id = parent.id
             handler.logger.debug(f"Found parent session: {parent_session_id}")
 

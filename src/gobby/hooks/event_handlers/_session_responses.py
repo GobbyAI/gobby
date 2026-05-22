@@ -10,7 +10,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookResponse
-from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, serialize_task_state
+from gobby.tasks.state_semantics import (
+    ACTIVE_STAGE_STATES,
+    is_task_actively_claimed,
+    serialize_task_state,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -91,15 +95,26 @@ def get_claimed_task_info(
     if not claimed_tasks:
         return None
 
+    reconciled: dict[str, str] = {}
     result: list[tuple[str, str, str]] = []
     for task_uuid in list(claimed_tasks):
         try:
             task = handler._task_manager.get_task(task_uuid, project_id=project_id)
+            if not is_task_actively_claimed(task, session_id):
+                _logger.info(
+                    "Pruning stale claimed task %s from session %s; live owner differs",
+                    task_uuid[:8],
+                    session_id,
+                )
+                continue
             ref = f"#{task.seq_num}" if task.seq_num else task_uuid[:8]
+            reconciled[task_uuid] = ref
             result.append((ref, _task_state_label(task), task.title))
         except Exception as e:
             _logger.debug(f"Failed to fetch task {task_uuid[:8]}: {e}")
-            result.append((task_uuid[:8], "unknown", "(deleted)"))
+    if reconciled != claimed_tasks:
+        sv_mgr.set_variable(session_id, "task_claimed", bool(reconciled))
+        sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
     return result or None
 
 
