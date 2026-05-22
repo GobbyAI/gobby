@@ -162,7 +162,12 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/worktrees/branch", database_url=None)
+            mock_code_index.assert_awaited_once_with(
+                "/tmp/worktrees/branch",
+                database_url=None,
+                daemon_bind_host=None,
+                daemon_port=None,
+            )
             assert mock_execute.await_args.args[0].extra_env == {"PATH": "/isolated/bin:/usr/bin"}
             mock_execute.assert_awaited_once()
 
@@ -338,7 +343,12 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/clones/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/clones/branch", database_url=None)
+            mock_code_index.assert_awaited_once_with(
+                "/tmp/clones/branch",
+                database_url=None,
+                daemon_bind_host=None,
+                daemon_port=None,
+            )
             mock_execute.assert_awaited_once()
 
 

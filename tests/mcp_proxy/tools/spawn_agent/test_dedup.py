@@ -27,6 +27,11 @@ class TestSpawnAgentDedup:
 
         active_run = MagicMock()
         active_run.id = "existing-run-456"
+        active_run.status = "running"
+        active_run.child_session_id = "child-456"
+        active_run.parent_session_id = "parent-789"
+        active_run.task_id = "task-uuid-123"
+        active_run.agent_name = "backend-developer"
         runner.run_storage.list_active.return_value = [active_run]
         runner.run_storage.get_active_run_for_task.return_value = active_run
 
@@ -78,7 +83,81 @@ class TestSpawnAgentDedup:
         assert result["success"] is True
         assert result["skipped"] is True
         assert result["run_id"] == "existing-run-456"
+        assert result["status"] == "running"
+        assert result["child_session_id"] == "child-456"
+        assert result["parent_session_id"] == "parent-789"
+        assert result["task_id"] == "task-uuid-123"
+        assert result["agent_name"] == "backend-developer"
         assert "already running" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_spawn_refuses_closed_task_before_launch(self) -> None:
+        """Closed tasks are refused before isolation or terminal launch."""
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "Can spawn", 0)
+        runner._child_session_manager = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
+
+        agent_body = AgentDefinitionBody(
+            name="default",
+            provider="claude",
+        )
+
+        mock_task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.title = "Closed task"
+        mock_task.seq_num = 101
+        mock_task.id = "task-uuid-closed"
+        mock_task.additional_skills = None
+        mock_task.closed_at = "2026-05-22T00:00:00+00:00"
+        mock_task.stages = []
+        mock_task_manager.get_task.return_value = mock_task
+
+        registry = create_spawn_agent_registry(
+            runner,
+            task_manager=mock_task_manager,
+            db=MagicMock(),
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+            ) as mock_resolve,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new_callable=AsyncMock,
+            ) as mock_execute,
+        ):
+            mock_ctx.return_value = {
+                "id": "proj-123",
+                "project_path": "/path/to/project",
+            }
+            mock_resolve.return_value = "task-uuid-closed"
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": "parent-789",
+                    "task_id": "#101",
+                    "isolation": "worktree",
+                },
+            )
+
+        assert result["success"] is False
+        assert result["skipped"] is True
+        assert result["task_id"] == "task-uuid-closed"
+        assert "not actionable" in result["error"]
+        mock_execute.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(self) -> None:

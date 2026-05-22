@@ -36,6 +36,7 @@ from ._code_index import (
     without_code_index_skill,
 )
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
+from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -506,22 +507,23 @@ async def spawn_agent_impl(
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     task_owned_by_child = False
+    resolved_task: Any | None = None
 
     if task_id and task_manager:
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id, project_id)
-            task = task_manager.get_task(resolved_task_id)
-            if task:
-                task_title = task.title
-                task_seq_num = task.seq_num
-                task_category = getattr(task, "category", None)
-                if task.additional_skills is not None:
-                    task_additional_skills = _normalize_string_list(task.additional_skills)
-                claimed_session_id = get_claimed_session_id(task)
+            resolved_task = task_manager.get_task(resolved_task_id)
+            if resolved_task:
+                task_title = resolved_task.title
+                task_seq_num = resolved_task.seq_num
+                task_category = getattr(resolved_task, "category", None)
+                if resolved_task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
+                claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
-    # 4b. Dedup check — idempotent: return success if agent already running
+    # 4b. Dedup check: return success if an agent already owns the task.
     if resolved_task_id and runner.run_storage:
         active_run = _active_task_spawn_blocker(
             runner.run_storage,
@@ -530,13 +532,12 @@ async def spawn_agent_impl(
             parent_session_id=parent_session_id,
         )
         if active_run is not None:
-            return {
-                "success": True,
-                "skipped": True,
-                "run_id": active_run.id if active_run else None,
-                "message": f"Agent already running for task {task_id}",
-            }
+            return active_task_spawn_response(active_run, task_id)
 
+    if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
+        return non_actionable_task_spawn_response(
+            resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
+        )
     # 5. Handle worktree_id/clone_id reuse: skip isolation creation when existing resource provided
     isolation_ctx = None
     if worktree_id and worktree_storage:
