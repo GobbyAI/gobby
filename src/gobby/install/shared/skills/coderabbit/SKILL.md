@@ -23,9 +23,13 @@ REQUIRED SKILL: verification-before-completion.
 
 ## Plan Mode Gate
 
-Enter Plan Mode before CodeRabbit triage. Use `EnterPlanMode` when the runtime
-provides it; otherwise respond with a planning-focused triage message that
-switches the session into its native planning flow.
+Before any CodeRabbit triage, first check whether the session is already in
+native Plan Mode. If it is not, you MUST enter native Plan Mode before reading
+reports, verifying findings, creating or claiming tasks, or editing files. Native
+Plan Mode is the runtime-provided planning state; session-level planning is the
+assistant's internal planning posture and does not satisfy this gate. Use
+`EnterPlanMode` when the runtime provides it; otherwise respond with a
+planning-focused triage message and wait for plan approval before continuing.
 
 Plan Mode triage is read-only: ingest supplied findings and
 `./reports/coderabbit-*.md`, verify the current code, decide `fixed` or
@@ -50,7 +54,8 @@ behavior. Do not silently drop stale comments.
 
 ## Workflow
 
-1. Enter Plan Mode and complete read-only triage before implementation.
+1. If not already in native Plan Mode, enter Plan Mode before any triage; then
+   complete read-only triage before implementation.
 2. Create or claim a `gobby-tasks` task before edits.
 3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
 4. For each report, identify whether it contains actionable findings or only a
