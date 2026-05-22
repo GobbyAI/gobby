@@ -10,8 +10,8 @@ from gobby.build.controls import (
     build_resume_target,
     build_stop_target,
 )
-from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
 from gobby.build.observability import explain_dispatch, get_build_status, list_build_history
+from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
 from gobby.build.service import (
     BuildControlResult,
     BuildLifecycleEvent,
