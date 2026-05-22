@@ -587,22 +587,36 @@ def _refresh_clean_git_dir(path: str | Path, branch_name: str, base_ref: str) ->
 
     if _is_ancestor(workspace, base_ref, "HEAD"):
         return
-    if _is_ancestor(workspace, "HEAD", base_ref):
-        result = _git(workspace, ["merge", "--ff-only", base_ref], timeout=60)
-    else:
-        result = _git(
-            workspace,
-            ["merge", "--no-edit", base_ref],
-            timeout=60,
-            env={"GOBBY_MERGE": "1"},
-        )
+    try:
+        if _is_ancestor(workspace, "HEAD", base_ref):
+            result = _git(workspace, ["merge", "--ff-only", base_ref], timeout=60)
+        else:
+            result = _git(
+                workspace,
+                ["merge", "--no-edit", base_ref],
+                timeout=60,
+                env={"GOBBY_MERGE": "1"},
+            )
+    except subprocess.TimeoutExpired as exc:
+        _abort_merge_safely(workspace)
+        raise BuildWorkspaceError(
+            f"failed to refresh integration workspace {workspace} from {base_ref}: "
+            f"git merge timed out after {exc.timeout}s"
+        ) from exc
     if result.returncode != 0:
-        _git(workspace, ["merge", "--abort"], timeout=30)
+        _abort_merge_safely(workspace)
         detail = result.stderr.strip() or result.stdout.strip()
         raise BuildWorkspaceError(
             f"failed to refresh integration workspace {workspace} from {base_ref}: {detail}"
         )
     _ensure_clean_git_dir(workspace)
+
+
+def _abort_merge_safely(workspace: Path) -> None:
+    try:
+        _git(workspace, ["merge", "--abort"], timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _is_ancestor(repo_path: Path, ancestor: str, descendant: str) -> bool:

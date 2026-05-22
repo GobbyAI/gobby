@@ -80,8 +80,22 @@ class CodeIndexContext:
 
         logger.info(f"Invalidated code index for project {project_id}")
 
+    async def close_graph_client(self) -> None:
+        """Close and clear the code graph client."""
+        graph = self._graph
+        if graph is None:
+            return
+        try:
+            await graph.close()
+        finally:
+            self._graph = None
+
+    def clear_graph_client(self) -> None:
+        """Clear the code graph client reference without awaiting close."""
+        self._graph = None
+
     async def clear_graph(self, project_id: str) -> dict[str, Any]:
-        """Clear only the Neo4j code-graph projection for one project."""
+        """Clear only the FalkorDB code-graph projection for one project."""
         if self._graph is None or not self._graph.available:
             return {"success": False, "error": "Code graph not available", "project_id": project_id}
 
@@ -101,7 +115,7 @@ class CodeIndexContext:
             return {"success": False, "error": str(e), "project_id": project_id}
 
     async def rebuild_graph(self, project_id: str, limit: int = 10_000) -> dict[str, Any]:
-        """Rebuild the Neo4j code graph for a project from indexed hub rows."""
+        """Rebuild the FalkorDB code graph for a project from indexed hub rows."""
         if self._graph is None or not self._graph.available:
             return {"success": False, "error": "Code graph not available", "project_id": project_id}
 

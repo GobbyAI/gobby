@@ -46,7 +46,7 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
 def _services_start(gobby_home: Path) -> None:
-    """Start Docker services (Qdrant, Neo4j) via unified compose file.
+    """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
     Uses Docker Compose profiles to start only installed services.
     Falls back to legacy per-service compose files during migration.
@@ -67,7 +67,7 @@ def _services_start(gobby_home: Path) -> None:
         else:
             return
 
-    # Build subprocess env with config resolved from bootstrap + DB config
+    # Build subprocess env with resolved service config.
     env = dict(os.environ)
     profiles: list[str] = []
     try:
@@ -76,7 +76,6 @@ def _services_start(gobby_home: Path) -> None:
 
         bootstrap = load_bootstrap()
         config = load_config()
-
         from gobby.config.persistence import is_falkordb_enabled
 
         env["GOBBY_FALKORDB_PASSWORD"] = bootstrap.falkordb_password

@@ -45,7 +45,7 @@ class KnowledgeGraphResult:
 
 @dataclass
 class _GraphEntity:
-    """Normalized entity record used for Neo4j writes."""
+    """Normalized entity record used for FalkorDB writes."""
 
     entity_key: str
     name: str

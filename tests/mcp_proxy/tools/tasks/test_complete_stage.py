@@ -8,11 +8,14 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import add_claimed_task
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -27,6 +30,8 @@ pytestmark = pytest.mark.unit
 def _ops_context(temp_db):
     return SimpleNamespace(
         task_manager=LocalTaskManager(temp_db),
+        session_task_manager=SessionTaskManager(temp_db),
+        session_var_manager=SessionVariableManager(temp_db),
         resolve_session_id=lambda session_ref: session_ref,
     )
 
@@ -121,6 +126,45 @@ def test_complete_stage_releases_current_running_agent_dispatch_mutex(
     assert result["stage"]["state"] == "done"
     assert stage_row(temp_db, task.id, "architecture")["state"] == "done"
     assert mutexes.get_mutex(task.id) is None
+
+
+def test_complete_stage_releases_completed_agent_task_claim(
+    temp_db,
+    sample_project,
+) -> None:
+    child_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "holistic-child",
+        agent_depth=1,
+    )
+    manager = LocalTaskManager(temp_db)
+    task = create_task(temp_db, sample_project, task_type="epic")
+    initialize_manifest(temp_db, task.id, [spec("holistic_qa", 0), spec("merge", 1)])
+    manager.stage_states.start_stage(task.id, "holistic_qa", by_session_id=child_session_id)
+    claimed = manager.claim_task(task.id, child_session_id)
+    session_vars = SessionVariableManager(temp_db)
+    session_vars.merge_variables(
+        child_session_id,
+        add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+    )
+
+    with session_context_for_test(child_session_id):
+        result = _complete_stage(_ops_context(temp_db))(
+            task_id=task.id,
+            stage_name="holistic_qa",
+            validation_override_reason="holistic_qa approved",
+        )
+
+    refreshed = manager.get_task(task.id)
+    child_vars = session_vars.get_variables(child_session_id)
+    assert result["stage"]["state"] == "done"
+    assert refreshed is not None
+    assert refreshed.claimed_by_session_id is None
+    assert refreshed.assignee is None
+    assert child_vars["task_claimed"] is False
+    assert child_vars["claimed_tasks"] == {}
+    assert stage_row(temp_db, task.id, "merge")["state"] == "ready"
 
 
 def test_complete_stage_keeps_other_running_agent_dispatch_mutex_blocking(
