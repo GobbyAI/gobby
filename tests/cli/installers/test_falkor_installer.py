@@ -53,7 +53,12 @@ class TestDockerComposeFalkorDB:
         assert falkordb["image"] == "falkordb/falkordb:latest"
         assert "falkordb" in falkordb["profiles"]
         assert "all" in falkordb["profiles"]
-        assert "6379:6379" in falkordb["ports"]
+        assert "16379:6379" in falkordb["ports"]
+        assert "13000:3000" in falkordb["ports"]
+        assert (
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
+            in falkordb["environment"]
+        )
         assert "healthcheck" in falkordb
         assert "redis-cli" in " ".join(falkordb["healthcheck"]["test"])
 

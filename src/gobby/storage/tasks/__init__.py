@@ -64,7 +64,6 @@ from gobby.storage.tasks._models import (
     validate_implementation_domain,
     validate_task_type,
 )
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
 from gobby.storage.tasks._stage_registry import (
     ReviewPolicy,
@@ -81,6 +80,7 @@ from gobby.storage.tasks._stage_types import (
     StageManifestSpec,
     StageState,
 )
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 __all__ = [
     # Core classes
