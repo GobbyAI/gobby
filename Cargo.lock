@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",

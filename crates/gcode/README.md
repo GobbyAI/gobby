@@ -156,6 +156,25 @@ gcode search --project /path/to/app "q"   # By path
 --no-freshness                            # Skip read-time index/source freshness checks
 ```
 
+## AI CLI Skill Installation
+
+For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill
+for every supported project-local AI CLI target:
+
+| CLI | Project-local files |
+|-----|---------------------|
+| Claude Code | `.claude-plugin/plugin.json`, `skills/gcode/SKILL.md` |
+| Codex | `.codex/skills/gcode/SKILL.md` |
+| Droid | `.factory/skills/gcode/SKILL.md` |
+| Grok | `.grok/skills/gcode/SKILL.md` |
+| Qwen | `.qwen/skills/gcode/SKILL.md` |
+| Gemini CLI (deprecated) | `.gemini/skills/gcode/SKILL.md` |
+| Antigravity CLI | `.agents/skills/gcode/SKILL.md` |
+
+Gemini CLI remains installed for compatibility with older setups, but it is
+deprecated. Gobby-managed projects skip these project-local writes because
+Gobby owns CLI wiring.
+
 ## Daemon-Independent Runtime
 
 gcode is standalone in the important CLI sense: `gcode index`, `gcode search`,

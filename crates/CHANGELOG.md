@@ -7,6 +7,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] — gcode
+
+### Changed
+
+#### gcode
+
+- **AI CLI skill target refresh** — `gcode init` now installs the bundled `gcode` skill for every supported project-local AI CLI target: Claude Code, Codex, Droid, Grok, Qwen, Gemini CLI (deprecated compatibility), and Antigravity CLI. Gobby-managed projects keep skipping project-local skill installation because Gobby owns CLI wiring there.
+- **Gemini compatibility label** — Gemini CLI skill installation remains available for existing users, but code comments, command output labels, and docs now mark it deprecated.
+
 ## [0.8.2] — gcode
 
 ### Changed

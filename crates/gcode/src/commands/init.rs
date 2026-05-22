@@ -25,20 +25,25 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         _ => "existing",
     };
 
-    // Detect AI CLIs and install skills (skip if gobby manages this project)
+    // Install AI CLI skills (skip if Gobby manages this project)
     let mut installed_skills: Vec<String> = Vec::new();
     if status != "gobby" {
-        let clis = skill::detect_clis(project_root);
-        for cli in &clis {
-            match skill::install_skill(project_root, cli) {
+        for target in skill::supported_targets() {
+            match skill::install_skill(project_root, target) {
                 Ok(path) if !path.is_empty() => {
                     if !quiet {
-                        eprintln!("Installed gcode skill for {} → {}", cli.name, path);
+                        eprintln!(
+                            "Installed gcode skill for {} → {}",
+                            target.display_name, path
+                        );
                     }
-                    installed_skills.push(cli.name.to_string());
+                    installed_skills.push(target.display_name.to_string());
                 }
                 Err(e) if !quiet => {
-                    eprintln!("Warning: failed to install skill for {}: {}", cli.name, e);
+                    eprintln!(
+                        "Warning: failed to install skill for {}: {}",
+                        target.display_name, e
+                    );
                 }
                 _ => {}
             }
