@@ -50,9 +50,14 @@ from gobby.storage.tasks import (
     LocalTaskManager,
     ManifestAlreadyInitializedError,
     StageManifestSpec,
+    StageState,
     Task,
 )
 from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+_EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
+    {"ideation", "research", "architecture", "prd", "planning", "expansion", "pr"}
+)
 
 _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_work_attempts": "max_work_attempts = ?",
@@ -424,13 +429,26 @@ async def _resume_existing_lifecycle(
     services: object | None,
     target_branch: str | None,
 ) -> BuildResult:
-    if skip_stages:
+    resume_skip_stages = skip_stages
+    skip_stages_shape_resume = _skip_stages_can_shape_expanded_epic_resume(
+        task_manager,
+        task,
+        skip_stages,
+    )
+    if skip_stages and not skip_stages_shape_resume:
         if opts.skip_stages_explicit:
             raise ValueError(
                 "--skip-stage can only shape a new lifecycle; use build restart or clean first"
             )
         warnings.append("Profile skip_stages ignored because the task already has a manifest")
+        resume_skip_stages = []
     resume_opts = opts
+    _repair_expanded_epic_root_manifest_for_resume(
+        task_manager,
+        task,
+        resume_opts,
+        resume_skip_stages,
+    )
     _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
     record_build_delivery_campaign(
         db,
@@ -498,11 +516,92 @@ async def _resume_existing_lifecycle(
         task_id=task.id,
         created=False,
         initial_lifecycle=initial_lifecycle,
-        applied_stages_skipped=[],
+        applied_stages_skipped=resume_skip_stages if skip_stages_shape_resume else [],
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+    )
+
+
+def _skip_stages_can_shape_expanded_epic_resume(
+    task_manager: LocalTaskManager,
+    task: Task,
+    skip_stages: list[str],
+) -> bool:
+    if not skip_stages:
+        return False
+    return (
+        task.task_type == "epic"
+        and set(skip_stages) <= {"pr"}
+        and _has_existing_expansion_output(task_manager, task)
+    )
+
+
+def _repair_expanded_epic_root_manifest_for_resume(
+    task_manager: LocalTaskManager,
+    task: Task,
+    opts: BuildOptions,
+    skip_stages: list[str],
+) -> bool:
+    if task.task_type != "epic" or not _has_existing_expansion_output(task_manager, task):
+        return False
+
+    rows = task_manager.stage_states.list_for_task(task.id)
+    if not rows:
+        return False
+
+    desired_opts = replace(opts, stage_caps=[])
+    desired_specs = resolve_stage_manifest_specs(
+        task_manager,
+        task,
+        "expanded_epic",
+        desired_opts,
+        skip_stages,
+    )
+    desired_names = [spec.stage_name for spec in desired_specs]
+    current_names = [row.stage_name for row in rows]
+    if current_names == desired_names:
+        return False
+
+    desired_name_set = set(desired_names)
+    if not desired_name_set.issubset(current_names):
+        return False
+    if any(
+        stage_name not in desired_name_set and stage_name not in _EXPANDED_EPIC_LEGACY_ROOT_STAGES
+        for stage_name in current_names
+    ):
+        return False
+
+    desired_rows = [row for row in rows if row.stage_name in desired_name_set]
+    if not all(_is_pristine_resume_stage(row) for row in desired_rows):
+        return False
+
+    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        desired_specs,
+        by_session_id=None,
+    )
+    task_manager.lifecycle_events.record_lifecycle_event(
+        task.id,
+        from_state="manifest:" + ",".join(current_names),
+        to_state="manifest:" + ",".join(desired_names),
+        reason="repair_expanded_epic_root_manifest",
+        by_actor="build",
+    )
+    return True
+
+
+def _is_pristine_resume_stage(row: StageState) -> bool:
+    return (
+        row.state == "ready"
+        and row.entered_at is None
+        and row.completed_at is None
+        and row.work_attempt_count == 0
+        and row.review_round_count == 0
+        and row.artifact_refs is None
+        and row.notes is None
     )
 
 

@@ -30,7 +30,7 @@ from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_types import StageManifestSpec
+from gobby.storage.tasks._stage_types import ManifestAlreadyInitializedError, StageManifestSpec
 
 logger = logging.getLogger(__name__)
 
@@ -497,6 +497,8 @@ def cascade_build_state_to_subtree(
                 stage_states.initialize_manifest(task_id, specs, by_session_id=None)
             except DispatchMutexUnavailableError:
                 logger.info("Skipping busy task %s during build cascade", task_id)
+            except ManifestAlreadyInitializedError:
+                logger.info("Skipping progressed task %s during build cascade", task_id)
 
     return len(update_params)
 

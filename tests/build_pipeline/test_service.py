@@ -1194,6 +1194,97 @@ async def test_build_task_ref_automates_existing_expansion_output(
 
 
 @pytest.mark.asyncio
+async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.storage.expansion_runs import LocalExpansionRunManager
+    from gobby.storage.tasks import StageManifestSpec
+
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expanded epic",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Generated child",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.stage_states.initialize_manifest(
+        parent.id,
+        [
+            StageManifestSpec(stage_name=name, position=position)
+            for position, name in enumerate(
+                [
+                    "ideation",
+                    "research",
+                    "architecture",
+                    "prd",
+                    "planning",
+                    "expansion",
+                    "development",
+                    "holistic_qa",
+                    "pr",
+                    "merge",
+                ]
+            )
+        ],
+        by_session_id=None,
+    )
+    for stage_name in ("ideation", "research", "architecture"):
+        task_manager.stage_states.start_stage(parent.id, stage_name, by_session_id=None)
+        task_manager.stage_states.complete_stage(parent.id, stage_name, by_session_id=None)
+    task_manager.stage_states.start_stage(parent.id, "prd", by_session_id=None)
+    task_manager.stage_states.initialize_manifest(
+        child.id,
+        [
+            StageManifestSpec(stage_name="development", position=0),
+            StageManifestSpec(stage_name="pr", position=1),
+            StageManifestSpec(stage_name="merge", position=2),
+        ],
+        by_session_id=None,
+    )
+    run = LocalExpansionRunManager(temp_db).create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+    LocalExpansionRunManager(temp_db).save_apply_result(
+        run.id,
+        task_id_map={"child": child.id},
+        created_task_ids=[child.id],
+    )
+
+    result = await _build(
+        f"#{parent.seq_num}",
+        _options(isolation="none", skip_stages=["pr"], skip_stages_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.initial_lifecycle == "development"
+    assert result.applied_stages_skipped == ["pr"]
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == [
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+    parent_rows = task_manager.stage_states.list_for_task(parent.id)
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in parent_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in child_rows] == ["development", "merge"]
+
+
+@pytest.mark.asyncio
 async def test_build_task_ref_can_reset_existing_expansion_output(
     temp_db,
     sample_project,
