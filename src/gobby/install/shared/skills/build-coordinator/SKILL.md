@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.0.0"
+version: "1.0.1"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -41,6 +41,12 @@ Keep two work streams separate:
 
 Do not close the target task or epic while known `gobby build` bugs from the run
 remain open.
+
+The coordination epic is the active goal record for the run. Do not close,
+unclaim, or move work out of it just to satisfy a stop hook, context limit, or
+handoff pressure. If the goal is not complete, keep the coordination epic
+claimed and continue, compact the session, or ask the user to explicitly cancel
+or pause the goal.
 
 ## Startup
 
@@ -131,6 +137,10 @@ When context gets large, compact before degradation affects decisions. Include:
 
 ## Completion Gates
 
+These gates apply to the coordination epic itself as well as the target. A stop
+hook is a reminder to finish or hand off the goal; it is not evidence that the
+goal is complete.
+
 Before closing the target task or epic, verify:
 
 - target product work is merged or otherwise completed according to its stages
@@ -143,8 +153,10 @@ Before closing the target task or epic, verify:
 - stale worktrees or clones are cleaned up, or any intentionally preserved
   workspace is documented
 
-Close the coordination epic after the target is complete and every discovered
-build bug from the run is fixed or explicitly blocked on a user decision.
+Close the coordination epic only after the target is complete and every
+discovered build bug from the run is fixed or explicitly blocked on a user
+decision. Keep discovered build bugs under the coordination epic while they are
+open; do not detach or reparent them to make the coordinator task closable.
 
 ## Goal Prompt Template
 
@@ -175,5 +187,7 @@ required.
 Completion requires the target work complete, all discovered build bugs fixed and
 closed with linked commits, required validation run, no unexpected running agents
 or claimed tasks, and final status covering build state, validation, bug fixes,
-escalations, and task states.
+escalations, and task states. Do not close the coordination epic to clear a stop
+hook while any completion requirement remains unmet; compact or continue the
+session instead.
 ```

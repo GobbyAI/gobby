@@ -78,6 +78,16 @@ def test_build_coordinator_requires_stage_normalization_and_bug_fixes() -> None:
     assert "committed, linked, and closed before the target" in body
 
 
+def test_build_coordinator_forbids_stop_hook_goal_closure_shortcut() -> None:
+    body = _body()
+
+    assert "The coordination epic is the active goal record" in body
+    assert "Do not close,\nunclaim, or move work out of it just to satisfy a stop hook" in body
+    assert "A stop\nhook is a reminder to finish or hand off the goal" in body
+    assert "do not detach or reparent them to make the coordinator task closable" in body
+    assert "Do not close the coordination epic to clear a stop\nhook" in body
+
+
 def test_build_coordinator_is_generic_not_one_off() -> None:
     body = _body()
 
