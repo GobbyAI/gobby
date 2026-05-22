@@ -42,7 +42,7 @@ class _FakeMemoryManager:
 
 
 def test_code_graph_constructor_accepts_falkor_client_keyword() -> None:
-    """CodeGraph is constructed from FalkorClient, not Neo4jClient."""
+    """CodeGraph is constructed from FalkorClient."""
     signature = inspect.signature(CodeGraph)
 
     assert "falkor_client" in signature.parameters
