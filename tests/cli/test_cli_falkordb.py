@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import click
 import pytest
 from click.testing import CliRunner
 
 pytestmark = pytest.mark.unit
 
-MIGRATION_MESSAGE = "Neo4j has been replaced by FalkorDB. Use --falkordb or --falkordb-password."
+MIGRATION_MESSAGE = "--neo4j / --neo4j-password has been removed in 0.4.0."
 
 
 @pytest.fixture
@@ -40,6 +42,18 @@ class TestFalkorDBInstallFlags:
         password = _param_by_name(install, "falkordb_password")
         assert password.help is not None
         assert "FalkorDB" in password.help
+        assert "reused from existing config" in password.help
+
+    def test_install_help_hides_legacy_neo4j_flags(self, runner: CliRunner) -> None:
+        from gobby.cli.install import install
+
+        result = runner.invoke(install, ["--help"])
+
+        assert result.exit_code == 0
+        assert "--falkordb" in result.output
+        assert "--falkordb-password" in result.output
+        assert "--neo4j" not in result.output
+        assert "--neo4j-password" not in result.output
 
     def test_uninstall_exposes_falkordb_target_flag(self) -> None:
         from gobby.cli.install import uninstall
@@ -51,26 +65,57 @@ class TestFalkorDBInstallFlags:
         legacy = _param_by_name(uninstall, "neo4j_flag")
         assert legacy.hidden is True
 
+    def test_falkordb_target_runs_only_falkordb_service(self, runner: CliRunner) -> None:
+        from gobby.cli.install import install, install_falkordb
+
+        with (
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
+            patch("gobby.cli.install._ensure_daemon_config") as mock_config,
+            patch("gobby.cli.install.run_daemon_setup") as mock_setup,
+            patch("gobby.cli.install._run_standard_cli_install") as mock_cli,
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
+            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_voice_install") as mock_voice,
+        ):
+            result = runner.invoke(
+                install,
+                ["--falkordb", "--falkordb-password", "secret"],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        mock_falkordb.assert_called_once()
+        assert mock_falkordb.call_args.args[0] is install_falkordb
+        assert mock_falkordb.call_args.args[1] == "secret"
+        mock_summary.assert_called_once()
+        mock_config.assert_not_called()
+        mock_setup.assert_not_called()
+        mock_cli.assert_not_called()
+        mock_hooks.assert_not_called()
+        mock_embedding.assert_not_called()
+        mock_qdrant.assert_not_called()
+        mock_voice.assert_not_called()
+
 
 class TestLegacyNeo4jFlagErrors:
     def test_install_neo4j_password_hidden_flag_fails_with_migration_message(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+        self, runner: CliRunner
     ) -> None:
         from gobby.cli.install import install
-
-        monkeypatch.setattr(install, "callback", lambda *args, **kwargs: None)
 
         result = runner.invoke(install, ["--neo4j-password", "secret"])
 
         assert result.exit_code == 2
         assert MIGRATION_MESSAGE in result.output
+        assert "gobby install --falkordb" in result.output
+        assert "gobby uninstall --falkordb" in result.output
 
     def test_install_neo4j_hidden_flag_fails_with_migration_message(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+        self, runner: CliRunner
     ) -> None:
         from gobby.cli.install import install
-
-        monkeypatch.setattr(install, "callback", lambda *args, **kwargs: None)
 
         result = runner.invoke(install, ["--neo4j"])
 
@@ -78,11 +123,9 @@ class TestLegacyNeo4jFlagErrors:
         assert MIGRATION_MESSAGE in result.output
 
     def test_uninstall_neo4j_hidden_flag_fails_with_migration_message(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+        self, runner: CliRunner
     ) -> None:
         from gobby.cli.install import uninstall
-
-        monkeypatch.setattr(uninstall, "callback", lambda *args, **kwargs: None)
 
         result = runner.invoke(uninstall, ["--neo4j", "--yes"])
 

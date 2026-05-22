@@ -62,9 +62,14 @@ logger = logging.getLogger(__name__)
 
 # Re-export for backwards compatibility (tests import from here)
 _ensure_daemon_config = ensure_daemon_config
-_run_neo4j_install = _run_falkordb_install
 _NEO4J_MIGRATION_MESSAGE = (
-    "Neo4j has been replaced by FalkorDB. Use --falkordb or --falkordb-password."
+    "--neo4j / --neo4j-password has been removed in 0.4.0.\n\n"
+    "The knowledge graph backend has been replaced with FalkorDB.\n"
+    "- Install (auto-runs as part of gobby install; tune with): "
+    "gobby install [--falkordb-password <pw>] "
+    "(or service-only: gobby install --falkordb)\n"
+    "- Uninstall: gobby uninstall --falkordb\n"
+    "- Migration notes: see CHANGELOG.md for the full upgrade path."
 )
 
 # Re-exports from extracted modules (tests import these from gobby.cli.install)
@@ -149,13 +154,13 @@ def _fail_legacy_neo4j_option(
     "--falkordb",
     "falkordb_flag",
     is_flag=True,
-    help="Install FalkorDB knowledge graph backend only",
+    help="Install only the FalkorDB service (service-targeting; skips CLI hooks/git/embedding/voice).",
 )
 @click.option(
     "--falkordb-password",
     "falkordb_password",
     default=None,
-    help="Set a custom FalkorDB password (default: auto-generated)",
+    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
 )
 @click.option(
     "--neo4j",
@@ -248,7 +253,6 @@ def install(
     working_dir: Path | None,
     falkordb_flag: bool = False,
     falkordb_password: str | None = None,
-    neo4j_password: str | None = None,
 ) -> None:
     """Install Gobby hooks to AI coding CLIs and Git.
 
@@ -259,11 +263,22 @@ def install(
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
-    if falkordb_password is None and neo4j_password is not None:
-        falkordb_password = neo4j_password
 
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
+
+    if falkordb_flag:
+        click.echo("=" * 60)
+        click.echo("  Gobby Hooks Installation")
+        click.echo("=" * 60)
+        click.echo("\nComponents to configure: falkordb")
+        click.echo("")
+        service_results: dict[str, dict[str, Any]] = {}
+        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
+        all_success = _echo_install_summary(service_results, no_interactive_flag)
+        if not all_success:
+            sys.exit(1)
+        return
 
     if (
         not claude_flag
@@ -423,8 +438,6 @@ def install(
             elif selected_embedding_provider == "none":
                 click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
                 click.echo("")
-        elif falkordb_flag:
-            _run_falkordb_install(install_falkordb, falkordb_password, results)
 
         # Migration detection
         if mode == "global":
