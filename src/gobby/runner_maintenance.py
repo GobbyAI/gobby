@@ -32,6 +32,12 @@ _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 
 
+def _positive_int_or_default(value: Any, default: int) -> int:
+    if not isinstance(value, int):
+        return default
+    return max(1, value)
+
+
 async def _run_db(
     runner: Callable[..., Awaitable[Any]] | None,
     func: Callable[..., Any],
@@ -332,10 +338,11 @@ async def cleanup_chat_attachments_loop(
     """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
     from gobby.storage import chat_attachments
 
-    interval_seconds = max(1, interval_minutes) * 60
+    retention_hours = _positive_int_or_default(retention_hours, 24)
+    interval_seconds = _positive_int_or_default(interval_minutes, 60) * 60
 
     async def cleanup_once() -> None:
-        cutoff = datetime.now(UTC) - timedelta(hours=max(1, retention_hours))
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         records = await _run_db(
             run_db,
             chat_attachments.delete_stale_unbound_attachments,

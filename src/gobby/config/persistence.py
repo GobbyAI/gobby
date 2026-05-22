@@ -2,7 +2,7 @@
 Persistence configuration module.
 
 Contains storage and sync-related Pydantic config models:
-- DatabasesConfig: Shared database connections (Qdrant, Neo4j)
+- DatabasesConfig: Shared database connections (Qdrant, FalkorDB)
 - EmbeddingsConfig: Embedding model settings (shared by memory, tools, code index)
 - MemoryConfig: Memory-specific behavior (crossrefs, decay, search)
 - MemoryBackupConfig: Memory file sync settings (debounce, export path)
@@ -26,8 +26,10 @@ __all__ = [
     "MemoryStaleAuditConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
-    "Neo4jConfig",
+    "FalkorConfig",
     "QdrantConfig",
+    "is_falkordb_enabled",
+    "validate_falkordb_password",
 ]
 
 
@@ -62,30 +64,62 @@ class QdrantConfig(BaseModel):
     )
 
 
-class Neo4jConfig(BaseModel):
-    """Neo4j graph database connection configuration."""
+def validate_falkordb_password(value: str) -> str:
+    """Reject FalkorDB passwords whose Docker boundary cannot round-trip."""
+    if not value:
+        raise ValueError("FalkorDB password must not be empty")
+    if any(ch.isspace() for ch in value):
+        raise ValueError("FalkorDB password must not contain whitespace")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        raise ValueError("FalkorDB password must not contain ASCII control characters")
+    if any(ord(ch) > 0x7E for ch in value):
+        raise ValueError(
+            "FalkorDB password must use printable ASCII only (Docker round-trip constraint)"
+        )
+    return value
+
+
+def _validate_optional_falkordb_password(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return validate_falkordb_password(value)
+
+
+class FalkorConfig(BaseModel):
+    """FalkorDB graph database connection configuration."""
 
     model_config = {"extra": "ignore"}
 
-    url: str | None = Field(
-        default="http://localhost:8474",
+    host: str = Field(
+        default="127.0.0.1",
+        description="FalkorDB host. Docker default: 127.0.0.1 (port-mapped).",
+    )
+    port: int = Field(
+        default=16379,
         description=(
-            "Neo4j HTTP API URL. "
-            "Uses port 8474 (mapped from 7474) to avoid conflicts. "
-            "Set automatically by 'gobby install'."
+            "FalkorDB port. Docker host-side: 16379 (remapped from container 6379 to "
+            "avoid system Redis conflicts). 0.4.0 supports Docker only — see 3.1's mode decision."
         ),
     )
-    auth: str | None = Field(
+    requirepass: str | None = Field(
         default=None,
         description=(
-            "Neo4j authentication in 'user:password' format. "
-            "Must be provided when Neo4j is enabled. "
-            "Supports ${ENV_VAR} pattern for env var expansion at load time."
+            "FalkorDB password (Redis AUTH; named `requirepass` to match the Redis config "
+            "directive AND to avoid secret-name collision with `auth.password`). "
+            "`config_key_to_secret_name` derives the secret-store name from the LAST segment "
+            "of the dotted config key — `databases.falkordb.requirepass` resolves to secret "
+            "name `requirepass`, which is unique across the existing config namespace. Naming "
+            "this field `password` would resolve to secret name `password`, which collides "
+            "with the existing `auth.password` web-login secret. Must be provided when "
+            "FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time."
         ),
     )
-    database: str = Field(
-        default="neo4j",
-        description="Neo4j database name",
+    graph_name: str = Field(
+        default="gobby_kg",
+        description=(
+            "FalkorDB graph key. Memory KG uses 'gobby_kg', code graph uses 'gobby_code'. "
+            "Set per consumer; this is the default for the memory KG client."
+        ),
     )
     graph_search: bool = Field(
         default=True,
@@ -100,17 +134,21 @@ class Neo4jConfig(BaseModel):
         description="RRF constant for merging Qdrant and graph results (higher = more uniform weighting)",
     )
 
+    @field_validator("requirepass")
+    @classmethod
+    def validate_requirepass(cls, value: str | None) -> str | None:
+        return _validate_optional_falkordb_password(value)
+
     @field_validator("graph_min_score")
     @classmethod
     def validate_score(cls, v: float) -> float:
-        """Validate score is between 0.0 and 1.0."""
         if not (0.0 <= v <= 1.0):
             raise ValueError("Value must be between 0.0 and 1.0")
         return v
 
 
 class DatabasesConfig(BaseModel):
-    """Shared database connection configuration for Qdrant and Neo4j."""
+    """Shared database connection configuration for Qdrant and FalkorDB."""
 
     model_config = {"extra": "ignore"}
 
@@ -118,10 +156,24 @@ class DatabasesConfig(BaseModel):
         default_factory=QdrantConfig,
         description="Qdrant vector database connection",
     )
-    neo4j: Neo4jConfig = Field(
-        default_factory=Neo4jConfig,
-        description="Neo4j graph database connection",
+    falkordb: FalkorConfig = Field(
+        default_factory=FalkorConfig,
+        description="FalkorDB graph database connection",
     )
+
+
+def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
+    """Whether the FalkorDB knowledge-graph backend is active.
+
+    Activation signal: the installer wrote `databases.falkordb.requirepass`
+    into config_store and `load_config(config_store=..., secret_resolver=...)`
+    successfully resolved it. Default `FalkorConfig.requirepass = None` so the
+    truthy check distinguishes installed-and-resolved from unconfigured.
+
+    Pass a `DatabasesConfig` instance (e.g. `runner.config.databases`), NOT the
+    top-level config — `config` has no top-level `falkordb` attribute.
+    """
+    return bool(databases.falkordb.requirepass)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +275,7 @@ class MemoryStaleAuditConfig(FeatureDefaultConfig):
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
-    Database connections (Qdrant, Neo4j) live in DatabasesConfig.
+    Database connections (Qdrant, FalkorDB) live in DatabasesConfig.
     Embedding model settings live in EmbeddingsConfig.
     This config only contains memory-specific behavior settings.
     """

@@ -877,22 +877,41 @@ class TestReindexEmbeddings:
 
 
 class TestEntityGraph:
-    """Tests for Neo4j entity graph methods."""
+    """Tests for FalkorDB entity graph methods."""
+
+    def test_clear_graph_clients_clears_manager_and_child_service_refs(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        """clear_graph_clients removes all graph references owned by the manager."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
+        kg_service = MagicMock()
+        manager._falkor_client = MagicMock()
+        manager._kg_service = kg_service
+        manager._search_service._kg_service = kg_service
+        manager._indexing_service._kg_service = kg_service
+
+        manager.clear_graph_clients()
+
+        assert manager._falkor_client is None
+        assert manager._kg_service is None
+        assert manager._search_service._kg_service is None
+        assert manager._indexing_service._kg_service is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_graph_no_neo4j(self, db, memory_config) -> None:
-        """get_entity_graph returns None when no Neo4j configured."""
-        manager = MemoryManager(db=db, config=memory_config, neo4j_url=None)
-        # Ensure no graph client
+    async def test_get_entity_graph_no_falkordb(self, db, memory_config) -> None:
+        """get_entity_graph returns None when no FalkorDB configured."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
         assert manager._falkor_client is None
         assert manager._kg_service is None
         result = await manager.get_entity_graph()
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_neighbors_no_neo4j(self, db, memory_config) -> None:
-        """get_entity_neighbors returns None when no Neo4j configured."""
-        manager = MemoryManager(db=db, config=memory_config, neo4j_url=None)
+    async def test_get_entity_neighbors_no_falkordb(self, db, memory_config) -> None:
+        """get_entity_neighbors returns None when no FalkorDB configured."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
         assert manager._falkor_client is None
         result = await manager.get_entity_neighbors("test-entity")
         assert result is None

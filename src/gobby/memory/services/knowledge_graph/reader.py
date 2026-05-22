@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.neo4j_client import Neo4jConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from gobby.memory.neo4j_client import Neo4jClient
+    from gobby.memory.falkor_client import FalkorClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,12 @@ class KnowledgeGraphReader:
 
     def __init__(
         self,
-        neo4j_client: Neo4jClient,
+        falkor_client: FalkorClient,
         embed_fn: Callable[..., Any] | None,
         *,
         embedding_dim: int,
     ) -> None:
-        self._neo4j = neo4j_client
+        self._falkor = falkor_client
         self._embed_fn = embed_fn
         self._embedding_dim = embedding_dim
         self._vector_index_ensured = False
@@ -43,10 +43,10 @@ class KnowledgeGraphReader:
         if self._vector_index_ensured:
             return
         try:
-            await self._neo4j.ensure_vector_index(dimensions=self._embedding_dim)
+            await self._falkor.ensure_vector_index(dimension=self._embedding_dim)
             self._vector_index_ensured = True
-        except Neo4jConnectionError:
-            logger.debug("Neo4j unreachable, skipping vector index creation")
+        except FalkorConnectionError:
+            logger.debug("FalkorDB unreachable, skipping vector index creation")
         except Exception as e:
             logger.warning(f"Failed to ensure vector index: {e}")
 
@@ -61,7 +61,7 @@ class KnowledgeGraphReader:
         await self.ensure_vector_index()
 
         try:
-            entity_rows = await self._neo4j.vector_search(
+            entity_rows = await self._falkor.vector_search(
                 query_embedding=query_embedding,
                 limit=limit,
                 min_score=min_score,
@@ -76,7 +76,7 @@ class KnowledgeGraphReader:
 
             if entity_keys:
                 try:
-                    mem_rows = await self._neo4j.query(
+                    mem_rows = await self._falkor.query(
                         "UNWIND $entity_keys AS entity_key "
                         "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE m.project_id = $project_id "
@@ -112,8 +112,8 @@ class KnowledgeGraphReader:
 
             return results
 
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable during entity vector search: {e}")
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable during entity vector search: {e}")
             return []
         except Exception as e:
             logger.warning(f"Entity vector search failed: {e}")
@@ -133,7 +133,7 @@ class KnowledgeGraphReader:
         max_hops = max(1, min(max_hops, 3))
 
         try:
-            rows = await self._neo4j.query(
+            rows = await self._falkor.query(
                 "UNWIND $entity_keys AS entity_key "
                 f"MATCH (start:_Entity {{entity_key: entity_key}})-[*1..{max_hops}]-(related:_Entity)"
                 "-[:MENTIONED_IN]->(m:Memory) "
@@ -143,8 +143,8 @@ class KnowledgeGraphReader:
                 {"entity_keys": entity_keys, "limit": limit, "project_id": project_id},
             )
             return [r["memory_id"] for r in rows if r.get("memory_id")]
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable during graph traversal: {e}")
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable during graph traversal: {e}")
             return []
         except Exception as e:
             logger.warning(f"Graph traversal failed: {e}")
@@ -157,12 +157,12 @@ class KnowledgeGraphReader:
     ) -> dict[str, Any] | None:
         """Get the entity graph for visualization."""
         try:
-            return await self._neo4j.get_entity_graph(limit=limit, project_id=project_id)
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable: {e}")
+            return await self._falkor.get_entity_graph(limit=limit, project_id=project_id)
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable: {e}")
             return None
         except Exception as e:
-            logger.warning(f"Neo4j query failed: {e}")
+            logger.warning(f"FalkorDB query failed: {e}")
             return None
 
     async def get_entity_neighbors(
@@ -172,12 +172,12 @@ class KnowledgeGraphReader:
     ) -> dict[str, Any] | None:
         """Get neighbors for a single entity."""
         try:
-            return await self._neo4j.get_entity_neighbors(entity_key, project_id=project_id)
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable: {e}")
+            return await self._falkor.get_entity_neighbors(entity_key, project_id=project_id)
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable: {e}")
             return None
         except Exception as e:
-            logger.warning(f"Neo4j query failed: {e}")
+            logger.warning(f"FalkorDB query failed: {e}")
             return None
 
     async def search_graph(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -206,7 +206,7 @@ class KnowledgeGraphReader:
                 logger.debug(f"Vector graph search failed, falling back to substring: {e}")
 
         try:
-            rows = await self._neo4j.query(
+            rows = await self._falkor.query(
                 "MATCH (n:_Entity) WHERE toLower(n.name) CONTAINS toLower($query) "
                 "RETURN n.entity_key AS entity_key, n.name AS name, "
                 "n.entity_type AS entity_type, n.project_id AS project_id, "
@@ -215,8 +215,8 @@ class KnowledgeGraphReader:
                 {"query": query, "limit": limit},
             )
             return rows
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable: {e}")
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable: {e}")
             return []
         except Exception as e:
             logger.warning(f"Graph search failed: {e}")
