@@ -32,18 +32,25 @@ def test_session_had_edits_updates_use_boolean_literals() -> None:
 
 
 def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
-    """test_session_unique_conflict_detection_uses_integrity_error_args verifies conflict matching.
-
-    MaskedIntegrityError message args drive session_upsert.is_session_unique_conflict,
-    including masking behavior.
-    """
+    """Session unique-conflict matching must use exception args, not masked str()."""
 
     class MaskedIntegrityError(sqlite3.IntegrityError):
         def __str__(self) -> str:
             return "masked"
 
     assert session_upsert.is_session_unique_conflict(
-        MaskedIntegrityError("UNIQUE constraint failed: sessions.external_id, sessions.machine_id")
+        MaskedIntegrityError(
+            "UNIQUE constraint failed: sessions.external_id, sessions.machine_id, "
+            "sessions.source, sessions.project_id, sessions.session_type"
+        )
+    )
+    assert session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError('duplicate key value violates unique constraint "idx_sessions_unique"')
+    )
+    assert not session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError(
+            'duplicate key value violates unique constraint "idx_sessions_seq_num"'
+        )
     )
     assert not session_upsert.is_session_unique_conflict(
         MaskedIntegrityError("UNIQUE constraint failed: other_table.external_id")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
@@ -216,7 +215,7 @@ class _SessionCRUDMixin:
                             next_seq_num,
                         ),
                     )
-                except sqlite3.IntegrityError as exc:
+                except Exception as exc:
                     if not is_session_unique_conflict(exc):
                         raise
                     conflicting = self.find_by_external_id(

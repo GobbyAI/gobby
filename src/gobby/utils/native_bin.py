@@ -25,8 +25,11 @@ def local_native_bin_path(name: str) -> Path:
     return native_bin_dir() / native_bin_name(name)
 
 
-def _homebrew_distribution_active() -> bool:
-    return os.environ.get("GOBBY_DISTRIBUTION", "").strip().lower() == "homebrew"
+def is_native_bin_usable(path: Path) -> bool:
+    """Return whether a local native binary path can be executed."""
+    if sys.platform == "win32":
+        return path.is_file()
+    return path.is_file() and os.access(path, os.X_OK)
 
 
 def _resolve_path_native_bin(name: str) -> str | None:
@@ -42,17 +45,10 @@ def _resolve_path_native_bin(name: str) -> str | None:
 
 
 def resolve_native_bin(name: str) -> str | None:
-    """Resolve a native binary, using PATH first in Homebrew distribution mode."""
-    if _homebrew_distribution_active():
-        return _resolve_path_native_bin(name)
-
+    """Resolve a native binary, preferring Gobby's managed bin before PATH."""
     local_path = local_native_bin_path(name)
-    if local_path.exists():
-        if sys.platform == "win32":
-            if local_path.is_file():
-                return str(local_path)
-        elif local_path.is_file() and os.access(local_path, os.X_OK):
-            return str(local_path)
+    if is_native_bin_usable(local_path):
+        return str(local_path)
 
     return _resolve_path_native_bin(name)
 

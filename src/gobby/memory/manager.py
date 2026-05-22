@@ -125,7 +125,7 @@ class MemoryManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize DedupService: {e}")
 
-        if llm_service and vector_store and embed_fn and self._neo4j_client:
+        if llm_service and self._neo4j_client:
             try:
                 from gobby.prompts.loader import PromptLoader
 

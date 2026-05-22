@@ -84,6 +84,7 @@ services:
       POSTGRES_DB: ${GOBBY_POSTGRES_DB:-gobby}
       POSTGRES_USER: ${GOBBY_POSTGRES_USER:-gobby}
       POSTGRES_PASSWORD: ${GOBBY_POSTGRES_PASSWORD:-gobby_dev}
+      GOBBY_PGAUDIT_LOG: ${GOBBY_PGAUDIT_LOG:-ddl}
     ports:
       - "${GOBBY_POSTGRES_PORT:-60891}:5432"
     volumes:

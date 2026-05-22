@@ -241,18 +241,22 @@ class TaskTreeBuilder:
                         sibling_map = self._sibling_index_map.get(parent_task_id, {})
                         blocker_id = sibling_map.get(dep)
                         if blocker_id is None:
-                            self._errors.append(f"Sibling index {dep} not found for task '{title}'")
+                            message = f"Sibling index {dep} not found for task '{title}'"
+                            logger.warning(message)
+                            self._errors.append(message)
                             continue
                     elif isinstance(dep, str):
                         # Title string - look up by title
                         blocker_id = self._title_to_id.get(dep)
                         if blocker_id is None:
-                            self._errors.append(f"Dependency not found: '{dep}' for task '{title}'")
+                            message = f"Dependency not found: '{dep}' for task '{title}'"
+                            logger.warning(message)
+                            self._errors.append(message)
                             continue
                     else:
-                        self._errors.append(
-                            f"Invalid dependency type {type(dep).__name__} for task '{title}'"
-                        )
+                        message = f"Invalid dependency type {type(dep).__name__} for task '{title}'"
+                        logger.warning(message)
+                        self._errors.append(message)
                         continue
 
                     try:
@@ -265,9 +269,9 @@ class TaskTreeBuilder:
                     except ValueError as e:
                         # Ignore duplicate dependency errors
                         if "already exists" not in str(e):
-                            self._errors.append(
-                                f"Failed to add dependency {title} -> {dep_display}: {e}"
-                            )
+                            message = f"Failed to add dependency {title} -> {dep_display}: {e}"
+                            logger.warning(message)
+                            self._errors.append(message)
 
             # Get this node's task_id to pass as parent for children
             node_task_id = self._title_to_id.get(title) if title else None
