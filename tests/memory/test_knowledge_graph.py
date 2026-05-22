@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.falkor_client import FalkorConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     Entity,
@@ -67,6 +67,21 @@ def service(
         llm_provider=mock_llm,
         embed_fn=mock_embed_fn,
         prompt_loader=mock_prompt_loader,
+    )
+
+
+def _mock_graph_extraction(mock_llm: AsyncMock) -> None:
+    """Prime LLM mocks with one entity and one relationship."""
+    mock_llm.generate_json = AsyncMock(
+        side_effect=[
+            {"entities": [{"entity": "Josh", "entity_type": "person"}]},
+            {
+                "relations": [
+                    {"source": "Josh", "relationship": "uses", "destination": "Python"},
+                ]
+            },
+            {"relations_to_delete": []},
+        ]
     )
 
 
@@ -130,6 +145,62 @@ class TestAddToGraph:
 
         mock_falkor.ensure_memory_graph_schema.assert_awaited_once()
         assert service._graph_schema_ensured is True
+
+    async def test_add_to_graph_blocks_writes_when_schema_connection_fails(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
+    ) -> None:
+        """A schema connection failure blocks graph writes."""
+        mock_falkor.ensure_memory_graph_schema = AsyncMock(
+            side_effect=FalkorConnectionError("schema unavailable")
+        )
+        _mock_graph_extraction(mock_llm)
+
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == ["schema unavailable"]
+
+        assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
+        mock_falkor.merge_node.assert_not_awaited()
+        mock_falkor.merge_relationship.assert_not_awaited()
+        mock_falkor.set_node_vector.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "schema_error",
+        [
+            FalkorQueryError("constraint status FAILED"),
+            TimeoutError("constraint readiness timed out"),
+        ],
+    )
+    async def test_add_to_graph_stops_writes_when_schema_readiness_fails(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
+        schema_error: Exception,
+    ) -> None:
+        """Constraint readiness failures must not be swallowed before graph writes."""
+        mock_falkor.ensure_memory_graph_schema = AsyncMock(side_effect=schema_error)
+        _mock_graph_extraction(mock_llm)
+
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == [str(schema_error)]
+
+        assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
+        mock_falkor.merge_node.assert_not_awaited()
+        mock_falkor.merge_relationship.assert_not_awaited()
+        mock_falkor.set_node_vector.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
 
     async def test_add_to_graph_extracts_entities(
         self,
