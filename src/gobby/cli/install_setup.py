@@ -315,7 +315,9 @@ def run_daemon_setup(project_path: Path) -> None:
 
         ide_results = configure_vscode_family_terminal_titles()
         configured_ides = [
-            ide_name for ide_name, result in ide_results.items() if result.get("added")
+            ide_name
+            for ide_name, result in ide_results.items()
+            if result.get("added") or result.get("updated")
         ]
         if configured_ides:
             click.echo(

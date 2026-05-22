@@ -1077,6 +1077,7 @@ class TestConfigureIdeTerminalTitle:
         settings = json.loads(settings_path.read_text())
         assert settings["editor.fontSize"] == 14
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+        assert "terminal.integrated.tabs.hideCondition" not in settings
 
         # Verify backup exists and has original content
         backup = json.loads(Path(result["backup_path"]).read_text())
@@ -1100,6 +1101,55 @@ class TestConfigureIdeTerminalTitle:
         assert result["already_configured"] is True
         assert result["added"] is False
         assert result["backup_path"] is None
+
+    def test_updates_existing_title_without_sequence(self, temp_dir: Path) -> None:
+        """Existing title setting without ${sequence} is repaired."""
+        config_dir = temp_dir / "TestIDE6"
+        user_dir = config_dir / "User"
+        user_dir.mkdir(parents=True)
+        settings_path = user_dir / "settings.json"
+        settings_path.write_text(json.dumps({"terminal.integrated.tabs.title": "${process}"}))
+
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
+            mock_dir.return_value = config_dir
+            result = configure_ide_terminal_title("TestIDE6")
+
+        assert result["success"] is True
+        assert result["added"] is False
+        assert result["updated"] is True
+        assert result["already_configured"] is False
+        assert result["backup_path"] is not None
+
+        settings = json.loads(settings_path.read_text())
+        assert settings["terminal.integrated.tabs.title"] == "${sequence}${separator}${process}"
+
+    def test_antigravity_keeps_terminal_tabs_visible(self, temp_dir: Path) -> None:
+        """Antigravity keeps the tab list visible so ${sequence} can be seen."""
+        config_dir = temp_dir / "Antigravity"
+        user_dir = config_dir / "User"
+        user_dir.mkdir(parents=True)
+        settings_path = user_dir / "settings.json"
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "terminal.integrated.tabs.title": "${sequence}",
+                    "terminal.integrated.tabs.hideCondition": "singleTerminal",
+                }
+            )
+        )
+
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
+            mock_dir.return_value = config_dir
+            result = configure_ide_terminal_title("Antigravity")
+
+        assert result["success"] is True
+        assert result["added"] is False
+        assert result["updated"] is True
+        assert result["already_configured"] is False
+
+        settings = json.loads(settings_path.read_text())
+        assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+        assert settings["terminal.integrated.tabs.hideCondition"] == "never"
 
     def test_invalid_json_in_settings(self, temp_dir: Path) -> None:
         """Existing settings.json with invalid JSON — returns error."""
@@ -1147,6 +1197,7 @@ class TestConfigureIdeTerminalTitle:
         assert result["added"] is True
         settings = json.loads((config_dir / "User" / "settings.json").read_text())
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+        assert "terminal.integrated.tabs.hideCondition" not in settings
 
     def test_antigravity_ide_settings_created(self, temp_dir: Path) -> None:
         """Antigravity IDE uses the same VS Code-family settings layout."""
@@ -1161,6 +1212,7 @@ class TestConfigureIdeTerminalTitle:
         assert result["added"] is True
         settings = json.loads((config_dir / "User" / "settings.json").read_text())
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
+        assert settings["terminal.integrated.tabs.hideCondition"] == "never"
 
 
 class TestConfigureVsCodeFamilyTerminalTitles:

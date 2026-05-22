@@ -24,6 +24,12 @@ VSCODE_FAMILY_IDE_NAMES: tuple[str, ...] = (
     "Antigravity IDE",
 )
 
+ANTIGRAVITY_IDE_NAMES: frozenset[str] = frozenset({"Antigravity", "Antigravity IDE"})
+TERMINAL_TITLE_SETTING = "terminal.integrated.tabs.title"
+TERMINAL_TABS_HIDE_CONDITION_SETTING = "terminal.integrated.tabs.hideCondition"
+TERMINAL_TITLE_SEQUENCE = "${sequence}"
+TERMINAL_TABS_ALWAYS_VISIBLE = "never"
+
 
 def _get_ide_config_dir(ide_name: str) -> Path:
     """Get the IDE's config root directory (cross-platform).
@@ -41,12 +47,24 @@ def _get_ide_config_dir(ide_name: str) -> Path:
         return Path.home() / ".config" / ide_name
 
 
+def _title_with_sequence(title: Any) -> str:
+    if isinstance(title, str):
+        stripped = title.strip()
+        if TERMINAL_TITLE_SEQUENCE in stripped:
+            return stripped
+        if stripped:
+            return f"{TERMINAL_TITLE_SEQUENCE}${{separator}}{stripped}"
+
+    return TERMINAL_TITLE_SEQUENCE
+
+
 def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
     """Configure terminal.integrated.tabs.title for a VS Code-family IDE.
 
     Adds ``${sequence}`` so tmux ``set-titles`` OSC escapes propagate to
-    tab/sidebar labels. Uses backup + atomic write pattern. No-op if
-    already configured.
+    tab/sidebar labels. Antigravity also needs its terminal tabs kept visible
+    because recent builds hide the only tab by default. Uses backup + atomic
+    write pattern. No-op if already configured.
 
     Skips silently if the IDE is not installed (config dir doesn't exist).
 
@@ -54,12 +72,13 @@ def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
         ide_name: IDE name matching the Application Support / config dir.
 
     Returns:
-        Dict with 'success', 'added', 'already_configured', 'skipped',
+        Dict with 'success', 'added', 'updated', 'already_configured', 'skipped',
         'backup_path', and 'error' keys.
     """
     result: dict[str, Any] = {
         "success": False,
         "added": False,
+        "updated": False,
         "already_configured": False,
         "skipped": False,
         "backup_path": None,
@@ -88,9 +107,18 @@ def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
             result["error"] = f"Failed to read {settings_path}: {e}"
             return result
 
-    # Check if already configured
-    setting_key = "terminal.integrated.tabs.title"
-    if setting_key in existing_settings:
+    updates: dict[str, Any] = {}
+
+    title = _title_with_sequence(existing_settings.get(TERMINAL_TITLE_SETTING))
+    if existing_settings.get(TERMINAL_TITLE_SETTING) != title:
+        updates[TERMINAL_TITLE_SETTING] = title
+
+    if ide_name in ANTIGRAVITY_IDE_NAMES:
+        current_hide_condition = existing_settings.get(TERMINAL_TABS_HIDE_CONDITION_SETTING)
+        if current_hide_condition != TERMINAL_TABS_ALWAYS_VISIBLE:
+            updates[TERMINAL_TABS_HIDE_CONDITION_SETTING] = TERMINAL_TABS_ALWAYS_VISIBLE
+
+    if not updates:
         result["success"] = True
         result["already_configured"] = True
         return result
@@ -106,8 +134,12 @@ def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
             result["error"] = f"Failed to create backup: {e}"
             return result
 
-    # Add the setting
-    existing_settings[setting_key] = "${sequence}"
+    result["added"] = any(key not in existing_settings for key in updates)
+    result["updated"] = any(
+        key in existing_settings and existing_settings.get(key) != value
+        for key, value in updates.items()
+    )
+    existing_settings.update(updates)
 
     # Ensure User/ directory exists
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +153,6 @@ def configure_ide_terminal_title(ide_name: str) -> dict[str, Any]:
         return result
 
     result["success"] = True
-    result["added"] = True
     return result
 
 
