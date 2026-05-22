@@ -336,6 +336,43 @@ class TestFalkorConfigFields:
         config = FalkorConfig()
         assert config.requirepass is None
 
+    @pytest.mark.parametrize(
+        "password",
+        [
+            "Pa$$w0rd!",
+            "aB-3.7=z",
+            "xyz_123-ABC",
+        ],
+    )
+    def test_validate_falkordb_password_accepts_printable_ascii(self, password: str) -> None:
+        """Accepted FalkorDB passwords are printable ASCII without whitespace."""
+        from gobby.config.persistence import FalkorConfig, validate_falkordb_password
+
+        assert validate_falkordb_password(password) == password
+        assert FalkorConfig(requirepass=password).requirepass == password
+
+    @pytest.mark.parametrize(
+        ("password", "message"),
+        [
+            ("", "must not be empty"),
+            ("has space", "must not contain whitespace"),
+            ("has\ttab", "must not contain whitespace"),
+            ("has\nnewline", "must not contain whitespace"),
+            ("has\x00control", "must not contain ASCII control characters"),
+            ("has-é-high-bit", "must use printable ASCII only"),
+        ],
+    )
+    def test_validate_falkordb_password_rejects_docker_unsafe_values(
+        self, password: str, message: str
+    ) -> None:
+        """Docker-unsafe FalkorDB passwords are rejected with actionable messages."""
+        from gobby.config.persistence import FalkorConfig, validate_falkordb_password
+
+        with pytest.raises(ValueError, match=message):
+            validate_falkordb_password(password)
+        with pytest.raises(ValidationError, match=message):
+            FalkorConfig(requirepass=password)
+
     def test_falkor_graph_name_defaults_to_memory_graph(self) -> None:
         """graph_name defaults to the memory knowledge graph."""
         from gobby.config.persistence import FalkorConfig
