@@ -667,7 +667,7 @@ registry is the runtime side.
 
 | Tool | Description |
 | :--- | :--- |
-| `send_message` | P2P message between sessions. |
+| `send_message` | Message a `session`, `agent`, `project`, `build`, or `all` target. |
 | `send_command` | Send a constrained command to a descendant session. |
 | `activate_command` | Activate a pending command in the target session. |
 | `complete_command` | Mark a command complete and send the result back. |
@@ -680,6 +680,13 @@ Rule authors should treat `turn_start` and `turn_end` as the semantic
 lifecycle events. Provider/runtime hooks such as `before_agent`,
 `after_agent`, and `stop` are transport details. Agent termination is a
 separate runtime transition and still requires `end_agent_run`.
+
+`send_message` takes `from_session`, `target`, `content`, and optional
+`target_id`. Use `target="session"` with a session ref, `target="agent"` with
+an agent run id, `target="project"` with a project id or name, and
+`target="build"` with a build run id, build input ref, or root task ref.
+Use `target="all"` without `target_id` for every deliverable non-system
+session except the sender.
 
 ### Example: Agent Spawning
 
@@ -701,11 +708,20 @@ call_tool("gobby-agents", "apply_persona", {
 ### Example: Inter-Agent Messaging
 
 ```python
-# P2P message
+# P2P message to one session
 call_tool("gobby-agents", "send_message", {
     "from_session": "<your_session>",
-    "to_session": "<target_session>",
+    "target": "session",
+    "target_id": "<target_session>",
     "content": "Task completed. All tests pass.",
+})
+
+# Fan out to active agents working in a build subtree
+call_tool("gobby-agents", "send_message", {
+    "from_session": "<your_session>",
+    "target": "build",
+    "target_id": "#123",
+    "content": "Pause work before merge validation.",
 })
 
 # Command coordination

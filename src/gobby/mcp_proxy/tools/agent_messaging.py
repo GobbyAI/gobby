@@ -1,7 +1,7 @@
 """Inter-agent messaging and command tools for the gobby-agents MCP server.
 
 Provides P2P messaging and command coordination between sessions:
-- send_message: P2P messaging with same-project validation
+- send_message: target-based messaging with same-project validation for sessions
 - send_command: Ancestor sends command to descendant
 - complete_command: Descendant completes command, clears state, sends result
 - deliver_pending_messages: Fetch and mark undelivered messages
@@ -121,51 +121,57 @@ def add_messaging_tools(
     @registry.tool(
         name="send_message",
         description=(
-            "Send a P2P message between sessions. Validates both sessions "
-            "are in the same project. Messages are automatically injected "
+            "Send a message to an explicit target selector: session, agent, "
+            "project, build, or all. Session targets validate same-project "
+            "delivery. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
-            "to agent_runs.result when sending to parent. Direct message callers "
-            "pass to_session and content. Broadcast callers pass send_to_all=true "
-            "and omit to_session. Optional fields such as priority, message_type, "
-            "metadata, and include_wakeup are keyword-only."
+            "to agent_runs.result when sending to parent. Pass target_id for "
+            "target='session' (session ref), target='agent' (agent run id), "
+            "target='project' (project id/name), and target='build' (build run id, "
+            "build input ref, or root task ref). target='all' forbids target_id. "
+            "Optional fields such as priority, message_type, metadata, and "
+            "include_wakeup are keyword-only."
         ),
     )
     async def send_message(
         from_session: str,
-        to_session: str | None = None,
-        content: str | None = None,
+        target: str,
+        content: str,
+        target_id: str | None = None,
         *,
         priority: str = "normal",
-        send_to_all: bool = False,
         include_wakeup: bool = False,
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            if content is None:
-                return {"success": False, "error": "content is required."}
             content = content.strip()
             if not content:
                 return {"success": False, "error": "content is required."}
-            if send_to_all and to_session is not None:
+            normalized_target = target.strip().lower()
+            if normalized_target == "all" and target_id is not None:
                 return {
                     "success": False,
-                    "error": "to_session cannot be combined with send_to_all=true.",
+                    "error": "target_id is not allowed when target='all'.",
                 }
-            if not send_to_all and to_session is None:
-                return {
-                    "success": False,
-                    "error": "Pass to_session unless send_to_all is true.",
-                }
+            if normalized_target == "session":
+                if target_id is None or not target_id.strip():
+                    return {
+                        "success": False,
+                        "error": "target_id is required when target='session'.",
+                    }
+
             from_id = _resolve(from_session)
 
-            to_id = _resolve(to_session) if to_session is not None else None
+            resolved_target_id = target_id
+            if normalized_target == "session":
+                resolved_target_id = _resolve(target_id)
 
             send_result = await mailbox.send(
                 from_session_id=from_id,
-                to_session_id=to_id,
-                send_to_all=send_to_all,
+                target=normalized_target,
+                target_id=resolved_target_id,
                 include_wakeup=include_wakeup,
                 content=content,
                 priority=priority,
@@ -177,7 +183,11 @@ def add_messaging_tools(
             from_sess = session_manager.get(from_id)
 
             # Auto-write to agent_runs.result when sending to parent
-            if from_sess and to_id and from_sess.parent_session_id == to_id:
+            if (
+                from_sess
+                and len(send_result.recipient_session_ids) == 1
+                and from_sess.parent_session_id == send_result.recipient_session_ids[0]
+            ):
                 try:
                     row = db.fetchone(
                         "SELECT id FROM agent_runs WHERE child_session_id = ? "

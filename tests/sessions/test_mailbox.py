@@ -10,11 +10,13 @@ import pytest
 
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.database import LocalDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -107,7 +109,9 @@ def _setup_broadcast_scenario(
     session_manager.update_status(excluded_parent, "expired")
     session_manager.update_status(excluded_child, "expired")
 
-    agent_runs.create(parent_session_id=parent, child_session_id=child_pending, provider="codex", prompt="pending")
+    agent_runs.create(
+        parent_session_id=parent, child_session_id=child_pending, provider="codex", prompt="pending"
+    )
     running = agent_runs.create(
         parent_session_id=parent,
         child_session_id=child_running,
@@ -115,7 +119,9 @@ def _setup_broadcast_scenario(
         prompt="running",
     )
     agent_runs.start(running.id)
-    agent_runs.create(parent_session_id=parent, child_session_id=child_paused, provider="codex", prompt="paused")
+    agent_runs.create(
+        parent_session_id=parent, child_session_id=child_paused, provider="codex", prompt="paused"
+    )
     agent_runs.create(
         parent_session_id=fallback_parent,
         child_session_id=fallback_child,
@@ -136,7 +142,12 @@ def _setup_broadcast_scenario(
     )
     agent_runs.complete(completed.id, "done")
     agent_runs.create(parent_session_id=sender, provider="codex", prompt="exclude sender fallback")
-    agent_runs.create(parent_session_id=parent, child_session_id=child_pending, provider="codex", prompt="duplicate")
+    agent_runs.create(
+        parent_session_id=parent,
+        child_session_id=child_pending,
+        provider="codex",
+        prompt="duplicate",
+    )
     agent_runs.create(parent_session_id=other_project, provider="codex", prompt="wrong project")
     ids["other-project-id"] = other_project_id
     return ids
@@ -150,11 +161,11 @@ async def _send_project_broadcast(
 ) -> MailboxSendResult:
     return await _mailbox(temp_db, session_manager).send(
         from_session_id=sender_id,
-        send_to_all=True,
+        target="project",
+        target_id=project_id,
         content="Broadcast",
         message_type="announcement",
         metadata={"scope": "project-agents"},
-        project_id=project_id,
     )
 
 
@@ -172,7 +183,8 @@ class TestMailboxDirectSend:
 
         result = await _mailbox(temp_db, session_manager, wake_dispatcher).send(
             from_session_id=sender.id,
-            to_session_id=recipient.id,
+            target="session",
+            target_id=recipient.id,
             content="  Assigned task  ",
             priority="high",
             message_type="task_assignment",
@@ -201,7 +213,7 @@ class TestMailboxDirectSend:
         assert json.loads(row["metadata_json"]) == {"task_id": "#14760"}
 
     @pytest.mark.asyncio
-    async def test_direct_send_requires_recipient(
+    async def test_session_target_requires_target_id(
         self,
         temp_db: LocalDatabase,
         session_manager: SessionManager,
@@ -209,9 +221,10 @@ class TestMailboxDirectSend:
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
 
-        with pytest.raises(ValueError, match="to_session_id is required"):
+        with pytest.raises(ValueError, match="target_id is required"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
+                target="session",
                 content="No target",
             )
 
@@ -227,7 +240,8 @@ class TestMailboxDirectSend:
 
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
-            to_session_id=recipient.id,
+            target="session",
+            target_id=recipient.id,
             content="Wake me",
             include_wakeup=True,
         )
@@ -259,7 +273,8 @@ class TestMailboxDirectSend:
             FailingWakeDispatcher(),
         ).send(
             from_session_id=sender.id,
-            to_session_id=recipient.id,
+            target="session",
+            target_id=recipient.id,
             content="Wake me",
             include_wakeup=True,
         )
@@ -278,7 +293,7 @@ class TestMailboxDirectSend:
 
 class TestMailboxBroadcast:
     @pytest.mark.asyncio
-    async def test_send_to_all_with_no_recipients_logs_empty_broadcast(
+    async def test_project_target_with_no_recipients_logs_empty_fanout(
         self,
         temp_db: LocalDatabase,
         session_manager: SessionManager,
@@ -290,14 +305,16 @@ class TestMailboxBroadcast:
 
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
-            send_to_all=True,
+            target="project",
+            target_id=sample_project["id"],
             content="Broadcast",
-            project_id=sample_project["id"],
         )
 
         assert result.recipient_session_ids == []
         assert result.message_ids == []
         assert result.broadcast_id
+        assert result.target == "project"
+        assert result.target_id == sample_project["id"]
         assert result.to_dict()["success"] is True
         assert result.to_dict()["failed_broadcasts"] == []
         assert temp_db.fetchone("SELECT id FROM inter_session_messages LIMIT 1") is None
@@ -305,14 +322,15 @@ class TestMailboxBroadcast:
         log_record = next(
             record
             for record in caplog.records
-            if record.message == "Mailbox broadcast resolved no recipients"
+            if record.message == "Mailbox target resolved no recipients"
         )
         assert log_record.from_session_id == sender.id
-        assert log_record.resolved_project_id == sample_project["id"]
+        assert log_record.target == "project"
+        assert log_record.target_id == sample_project["id"]
         assert log_record.broadcast_id == result.broadcast_id
 
     @pytest.mark.asyncio
-    async def test_send_to_all_targets_active_agent_run_sessions(
+    async def test_project_target_fans_out_to_active_agent_run_sessions(
         self,
         temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
@@ -340,7 +358,7 @@ class TestMailboxBroadcast:
         assert len(result.message_ids) == len(result.recipient_session_ids)
 
     @pytest.mark.asyncio
-    async def test_send_to_all_uses_active_parent_when_child_session_expired(
+    async def test_project_target_uses_active_parent_when_child_session_expired(
         self,
         temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
@@ -364,7 +382,7 @@ class TestMailboxBroadcast:
         assert ids["fallback-child"] not in result.recipient_session_ids
 
     @pytest.mark.asyncio
-    async def test_send_to_all_enforces_project_scope_and_sender_exclusion(
+    async def test_project_target_enforces_project_scope_and_sender_exclusion(
         self,
         temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
@@ -390,7 +408,7 @@ class TestMailboxBroadcast:
         assert ids["excluded-child"] not in result.recipient_session_ids
 
     @pytest.mark.asyncio
-    async def test_send_to_all_writes_broadcast_metadata(
+    async def test_project_target_writes_selector_metadata(
         self,
         temp_db: LocalDatabase,
         project_manager: LocalProjectManager,
@@ -415,13 +433,13 @@ class TestMailboxBroadcast:
         )
         assert len(rows) == len(result.recipient_session_ids)
         metadata_payloads = [json.loads(row["metadata_json"]) for row in rows]
-        assert {payload["broadcast_id"] for payload in metadata_payloads} == {
-            result.broadcast_id
-        }
+        assert {payload["broadcast_id"] for payload in metadata_payloads} == {result.broadcast_id}
         for payload in metadata_payloads:
             assert payload["scope"] == "project-agents"
-            assert payload["broadcast"]["send_to_all"] is True
+            assert payload["broadcast"]["target"] == "project"
+            assert payload["broadcast"]["target_id"] == sample_project["id"]
             assert payload["broadcast"]["selector"] == {
+                "target": "project",
                 "project_id": sample_project["id"],
                 "agent_run_status": ["pending", "running"],
                 "session_status": ["active", "paused"],
@@ -429,20 +447,211 @@ class TestMailboxBroadcast:
             }
 
     @pytest.mark.asyncio
-    async def test_send_to_all_rejects_explicit_recipient(
+    async def test_all_target_rejects_target_id(
         self,
         temp_db: LocalDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
-        recipient = _register_session(session_manager, sample_project["id"], "recipient")
 
-        with pytest.raises(ValueError, match="cannot be combined"):
+        with pytest.raises(ValueError, match="target_id is not allowed"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
-                to_session_id=recipient.id,
-                send_to_all=True,
+                target="all",
+                target_id=sample_project["id"],
                 content="Invalid",
-                project_id=sample_project["id"],
+            )
+
+    @pytest.mark.asyncio
+    async def test_all_target_reaches_every_deliverable_non_system_session(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        active = _register_session(session_manager, sample_project["id"], "active")
+        paused = _register_session(session_manager, sample_project["id"], "paused")
+        expired = _register_session(session_manager, sample_project["id"], "expired")
+        session_manager.update_status(paused.id, "paused")
+        session_manager.update_status(expired.id, "expired")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="all",
+            content="Global notice",
+        )
+
+        assert result.recipient_session_ids == [active.id, paused.id]
+        assert result.broadcast_id
+        assert result.selector_metadata == {
+            "target": "all",
+            "session_status": ["active", "paused"],
+            "exclude_session_id": sender.id,
+            "exclude_system_session": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_target_resolves_active_agent_run_recipient(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        agent_runs = LocalAgentRunManager(temp_db)
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        parent = _register_session(session_manager, sample_project["id"], "parent")
+        child = _register_session(session_manager, sample_project["id"], "child", agent_depth=1)
+        run = agent_runs.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            provider="codex",
+            prompt="work",
+        )
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="agent",
+            target_id=run.id,
+            content="Status?",
+        )
+
+        assert result.recipient_session_ids == [child.id]
+        assert result.broadcast_id is None
+        assert result.selector_metadata == {
+            "target": "agent",
+            "agent_run_id": run.id,
+            "agent_run_status": "pending",
+            "task_id": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_build_target_only_includes_active_agents_in_task_subtree(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        tasks = LocalTaskManager(temp_db)
+        agent_runs = LocalAgentRunManager(temp_db)
+        history = BuildHistoryStorage(temp_db)
+        root = tasks.create_task(sample_project["id"], "Build root")
+        child_task = tasks.create_task(
+            sample_project["id"],
+            "Build child",
+            parent_task_id=root.id,
+        )
+        outside_task = tasks.create_task(sample_project["id"], "Outside")
+        build_run = history.record_run(
+            project_id=sample_project["id"],
+            action="build",
+            status="started",
+            root_task_id=root.id,
+            input_ref=f"#{root.seq_num}",
+        )
+
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        parent = _register_session(session_manager, sample_project["id"], "parent")
+        subtree_child = _register_session(
+            session_manager,
+            sample_project["id"],
+            "subtree-child",
+            agent_depth=1,
+        )
+        outside_child = _register_session(
+            session_manager,
+            sample_project["id"],
+            "outside-child",
+            agent_depth=1,
+        )
+        completed_child = _register_session(
+            session_manager,
+            sample_project["id"],
+            "completed-child",
+            agent_depth=1,
+        )
+        agent_runs.create(
+            parent_session_id=parent.id,
+            child_session_id=subtree_child.id,
+            provider="codex",
+            prompt="subtree",
+            task_id=child_task.id,
+        )
+        agent_runs.create(
+            parent_session_id=parent.id,
+            child_session_id=outside_child.id,
+            provider="codex",
+            prompt="outside",
+            task_id=outside_task.id,
+        )
+        completed = agent_runs.create(
+            parent_session_id=parent.id,
+            child_session_id=completed_child.id,
+            provider="codex",
+            prompt="completed",
+            task_id=child_task.id,
+        )
+        agent_runs.complete(completed.id, "done")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="build",
+            target_id=build_run.id,
+            content="Build update",
+        )
+
+        assert result.recipient_session_ids == [subtree_child.id]
+        assert result.broadcast_id
+        assert result.selector_metadata
+        assert result.selector_metadata["root_task_id"] == root.id
+        assert result.selector_metadata["build_run_id"] == build_run.id
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_target(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+
+        with pytest.raises(ValueError, match="Unknown message target"):
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="workspace",
+                content="Invalid",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_target_id(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+
+        with pytest.raises(ValueError, match="Project target not found"):
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="project",
+                target_id="missing-project",
+                content="Invalid",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_content(
+        self,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+
+        with pytest.raises(ValueError, match="content is required"):
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="all",
+                content="  ",
             )
