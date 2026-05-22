@@ -215,6 +215,30 @@ class WakeDispatcher:
                         exc_info=True,
                     )
 
+        if terminal_context and self._tmux_pane_sender:
+            tmux_pane = self._parse_tmux_pane(terminal_context)
+            if tmux_pane:
+                tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+                try:
+                    await self._tmux_pane_sender(
+                        tmux_pane,
+                        CONTINUE_WAKE_SIGNAL,
+                        tmux_socket_path,
+                    )
+                    return {
+                        "session_id": session_id,
+                        "delivered": True,
+                        "method": "tmux_pane",
+                    }
+                except Exception:
+                    logger.warning(
+                        "tmux pane wake failed for terminal agent session %s (pane=%s), "
+                        "trying SDK resume",
+                        session_id,
+                        tmux_pane,
+                        exc_info=True,
+                    )
+
         # SDK agent → try resume via sdk_session_id
         if self._sdk_resumer:
             sdk_session_id = self._resolve_sdk_session_id(session_id)

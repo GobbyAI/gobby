@@ -25,7 +25,8 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
-from tests.config.fake_keyring import DATABASE_URL_REF, FakeKeyring, install_fake_keyring
+from gobby.config.bootstrap import POSTGRES_DATABASE_URL_REF
+from gobby.config.local_cli_token import LOCAL_CLI_TOKEN_FILENAME
 
 pytestmark = pytest.mark.unit
 
@@ -109,10 +110,10 @@ class TestEnsureIsolationCodeIndex:
         proc = self._proc()
         runtime_root = tmp_path / "runtime"
         workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
-        fake_keyring = FakeKeyring()
-        install_fake_keyring(monkeypatch, fake_keyring)
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
@@ -124,6 +125,8 @@ class TestEnsureIsolationCodeIndex:
             result = await ensure_isolation_code_index(
                 str(workspace),
                 database_url="postgresql://gobby:secret@localhost/gobby",
+                daemon_bind_host="127.0.0.1",
+                daemon_port=61234,
                 runtime_root=runtime_root,
             )
 
@@ -135,11 +138,15 @@ class TestEnsureIsolationCodeIndex:
             f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
         )
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
-        assert f"database_url_ref: {DATABASE_URL_REF}" in bootstrap.read_text()
-        assert fake_keyring.set_calls == [
-            ("gobby", "postgres_database_url", "postgresql://gobby:secret@localhost/gobby")
-        ]
-        assert fake_keyring.get_calls == [("gobby", "postgres_database_url")]
+        bootstrap_text = bootstrap.read_text()
+        assert f"database_url_ref: {POSTGRES_DATABASE_URL_REF}" in bootstrap_text
+        assert "bind_host: 127.0.0.1" in bootstrap_text
+        assert "daemon_port: 61234" in bootstrap_text
+        source_token = source_home / LOCAL_CLI_TOKEN_FILENAME
+        runtime_token = Path(result.runtime_home) / LOCAL_CLI_TOKEN_FILENAME
+        assert source_token.exists()
+        assert runtime_token.exists()
+        assert runtime_token.read_text() == source_token.read_text()
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],

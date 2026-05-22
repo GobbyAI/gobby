@@ -113,6 +113,41 @@ class TestWakeDispatch:
         assert tmux_sender.await_args is not None
 
     @pytest.mark.asyncio
+    async def test_terminal_agent_uses_tmux_pane_when_session_name_missing(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Terminal child agents can be nudged from pane-only terminal context."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=1,
+            terminal_context={
+                "tmux_pane": "%5",
+                "tmux_socket_path": "/tmp/tmux-501/gobby",
+            },
+        )
+        tmux_sender = AsyncMock()
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        result = await dispatcher.dispatch_live_wake("sess-1")
+
+        assert result["delivered"] is True
+        assert result["method"] == "tmux_pane"
+        tmux_sender.assert_not_awaited()
+        tmux_pane_sender.assert_awaited_once_with(
+            "%5",
+            CONTINUE_WAKE_SIGNAL,
+            "/tmp/tmux-501/gobby",
+        )
+
+    @pytest.mark.asyncio
     async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
         self,
         session_manager: MagicMock,
