@@ -3,18 +3,31 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Protocol
 
 from gobby.storage.session_models import Session
 
 
+class _SessionGetter(Protocol):
+    def get(self, session_id: str) -> Session | None: ...
+
+
+class _TransactionConnection(Protocol):
+    def execute(self, sql: str, params: Sequence[object] = ()) -> object: ...
+
+
 def is_session_unique_conflict(exc: sqlite3.IntegrityError) -> bool:
-    return "UNIQUE constraint failed: sessions.external_id" in str(exc)
+    return any(
+        "UNIQUE constraint failed: sessions.external_id" in arg
+        for arg in exc.args
+        if isinstance(arg, str)
+    )
 
 
 def update_existing_session(
-    manager: Any,
-    conn: Any,
+    manager: _SessionGetter,
+    conn: _TransactionConnection,
     existing: Session,
     *,
     title: str | None,
@@ -61,4 +74,4 @@ def update_existing_session(
     updated = manager.get(existing.id)
     if updated is None:
         raise RuntimeError(f"Session {existing.id} disappeared during update")
-    return cast(Session, updated)
+    return updated

@@ -2,41 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 
 from gobby.config.app import load_config
 from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
+from gobby.runner_init.helpers import open_protected_test_database
 from gobby.storage.hub.protocol import HubDatabase
-
-
-def _open_protected_test_database(config: object, apply_migrations: bool) -> HubDatabase | None:
-    """Return the pytest safety database when config was redirected there."""
-    safe_path = os.environ.get("GOBBY_DATABASE_PATH")
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1" or not safe_path:
-        return None
-
-    config_path = getattr(config, "database_path", None)
-    if not isinstance(config_path, str):
-        return None
-    if Path(config_path).expanduser().resolve() != Path(safe_path).expanduser().resolve():
-        return None
-
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import MigrationUnsupportedError, run_migrations
-
-    db = LocalDatabase(config_path)
-    if apply_migrations:
-        try:
-            run_migrations(db)
-        except MigrationUnsupportedError:
-            pass
-    return db
 
 
 def open_runtime_hub_database(
@@ -49,7 +24,7 @@ def open_runtime_hub_database(
     if config.hub_backend != "postgres":
         raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
     if not config.database_url:
-        test_db = _open_protected_test_database(config, apply_migrations)
+        test_db = open_protected_test_database(config, apply_migrations=apply_migrations)
         if test_db is not None:
             return test_db
         raise RuntimeError(HUB_BACKEND_DATABASE_URL_REQUIRED)

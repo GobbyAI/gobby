@@ -62,3 +62,19 @@ def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
         "respond",
     )
     assert result.has_behavioral_delta
+
+
+def test_coderabbit_verifies_findings_before_fixing() -> None:
+    result = run_recorded_skill_scenario(SCENARIOS / "coderabbit/verify-before-fixing.yaml")
+
+    assert result.baseline.action_names == ("apply_finding", "leave_report", "respond")
+    assert result.loaded.action_names == (
+        "inspect_current_code",
+        "document_no_fix",
+        "apply_valid_finding",
+        "delete_processed_report",
+        "run_validation",
+        "commit_and_close_task",
+        "respond",
+    )
+    assert result.has_behavioral_delta

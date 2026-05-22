@@ -10,6 +10,7 @@ Provides fixtures for:
 - MCP client connections
 """
 
+import ast
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
@@ -188,36 +190,40 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
 
 
 def _write_test_keyring_module(gobby_home: Path) -> None:
-    (gobby_home / _TEST_KEYRING_MODULE).write_text(
-        '''"""Read-only keyring shim for e2e daemon subprocesses."""
+    module_path = gobby_home / _TEST_KEYRING_MODULE
+    module_source = textwrap.dedent(
+        '''\
+        """Read-only keyring shim for e2e daemon subprocesses."""
 
-import os
-
-
-class _TestKeyring:
-    name = "Gobby e2e test keyring"
-
-    def get_password(self, service, username):
-        if service == "gobby" and username == "postgres_database_url":
-            return os.environ.get("GOBBY_TEST_POSTGRES_DSN")
-        return None
-
-    def set_password(self, service, username, password):
-        raise RuntimeError("e2e keyring shim is read-only")
+        import os
 
 
-def get_keyring():
-    return _TestKeyring()
+        class _TestKeyring:
+            name = "Gobby e2e test keyring"
+
+            def get_password(self, service, username):
+                if service == "gobby" and username == "postgres_database_url":
+                    return os.environ.get("GOBBY_TEST_POSTGRES_DSN")
+                return None
+
+            def set_password(self, service, username, password):
+                raise RuntimeError("e2e keyring shim is read-only")
 
 
-def get_password(service, username):
-    return get_keyring().get_password(service, username)
+        def get_keyring():
+            return _TestKeyring()
 
 
-def set_password(service, username, password):
-    return get_keyring().set_password(service, username, password)
-'''
+        def get_password(service, username):
+            return get_keyring().get_password(service, username)
+
+
+        def set_password(service, username, password):
+            return get_keyring().set_password(service, username, password)
+        '''
     )
+    ast.parse(module_source, filename=str(module_path))
+    module_path.write_text(module_source)
 
 
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:

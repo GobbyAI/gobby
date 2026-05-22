@@ -485,7 +485,10 @@ def _run_test_sqlite_startup_repairs(db: LocalDatabase) -> None:
 
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
-    TaskDispatchMutexManager(db).sweep_expired()
+    try:
+        TaskDispatchMutexManager(db).sweep_expired()
+    except Exception:
+        logger.exception("Failed to sweep expired task dispatch mutex rows during startup repair")
 
 
 def run_migrations(db: LocalDatabase) -> int:

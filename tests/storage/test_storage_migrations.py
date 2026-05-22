@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from gobby.storage.migrations import (
     MIGRATIONS,
     MigrationUnsupportedError,
     _run_migration_list,
+    _run_test_sqlite_startup_repairs,
     get_current_version,
     latest_known_version,
     migrations_needed,
@@ -174,6 +176,35 @@ def test_sqlite_test_baseline_does_not_repair_legacy_runtime_indexes(tmp_path) -
     )
 
 
+def test_sqlite_startup_repair_logs_dispatch_mutex_sweep_failures(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Startup repairs should not fail a protected test DB when sweep cleanup fails."""
+    db_path = tmp_path / "dispatch_mutex_repair.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE task_dispatch_mutex (task_id TEXT)")
+
+    class FailingTaskDispatchMutexManager:
+        def __init__(self, db: LocalDatabase) -> None:
+            self.db = db
+
+        def sweep_expired(self) -> int:
+            raise RuntimeError("sweep failed")
+
+    monkeypatch.setattr(
+        "gobby.storage.tasks._dispatch_mutex.TaskDispatchMutexManager",
+        FailingTaskDispatchMutexManager,
+    )
+    caplog.set_level(logging.ERROR, logger="gobby.storage.migrations")
+
+    _run_test_sqlite_startup_repairs(db)
+
+    assert "Failed to sweep expired task dispatch mutex rows" in caplog.text
+    assert "sweep failed" in caplog.text
+
+
 @pytest.mark.parametrize("legacy_version", [1, 218, 219, 238, 239, 257, 258, 259])
 def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) -> None:
     """Historical SQLite upgrades below the v260 baseline are unsupported."""
@@ -304,9 +335,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
     )
     assert "content_blocks_json" in _column_names(db, "chat_messages")
     assert "project_id" in _column_names(db, "chat_attachments")
-    assert {"token_hash", "expires_at", "remember_me"}.issubset(
-        _column_names(db, "auth_sessions")
-    )
+    assert {"token_hash", "expires_at", "remember_me"}.issubset(_column_names(db, "auth_sessions"))
     assert "token" not in _column_names(db, "auth_sessions")
 
     assert "expansion_context" not in _column_names(db, "tasks")

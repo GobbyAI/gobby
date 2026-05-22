@@ -1,12 +1,14 @@
 """Focused tests for session storage behavior."""
 
 import inspect
+import sqlite3
 
 import pytest
 
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _field_update as session_field_update
+from gobby.storage.sessions import _upsert as session_upsert
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +29,19 @@ def test_session_had_edits_updates_use_boolean_literals() -> None:
     assert "had_edits = 0" not in source
     assert "had_edits = TRUE" in source
     assert "had_edits = FALSE" in source
+
+
+def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
+    class MaskedIntegrityError(sqlite3.IntegrityError):
+        def __str__(self) -> str:
+            return "masked"
+
+    assert session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError("UNIQUE constraint failed: sessions.external_id, sessions.machine_id")
+    )
+    assert not session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError("UNIQUE constraint failed: other_table.external_id")
+    )
 
 
 class TestSessionManagerRegistration:

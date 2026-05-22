@@ -1,5 +1,6 @@
 """Initialization and configuration tests for GobbyRunner."""
 
+import logging
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -117,6 +118,57 @@ class TestInitHubDatabase:
 
         with pytest.raises(ValueError, match="database_url"):
             helpers.init_hub_database(config)
+
+    def test_open_protected_test_database_respects_apply_migrations(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        from gobby.runner_init import helpers
+
+        safe_path = tmp_path / "safe.db"
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_DATABASE_PATH", str(safe_path))
+        config = SimpleNamespace(database_path=str(safe_path))
+        db = MagicMock()
+
+        with (
+            patch("gobby.storage.database.LocalDatabase", return_value=db),
+            patch("gobby.storage.migrations.run_migrations") as run_migrations,
+        ):
+            result = helpers.open_protected_test_database(config, apply_migrations=False)
+
+        assert result is db
+        run_migrations.assert_not_called()
+
+    def test_open_protected_test_database_logs_unsupported_migrations(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.runner_init import helpers
+        from gobby.storage.migrations import MigrationUnsupportedError
+
+        safe_path = tmp_path / "safe.db"
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_DATABASE_PATH", str(safe_path))
+        config = SimpleNamespace(database_path=str(safe_path))
+        db = MagicMock()
+        caplog.set_level(logging.DEBUG, logger="gobby.runner_init.helpers")
+
+        with (
+            patch("gobby.storage.database.LocalDatabase", return_value=db),
+            patch(
+                "gobby.storage.migrations.run_migrations",
+                side_effect=MigrationUnsupportedError("unsupported baseline"),
+            ),
+        ):
+            result = helpers.open_protected_test_database(config)
+
+        assert result is db
+        assert "Protected test SQLite migrations unsupported" in caplog.text
+        assert "unsupported baseline" in caplog.text
 
 
 class TestGobbyRunnerInitialization:

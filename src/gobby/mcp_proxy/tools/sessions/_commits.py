@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 
@@ -34,7 +35,7 @@ def register_commits_tools(
 
     from gobby.utils.session_context import resolve_session_ref
 
-    db_handle = db if db is not None else getattr(session_manager, "db", None)
+    db_handle: HubDatabase | None = db if db is not None else getattr(session_manager, "db", None)
 
     def _resolve_session_id(ref: str) -> str:
         return resolve_session_ref(session_manager, ref)

@@ -1,0 +1,59 @@
+skill: coderabbit
+agent: default
+description: Agent receives CodeRabbit findings and is tempted to patch stale comments blindly.
+prompt: |
+  Apply these CodeRabbit findings and clean up reports/coderabbit-123.md.
+  1. Replace Foo.has_overlap in tests/dispatch/test_runtime_dispatch_mutex.py.
+  2. Fix src/example.py nit: add missing type annotation.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: apply_finding
+        finding: Foo.has_overlap
+      - action: leave_report
+        path: reports/coderabbit-123.md
+      - action: respond
+        text: Applied the findings as requested.
+  loaded:
+    loaded_skills:
+      - coderabbit
+    actions:
+      - action: inspect_current_code
+        paths:
+          - tests/dispatch/test_runtime_dispatch_mutex.py
+          - src/example.py
+          - reports/coderabbit-123.md
+      - action: document_no_fix
+        finding: Foo.has_overlap
+        reason: Current code uses DispatchWriteSetGuard.action_reserves_write_set, conflict_for, and reserve; no has_overlap path remains.
+      - action: apply_valid_finding
+        finding: src/example.py nit
+      - action: delete_processed_report
+        path: reports/coderabbit-123.md
+      - action: run_validation
+        command: GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_coderabbit_skill.py tests/skills/test_skill_tdd_harness.py -v
+      - action: commit_and_close_task
+      - action: respond
+        text: "Verified current code first, applied valid findings including nits, documented the stale no-fix item, deleted the processed report, validated, committed, and closed the task."
+assertions:
+  baseline_action_order:
+    - apply_finding
+    - leave_report
+    - respond
+  loaded_action_order:
+    - inspect_current_code
+    - document_no_fix
+    - apply_valid_finding
+    - delete_processed_report
+    - run_validation
+    - commit_and_close_task
+    - respond
+  baseline_text_contains:
+    - Applied the findings
+  loaded_text_contains:
+    - Verified current code first
+    - documented the stale no-fix item
+    - deleted the processed report
+  loaded_text_forbids:
+    - Applied the findings as requested
