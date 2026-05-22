@@ -73,12 +73,29 @@ def _services_start(gobby_home: Path) -> None:
     try:
         from gobby.config.app import load_config
         from gobby.config.bootstrap import load_bootstrap
-
-        bootstrap = load_bootstrap()
-        config = load_config()
         from gobby.config.persistence import is_falkordb_enabled
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.secrets import SecretStore
 
-        env["GOBBY_FALKORDB_PASSWORD"] = bootstrap.falkordb_password
+        from .installers.falkor import _resolve_falkordb_db_path
+
+        bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+        db_path = _resolve_falkordb_db_path(gobby_home)
+        db = LocalDatabase(db_path)
+        try:
+            config_store = ConfigStore(db)
+            secret_store = SecretStore(db)
+            config = load_config(
+                config_store=config_store,
+                secret_resolver=secret_store.get,
+            )
+        finally:
+            db.close()
+
+        env["GOBBY_FALKORDB_PASSWORD"] = (
+            config.databases.falkordb.requirepass or bootstrap.falkordb_password
+        )
 
         # Determine which profiles to start
         if is_falkordb_enabled(config.databases):
