@@ -15,7 +15,7 @@ def _make_config(**overrides):
     """Create a mock MemoryConfig."""
     config = MagicMock()
     config.enabled = True
-    config.neo4j_url = None
+    config.falkordb_host = None
     config.auto_crossref = False
     for k, v in overrides.items():
         setattr(config, k, v)

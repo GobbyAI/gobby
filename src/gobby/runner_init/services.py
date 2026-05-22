@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.persistence import is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.memory.manager import MemoryManager
@@ -79,18 +80,20 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     expected_dim=emb_cfg.dim,
                 )
 
+            falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
             runner.memory_manager = MemoryManager(
                 runner.database,
                 runner.config.memory,
                 llm_service=runner.llm_service,
                 vector_store=runner.vector_store,
                 embed_fn=embed_fn,
-                neo4j_url=db_cfg.neo4j.url,
-                neo4j_auth=db_cfg.neo4j.auth,
-                neo4j_database=db_cfg.neo4j.database,
-                neo4j_graph_search=db_cfg.neo4j.graph_search,
-                neo4j_graph_min_score=db_cfg.neo4j.graph_min_score,
-                neo4j_rrf_k=db_cfg.neo4j.rrf_k,
+                falkordb_host=falkor_cfg.host if falkor_cfg else None,
+                falkordb_port=falkor_cfg.port if falkor_cfg else 16379,
+                falkordb_password=falkor_cfg.requirepass if falkor_cfg else None,
+                falkordb_graph_name=falkor_cfg.graph_name if falkor_cfg else "gobby_kg",
+                falkordb_graph_search=falkor_cfg.graph_search if falkor_cfg else True,
+                falkordb_graph_min_score=falkor_cfg.graph_min_score if falkor_cfg else 0.5,
+                falkordb_rrf_k=falkor_cfg.rrf_k if falkor_cfg else 60,
                 embedding_dim=emb_cfg.dim,
                 collection_prefix=db_cfg.qdrant.collection_prefix,
                 run_db=runner.db_executor.run,
@@ -109,8 +112,12 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
 
             ci_config = runner.config.code_index
             ci_storage = CodeIndexStorage(runner.database)
-            ci_neo4j = runner.memory_manager.neo4j_client if runner.memory_manager else None
-            ci_graph = CodeGraph(neo4j_client=ci_neo4j)
+            ci_falkor = (
+                getattr(runner.memory_manager, "falkor_client", None)
+                if runner.memory_manager
+                else None
+            )
+            ci_graph = CodeGraph(falkor_client=ci_falkor)
 
             ci_vector_store = runner.vector_store if ci_config.embedding_enabled else None
 

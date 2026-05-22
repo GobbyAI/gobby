@@ -1,4 +1,4 @@
-"""Neo4j call/import graph operations for code symbols.
+"""FalkorDB call/import graph operations for code symbols.
 
 Canonical project symbols are stored as ``CodeSymbol {id, project}``.
 Call targets that cannot be resolved to a project symbol are stored as
@@ -38,10 +38,10 @@ _NODE_TYPE_CASE = (
 
 
 class CodeGraph:
-    """Code-specific graph operations wrapping Neo4jClient."""
+    """Code-specific graph operations wrapping FalkorClient."""
 
-    def __init__(self, neo4j_client: Any | None = None) -> None:
-        self._client: Any = neo4j_client
+    def __init__(self, falkor_client: Any | None = None) -> None:
+        self._client: Any = falkor_client
 
     @property
     def available(self) -> bool:
@@ -108,7 +108,7 @@ class CodeGraph:
         await self._client.execute_write(
             """
             MERGE (f:CodeFile {path: $file_path, project: $project})
-            SET f.updated_at = datetime(), f.symbol_count = $symbol_count
+            SET f.updated_at = timestamp(), f.symbol_count = $symbol_count
             """,
             {
                 "file_path": file_path,
@@ -193,7 +193,7 @@ class CodeGraph:
                     s.kind = $kind,
                     s.file_path = $file,
                     s.line_start = $line_start,
-                    s.updated_at = datetime()
+                    s.updated_at = timestamp()
                 MERGE (f)-[:DEFINES]->(s)
                 """,
                 {
@@ -226,7 +226,7 @@ class CodeGraph:
                 cypher = """
                     MERGE (caller:CodeSymbol {id: $caller_id, project: $project})
                     MERGE (callee:CodeSymbol {id: $target_id, project: $project})
-                    ON CREATE SET callee.name = $callee_name, callee.updated_at = datetime()
+                    ON CREATE SET callee.name = $callee_name, callee.updated_at = timestamp()
                     MERGE (caller)-[:CALLS {file: $file, line: $line}]->(callee)
                 """
             elif callee_kind == "external":
@@ -235,7 +235,7 @@ class CodeGraph:
                     MERGE (callee:ExternalSymbol {id: $target_id, project: $project})
                     SET callee.name = $callee_name,
                         callee.external_module = $callee_module,
-                        callee.updated_at = datetime()
+                        callee.updated_at = timestamp()
                     MERGE (caller)-[:CALLS {file: $file, line: $line}]->(callee)
                 """
             else:
@@ -243,7 +243,7 @@ class CodeGraph:
                     MERGE (caller:CodeSymbol {id: $caller_id, project: $project})
                     MERGE (callee:UnresolvedCallee {id: $target_id, project: $project})
                     SET callee.name = $callee_name,
-                        callee.updated_at = datetime()
+                        callee.updated_at = timestamp()
                     MERGE (caller)-[:CALLS {file: $file, line: $line}]->(callee)
                 """
             await self._client.execute_write(cypher, params)
