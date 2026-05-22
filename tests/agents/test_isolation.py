@@ -5,6 +5,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 """
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -156,6 +157,37 @@ class TestEnsureIsolationCodeIndex:
             text=True,
         )
         assert status.stdout == ""
+
+    @pytest.mark.asyncio
+    async def test_database_url_token_failure_logs_and_reraises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Token creation failures are logged with traceback and re-raised."""
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        workspace.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        caplog.set_level(logging.ERROR, logger="gobby.agents.code_index")
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.ensure_local_cli_token",
+                side_effect=RuntimeError("token denied"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="token denied"):
+                await ensure_isolation_code_index(
+                    str(workspace),
+                    database_url="postgresql://gobby:secret@localhost/gobby",
+                    runtime_root=runtime_root,
+                )
+
+        assert "Failed to prepare local CLI token for gcode runtime" in caplog.text
 
     @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:

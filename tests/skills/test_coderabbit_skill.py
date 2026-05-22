@@ -42,6 +42,17 @@ def test_coderabbit_skill_requires_verification_before_fixes() -> None:
     assert "Include nits" in body
 
 
+def test_coderabbit_skill_requires_plan_mode_triage_before_edits() -> None:
+    """Verify CodeRabbit triage happens in Plan Mode before implementation edits."""
+    body = _body()
+
+    assert "## Plan Mode Gate" in body
+    assert "Enter Plan Mode before CodeRabbit triage" in body
+    assert "`EnterPlanMode`" in body
+    assert "Plan Mode triage is read-only" in body
+    assert "before the first edit" in body
+
+
 def test_coderabbit_skill_documents_no_fix_decisions() -> None:
     """Verify the skill requires documented no-fix decisions for stale or invalid findings."""
     body = _body()

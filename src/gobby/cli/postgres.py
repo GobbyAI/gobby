@@ -37,7 +37,7 @@ from gobby.cli.installers.postgres import (
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
-from gobby.cli.utils import _is_process_alive, get_gobby_home
+from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
 from gobby.storage.migration.sqlite_to_postgres import (
     SqliteToPostgresMigrationError,
     migrate_sqlite_to_postgres,
@@ -347,20 +347,6 @@ def _render_restore_result(result: dict[str, Any]) -> None:
     click.echo(f"  pg_search: {'yes' if probes.get('pg_search_present') else 'no'}")
     click.echo(f"  pgaudit:   {'yes' if probes.get('pgaudit_present') else 'no'}")
     click.echo(f"  Migration: {'complete' if migration.get('present') else 'missing'}")
-
-
-def _redact_dsn(dsn: str) -> str:
-    if "@" not in dsn:
-        return dsn
-    prefix, suffix = dsn.split("@", 1)
-    scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
-    if ":" not in auth:
-        return dsn
-    user = auth.split(":", 1)[0]
-    redacted_auth = f"{user}:****"
-    if scheme:
-        return f"{scheme}://{redacted_auth}@{suffix}"
-    return f"{redacted_auth}@{suffix}"
 
 
 def _install_mode(value: str) -> InstallMode:

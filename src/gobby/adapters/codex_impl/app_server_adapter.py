@@ -177,8 +177,6 @@ class CodexAdapter(BaseAdapter):
         handle = getattr(self._hook_manager, "handle", None)
         if handle is not None:
             response = handle(event)
-        elif handle_async is not None:
-            response = handle_async(event)
         else:
             raise RuntimeError("hook manager has no handle method")
 
@@ -341,7 +339,7 @@ class CodexAdapter(BaseAdapter):
 
                 task.add_done_callback(_log_notification_result)
         except Exception as e:
-            logger.error("Error handling Codex notification %s: %s", method, e)
+            logger.error("Error handling Codex notification %s: %s", method, e, exc_info=True)
 
     async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle an incoming approval request from Codex.
@@ -370,7 +368,7 @@ class CodexAdapter(BaseAdapter):
         try:
             hook_response = await self._dispatch_hook_event(hook_event)
         except Exception as e:
-            logger.error("Error processing approval request %s: %s", method, e)
+            logger.error("Error processing approval request %s: %s", method, e, exc_info=True)
             if is_safe_auto_approved:
                 if method == "mcpServer/elicitation/request":
                     return self._translate_mcp_elicitation_response()

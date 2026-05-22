@@ -2,7 +2,9 @@
 
 import logging
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,7 +42,10 @@ class TestGobbyRunnerInit:
 
 
 class TestSetMockDefault:
+    """Tests for test helper default assignment behavior."""
+
     def test_preserves_asyncmock_overrides(self) -> None:
+        """Existing AsyncMock attributes are not replaced by default values."""
         obj = MagicMock()
         existing = AsyncMock()
         obj.child = existing
@@ -49,7 +54,7 @@ class TestSetMockDefault:
 
         assert obj.child is existing
 
-    def test_init_without_websocket(self, mock_config) -> None:
+    def test_init_without_websocket(self, mock_config: Any) -> None:
         """Test init when WebSocket is disabled."""
         mock_config.websocket = MagicMock()
         mock_config.websocket.enabled = False
@@ -65,7 +70,7 @@ class TestSetMockDefault:
             assert runner.websocket_server is None
             mock_ws_cls.assert_not_called()
 
-    def test_init_websocket_none_config(self, mock_config) -> None:
+    def test_init_websocket_none_config(self, mock_config: Any) -> None:
         """Test init when websocket config is None."""
         patches = create_base_patches(mock_config)
 
@@ -78,7 +83,10 @@ class TestSetMockDefault:
 
 
 class TestInitHubDatabase:
+    """Tests for hub database initialization helpers."""
+
     def test_rejects_non_postgres_backend(self) -> None:
+        """SQLite hub backend is rejected by the PostgreSQL-only runtime."""
         from gobby.runner_init import helpers
 
         config = SimpleNamespace(
@@ -89,7 +97,8 @@ class TestInitHubDatabase:
         with pytest.raises(ValueError, match="postgres"):
             helpers.init_hub_database(config)
 
-    def test_uses_postgres_backend_when_selected(self, monkeypatch) -> None:
+    def test_uses_postgres_backend_when_selected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PostgreSQL backend opens the configured DSN and applies migrations."""
         from gobby.runner_init import helpers
 
         with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database:
@@ -108,6 +117,7 @@ class TestInitHubDatabase:
         db.apply_migrations.assert_called_once_with()
 
     def test_postgres_backend_requires_database_url(self) -> None:
+        """PostgreSQL backend requires a configured database_url."""
         from gobby.runner_init import helpers
 
         config = SimpleNamespace(
@@ -122,8 +132,9 @@ class TestInitHubDatabase:
     def test_open_protected_test_database_respects_apply_migrations(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
+        """Protected SQLite test helper respects apply_migrations=False."""
         from gobby.runner_init import helpers
 
         safe_path = tmp_path / "safe.db"
@@ -144,9 +155,10 @@ class TestInitHubDatabase:
     def test_open_protected_test_database_logs_unsupported_migrations(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        tmp_path,
+        tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """Unsupported protected SQLite migrations are logged and skipped."""
         from gobby.runner_init import helpers
         from gobby.storage.migrations import MigrationUnsupportedError
 

@@ -11,7 +11,7 @@ RUN test -n "$PG_SEARCH_VERSION" \
     && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u3 \
-        postgresql-18-pgaudit=18.0-3.pgdg13+1 \
+        postgresql-18-pgaudit=18.0-2.pgdg13+1 \
     && arch="$(dpkg --print-architecture)" \
     && curl -fsSL \
         "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" \

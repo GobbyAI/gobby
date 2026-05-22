@@ -21,6 +21,18 @@ and files matching `./reports/coderabbit-*.md`.
 
 REQUIRED SKILL: verification-before-completion.
 
+## Plan Mode Gate
+
+Enter Plan Mode before CodeRabbit triage. Use `EnterPlanMode` when the runtime
+provides it; otherwise respond with a planning-focused triage message that
+switches the session into its native planning flow.
+
+Plan Mode triage is read-only: ingest supplied findings and
+`./reports/coderabbit-*.md`, verify the current code, decide `fixed` or
+`no-fix`, and present the implementation plan before editing files. If native
+Plan Mode blocks task creation, create or claim the `gobby-tasks` task
+immediately after plan approval and before the first edit.
+
 ## Contract
 
 CodeRabbit findings are leads, not patches. Verify each item against current code
@@ -38,18 +50,19 @@ behavior. Do not silently drop stale comments.
 
 ## Workflow
 
-1. Create or claim a `gobby-tasks` task before edits.
-2. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
-3. For each report, identify whether it contains actionable findings or only a
+1. Enter Plan Mode and complete read-only triage before implementation.
+2. Create or claim a `gobby-tasks` task before edits.
+3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
+4. For each report, identify whether it contains actionable findings or only a
    CodeRabbit CLI failure such as `Too many files`.
-4. Inspect current code for each finding before deciding.
-5. Apply valid findings, including small nits, using normal repo patterns.
-6. Document stale or invalid findings as `no-fix` decisions.
-7. Delete processed `./reports/coderabbit-*.md` files after their contents are
+5. Inspect current code for each finding before deciding.
+6. Apply valid findings, including small nits, using normal repo patterns.
+7. Document stale or invalid findings as `no-fix` decisions.
+8. Delete processed `./reports/coderabbit-*.md` files after their contents are
    fixed or documented. Leave unrelated report artifacts alone.
-8. Run focused validation for the touched areas, plus scoped lint/type checks
+9. Run focused validation for the touched areas, plus scoped lint/type checks
    when available.
-9. Commit with the task ref and close the task with `commit_sha`.
+10. Commit with the task ref and close the task with `commit_sha`.
 
 ## Verification Discipline
 

@@ -62,6 +62,12 @@ def test_build_history_get_event_returns_none_for_missing_event(temp_db) -> None
     assert BuildHistoryStorage(temp_db).get_event(999_999) is None
 
 
+def test_build_history_get_run_returns_none_for_missing_run(temp_db) -> None:
+    from gobby.storage.build_history import BuildHistoryStorage
+
+    assert BuildHistoryStorage(temp_db).get_run("br-missing") is None
+
+
 def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
     from gobby.storage.projects import LocalProjectManager

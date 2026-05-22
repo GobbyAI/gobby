@@ -65,10 +65,10 @@ def _configured_postgres_database_url() -> str | None:
     if os.environ.get("GOBBY_TEST_PROTECT") != "1":
         return None
     try:
-        from gobby.config.bootstrap import load_bootstrap
+        from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
         return load_bootstrap().database_url
-    except Exception as exc:
+    except BootstrapConfigError as exc:
         logger.warning("Failed to load bootstrap PostgreSQL DSN for tests: %s", exc)
         return None
 

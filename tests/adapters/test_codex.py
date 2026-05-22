@@ -27,7 +27,7 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
 )
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -1626,6 +1626,47 @@ class TestCodexAdapterHandleNotification:
 
         adapter._handle_notification("turn/started", {"threadId": "thr-1"})
         assert mock_hook_manager.handle.call_count == 1
+
+
+class TestCodexAdapterDispatchHookEvent:
+    """Tests for CodexAdapter hook dispatch fallback behavior."""
+
+    @staticmethod
+    def _event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="thr-dispatch",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_ignores_non_coroutine_handle_async(self) -> None:
+        """Non-coroutine handle_async is ignored in favor of the sync handler."""
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.return_value = HookResponse(decision="allow")
+        mock_hook_manager.handle_async = MagicMock(return_value=HookResponse(decision="deny"))
+        adapter = CodexAdapter(hook_manager=mock_hook_manager)
+
+        response = await adapter._dispatch_hook_event(self._event())
+
+        assert response.decision == "allow"
+        mock_hook_manager.handle.assert_called_once()
+        mock_hook_manager.handle_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_non_coroutine_handle_async_without_handle(self) -> None:
+        """Non-coroutine handle_async alone is not treated as a valid handler."""
+
+        class NonAsyncOnlyHookManager:
+            def handle_async(self, _event: HookEvent) -> HookResponse:
+                return HookResponse(decision="allow")
+
+        adapter = CodexAdapter(hook_manager=NonAsyncOnlyHookManager())
+
+        with pytest.raises(RuntimeError, match="hook manager has no handle method"):
+            await adapter._dispatch_hook_event(self._event())
 
 
 class TestCodexAdapterSyncExistingSessions:

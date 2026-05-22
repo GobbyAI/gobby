@@ -22,6 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Actions are major-version pinned so Dependabot and branch protection can
+  # carry security updates without manual SHA digest churn on every workflow.
   lint:
     name: Lint
     runs-on: ubuntu-latest

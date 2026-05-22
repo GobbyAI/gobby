@@ -19,7 +19,7 @@ from gobby.servers.websocket.chat._stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 
 logger = logging.getLogger(__name__)
-EXPECTED_TTS_ERRORS = (ValueError, RuntimeError, OSError)
+EXPECTED_TTS_ERRORS: tuple[type[Exception], ...] = (ValueError, RuntimeError, OSError)
 
 
 @dataclass

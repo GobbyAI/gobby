@@ -15,6 +15,7 @@ import importlib
 import logging
 import os
 import platform
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -27,12 +28,17 @@ logger = logging.getLogger(__name__)
 # Default bootstrap file location. Kept as a string for compatibility with callers
 # that import the constant; load_bootstrap() resolves GOBBY_HOME dynamically.
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
+DEFAULT_DAEMON_BIND_HOST = "localhost"
+DEFAULT_DAEMON_PORT = 60887
+DEFAULT_WEBSOCKET_PORT = 60888
+DEFAULT_UI_PORT = 60889
 POSTGRES_DATABASE_URL_KEYRING_SERVICE = "gobby"
 POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
 POSTGRES_DATABASE_URL_REF = (
     f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
 )
 _POSTGRES_DATABASE_URL_CACHE: dict[tuple[Any, str, str], str] = {}
+_POSTGRES_DATABASE_URL_CACHE_LOCK = threading.RLock()
 
 HubBackend = Literal["postgres"]
 PostgresInstallMode = Literal["docker", "native", "external"]
@@ -67,10 +73,10 @@ class BootstrapConfig:
     """Minimal settings needed before the database is available."""
 
     database_path: str = "~/.gobby/gobby-hub.db"
-    daemon_port: int = 60887
-    bind_host: str = "localhost"
-    websocket_port: int = 60888
-    ui_port: int = 60889
+    daemon_port: int = DEFAULT_DAEMON_PORT
+    bind_host: str = DEFAULT_DAEMON_BIND_HOST
+    websocket_port: int = DEFAULT_WEBSOCKET_PORT
+    ui_port: int = DEFAULT_UI_PORT
     neo4j_password: str = "gobbyneo4j"
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
@@ -225,9 +231,10 @@ def store_postgres_database_url(database_url: str) -> str:
             "failed to verify database_url in OS keyring entry "
             f"{POSTGRES_DATABASE_URL_REF}. {_keyring_guidance()}"
         )
-    _POSTGRES_DATABASE_URL_CACHE[
-        _postgres_database_url_cache_key(keyring_backend, service, username)
-    ] = stored_database_url
+    with _POSTGRES_DATABASE_URL_CACHE_LOCK:
+        _POSTGRES_DATABASE_URL_CACHE[
+            _postgres_database_url_cache_key(keyring_backend, service, username)
+        ] = stored_database_url
     return POSTGRES_DATABASE_URL_REF
 
 
@@ -236,7 +243,8 @@ def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
     service, username = _parse_postgres_database_url_ref(database_url_ref)
     keyring_backend = _keyring()
     cache_key = _postgres_database_url_cache_key(keyring_backend, service, username)
-    cached_database_url = _POSTGRES_DATABASE_URL_CACHE.get(cache_key)
+    with _POSTGRES_DATABASE_URL_CACHE_LOCK:
+        cached_database_url = _POSTGRES_DATABASE_URL_CACHE.get(cache_key)
     if cached_database_url is not None:
         return cached_database_url
     try:
@@ -248,7 +256,8 @@ def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
             f"database_url_ref keyring entry {database_url_ref} is missing. {_keyring_guidance()}"
         )
     resolved_database_url = str(database_url)
-    _POSTGRES_DATABASE_URL_CACHE[cache_key] = resolved_database_url
+    with _POSTGRES_DATABASE_URL_CACHE_LOCK:
+        _POSTGRES_DATABASE_URL_CACHE[cache_key] = resolved_database_url
     return resolved_database_url
 
 
