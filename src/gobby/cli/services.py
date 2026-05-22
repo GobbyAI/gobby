@@ -22,7 +22,6 @@ from gobby.cli.utils import get_gobby_home
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.secrets import SECRET_REF_PATTERN, SecretStore
 
 logger = logging.getLogger(__name__)
 
@@ -218,87 +217,6 @@ async def get_falkordb_status(
         "installed": installed,
         "healthy": healthy,
         "url": f"redis://{status_host}:{status_port}" if status_host and status_port else None,
-    }
-
-
-# ---------------------------------------------------------------------------
-# FalkorDB
-# ---------------------------------------------------------------------------
-
-
-def is_falkordb_installed(*, gobby_home: Path | None = None) -> bool:
-    """Check if FalkorDB connection keys are installed in config_store."""
-    home = gobby_home if gobby_home is not None else get_gobby_home()
-    from gobby.cli.installers import falkor
-
-    return falkor.is_falkordb_installed(gobby_home=home)
-
-
-async def is_falkordb_healthy(
-    *,
-    host: str | None,
-    port: int | None,
-    password: str | None = None,
-) -> bool:
-    """Check FalkorDB health with redis-cli PING."""
-    if not host or not port:
-        return False
-
-    command = ["redis-cli", "-h", host, "-p", str(port)]
-    if password:
-        command.extend(["-a", password])
-    command.append("PING")
-
-    try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            command,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-    if not hasattr(result, "returncode"):
-        return True
-    return result.returncode == 0 and str(getattr(result, "stdout", "")).strip() in {"PONG", ""}
-
-
-async def get_falkordb_status(*, gobby_home: Path | None = None) -> dict[str, Any]:
-    """Get installed and health status for configured FalkorDB."""
-    home = gobby_home if gobby_home is not None else get_gobby_home()
-    installed = is_falkordb_installed(gobby_home=home)
-    host: str | None = None
-    port: int | None = None
-    password: str | None = None
-
-    if installed:
-        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
-
-        db_path = _resolve_falkordb_db_path(home)
-        db = LocalDatabase(db_path)
-        try:
-            store = ConfigStore(db)
-            host_value = store.get("databases.falkordb.host")
-            port_value = store.get("databases.falkordb.port")
-            host = host_value if isinstance(host_value, str) else None
-            port = int(port_value) if port_value is not None else None
-            secret_ref = store.get("databases.falkordb.requirepass")
-            if isinstance(secret_ref, str):
-                match = SECRET_REF_PATTERN.fullmatch(secret_ref)
-                password = SecretStore(db).get(match.group(1)) if match else secret_ref
-        finally:
-            db.close()
-
-    healthy = (
-        await is_falkordb_healthy(host=host, port=port, password=password) if installed else False
-    )
-    return {
-        "installed": installed,
-        "healthy": healthy,
-        "host": host,
-        "port": port,
     }
 
 
