@@ -9,7 +9,7 @@ use crate::schema;
 
 const POSTGRES_DATABASE_URL_REF: &str = "keyring:gobby:postgres_database_url";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
-const BROKER_TIMEOUT: Duration = Duration::from_millis(500);
+const BROKER_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Deserialize)]
 struct BrokerDatabaseUrlResponse {
@@ -161,7 +161,7 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
 
 fn resolve_keyring_database_url(database_url_ref: &str) -> anyhow::Result<String> {
     let (service, username) = parse_database_url_ref(database_url_ref)?;
-    keyring::use_native_store(false).context("failed to open OS keyring store")?;
+    configure_native_keyring_store().context("failed to open OS keyring store")?;
     let store = keyring_core::get_default_store().context("OS keyring store is not configured")?;
     let entry = store
         .build(service, username, None)
@@ -173,6 +173,37 @@ fn resolve_keyring_database_url(database_url_ref: &str) -> anyhow::Result<String
         bail!("database_url_ref keyring entry {database_url_ref} is missing");
     }
     Ok(database_url)
+}
+
+fn configure_native_keyring_store() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let config = std::collections::HashMap::new();
+        let store = apple_native_keyring_store::keychain::Store::new_with_configuration(&config)?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let config = std::collections::HashMap::new();
+        let store = linux_keyutils_keyring_store::Store::new_with_configuration(&config)?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let config = std::collections::HashMap::new();
+        let store = windows_native_keyring_store::Store::new_with_configuration(&config)?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        bail!("OS keyring store is not supported on this platform");
+    }
 }
 
 fn parse_database_url_ref(database_url_ref: &str) -> anyhow::Result<(&str, &str)> {
@@ -259,6 +290,77 @@ mod tests {
         .expect("resolve ref");
 
         assert_eq!(resolved, "postgresql://gobby:secret@localhost:60891/gobby");
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_when_broker_token_is_missing() {
+        let home = tempfile::tempdir().expect("temp home");
+        let bootstrap_path = write_bootstrap(home.path(), 60887);
+
+        let resolved = resolve_database_url_from_bootstrap(
+            &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
+            || resolve_brokered_database_url_at(home.path(), &bootstrap_path),
+            |reference| {
+                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
+                Ok("postgresql://keyring/db".to_string())
+            },
+        )
+        .expect("missing broker token falls back to keyring");
+
+        assert_eq!(resolved, "postgresql://keyring/db");
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_when_broker_is_unreachable() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), "token\n").expect("write token");
+        let bootstrap_path = write_bootstrap(home.path(), unused_local_port());
+
+        let resolved = resolve_database_url_from_bootstrap(
+            &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
+            || resolve_brokered_database_url_at(home.path(), &bootstrap_path),
+            |reference| {
+                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
+                Ok("postgresql://keyring/db".to_string())
+            },
+        )
+        .expect("unreachable broker falls back to keyring");
+
+        assert_eq!(resolved, "postgresql://keyring/db");
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_after_broker_401() {
+        assert_broker_http_failure_falls_back_to_keyring(
+            "401 Unauthorized",
+            r#"{"error":"bad token"}"#,
+        );
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_after_broker_403() {
+        assert_broker_http_failure_falls_back_to_keyring(
+            "403 Forbidden",
+            r#"{"error":"forbidden"}"#,
+        );
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_after_broker_non_2xx() {
+        assert_broker_http_failure_falls_back_to_keyring(
+            "503 Service Unavailable",
+            r#"{"error":"unavailable"}"#,
+        );
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_after_broker_invalid_json() {
+        assert_broker_http_failure_falls_back_to_keyring("200 OK", "not json");
+    }
+
+    #[test]
+    fn postgres_bootstrap_falls_back_to_keyring_after_broker_empty_database_url() {
+        assert_broker_http_failure_falls_back_to_keyring("200 OK", r#"{"database_url":"  "}"#);
     }
 
     #[test]
@@ -493,5 +595,27 @@ mod tests {
             String::from_utf8_lossy(&request).into_owned()
         });
         (format!("http://{addr}"), handle)
+    }
+
+    fn assert_broker_http_failure_falls_back_to_keyring(status: &str, body: &str) {
+        let (daemon_url, request) = spawn_http_response(http_response(status, body));
+
+        let resolved = resolve_database_url_from_bootstrap(
+            &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
+            || request_broker_database_url(&daemon_url, "token"),
+            |reference| {
+                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
+                Ok("postgresql://keyring/db".to_string())
+            },
+        )
+        .expect("broker failure falls back to keyring");
+        let _ = request.join().expect("read request");
+
+        assert_eq!(resolved, "postgresql://keyring/db");
+    }
+
+    fn unused_local_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused local port");
+        listener.local_addr().expect("local addr").port()
     }
 }

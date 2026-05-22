@@ -101,6 +101,25 @@ pub fn resolve_config_value(value: &str, conn: &mut Client) -> anyhow::Result<St
 }
 
 #[cfg(test)]
+fn resolve_config_value_without_secrets(value: &str) -> anyhow::Result<String> {
+    if value.contains("$secret:") {
+        bail!("secret resolution requires a PostgreSQL connection");
+    }
+    if !value.contains("${") {
+        return Ok(value.to_string());
+    }
+    if value.starts_with("${") && value.ends_with('}') {
+        let var_name = &value[2..value.len() - 1];
+        if let Some((var, default)) = var_name.split_once(":-") {
+            return Ok(std::env::var(var).unwrap_or_else(|_| default.to_string()));
+        }
+        return std::env::var(var_name)
+            .with_context(|| format!("environment variable {var_name} not set"));
+    }
+    Ok(value.to_string())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -155,23 +174,4 @@ mod tests {
             resolve_config_value_without_secrets("${GCODE_NONEXISTENT_VAR_999:-fallback}").unwrap();
         assert_eq!(result, "fallback");
     }
-}
-
-#[cfg(test)]
-fn resolve_config_value_without_secrets(value: &str) -> anyhow::Result<String> {
-    if value.contains("$secret:") {
-        bail!("secret resolution requires a PostgreSQL connection");
-    }
-    if !value.contains("${") {
-        return Ok(value.to_string());
-    }
-    if value.starts_with("${") && value.ends_with('}') {
-        let var_name = &value[2..value.len() - 1];
-        if let Some((var, default)) = var_name.split_once(":-") {
-            return Ok(std::env::var(var).unwrap_or_else(|_| default.to_string()));
-        }
-        return std::env::var(var_name)
-            .with_context(|| format!("environment variable {var_name} not set"));
-    }
-    Ok(value.to_string())
 }

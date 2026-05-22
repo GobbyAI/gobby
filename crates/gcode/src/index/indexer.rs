@@ -606,36 +606,6 @@ fn upsert_calls(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::models::{CallRelation, CallTargetKind};
-
-    #[test]
-    fn call_relation_contract_uses_empty_optional_storage_values() {
-        let resolved = CallRelation::new(
-            "caller-1".to_string(),
-            "foo".to_string(),
-            "src/main.py".to_string(),
-            12,
-        )
-        .with_symbol_target("callee-1".to_string());
-        let unresolved = CallRelation::new(
-            "caller-2".to_string(),
-            "bar".to_string(),
-            "src/main.py".to_string(),
-            18,
-        );
-
-        assert_eq!(
-            resolved.callee_symbol_id.as_deref().unwrap_or(""),
-            "callee-1"
-        );
-        assert_eq!(unresolved.callee_symbol_id.as_deref().unwrap_or(""), "");
-        assert_eq!(resolved.callee_target_kind, CallTargetKind::Symbol);
-        assert_eq!(unresolved.callee_target_kind, CallTargetKind::Unresolved);
-    }
-}
-
 fn get_stale_files(
     conn: &mut Client,
     project_id: &str,
@@ -729,4 +699,34 @@ fn epoch_secs_str() -> String {
         .unwrap_or_default()
         .as_secs();
     format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::{CallRelation, CallTargetKind};
+
+    #[test]
+    fn call_relation_contract_uses_empty_optional_storage_values() {
+        let resolved = CallRelation::new(
+            "caller-1".to_string(),
+            "foo".to_string(),
+            "src/main.py".to_string(),
+            12,
+        )
+        .with_symbol_target("callee-1".to_string());
+        let unresolved = CallRelation::new(
+            "caller-2".to_string(),
+            "bar".to_string(),
+            "src/main.py".to_string(),
+            18,
+        );
+
+        assert_eq!(
+            resolved.callee_symbol_id.as_deref().unwrap_or(""),
+            "callee-1"
+        );
+        assert_eq!(unresolved.callee_symbol_id.as_deref().unwrap_or(""), "");
+        assert_eq!(resolved.callee_target_kind, CallTargetKind::Symbol);
+        assert_eq!(unresolved.callee_target_kind, CallTargetKind::Unresolved);
+    }
 }

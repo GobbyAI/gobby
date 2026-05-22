@@ -7,6 +7,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — gcode
+
+### Changed
+
+#### gcode
+
+- **Daemon-brokered PostgreSQL DSN resolution** — `gcode` now resolves `database_url_ref: keyring:gobby:postgres_database_url` through the local Gobby daemon broker first, using `POST /api/local/runtime/database-url` with the runtime `local_cli_token`. If the daemon path is unavailable, unauthorized, malformed, or returns an empty DSN, `gcode` silently falls back to the native OS keyring. Inline `database_url` bootstrap files keep their existing behavior, and unsupported `database_url_ref` values still fail clearly before any broker lookup.
+- **No SQLite-backed keyring dependency** — `gcode` now wires platform keyring stores directly through `keyring-core` instead of depending on the `keyring` meta crate, avoiding the SQLite-backed `db-keystore`/`turso` stack in the release binary.
+
 ## [0.8.0] — gcode
 
 ### Changed

@@ -94,8 +94,12 @@ feature flags to enable Neo4j, Qdrant, or embeddings support.
 
 Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
 `~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
-hub DSN from `database_url_ref` or `database_url`. The Gobby daemon process does
-not need to be running for normal index/search commands.
+hub DSN from `database_url_ref` or `database_url`. For
+`database_url_ref: keyring:gobby:postgres_database_url`, gcode asks the local
+Gobby daemon broker for the DSN first and falls back to the native OS keyring
+when the broker is unavailable. The DSN is not written to a plaintext runtime file. The
+Gobby daemon process does not need to be running for normal index/search
+commands when keyring fallback is available.
 
 ### With Gobby
 
@@ -171,6 +175,11 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 **Search quality improves.** With Neo4j, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
 **Config and secrets are managed.** Neo4j URLs, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
+
+**PostgreSQL DSNs stay out of plaintext files.** Isolated gcode runtimes keep
+`database_url_ref: keyring:gobby:postgres_database_url`; gcode resolves it
+through the daemon broker when available and falls back to the native OS
+keyring.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 
