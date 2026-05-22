@@ -15,7 +15,7 @@ def test_available():
     graph = CodeGraph()
     assert graph.available is False
 
-    graph = CodeGraph(neo4j_client=MagicMock())
+    graph = CodeGraph(falkor_client=MagicMock())
     assert graph.available is True
 
 
@@ -27,7 +27,7 @@ async def test_add_relationships_not_available():
 
 @pytest.mark.asyncio
 async def test_add_relationships_success(mock_client):
-    graph = CodeGraph(neo4j_client=mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
 
     imports = [{"source_file": "a.py", "target_module": "sys"}]
     calls = [{"caller_symbol_id": "sym1", "callee_name": "func", "file_path": "a.py", "line": 1}]
@@ -40,7 +40,7 @@ async def test_add_relationships_success(mock_client):
 
 @pytest.mark.asyncio
 async def test_add_relationships_skips_incomplete_records(mock_client):
-    graph = CodeGraph(neo4j_client=mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
 
     imports = [{"source_file": "a.py", "target_module": ""}]
     calls = [{"caller_symbol_id": "sym1", "callee_name": "", "file_path": "a.py", "line": 1}]
@@ -54,7 +54,7 @@ async def test_add_relationships_skips_incomplete_records(mock_client):
 
 @pytest.mark.asyncio
 async def test_add_relationships_exception(mock_client):
-    graph = CodeGraph(neo4j_client=mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_write.side_effect = Exception("err")
     imports = [{"source_file": "start.py"}]
     with pytest.raises(Exception, match="err"):

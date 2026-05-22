@@ -330,6 +330,39 @@ class TestInitSubsystems:
         vector_store.initialize.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_falkordb_health_failure_clears_all_graph_refs(self) -> None:
+        from gobby.config.persistence import MemoryConfig
+        from gobby.memory.manager import MemoryManager
+        from gobby.runner_lifecycle_subsystems import _check_external_services
+
+        manager = MemoryManager(db=MagicMock(), config=MemoryConfig(), falkordb_host=None)
+        kg_service = MagicMock()
+        manager._falkor_client = SimpleNamespace(ping=AsyncMock(return_value=False))
+        manager._kg_service = kg_service
+        manager._search_service._kg_service = kg_service
+        manager._indexing_service._kg_service = kg_service
+        runner = SimpleNamespace(
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url=""),
+                    falkordb=SimpleNamespace(
+                        host="127.0.0.1",
+                        port=16379,
+                        requirepass="secret",
+                    ),
+                )
+            ),
+            memory_manager=manager,
+        )
+
+        await _check_external_services(runner, tracker=None)
+
+        assert manager._falkor_client is None
+        assert manager._kg_service is None
+        assert manager._search_service._kg_service is None
+        assert manager._indexing_service._kg_service is None
+
+    @pytest.mark.asyncio
     async def test_provider_model_discovery_runs_in_background_without_startup_warning(
         self, caplog
     ) -> None:

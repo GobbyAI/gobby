@@ -60,7 +60,7 @@ class TestVectorStoreInitialization:
         config.enabled = True
         config.backend = "local"
         config.auto_crossref = False
-        config.neo4j_url = None
+        config.falkordb_host = None
 
         db = MagicMock()
         db.fetchone = MagicMock(return_value=None)

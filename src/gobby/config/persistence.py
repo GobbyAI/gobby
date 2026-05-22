@@ -26,8 +26,10 @@ __all__ = [
     "MemoryStaleAuditConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
+    "FalkorConfig",
     "Neo4jConfig",
     "QdrantConfig",
+    "is_falkordb_enabled",
 ]
 
 
@@ -109,6 +111,49 @@ class Neo4jConfig(BaseModel):
         return v
 
 
+class FalkorConfig(BaseModel):
+    """FalkorDB graph database connection configuration."""
+
+    model_config = {"extra": "ignore"}
+
+    host: str = Field(
+        default="127.0.0.1",
+        description="FalkorDB host. Docker default: 127.0.0.1 (port-mapped).",
+    )
+    port: int = Field(
+        default=16379,
+        description="FalkorDB port. Docker host-side default is 16379.",
+    )
+    requirepass: str | None = Field(
+        default=None,
+        description="FalkorDB password (Redis AUTH requirepass).",
+    )
+    graph_name: str = Field(
+        default="gobby_kg",
+        description="FalkorDB graph key for the memory knowledge graph.",
+    )
+    graph_search: bool = Field(
+        default=True,
+        description="Enable graph-augmented search (entity vector search merged via RRF)",
+    )
+    graph_min_score: float = Field(
+        default=0.5,
+        description="Minimum entity vector similarity score for graph search (0.0-1.0)",
+    )
+    rrf_k: int = Field(
+        default=60,
+        description="RRF constant for merging Qdrant and graph results.",
+    )
+
+    @field_validator("graph_min_score")
+    @classmethod
+    def validate_score(cls, v: float) -> float:
+        """Validate score is between 0.0 and 1.0."""
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("Value must be between 0.0 and 1.0")
+        return v
+
+
 class DatabasesConfig(BaseModel):
     """Shared database connection configuration for Qdrant and Neo4j."""
 
@@ -122,6 +167,16 @@ class DatabasesConfig(BaseModel):
         default_factory=Neo4jConfig,
         description="Neo4j graph database connection",
     )
+    falkordb: FalkorConfig = Field(
+        default_factory=FalkorConfig,
+        description="FalkorDB graph database connection",
+    )
+
+
+def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
+    """Whether the FalkorDB knowledge-graph backend is active."""
+    falkordb = getattr(databases, "falkordb", None)
+    return bool(getattr(falkordb, "requirepass", None))
 
 
 # ---------------------------------------------------------------------------
