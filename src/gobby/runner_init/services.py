@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.persistence import is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.runner_init.helpers import resolve_embedding_api_key
@@ -111,20 +112,26 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
             from gobby.code_index.storage import CodeIndexStorage
 
             ci_config = runner.config.code_index
+            db_cfg = runner.config.databases
             ci_storage = CodeIndexStorage(runner.database)
-            ci_falkor = (
-                getattr(runner.memory_manager, "falkor_client", None)
-                if runner.memory_manager
-                else None
-            )
-            ci_graph = CodeGraph(falkor_client=ci_falkor)
+            ci_graph = None
+
+            if ci_config.graph_enabled and is_falkordb_enabled(db_cfg):
+                falkor_cfg = db_cfg.falkordb
+                ci_falkor = FalkorClient(
+                    host=falkor_cfg.host,
+                    port=falkor_cfg.port,
+                    password=falkor_cfg.requirepass,
+                    graph_name="gobby_code",
+                )
+                ci_graph = CodeGraph(falkor_client=ci_falkor)
 
             ci_vector_store = runner.vector_store if ci_config.embedding_enabled else None
 
             runner.code_indexer = CodeIndexContext(
                 storage=ci_storage,
                 vector_store=ci_vector_store,
-                graph=ci_graph if ci_config.graph_enabled else None,
+                graph=ci_graph,
                 config=ci_config,
                 run_db=runner.db_executor.run,
             )

@@ -7,6 +7,7 @@ Call targets that cannot be resolved to a project symbol are stored as
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -41,11 +42,29 @@ class CodeGraph:
     """Code-specific graph operations wrapping FalkorClient."""
 
     def __init__(self, falkor_client: Any | None = None) -> None:
-        self._client: Any = falkor_client
+        self._falkor: Any = falkor_client
 
     @property
     def available(self) -> bool:
-        return self._client is not None
+        return self._falkor is not None
+
+    async def close(self) -> None:
+        """Close the underlying FalkorDB client."""
+        if self._falkor is None:
+            return
+
+        client = self._falkor
+        self._falkor = None
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except RuntimeError as exc:
+            logger.debug("Code graph FalkorDB client already closed: %s", exc)
 
     @staticmethod
     def _target_id(project_id: str, call: dict[str, Any]) -> str:
@@ -62,7 +81,7 @@ class CodeGraph:
         return make_unresolved_callee_id(project_id, callee_name)
 
     async def _cleanup_orphans(self, project_id: str) -> None:
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (m:CodeModule {project: $project})
             WHERE NOT (m)<-[:IMPORTS]-()
@@ -70,7 +89,7 @@ class CodeGraph:
             """,
             {"project": project_id},
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (n {project: $project})
             WHERE (n:UnresolvedCallee OR n:ExternalSymbol)
@@ -79,7 +98,7 @@ class CodeGraph:
             """,
             {"project": project_id},
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (s:CodeSymbol {project: $project})
             WHERE s.file_path IS NULL
@@ -105,7 +124,7 @@ class CodeGraph:
         contains = contains or []
         symbol_ids = [symbol["id"] for symbol in contains if symbol.get("id")]
 
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MERGE (f:CodeFile {path: $file_path, project: $project})
             SET f.updated_at = timestamp(), f.symbol_count = $symbol_count
@@ -116,21 +135,21 @@ class CodeGraph:
                 "symbol_count": len(symbol_ids),
             },
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (f:CodeFile {path: $file_path, project: $project})-[r:IMPORTS]->(:CodeModule)
             DELETE r
             """,
             {"file_path": file_path, "project": project_id},
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (f:CodeFile {path: $file_path, project: $project})-[r:DEFINES]->(:CodeSymbol)
             DELETE r
             """,
             {"file_path": file_path, "project": project_id},
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->()
             DELETE r
@@ -139,7 +158,7 @@ class CodeGraph:
         )
 
         if symbol_ids:
-            await self._client.execute_write(
+            await self._falkor.execute_write(
                 """
                 MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
                 WHERE NOT s.id IN $symbol_ids
@@ -152,7 +171,7 @@ class CodeGraph:
                 },
             )
         else:
-            await self._client.execute_write(
+            await self._falkor.execute_write(
                 """
                 MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
                 DETACH DELETE s
@@ -166,7 +185,7 @@ class CodeGraph:
             target_module = imp.get("target_module")
             if not target_module:
                 continue
-            await self._client.execute_write(
+            await self._falkor.execute_write(
                 """
                 MERGE (f:CodeFile {path: $source, project: $project})
                 MERGE (m:CodeModule {name: $target, project: $project})
@@ -185,7 +204,7 @@ class CodeGraph:
             symbol_name = cont.get("name")
             if not symbol_id or not symbol_name:
                 continue
-            await self._client.execute_write(
+            await self._falkor.execute_write(
                 """
                 MERGE (f:CodeFile {path: $file, project: $project})
                 MERGE (s:CodeSymbol {id: $symbol_id, project: $project})
@@ -246,7 +265,7 @@ class CodeGraph:
                         callee.updated_at = timestamp()
                     MERGE (caller)-[:CALLS {file: $file, line: $line}]->(callee)
                 """
-            await self._client.execute_write(cypher, params)
+            await self._falkor.execute_write(cypher, params)
             relationship_count += 1
 
         await self._cleanup_orphans(project_id)
@@ -279,7 +298,7 @@ class CodeGraph:
         if not self.available:
             return []
         try:
-            result = await self._client.execute_read(
+            result = await self._falkor.execute_read(
                 f"""
                 MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}})
                 WHERE {_CALL_TARGET_PREDICATE}
@@ -304,7 +323,7 @@ class CodeGraph:
         if not self.available:
             return []
         try:
-            result = await self._client.execute_read(
+            result = await self._falkor.execute_read(
                 f"""
                 MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}})
                 WHERE {_CALL_TARGET_PREDICATE}
@@ -324,7 +343,7 @@ class CodeGraph:
         if not self.available:
             return []
         try:
-            result = await self._client.execute_read(
+            result = await self._falkor.execute_read(
                 """
                 MATCH (f:CodeFile {path: $path, project: $project})-[:IMPORTS]->(m:CodeModule)
                 RETURN m.name AS module_name
@@ -347,7 +366,7 @@ class CodeGraph:
             return []
         try:
             depth = max(1, min(int(depth), 5))
-            result = await self._client.execute_read(
+            result = await self._falkor.execute_read(
                 f"""
                 MATCH path = (f:CodeFile)-[:IMPORTS*1..{depth}]->(m:CodeModule {{name: $module, project: $project}})
                 UNWIND nodes(path) AS n
@@ -379,7 +398,7 @@ class CodeGraph:
 
         try:
             if symbol_id:
-                records = await self._client.execute_read(
+                records = await self._falkor.execute_read(
                     f"""
                     MATCH (target {{id: $id, project: $project}})
                     WHERE {_CALL_TARGET_PREDICATE}
@@ -401,7 +420,7 @@ class CodeGraph:
                 )
                 results.extend(dict(r) for r in records)
             else:
-                call_records = await self._client.execute_read(
+                call_records = await self._falkor.execute_read(
                     f"""
                     MATCH (tf:CodeFile {{path: $path, project: $project}})-[:DEFINES]->(target_sym:CodeSymbol)
                     MATCH path = (affected:CodeSymbol)-[:CALLS*1..{depth}]->(target_sym)
@@ -422,7 +441,7 @@ class CodeGraph:
                 )
                 results.extend(dict(r) for r in call_records)
 
-                import_records = await self._client.execute_read(
+                import_records = await self._falkor.execute_read(
                     f"""
                     MATCH (tf:CodeFile {{path: $path, project: $project}})-[:IMPORTS]->(m:CodeModule)
                     MATCH path = (importer:CodeFile)-[:IMPORTS*1..{depth}]->(m)
@@ -455,7 +474,7 @@ class CodeGraph:
         link_limit = limit * 4
 
         try:
-            file_records = await self._client.execute_read(
+            file_records = await self._falkor.execute_read(
                 """
                 MATCH (f:CodeFile {project: $project})
                 OPTIONAL MATCH (f)-[:DEFINES]->(s:CodeSymbol)
@@ -472,7 +491,7 @@ class CodeGraph:
             nodes = [dict(r) for r in file_records]
             node_ids = {n["id"] for n in nodes}
 
-            import_records = await self._client.execute_read(
+            import_records = await self._falkor.execute_read(
                 """
                 MATCH (f:CodeFile {project: $project})-[:IMPORTS]->(m:CodeModule {project: $project})
                 WHERE f.path IN $file_paths
@@ -496,7 +515,7 @@ class CodeGraph:
                     module_ids.add(mid)
                     nodes.append({"id": mid, "name": mid, "type": "module"})
 
-            defines_records = await self._client.execute_read(
+            defines_records = await self._falkor.execute_read(
                 """
                 MATCH (f:CodeFile {project: $project})-[:DEFINES]->(s:CodeSymbol {project: $project})
                 WHERE f.path IN $file_paths
@@ -529,7 +548,7 @@ class CodeGraph:
                         }
                     )
 
-            call_records = await self._client.execute_read(
+            call_records = await self._falkor.execute_read(
                 f"""
                 MATCH (f:CodeFile {{project: $project}})-[:DEFINES]->(s:CodeSymbol {{project: $project}})-[:CALLS]->(target)
                 WHERE f.path IN $file_paths AND ({_CALL_TARGET_PREDICATE})
@@ -575,7 +594,7 @@ class CodeGraph:
         if not self.available:
             return {"nodes": [], "links": []}
         try:
-            sym_records = await self._client.execute_read(
+            sym_records = await self._falkor.execute_read(
                 """
                 MATCH (:CodeFile {path: $path, project: $project})-[:DEFINES]->(s:CodeSymbol {project: $project})
                 RETURN s.id AS id, s.name AS name, coalesce(s.kind, 'function') AS type,
@@ -590,7 +609,7 @@ class CodeGraph:
                 {"source": file_path, "target": node["id"], "type": "DEFINES"} for node in nodes
             ]
 
-            call_records = await self._client.execute_read(
+            call_records = await self._falkor.execute_read(
                 f"""
                 MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target)
                 WHERE ({_CALL_TARGET_PREDICATE})
@@ -676,7 +695,7 @@ class CodeGraph:
         if not self.available:
             return {"nodes": [], "links": []}
         try:
-            records = await self._client.execute_read(
+            records = await self._falkor.execute_read(
                 f"""
                 MATCH (center {{id: $id, project: $project}})
                 WHERE center:CodeSymbol OR center:UnresolvedCallee OR center:ExternalSymbol
@@ -775,7 +794,7 @@ class CodeGraph:
 
         if symbol_id and self.available:
             try:
-                center_rows = await self._client.execute_read(
+                center_rows = await self._falkor.execute_read(
                     f"""
                     MATCH (n {{id: $id, project: $project}})
                     WHERE n:CodeSymbol OR n:UnresolvedCallee OR n:ExternalSymbol
@@ -840,7 +859,7 @@ class CodeGraph:
         """Remove all graph data for a project."""
         if not self.available:
             return
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             f"""
             MATCH (n {{project: $project}})
             WHERE {_PROJECT_NODE_PREDICATE}
@@ -853,14 +872,14 @@ class CodeGraph:
         """Remove all graph data for a specific file."""
         if not self.available:
             return
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
             DETACH DELETE s
             """,
             {"file_path": file_path, "project": project_id},
         )
-        await self._client.execute_write(
+        await self._falkor.execute_write(
             """
             MATCH (f:CodeFile {path: $file_path, project: $project})
             DETACH DELETE f

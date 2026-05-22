@@ -95,6 +95,9 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
                 endpoint,
             )
             runner.memory_manager.clear_graph_clients()
+            code_indexer = getattr(runner, "code_indexer", None)
+            if code_indexer:
+                code_indexer.clear_graph_client()
             if tracker:
                 tracker.error("FalkorDB", f"unreachable at {endpoint}")
         elif tracker:

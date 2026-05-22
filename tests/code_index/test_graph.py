@@ -5,6 +5,10 @@ import pytest
 from gobby.code_index.graph import CodeGraph
 
 
+def _compact(cypher: str) -> str:
+    return " ".join(cypher.split())
+
+
 @pytest.fixture
 def mock_client():
     client = AsyncMock()
@@ -17,6 +21,30 @@ def test_available():
 
     graph = CodeGraph(falkor_client=MagicMock())
     assert graph.available is True
+
+
+@pytest.mark.asyncio
+async def test_close_delegates_to_falkor_client():
+    client = MagicMock()
+    client.close = AsyncMock()
+    graph = CodeGraph(falkor_client=client)
+
+    await graph.close()
+    await graph.close()
+
+    client.close.assert_awaited_once()
+    assert graph.available is False
+
+
+@pytest.mark.asyncio
+async def test_close_ignores_already_closed_runtime_error():
+    client = MagicMock()
+    client.close = AsyncMock(side_effect=RuntimeError("Event loop is closed"))
+    graph = CodeGraph(falkor_client=client)
+
+    await graph.close()
+
+    assert graph.available is False
 
 
 @pytest.mark.asyncio
@@ -36,6 +64,11 @@ async def test_add_relationships_success(mock_client):
     cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
     assert cnt == 3
     assert mock_client.execute_write.call_count == 11
+    queries = [_compact(call.args[0]) for call in mock_client.execute_write.await_args_list]
+    assert any("timestamp()" in query for query in queries)
+    assert all("datetime()" not in query for query in queries)
+    assert all("CREATE CONSTRAINT" not in query for query in queries)
+    assert all("db.idx.vector.createNodeIndex" not in query for query in queries)
 
 
 @pytest.mark.asyncio
@@ -82,7 +115,7 @@ async def test_methods_not_available():
 
 @pytest.mark.asyncio
 async def test_find_callers(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.return_value = [
         {"caller_id": "c1", "caller_name": "cn", "file": "f", "line": 1}
     ]
@@ -97,7 +130,7 @@ async def test_find_callers(mock_client):
 
 @pytest.mark.asyncio
 async def test_find_usages(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.return_value = [{"source_id": "s1"}]
     assert await graph.find_usages("n", "p1") == [{"source_id": "s1"}]
     mock_client.execute_read.side_effect = Exception("e")
@@ -106,7 +139,7 @@ async def test_find_usages(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_imports(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.return_value = [{"module_name": "m1"}]
     assert await graph.get_imports("f", "p1") == [{"module_name": "m1"}]
     mock_client.execute_read.side_effect = Exception("e")
@@ -115,7 +148,7 @@ async def test_get_imports(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_import_chain(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.return_value = [{"name": "n1"}]
     assert await graph.get_import_chain("m", "p1") == [{"name": "n1"}]
     query, params = mock_client.execute_read.await_args.args
@@ -127,7 +160,7 @@ async def test_get_import_chain(mock_client):
 
 @pytest.mark.asyncio
 async def test_find_blast_radius(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
 
     with pytest.raises(ValueError):
         await graph.find_blast_radius("s", "f", "p")
@@ -154,7 +187,7 @@ async def test_find_blast_radius(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_file_graph(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.side_effect = [
         [{"id": "f1", "path": "p1", "type": "file", "symbol_count": 1}],  # file_records
         [{"source": "f1", "target": "m1", "type": "IMPORTS"}],  # import_records
@@ -192,7 +225,7 @@ async def test_get_file_graph(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_file_symbols(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.side_effect = [
         [
             {
@@ -235,7 +268,7 @@ async def test_get_file_symbols(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_symbol_neighbors(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     mock_client.execute_read.return_value = [
         {
             "id": "sym_in",
@@ -266,7 +299,7 @@ async def test_get_symbol_neighbors(mock_client):
 
 @pytest.mark.asyncio
 async def test_get_blast_radius_graph(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     graph.find_blast_radius = AsyncMock(
         return_value=[
             {
@@ -300,7 +333,7 @@ async def test_get_blast_radius_graph(mock_client):
 
 @pytest.mark.asyncio
 async def test_clear_project(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     await graph.clear_project("p1")
     mock_client.execute_write.assert_called_once()
 
@@ -311,7 +344,7 @@ async def test_clear_project(mock_client):
 
 @pytest.mark.asyncio
 async def test_delete_file(mock_client):
-    graph = CodeGraph(mock_client)
+    graph = CodeGraph(falkor_client=mock_client)
     await graph.delete_file("f", "p")
     assert mock_client.execute_write.call_count == 5
 
