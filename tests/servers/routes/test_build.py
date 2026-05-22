@@ -396,6 +396,7 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
 
 
 def test_get_api_build_status_returns_observability_payload() -> None:
+    """Verify build status returns observability payload for a valid ref."""
     payload = {"ok": True, "root": {"task_id": "task-1"}}
 
     with patch("gobby.servers.routes.build.get_build_status", return_value=payload) as status:
@@ -408,6 +409,7 @@ def test_get_api_build_status_returns_observability_payload() -> None:
 
 
 def test_get_api_build_dispatch_explain_returns_payload() -> None:
+    """Verify dispatch explain returns the proposed build action payload."""
     payload = {"ok": True, "eligible": True, "proposed_action": {"action": "start_stage"}}
 
     with patch("gobby.servers.routes.build.explain_dispatch", return_value=payload) as explain:
@@ -423,6 +425,7 @@ def test_get_api_build_dispatch_explain_returns_payload() -> None:
 
 
 def test_get_api_build_history_returns_payload() -> None:
+    """Verify build history returns runs and events for a valid ref."""
     payload = {"ok": True, "root_task_id": "task-1", "runs": [], "events": []}
 
     with patch("gobby.servers.routes.build.list_build_history", return_value=payload) as history:
@@ -434,6 +437,7 @@ def test_get_api_build_history_returns_payload() -> None:
 
 
 def test_get_api_build_status_returns_400_for_invalid_ref() -> None:
+    """Verify build status returns 400 when the ref cannot resolve."""
     with patch(
         "gobby.servers.routes.build.get_build_status",
         side_effect=ValueError("build input not found: #missing"),

@@ -34,7 +34,7 @@ class MockSession:
     project_id: str = "project-1"
     status: str = "active"
     agent_depth: int = 0
-    terminal_context: object | None = None
+    terminal_context: dict[str, Any] | None = None
 
 
 @dataclass

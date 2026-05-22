@@ -6,6 +6,11 @@ import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from gobby.config.bootstrap import (
+    HUB_BACKEND_DATABASE_URL_REQUIRED,
+    HUB_BACKEND_POSTGRES_REQUIRED,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,11 +83,11 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     """Initialize the runtime hub database."""
     if getattr(config, "hub_backend", "postgres") != "postgres":
         logger.warning("Only PostgreSQL is supported for the runtime hub")
-        raise ValueError("hub_backend must be postgres")
+        raise ValueError(HUB_BACKEND_POSTGRES_REQUIRED)
 
     database_url = getattr(config, "database_url", None)
     if not database_url:
-        raise ValueError("hub_backend=postgres requires database_url")
+        raise ValueError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 

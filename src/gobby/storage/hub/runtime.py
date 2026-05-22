@@ -6,6 +6,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from gobby.config.app import load_config
+from gobby.config.bootstrap import (
+    HUB_BACKEND_DATABASE_URL_REQUIRED,
+    HUB_BACKEND_POSTGRES_REQUIRED,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -17,9 +21,9 @@ def open_runtime_hub_database(
     """Open the configured PostgreSQL runtime hub database."""
     config = load_config(config_file)
     if config.hub_backend != "postgres":
-        raise RuntimeError("hub_backend must be postgres; run `gobby postgres install`.")
+        raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
     if not config.database_url:
-        raise RuntimeError("hub_backend=postgres requires database_url_ref in bootstrap.yaml")
+        raise RuntimeError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 

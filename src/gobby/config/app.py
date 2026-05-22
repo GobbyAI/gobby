@@ -351,7 +351,11 @@ class DaemonConfig(BaseModel):
     )
     hub_backend: Literal["postgres"] = Field(
         default="postgres",
-        description="Hub database backend selected by bootstrap.yaml; only postgres is supported.",
+        description=(
+            'hub_backend (Literal["postgres"]) selected by bootstrap.yaml; only "postgres" '
+            'is supported. "sqlite" was removed; see docs/guides/configuration.md#bootstrap '
+            "and use `gobby postgres install` or `gobby postgres migrate-from-sqlite`."
+        ),
     )
     database_url: str | None = Field(
         default=None,

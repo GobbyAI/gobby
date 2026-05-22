@@ -173,10 +173,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         if server.session_manager is not None:
             listener_loop = asyncio.get_running_loop()
-            app.state.session_broadcast_tasks = set()
+            session_broadcast_tasks: set[asyncio.Task[Any]] = set()
+            app.state.session_broadcast_closed = False
+            app.state.session_broadcast_tasks = session_broadcast_tasks
 
             def _session_broadcast_done(done_task: asyncio.Task[Any]) -> None:
-                app.state.session_broadcast_tasks.discard(done_task)
+                session_broadcast_tasks.discard(done_task)
                 try:
                     done_task.result()
                 except asyncio.CancelledError:
@@ -185,14 +187,16 @@ def create_app(server: "HTTPServer") -> FastAPI:
                     logger.exception("Session change broadcast task failed")
 
             def _broadcast_session_change(event: str, session_id: str) -> None:
-                if not ws_server or listener_loop.is_closed():
+                if not ws_server or listener_loop.is_closed() or app.state.session_broadcast_closed:
                     return
 
                 def _schedule() -> None:
+                    if app.state.session_broadcast_closed:
+                        return
                     task = listener_loop.create_task(
                         ws_server.broadcast_session_event(event, session_id)
                     )
-                    app.state.session_broadcast_tasks.add(task)
+                    session_broadcast_tasks.add(task)
                     task.add_done_callback(_session_broadcast_done)
 
                 listener_loop.call_soon_threadsafe(_schedule)
@@ -362,6 +366,25 @@ def create_app(server: "HTTPServer") -> FastAPI:
             )
             del app.state.session_change_listener
             logger.debug("Session change listener disconnected from session manager")
+
+        if hasattr(app.state, "session_broadcast_closed"):
+            app.state.session_broadcast_closed = True
+
+        broadcast_tasks = list(getattr(app.state, "session_broadcast_tasks", ()))
+        if broadcast_tasks:
+            for task in broadcast_tasks:
+                task.cancel()
+            results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    logger.warning(
+                        "Session change broadcast task failed during shutdown",
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
+            app.state.session_broadcast_tasks.clear()
+            logger.debug("Session change broadcast tasks stopped")
 
         voice_cleanup = getattr(ws_server, "cleanup_voice", None) if ws_server else None
         if voice_cleanup:
