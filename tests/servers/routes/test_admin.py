@@ -72,7 +72,7 @@ class TestAdminRoutes:
         server.memory_manager = MagicMock()
         server.memory_manager.get_stats.return_value = {"total_count": 10}
         server.memory_manager._vector_store = None
-        server.memory_manager._neo4j_client = None
+        server.memory_manager._falkor_client = None
 
         server._background_tasks = set()
         server._runner = RunnerShutdownStub()

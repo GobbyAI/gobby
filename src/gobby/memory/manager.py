@@ -99,13 +99,13 @@ class MemoryManager:
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
         if neo4j_url:
-            self._neo4j_client: Neo4jClient | None = Neo4jClient(
+            self._falkor_client: Neo4jClient | None = Neo4jClient(
                 url=neo4j_url,
                 auth=neo4j_auth,
                 database=neo4j_database,
             )
         else:
-            self._neo4j_client = None
+            self._falkor_client = None
 
         self._embeddings_available: bool | None = None
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
@@ -125,14 +125,14 @@ class MemoryManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize DedupService: {e}")
 
-        if llm_service and vector_store and embed_fn and self._neo4j_client:
+        if llm_service and vector_store and embed_fn and self._falkor_client:
             try:
                 from gobby.prompts.loader import PromptLoader
 
                 provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
-                    neo4j_client=self._neo4j_client,
+                    neo4j_client=self._falkor_client,
                     llm_provider=provider,
                     embed_fn=embed_fn,
                     prompt_loader=prompt_loader,
@@ -185,19 +185,19 @@ class MemoryManager:
 
     async def close(self) -> None:
         """Close underlying clients (Neo4j httpx.AsyncClient, etc.)."""
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                await self._neo4j_client.close()
+                await self._falkor_client.close()
             except Exception as e:
                 logger.warning(f"Failed to close Neo4j client: {e}")
-            self._neo4j_client = None
+            self._falkor_client = None
             self._kg_service = None
             self._search_service.kg_service = None
             self._indexing_service.kg_service = None
 
     def clear_graph_clients(self) -> None:
         """Disable graph features by clearing Neo4j client and KG service."""
-        self._neo4j_client = None
+        self._falkor_client = None
         self._kg_service = None
         self._search_service.kg_service = None
         self._indexing_service.kg_service = None
@@ -226,7 +226,7 @@ class MemoryManager:
     @property
     def neo4j_client(self) -> Neo4jClient | None:
         """Shared Neo4j client for graph-backed subsystems, when configured."""
-        return self._neo4j_client
+        return self._falkor_client
 
     def _keyword_search(
         self,
@@ -911,9 +911,11 @@ class MemoryManager:
         """Get the Neo4j entity graph for visualization."""
         if self._kg_service:
             return await self._kg_service.get_entity_graph(limit=limit, project_id=project_id)
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_graph(limit=limit, project_id=project_id)
+                return await self._falkor_client.get_entity_graph(
+                    limit=limit, project_id=project_id
+                )
             except Exception as e:
                 logger.warning(f"Neo4j query failed: {e}")
                 return None
@@ -930,9 +932,9 @@ class MemoryManager:
                 entity_key,
                 project_id=project_id,
             )
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_neighbors(
+                return await self._falkor_client.get_entity_neighbors(
                     entity_key,
                     project_id=project_id,
                 )

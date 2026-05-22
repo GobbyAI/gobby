@@ -274,7 +274,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Get Neo4j knowledge graph entities and relationships."""
         if server.memory_manager is None or not getattr(
-            server.memory_manager, "_neo4j_client", None
+            server.memory_manager, "_falkor_client", None
         ):
             raise HTTPException(status_code=404, detail="Neo4j not configured")
         try:
@@ -298,7 +298,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Get neighbors for a single Neo4j entity."""
         if server.memory_manager is None or not getattr(
-            server.memory_manager, "_neo4j_client", None
+            server.memory_manager, "_falkor_client", None
         ):
             raise HTTPException(status_code=404, detail="Neo4j not configured")
         try:
