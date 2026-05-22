@@ -9,7 +9,7 @@ use crate::schema;
 
 const POSTGRES_DATABASE_URL_REF: &str = "keyring:gobby:postgres_database_url";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
-const BROKER_TIMEOUT: Duration = Duration::from_secs(1);
+const BROKER_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Deserialize)]
 struct BrokerDatabaseUrlResponse {
@@ -467,6 +467,20 @@ mod tests {
     }
 
     #[test]
+    fn broker_request_allows_cold_daemon_latency() {
+        let (daemon_url, request) = spawn_http_response_after(
+            http_response("200 OK", r#"{"database_url":"postgresql://broker/db"}"#),
+            Duration::from_millis(1100),
+        );
+
+        let resolved =
+            request_broker_database_url(&daemon_url, "token-123").expect("broker resolves");
+        let _ = request.join().expect("read request");
+
+        assert_eq!(resolved, "postgresql://broker/db");
+    }
+
+    #[test]
     fn broker_missing_token_fails() {
         let home = tempfile::tempdir().expect("temp home");
         let bootstrap_path = write_bootstrap(home.path(), 60887);
@@ -573,6 +587,13 @@ mod tests {
     }
 
     fn spawn_http_response(response: String) -> (String, thread::JoinHandle<String>) {
+        spawn_http_response_after(response, Duration::ZERO)
+    }
+
+    fn spawn_http_response_after(
+        response: String,
+        delay: Duration,
+    ) -> (String, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let addr = listener.local_addr().expect("local addr");
         let handle = thread::spawn(move || {
@@ -589,6 +610,7 @@ mod tests {
                     break;
                 }
             }
+            thread::sleep(delay);
             stream
                 .write_all(response.as_bytes())
                 .expect("write response");

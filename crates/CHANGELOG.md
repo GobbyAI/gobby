@@ -7,6 +7,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — gcode
+
+### Changed
+
+#### gcode
+
+- **More tolerant daemon-brokered DSN lookup** — `gcode` now gives the local daemon broker 3 seconds to return the PostgreSQL DSN, preventing cold daemon responses around 1 second from falling through to macOS Keychain prompts.
+- **Install guidance for stale binaries** — docs now call out older `gcode` binaries on `PATH`, since pre-0.8.1 installs bypass the daemon broker and can still trigger native Keychain authorization dialogs.
+
 ## [0.8.1] — gcode
 
 ### Changed

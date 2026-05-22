@@ -100,6 +100,9 @@ Gobby daemon broker for the DSN first and falls back to the native OS keyring
 when the broker is unavailable. The DSN is not written to a plaintext runtime file. The
 Gobby daemon process does not need to be running for normal index/search
 commands when keyring fallback is available.
+If macOS keeps asking for Keychain authorization, check `which -a gcode` and
+remove or de-prioritize stale binaries; older installs bypass daemon-brokered
+DSN resolution.
 
 ### With Gobby
 
