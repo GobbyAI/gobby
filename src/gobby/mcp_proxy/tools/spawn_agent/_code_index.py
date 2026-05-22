@@ -19,6 +19,8 @@ async def prepare_isolation_code_index(
         preflight = await ensure_isolation_code_index(
             cwd,
             database_url=getattr(daemon_config, "database_url", None),
+            daemon_bind_host=getattr(daemon_config, "bind_host", None),
+            daemon_port=getattr(daemon_config, "daemon_port", None),
         )
         env = getattr(preflight, "env", {})
         return None, env if isinstance(env, dict) else {}

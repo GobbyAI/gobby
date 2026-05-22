@@ -47,6 +47,7 @@ class TestPackCommand:
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
         (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
+        (fake_home / "local_cli_token").write_text("token\n")
         (fake_home / "session_transcripts").mkdir()
         (fake_home / "session_transcripts" / "1.txt").write_text("ts")
 
@@ -57,6 +58,7 @@ class TestPackCommand:
         assert "Pack contents (dry run):" in result.output
         assert "gobby/bootstrap.yaml" in result.output
         assert "gobby/gobby-hub.db" not in result.output
+        assert "gobby/local_cli_token" not in result.output
         assert "gobby/session_transcripts/" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
@@ -68,6 +70,7 @@ class TestPackCommand:
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
         (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
+        (fake_home / "local_cli_token").write_text("token\n")
 
         mock_home.return_value = fake_home
 
@@ -83,6 +86,7 @@ class TestPackCommand:
             assert "gobby/manifest.json" in names
             assert "gobby/bootstrap.yaml" in names
             assert "gobby/gobby-hub.db" not in names
+            assert "gobby/local_cli_token" not in names
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)

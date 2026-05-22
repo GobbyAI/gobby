@@ -14,8 +14,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from gobby.config.bootstrap import store_postgres_database_url
+from gobby.config.bootstrap import POSTGRES_DATABASE_URL_REF
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
+from gobby.config.local_cli_token import ensure_local_cli_token
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,8 @@ async def ensure_isolation_code_index(
     *,
     timeout: float = 120.0,
     database_url: str | None = None,
+    daemon_bind_host: str | None = None,
+    daemon_port: int | None = None,
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
@@ -60,6 +63,8 @@ async def ensure_isolation_code_index(
         workspace=workspace,
         gcode_bin=Path(gcode_bin),
         database_url=database_url,
+        daemon_bind_host=daemon_bind_host,
+        daemon_port=daemon_port,
         runtime_root=runtime_root,
     )
     gcode_command = result.wrapper_path or gcode_bin
@@ -103,6 +108,8 @@ def _prepare_gcode_runtime(
     workspace: Path,
     gcode_bin: Path,
     database_url: str | None,
+    daemon_bind_host: str | None,
+    daemon_port: int | None,
     runtime_root: Path | None,
 ) -> CodeIndexPreflightResult:
     if not database_url:
@@ -116,12 +123,14 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
-    database_url_ref = store_postgres_database_url(database_url)
+    ensure_local_cli_token(source_home)
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
             "hub_backend": "postgres",
-            "database_url_ref": database_url_ref,
+            "database_url_ref": POSTGRES_DATABASE_URL_REF,
+            "daemon_port": daemon_port or 60887,
+            "bind_host": daemon_bind_host or "localhost",
             "postgres_install_mode": "external",
         },
     )
@@ -197,7 +206,7 @@ def _prepend_path(path: Path) -> str:
 
 
 def _link_runtime_assets(source_home: Path, runtime_home: Path) -> None:
-    for name in ("machine_id", ".secret_salt", "models", "services"):
+    for name in ("machine_id", ".secret_salt", "local_cli_token", "models", "services"):
         source = source_home / name
         target = runtime_home / name
         if target.exists() or target.is_symlink() or not source.exists():
