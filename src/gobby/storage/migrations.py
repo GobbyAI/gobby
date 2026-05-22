@@ -422,6 +422,50 @@ def _version_set(txn: _TransactionLike, table: str) -> set[int]:
     return {int(_row_value(row, "version")) for row in rows}
 
 
+def migrate_neo4j_config_to_falkordb(db: LocalDatabase) -> None:
+    """Move backend-neutral Neo4j config to FalkorDB keys and drop legacy connection state."""
+    tunable_keys = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
+    legacy_auth_secret: str | None = None
+    store = db.fetchone(
+        "SELECT value FROM config_store WHERE key = ?",
+        ("databases.neo4j.auth",),
+    )
+    if store is not None:
+        import json
+
+        value = json.loads(store["value"])
+        if isinstance(value, str) and value.startswith("$secret:"):
+            legacy_auth_secret = value.removeprefix("$secret:")
+
+    with db.transaction():
+        for suffix in tunable_keys:
+            row = db.fetchone(
+                "SELECT value, source FROM config_store WHERE key = ?",
+                (f"databases.neo4j.{suffix}",),
+            )
+            if row is None:
+                continue
+            db.execute(
+                """INSERT INTO config_store (key, value, source, updated_at)
+                   VALUES (?, ?, ?, datetime('now'))
+                   ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       source = excluded.source,
+                       updated_at = excluded.updated_at""",
+                (f"databases.falkordb.{suffix}", row["value"], row["source"]),
+            )
+
+        db.execute("DELETE FROM config_store WHERE key LIKE ?", ("databases.neo4j.%",))
+
+        if legacy_auth_secret is not None:
+            refs = db.fetchall(
+                "SELECT 1 FROM config_store WHERE value = ? LIMIT 1",
+                (f'"$secret:{legacy_auth_secret}"',),
+            )
+            if not refs:
+                db.execute("DELETE FROM secrets WHERE name = ?", (legacy_auth_secret,))
+
+
 def get_current_version(db: LocalDatabase) -> int:
     """Get current schema version from either bookkeeping table."""
     for table in ("schema_migrations", "schema_version"):

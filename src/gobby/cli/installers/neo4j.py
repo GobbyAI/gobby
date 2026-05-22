@@ -36,7 +36,9 @@ def _resolve_neo4j_password(password: str | None = None) -> str:
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap = load_bootstrap()
-        return bootstrap.neo4j_password
+        password = getattr(bootstrap, "neo4j_password", None)
+        if isinstance(password, str):
+            return password
     except (OSError, ValueError, AttributeError):
         pass
     return os.environ.get("GOBBY_NEO4J_PASSWORD", "gobbyneo4j")

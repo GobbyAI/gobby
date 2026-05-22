@@ -2,7 +2,7 @@
 Persistence configuration module.
 
 Contains storage and sync-related Pydantic config models:
-- DatabasesConfig: Shared database connections (Qdrant, Neo4j)
+- DatabasesConfig: Shared database connections (Qdrant, FalkorDB, Neo4j)
 - EmbeddingsConfig: Embedding model settings (shared by memory, tools, code index)
 - MemoryConfig: Memory-specific behavior (crossrefs, decay, search)
 - MemoryBackupConfig: Memory file sync settings (debounce, export path)
@@ -26,8 +26,11 @@ __all__ = [
     "MemoryStaleAuditConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
+    "FalkorConfig",
     "Neo4jConfig",
     "QdrantConfig",
+    "is_falkordb_enabled",
+    "validate_falkordb_password",
 ]
 
 
@@ -109,6 +112,66 @@ class Neo4jConfig(BaseModel):
         return v
 
 
+def validate_falkordb_password(value: str) -> str:
+    """Validate a FalkorDB Redis requirepass value used by Docker installs."""
+    if value == "":
+        raise ValueError("FalkorDB password must not be empty")
+    if any(char.isspace() for char in value):
+        raise ValueError("FalkorDB password must not contain whitespace")
+    if any(ord(char) < 33 or ord(char) > 126 for char in value):
+        raise ValueError("FalkorDB password must contain only printable ASCII characters")
+    return value
+
+
+class FalkorConfig(BaseModel):
+    """FalkorDB graph database connection configuration."""
+
+    model_config = {"extra": "ignore"}
+
+    host: str | None = Field(
+        default="127.0.0.1",
+        description="FalkorDB host for Redis protocol connections.",
+    )
+    port: int = Field(
+        default=16379,
+        description="FalkorDB Redis protocol port mapped by Docker Compose.",
+    )
+    requirepass: str | None = Field(
+        default=None,
+        description="FalkorDB Redis requirepass value or secret reference.",
+    )
+    graph_search: bool = Field(
+        default=True,
+        description="Enable graph-augmented search (entity vector search merged via RRF)",
+    )
+    graph_min_score: float = Field(
+        default=0.5,
+        description="Minimum entity vector similarity score for graph search (0.0-1.0)",
+    )
+    rrf_k: int = Field(
+        default=60,
+        description="RRF constant for merging Qdrant and graph results.",
+    )
+    graph_name: str = Field(
+        default="gobby",
+        description="Default FalkorDB graph name.",
+    )
+
+    @field_validator("requirepass")
+    @classmethod
+    def validate_requirepass(cls, value: str | None) -> str | None:
+        if value is None or value.startswith("$secret:"):
+            return value
+        return validate_falkordb_password(value)
+
+    @field_validator("graph_min_score")
+    @classmethod
+    def validate_score(cls, value: float) -> float:
+        if not (0.0 <= value <= 1.0):
+            raise ValueError("Value must be between 0.0 and 1.0")
+        return value
+
+
 class DatabasesConfig(BaseModel):
     """Shared database connection configuration for Qdrant and Neo4j."""
 
@@ -122,6 +185,15 @@ class DatabasesConfig(BaseModel):
         default_factory=Neo4jConfig,
         description="Neo4j graph database connection",
     )
+    falkordb: FalkorConfig = Field(
+        default_factory=FalkorConfig,
+        description="FalkorDB graph database connection",
+    )
+
+
+def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
+    """Return whether FalkorDB has enough connection config to start."""
+    return bool(databases.falkordb.host and databases.falkordb.port)
 
 
 # ---------------------------------------------------------------------------

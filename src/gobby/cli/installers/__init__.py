@@ -9,6 +9,7 @@ from .claude import install_claude, uninstall_claude
 from .codex import install_codex, install_codex_notify, uninstall_codex, uninstall_codex_notify
 from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
+from .falkor import install_falkordb, uninstall_falkordb
 from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
 from .mcp_config import install_default_mcp_servers
@@ -55,6 +56,9 @@ __all__ = [
     # Neo4j
     "install_neo4j",
     "uninstall_neo4j",
+    # FalkorDB
+    "install_falkordb",
+    "uninstall_falkordb",
     # Qdrant
     "install_qdrant",
     "uninstall_qdrant",

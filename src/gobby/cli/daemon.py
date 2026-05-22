@@ -77,12 +77,13 @@ def _services_start(gobby_home: Path) -> None:
         bootstrap = load_bootstrap()
         config = load_config()
 
-        # Neo4j auth — read password directly from bootstrap
-        env["GOBBY_NEO4J_PASSWORD"] = bootstrap.neo4j_password
+        from gobby.config.persistence import is_falkordb_enabled
+
+        env["GOBBY_FALKORDB_PASSWORD"] = bootstrap.falkordb_password
 
         # Determine which profiles to start
-        if config.databases.neo4j.url:
-            profiles.append("neo4j")
+        if is_falkordb_enabled(config.databases):
+            profiles.append("falkordb")
         if config.databases.qdrant.url:
             profiles.append("qdrant")
     except Exception as e:
