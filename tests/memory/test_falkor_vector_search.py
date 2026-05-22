@@ -72,8 +72,10 @@ class TestEnsureVectorIndex:
 
         client.query.assert_called_once()
         cypher = client.query.call_args.args[0]
+        params = client.query.call_args.args[1]
         assert "CREATE VECTOR INDEX FOR (n:_Entity) ON (n.embedding)" in cypher
-        assert "OPTIONS {dimension: 768, similarityFunction: 'cosine'}" in cypher
+        assert "OPTIONS {dimension: $dim, similarityFunction: 'cosine'}" in cypher
+        assert params == {"dim": 768}
         assert "IF NOT EXISTS" not in cypher
         assert "1536" not in cypher
         assert "vector.dimensions" not in cypher
@@ -87,8 +89,9 @@ class TestEnsureVectorIndex:
 
         await client.ensure_vector_index(dimension=embedding_config.dim)
 
-        cypher = client.query.call_args.args[0]
-        assert "dimension: 1024" in cypher
+        cypher, params = client.query.call_args.args
+        assert "dimension: $dim" in cypher
+        assert params == {"dim": 1024}
 
     async def test_ensure_vector_index_validates_index_name(
         self, monkeypatch: pytest.MonkeyPatch

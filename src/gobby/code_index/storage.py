@@ -711,7 +711,7 @@ class CodeIndexStorage:
     def get_file_symbol_tree(self, project_id: str, limit: int = 200) -> dict[str, Any]:
         """Build file→symbol containment graph from indexed hub rows.
 
-        Fallback for when Neo4j is unavailable. No call/import edges,
+        Fallback for when the graph backend is unavailable. No call/import edges,
         but still browsable as a file-to-symbol tree.
         """
         file_rows = self.db.fetchall(

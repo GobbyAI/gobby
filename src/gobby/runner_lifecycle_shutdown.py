@@ -292,17 +292,28 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.warning(f"HookManager shutdown failed: {e}")
 
-    if runner.memory_manager:
+    memory_manager = getattr(runner, "memory_manager", None)
+    if memory_manager:
         try:
-            await asyncio.wait_for(runner.memory_manager.close(), timeout=5.0)
+            await asyncio.wait_for(memory_manager.close(), timeout=5.0)
         except TimeoutError:
             logger.warning("MemoryManager close timed out")
         except Exception as e:
             logger.warning(f"MemoryManager close failed: {e}")
 
-    if runner.vector_store:
+    code_indexer = getattr(runner, "code_indexer", None)
+    if code_indexer:
         try:
-            await asyncio.wait_for(runner.vector_store.close(), timeout=5.0)
+            await asyncio.wait_for(code_indexer.close_graph_client(), timeout=5.0)
+        except TimeoutError:
+            logger.warning("CodeIndexContext graph close timed out")
+        except Exception as e:
+            logger.warning(f"CodeIndexContext graph close failed: {e}")
+
+    vector_store = getattr(runner, "vector_store", None)
+    if vector_store:
+        try:
+            await asyncio.wait_for(vector_store.close(), timeout=5.0)
         except TimeoutError:
             logger.warning("VectorStore close timed out")
         except Exception as e:

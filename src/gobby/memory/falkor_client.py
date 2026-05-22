@@ -1,4 +1,4 @@
-"""Async FalkorDB client for graph memory operations."""
+"""Async FalkorDB client for memory and code graph operations."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 import redis.exceptions
 
 logger = logging.getLogger(__name__)
+
 _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR = 5
 _VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT = 200
 _CONSTRAINT_POLL_INTERVAL_SECONDS = 0.25
@@ -57,7 +58,7 @@ def _raise_mapped_response_error(exc: redis.exceptions.ResponseError) -> NoRetur
     raise FalkorQueryError(message=str(exc), response_body=exc.args) from exc
 
 
-def _is_already_exists_error(exc: FalkorQueryError | redis.exceptions.ResponseError) -> bool:
+def _is_already_exists_error(exc: BaseException) -> bool:
     message = str(exc).lower()
     return (
         "already indexed" in message
@@ -82,7 +83,7 @@ def _header_name(column: Any) -> str:
     if isinstance(column, (str, bytes)):
         return _as_string(column)
     if isinstance(column, dict):
-        for key in ("name", "alias", "column"):
+        for key in ("name", "alias", "column", "property"):
             if key in column:
                 return _as_string(column[key])
     if _is_non_text_sequence(column):
@@ -91,7 +92,7 @@ def _header_name(column: Any) -> str:
             return _as_string(values[1])
         if values:
             return _as_string(values[0])
-    return _as_string(column)
+    return _as_string(getattr(column, "name", column))
 
 
 def _constraint_properties(value: Any) -> list[str]:
@@ -114,8 +115,14 @@ def _normalize_relationship_type(rel_type: str) -> str:
     return normalized
 
 
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 class FalkorClient:
-    """Async FalkorDB client for the knowledge graph."""
+    """Async FalkorDB client for graph operations."""
 
     def __init__(
         self,
@@ -125,7 +132,10 @@ class FalkorClient:
         graph_name: str = "gobby_kg",
         timeout: float = 15.0,
     ) -> None:
-        from falkordb.asyncio import FalkorDB
+        try:
+            from falkordb.asyncio import FalkorDB
+        except ModuleNotFoundError as exc:
+            raise FalkorConnectionError("falkordb package is not installed") from exc
 
         self._host = host
         self._port = port
@@ -144,18 +154,26 @@ class FalkorClient:
 
     async def close(self) -> None:
         """Close the underlying FalkorDB connection."""
-        close = getattr(self._db, "aclose", None)
-        if close is None:
-            connection = getattr(self._db, "connection", None)
-            close = getattr(connection, "aclose", None)
-        if close is None:
+        targets = (
+            getattr(self, "_db", None),
+            getattr(getattr(self, "_db", None), "connection", None),
+            getattr(self, "_client", None),
+        )
+        for target in targets:
+            if target is None:
+                continue
+            close = getattr(target, "aclose", None) or getattr(target, "close", None)
+            if close is None:
+                continue
+            result = close()
+            if inspect.isawaitable(result):
+                await result
             return
-        result = close()
-        if inspect.isawaitable(result):
-            await result
 
     async def query(
-        self, cypher: str, params: dict[str, Any] | None = None
+        self,
+        cypher: str,
+        params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a Cypher query and return rows as flat dictionaries."""
         try:
@@ -169,14 +187,29 @@ class FalkorClient:
 
     @staticmethod
     def _parse_falkor_result(result: Any) -> list[dict[str, Any]]:
-        """Parse a FalkorDB query result into Neo4jClient-compatible row dicts."""
+        """Parse a FalkorDB query result into flat row dictionaries."""
+        if result is None:
+            return []
+        if isinstance(result, list):
+            if not result:
+                return []
+            if isinstance(result[0], dict):
+                return [dict(row) for row in result]
+            if len(result) < 2:
+                return [{"value": value} for value in result]
+
         header = getattr(result, "header", None)
         records = getattr(result, "result_set", None)
+        if records is None:
+            records = getattr(result, "records", None)
+        if records is None:
+            records = getattr(result, "rows", None)
 
         if header is None and _is_non_text_sequence(result):
-            if len(result) >= 2:
-                header = result[0]
-                records = result[1]
+            values = list(result)
+            if len(values) >= 2:
+                header = values[0]
+                records = values[1]
             else:
                 header = []
                 records = []
@@ -188,10 +221,14 @@ class FalkorClient:
                 rows.append(dict(record))
                 continue
 
+            values = getattr(record, "values", record)
+            if callable(values):
+                values = list(values())
+
             row: dict[str, Any] = {}
-            if _is_non_text_sequence(record):
+            if _is_non_text_sequence(values):
                 for index, field in enumerate(fields):
-                    row[field] = record[index] if index < len(record) else None
+                    row[field] = values[index] if index < len(values) else None
             rows.append(row)
         return rows
 
@@ -271,7 +308,7 @@ class FalkorClient:
         _validate_cypher_identifier(prop, "property name")
 
         try:
-            await self._db.execute_command(
+            await self._execute_command(
                 "GRAPH.CONSTRAINT",
                 "CREATE",
                 self._graph_name,
@@ -287,27 +324,44 @@ class FalkorClient:
         except redis.exceptions.ResponseError as exc:
             if not _is_already_exists_error(exc):
                 _raise_mapped_response_error(exc)
+        except Exception as exc:
+            if not _is_already_exists_error(exc):
+                raise
 
         await self._wait_for_unique_constraint(label, prop)
 
+    async def _execute_command(self, *parts: Any) -> Any:
+        targets = (
+            getattr(self, "_db", None),
+            getattr(getattr(self, "_db", None), "connection", None),
+            getattr(self, "_redis", None),
+            getattr(self, "_client", None),
+        )
+        for target in targets:
+            execute = getattr(target, "execute_command", None)
+            if execute is None:
+                continue
+            return await _maybe_await(execute(*parts))
+        raise FalkorConnectionError("FalkorDB client does not expose execute_command")
+
     async def _wait_for_unique_constraint(self, label: str, prop: str) -> None:
         deadline = time.monotonic() + _CONSTRAINT_READY_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
+        while True:
             rows = await self.query("CALL db.constraints()")
             status = self._matching_constraint_status(rows, label, prop)
             if status == "OPERATIONAL":
                 return
             if status == "FAILED":
                 raise FalkorQueryError(
-                    f"FalkorDB unique constraint failed for {label}.{prop}",
+                    f"FalkorDB unique constraint failed with status FAILED for {label}.{prop}",
                     response_body=rows,
                 )
+            if time.monotonic() >= deadline:
+                raise FalkorQueryError(
+                    f"Timed out waiting for FalkorDB unique constraint {label}.{prop}",
+                    response_body={"label": label, "property": prop},
+                )
             await asyncio.sleep(_CONSTRAINT_POLL_INTERVAL_SECONDS)
-
-        raise FalkorQueryError(
-            f"Timed out waiting for FalkorDB unique constraint {label}.{prop}",
-            response_body={"label": label, "property": prop},
-        )
 
     @staticmethod
     def _matching_constraint_status(
@@ -545,10 +599,10 @@ class FalkorClient:
         _validate_cypher_identifier(similarity, "similarity function")
         cypher = (
             "CREATE VECTOR INDEX FOR (n:_Entity) ON (n.embedding) "
-            f"OPTIONS {{dimension: {int(dimension)}, similarityFunction: '{similarity}'}}"
+            f"OPTIONS {{dimension: $dim, similarityFunction: '{similarity}'}}"
         )
         try:
-            await self.query(cypher)
+            await self.query(cypher, {"dim": int(dimension)})
         except FalkorQueryError as exc:
             if not _is_already_exists_error(exc):
                 raise
