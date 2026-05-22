@@ -79,6 +79,12 @@ def validate_falkordb_password(value: str) -> str:
     return value
 
 
+def _validate_optional_falkordb_password(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return validate_falkordb_password(value)
+
+
 class FalkorConfig(BaseModel):
     """FalkorDB graph database connection configuration."""
 
@@ -131,9 +137,7 @@ class FalkorConfig(BaseModel):
     @field_validator("requirepass")
     @classmethod
     def validate_requirepass(cls, value: str | None) -> str | None:
-        if value is not None:
-            return validate_falkordb_password(value)
-        return value
+        return _validate_optional_falkordb_password(value)
 
     @field_validator("graph_min_score")
     @classmethod
