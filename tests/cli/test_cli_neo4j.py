@@ -1,65 +1,77 @@
-"""Tests for --neo4j flag in CLI and Neo4j service utilities."""
+"""Tests for legacy --neo4j CLI flags and FalkorDB service utilities."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from gobby.utils.status import format_status_message
 
 pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# services.py — is_neo4j_installed / get_neo4j_status
+# services.py — is_falkordb_installed / get_falkordb_status
 # ---------------------------------------------------------------------------
 
 
-class TestIsNeo4jInstalled:
-    """Tests for is_neo4j_installed."""
-
-    def test_returns_true_when_service_dir_exists(self, tmp_path: Path) -> None:
-        from gobby.cli.services import is_neo4j_installed
-
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
-
-        assert is_neo4j_installed(gobby_home=tmp_path) is True
-
-    def test_returns_false_when_service_dir_missing(self, tmp_path: Path) -> None:
-        from gobby.cli.services import is_neo4j_installed
-
-        assert is_neo4j_installed(gobby_home=tmp_path) is False
+def _seed_falkordb_config(db_path: Path) -> None:
+    db = LocalDatabase(db_path)
+    try:
+        run_migrations(db)
+        store = ConfigStore(db)
+        store.set("databases.falkordb.host", "localhost", source="test")
+        store.set("databases.falkordb.port", 16379, source="test")
+    finally:
+        db.close()
 
 
-class TestGetNeo4jStatus:
-    """Tests for get_neo4j_status."""
+class TestIsFalkorDBInstalled:
+    """Tests for is_falkordb_installed."""
+
+    def test_returns_true_when_config_has_host_and_port(self, tmp_path: Path) -> None:
+        from gobby.cli.services import is_falkordb_installed
+
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+
+        assert is_falkordb_installed(gobby_home=tmp_path) is True
+
+    def test_returns_false_when_config_missing(self, tmp_path: Path) -> None:
+        from gobby.cli.services import is_falkordb_installed
+
+        assert is_falkordb_installed(gobby_home=tmp_path) is False
+
+
+class TestGetFalkorDBStatus:
+    """Tests for get_falkordb_status."""
 
     @pytest.mark.asyncio
     async def test_returns_status_dict(self, tmp_path: Path) -> None:
-        from gobby.cli.services import get_neo4j_status
+        from gobby.cli.services import get_falkordb_status
 
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
+        _seed_falkordb_config(tmp_path / "gobby-hub.db")
 
-        with patch("gobby.cli.services.is_neo4j_healthy", return_value=False):
-            result = await get_neo4j_status(
+        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=False)):
+            result = await get_falkordb_status(
                 gobby_home=tmp_path,
-                neo4j_url="http://localhost:8474",
+                password="secret",
             )
 
         assert result["installed"] is True
         assert result["healthy"] is False
-        assert result["url"] == "http://localhost:8474"
+        assert result["url"] == "redis://localhost:16379"
 
     @pytest.mark.asyncio
     async def test_returns_not_installed(self, tmp_path: Path) -> None:
-        from gobby.cli.services import get_neo4j_status
+        from gobby.cli.services import get_falkordb_status
 
-        with patch("gobby.cli.services.is_neo4j_healthy", return_value=False):
-            result = await get_neo4j_status(gobby_home=tmp_path)
+        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=False)):
+            result = await get_falkordb_status(gobby_home=tmp_path)
 
         assert result["installed"] is False
 

@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from gobby.cli.services import is_qdrant_healthy
+from gobby.cli.services import is_falkordb_healthy, is_falkordb_installed, is_qdrant_healthy
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -315,27 +315,37 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
-            # Neo4j knowledge graph status
+            # FalkorDB knowledge graph status
             try:
-                from gobby.cli.services import is_neo4j_healthy, is_neo4j_installed
-
-                neo4j_client = getattr(server.memory_manager, "_neo4j_client", None)
-                neo4j_url = neo4j_client.base_url if neo4j_client else None
-                installed = is_neo4j_installed()
-                healthy = await is_neo4j_healthy(neo4j_url) if neo4j_url else False
-                memory_stats["neo4j"] = {
-                    "configured": neo4j_client is not None,
+                services = getattr(server, "services", None)
+                daemon_config = getattr(services, "config", None) if services is not None else None
+                databases = (
+                    getattr(daemon_config, "databases", None) if daemon_config is not None else None
+                )
+                falkordb = getattr(databases, "falkordb", None) if databases is not None else None
+                host = getattr(falkordb, "host", None) if falkordb is not None else None
+                port = getattr(falkordb, "port", None) if falkordb is not None else None
+                password = getattr(falkordb, "requirepass", None) if falkordb is not None else None
+                falkor_client = getattr(server.memory_manager, "_falkor_client", None)
+                installed = is_falkordb_installed(db=server.services.database)
+                healthy = await is_falkordb_healthy(host, port, password) if installed else False
+                memory_stats["falkordb"] = {
+                    "configured": falkor_client is not None or bool(password),
                     "installed": installed,
                     "healthy": healthy,
-                    "url": neo4j_url,
+                    "url": f"redis://{host}:{port}" if host and port else None,
                 }
             except Exception as e:
                 logger.warning(
-                    "Failed to check Neo4j status: %s: %s",
+                    "Failed to check FalkorDB status: %s: %s",
                     type(e).__name__,
                     e,
                 )
-                memory_stats["neo4j"] = {"configured": False, "installed": False, "healthy": False}
+                memory_stats["falkordb"] = {
+                    "configured": False,
+                    "installed": False,
+                    "healthy": False,
+                }
 
         # Get pipeline execution statistics
         pipeline_stats: dict[str, Any] = {

@@ -1,11 +1,12 @@
 """
-Service lifecycle utilities for Qdrant, Neo4j, and embedding providers.
+Service lifecycle utilities for Qdrant, FalkorDB, and embedding providers.
 
 Provides status checks for Docker-based services plus local embedding
 readiness helpers for managed local dependencies such as LM Studio.
 """
 
 import asyncio
+import importlib
 import ipaddress
 import logging
 import shutil
@@ -16,6 +17,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+from gobby.cli.utils import get_gobby_home
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -93,63 +99,124 @@ async def get_qdrant_status(
 
 
 # ---------------------------------------------------------------------------
-# Neo4j
+# FalkorDB
 # ---------------------------------------------------------------------------
 
 
-def is_neo4j_installed(*, gobby_home: Path | None = None) -> bool:
-    """Check if Neo4j services are installed locally.
+def is_falkordb_installed(
+    *,
+    db: HubDatabase | None = None,
+    gobby_home: Path | None = None,
+) -> bool:
+    """True if the installer has recorded FalkorDB host/port in config_store.
 
-    Checks for the presence of ~/.gobby/services/neo4j/ directory.
+    Source of truth: presence of both `databases.falkordb.host` and
+    `databases.falkordb.port`. When `db` is omitted, resolve the local DB from
+    the caller's Gobby home through the FalkorDB installer resolver.
     """
-    home = gobby_home or Path("~/.gobby").expanduser()
-    return (home / "services" / "neo4j").exists()
+    close_db = False
+    if db is None:
+        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
 
+        home = gobby_home if gobby_home is not None else get_gobby_home()
+        db = LocalDatabase(_resolve_falkordb_db_path(home))
+        close_db = True
 
-async def is_neo4j_healthy(url: str | None) -> bool:
-    """Check if a Neo4j instance is reachable and healthy.
-
-    Sends a GET request to the Neo4j HTTP endpoint with a short timeout.
-    Returns False if URL is None, unreachable, or returns 5xx.
-    """
-    if not url:
-        return False
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=5)
-            if resp.status_code >= 500:
-                logger.debug("Neo4j health check failed: %s returned %s", url, resp.status_code)
-                return False
-            return True
-    except httpx.HTTPError as e:
+        store = ConfigStore(db)
+        return (
+            store.get("databases.falkordb.host") is not None
+            and store.get("databases.falkordb.port") is not None
+        )
+    except Exception as e:
         logger.debug(
-            "Neo4j health check failed: %s unreachable: %s: %s",
-            url,
+            "FalkorDB install check failed: %s: %s",
             type(e).__name__,
             e,
         )
         return False
+    finally:
+        if close_db:
+            db.close()
 
 
-async def get_neo4j_status(
+async def is_falkordb_healthy(
+    host: str | None,
+    port: int | None,
+    password: str | None,
+) -> bool:
+    """PING the FalkorDB host/port; return True on PONG."""
+    if not host or not port:
+        return False
+
+    client: Any | None = None
+    try:
+        redis = importlib.import_module("redis.asyncio")
+        client = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
+        return bool(await client.ping())
+    except Exception as e:
+        logger.debug(
+            "FalkorDB health check failed: %s:%s unreachable: %s: %s",
+            host,
+            port,
+            type(e).__name__,
+            e,
+        )
+        return False
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+
+def _falkordb_config_values(
+    db: HubDatabase,
+) -> tuple[str | None, int | None]:
+    store = ConfigStore(db)
+    host = store.get("databases.falkordb.host")
+    port = store.get("databases.falkordb.port")
+    return (
+        host if isinstance(host, str) else None,
+        port if isinstance(port, int) else None,
+    )
+
+
+async def get_falkordb_status(
     *,
+    db: HubDatabase | None = None,
     gobby_home: Path | None = None,
-    neo4j_url: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    password: str | None = None,
 ) -> dict[str, Any]:
-    """Get comprehensive Neo4j status.
+    """Get FalkorDB installation and live health status."""
+    close_db = False
+    if db is None:
+        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
 
-    Returns dict with:
-        installed: bool - service directory exists
-        healthy: bool - API is reachable
-        url: str | None - configured URL
-    """
-    installed = is_neo4j_installed(gobby_home=gobby_home)
-    healthy = await is_neo4j_healthy(neo4j_url) if installed else False
+        home = gobby_home if gobby_home is not None else get_gobby_home()
+        db = LocalDatabase(_resolve_falkordb_db_path(home))
+        close_db = True
+
+    try:
+        installed = is_falkordb_installed(db=db)
+        configured_host, configured_port = (
+            _falkordb_config_values(db) if installed else (None, None)
+        )
+    finally:
+        if close_db:
+            db.close()
+
+    status_host = host if host is not None else configured_host
+    status_port = port if port is not None else configured_port
+    healthy = await is_falkordb_healthy(status_host, status_port, password) if installed else False
 
     return {
         "installed": installed,
         "healthy": healthy,
-        "url": neo4j_url,
+        "url": f"redis://{status_host}:{status_port}" if status_host and status_port else None,
     }
 
 
