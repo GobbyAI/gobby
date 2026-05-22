@@ -44,8 +44,15 @@ class KnowledgeGraphWriter:
         async with self._graph_schema_lock:
             if self._graph_schema_ensured:
                 return
-            await self._falkor.ensure_memory_graph_schema()
-            self._graph_schema_ensured = True
+            try:
+                await self._falkor.ensure_memory_graph_schema()
+                self._graph_schema_ensured = True
+            except FalkorConnectionError:
+                logger.debug("FalkorDB unreachable during knowledge-graph schema creation")
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to ensure knowledge-graph schema: {e}")
+                raise
 
     async def merge_entity(self, entity: _GraphEntity) -> None:
         """Merge a normalized entity node."""

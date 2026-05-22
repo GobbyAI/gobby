@@ -212,6 +212,7 @@ def test_postgres_backup_command_invokes_verified_backup_helper(
             "sha256s_path": str(tmp_path / "backup/SHA256SUMS"),
             "dump_sha256": "a" * 64,
             "verified": True,
+            "sha256_verified": True,
         }
 
     monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
@@ -224,6 +225,8 @@ def test_postgres_backup_command_invokes_verified_backup_helper(
     assert calls == [{"output_dir": tmp_path / "backup", "gobby_home": tmp_path}]
     assert "PostgreSQL backup created:" in result.output
     assert "Verified: pg_restore --list" in result.output
+    assert "SHA256SUMS:" in result.output
+    assert "Verified: SHA256SUMS" in result.output
 
 
 def test_postgres_restore_command_refuses_when_daemon_is_running(
@@ -258,6 +261,8 @@ def test_postgres_restore_command_invokes_restore_helper(
         calls.append({"source": source, **kwargs})
         return {
             "database_url": "postgresql://gobby:****@localhost:60891/gobby",
+            "dump_sha256": "b" * 64,
+            "sha256_verified": True,
             "probes": {
                 "pg_search_present": True,
                 "pgaudit_present": True,
@@ -274,6 +279,7 @@ def test_postgres_restore_command_invokes_restore_helper(
     assert result.exit_code == 0
     assert calls == [{"source": dump, "clean": True, "gobby_home": tmp_path}]
     assert "PostgreSQL restore completed." in result.output
+    assert "Verified: SHA256SUMS" in result.output
     assert "pg_search: yes" in result.output
 
 

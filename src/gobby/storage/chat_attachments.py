@@ -91,21 +91,35 @@ class ChatAttachmentRecord:
         return bool(self.conversation_id or self.message_id or self.target_session_id)
 
 
-def _row_to_record(row: Mapping[str, Any]) -> ChatAttachmentRecord:
+def _optional_row_str(row: Mapping[str, object], key: str) -> str | None:
+    value = row[key]
+    return None if value is None else str(value)
+
+
+def _row_int(row: Mapping[str, object], key: str) -> int:
+    value = row[key]
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    raise TypeError(f"{key} must be int-compatible, got {type(value).__name__}")
+
+
+def _row_to_record(row: Mapping[str, object]) -> ChatAttachmentRecord:
     return ChatAttachmentRecord(
         id=str(row["id"]),
         project_id=str(row["project_id"]),
-        draft_id=row["draft_id"],
-        conversation_id=row["conversation_id"],
-        message_id=row["message_id"],
-        target_session_id=row["target_session_id"],
+        draft_id=_optional_row_str(row, "draft_id"),
+        conversation_id=_optional_row_str(row, "conversation_id"),
+        message_id=_optional_row_str(row, "message_id"),
+        target_session_id=_optional_row_str(row, "target_session_id"),
         filename=str(row["filename"]),
         mime_type=str(row["mime_type"]),
-        size_bytes=int(row["size_bytes"]),
+        size_bytes=_row_int(row, "size_bytes"),
         local_path=str(row["local_path"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
-        bound_at=row["bound_at"],
+        bound_at=_optional_row_str(row, "bound_at"),
     )
 
 
