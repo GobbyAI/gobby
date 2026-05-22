@@ -41,6 +41,8 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--reset-expansion-output" in result.output
     assert "--max-active-agents" in result.output
     assert "--max-retries" in result.output
+    assert "--planning-seed-state" in result.output
+    assert "--completed-plan-review-rounds" in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -90,6 +92,10 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "4",
                 "--max-retries",
                 "0",
+                "--planning-seed-state",
+                "approved",
+                "--completed-plan-review-rounds",
+                "2",
             ],
         )
 
@@ -121,6 +127,8 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.reset_expansion_output is True
     assert opts.max_active_agents == 4
     assert opts.max_retries == 0
+    assert opts.planning_seed_state == "approved"
+    assert opts.completed_plan_review_rounds == 2
     assert call.kwargs == {
         "db": open_db.return_value,
         "project_id": "project-1",
@@ -249,6 +257,8 @@ def test_build_payload_includes_max_retries_zero() -> None:
     payload = _build_payload(BuildOptions(max_retries=0), "#42")
 
     assert payload["max_retries"] == 0
+    assert payload["planning_seed_state"] == "drafted"
+    assert payload["completed_plan_review_rounds"] == 0
 
 
 def test_daemon_profile_error_detection_prefers_structured_type() -> None:
@@ -338,6 +348,9 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
         result = CliRunner().invoke(cli, ["build", "resume"])
 
     assert result.exit_code == 0
+    assert "Dispatcher cron: enabled" in result.output
+    assert "Project: project-1" in result.output
+    assert "Event: gobby build resume" in result.output
     build_resume.assert_called_once_with(db=open_db.return_value, project_id="project-1")
     tick.assert_called_once_with(open_db.return_value, "project-1")
     run.assert_called_once()

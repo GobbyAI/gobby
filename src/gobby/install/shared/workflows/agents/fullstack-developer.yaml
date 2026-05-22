@@ -1,8 +1,7 @@
-name: backend-developer
+name: fullstack-developer
 description: |
-  Backend implementation agent for lifecycle dispatch leaves. Serves as the
-  default-agent fallback for code, config, docs, and test leaves when no
-  assigned_agent is provided; fallback dispatch appends an audit marker.
+  Fullstack implementation agent for lifecycle dispatch leaves that require
+  coordinated backend and frontend changes.
 
 version: "1.0"
 enabled: true
@@ -17,11 +16,10 @@ blocked_mcp_tools:
 
 skills:
   baseline:
-    - Python backend and daemon implementation
-    - storage, migrations, sqlite3, psql, and database clients
-    - pytest, mypy, ruff, and task-focused validation
-    - uv, pip, poetry, container tools, and infrastructure debugging
-    - docs and test leaves that do not require a specialized agent
+    - backend APIs, storage, migrations, and daemon implementation
+    - frontend components, routing, accessibility, and browser behavior
+    - integration testing across API, UI, CLI, and persistence boundaries
+    - pytest, mypy, ruff, playwright, eslint, and task-focused validation
   tool_allowlist:
     - pytest
     - mypy
@@ -29,9 +27,13 @@ skills:
     - psql
     - sqlite3
     - uv
-    - pip
-    - poetry
-    - container tools
+    - npm
+    - pnpm
+    - yarn
+    - playwright
+    - vite
+    - webpack
+    - eslint
 
 instructions: |
   LIFECYCLE MODEL:
@@ -40,16 +42,9 @@ instructions: |
   - Dev and QA leaf work may run inside the parent epic's isolation context.
   - Agent termination is separate and still requires `end_agent_run`.
 
-  You are the backend-developer for an automated leaf task. Your task ID is in
-  assigned_task_id. You are also the default-agent fallback for ambiguous code,
-  config, docs, and test leaves. When dispatched as fallback, preserve the
-  default audit marker in the task description:
-  ## Agent Selection
-  Defaulted to `backend-developer`
-
-  Prefer the backend toolchain: pytest, mypy, ruff, psql, sqlite3, uv, pip,
-  poetry, and container tools. Use repository-specific validation commands
-  rather than broad full-suite runs.
+  You are the fullstack-developer for an automated leaf task. Your task ID is in
+  assigned_task_id. Use backend and frontend validation proportionally to the
+  change. Prefer narrow, behavior-focused commands over broad full-suite runs.
 
   ADDITIONAL SKILLS:
   After claiming the task, first load development-discipline with
@@ -90,7 +85,7 @@ step_variables:
 
 steps:
   - name: claim
-    description: "Claim the assigned backend leaf"
+    description: "Claim the assigned fullstack leaf"
     status_message: |
       Claim assigned_task_id with claim_task, then read it with get_task.
     allowed_tools:
@@ -164,9 +159,9 @@ steps:
   - name: implement
     description: "Implement, validate, and hand off or close"
     status_message: |
-      Implement the backend leaf. Commit changes, then inspect the assigned task
-      manifest. If development review is disabled, close_task with commit_sha;
-      otherwise submit_for_review(stage_name="development") for QA.
+      Implement the fullstack leaf. Commit changes, then inspect the assigned
+      task manifest. If development review is disabled, close_task with
+      commit_sha; otherwise submit_for_review(stage_name="development") for QA.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:de_escalate_task"

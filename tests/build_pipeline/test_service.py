@@ -135,6 +135,57 @@ async def test_plan_file_quick_initializes_planning_pulse(
 
 
 @pytest.mark.asyncio
+async def test_approved_plan_file_seed_starts_at_expansion(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "approved-plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = await _build(
+        str(plan_file),
+        _options(quick=True, isolation="none", planning_seed_state="approved"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.initial_lifecycle == "expansion"
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == ["expansion"]
+
+
+@pytest.mark.asyncio
+async def test_needs_review_plan_file_seed_sets_planning_review_round_count(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "needs-review-plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            quick=True,
+            isolation="none",
+            planning_seed_state="needs_review",
+            completed_plan_review_rounds=2,
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    task_manager = LocalTaskManager(temp_db)
+    planning = task_manager.stage_states.get(result.task_id, "planning")
+
+    assert result.initial_lifecycle == "planning"
+    assert planning is not None
+    assert planning.state == "needs_review"
+    assert planning.review_round_count == 2
+
+
+@pytest.mark.asyncio
 async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
     temp_db,
     sample_project,

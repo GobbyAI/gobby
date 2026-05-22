@@ -135,7 +135,8 @@ regex; `kind: manifest` exempts it from the `**Acceptance:**` requirement.
   validation_criteria: <one-line pass/fail>
   labels:
     - covers:<plan-id>:<section-id>:<item-id>
-  assigned_agent: <agent-name>
+  implementation_domain: <backend|frontend|fullstack>  # required for code
+  assigned_agent: <agent-name>  # optional privileged/manual override
   tdd: <true|false>
   source_section: <section-id>
 ```
@@ -151,8 +152,9 @@ Entry schema (one entry per `kind: deliverable` section):
 | `depends_on` | list[str] | References `source_section` IDs of other manifest entries |
 | `validation_criteria` | str | One-line pass/fail |
 | `labels` | list[str] | Exactly one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item in the source section |
-| `assigned_agent` | str | Routes the leaf to a specific agent |
-| `tdd` | bool | True implies the deterministic compiler emits a TEST/IMPL/REF wrapper for eligible categories |
+| `implementation_domain` | enum|null | Required for `category: code`; one of `backend`, `frontend`, `fullstack` |
+| `assigned_agent` | str|null | Optional privileged/manual route override |
+| `tdd` | bool | True adds `test-driven-development`, `tdd:required`, and TDD evidence criteria on the leaf |
 | `source_section` | str | Must reference a `kind: deliverable` section ID |
 
 `depends_on` values name leaf deliverable dependencies by manifest
@@ -163,9 +165,15 @@ such as `P0` are invalid because phases are not implementation leaves.
 
 The single category policy is:
 
+- `code` entries must include `implementation_domain`. Expansion maps
+  `backend` to `backend-developer`, `frontend` to `frontend-developer`, and
+  `fullstack` to `fullstack-developer` unless a privileged/manual override is
+  present.
 - `code` and `config` are TDD-eligible. Manifest entries for these categories
-  may set `tdd: true`, which makes expansion emit the deterministic
-  TEST/IMPL/REF wrapper.
+  may set `tdd: true`, which makes expansion emit one implementation leaf with
+  `additional_skills: ["test-driven-development"]`, label `tdd:required`, and
+  validation criteria requiring red, green, refactor/final-green, exact command,
+  and test-quality audit evidence.
 - `test`, `refactor`, `docs`, `research`, `planning`, and `manual` are not
   TDD-eligible. Manifest entries for these categories must use `tdd: false`.
 - `category: test` is valid for standalone test infrastructure,
@@ -173,14 +181,14 @@ The single category policy is:
   their own right. These entries expand as single tasks and must carry their
   own acceptance criteria.
 - Filler tasks such as "write tests for X" are rejected when they duplicate
-  the TDD wrapper that expansion already emits for a `code` or `config`
-  deliverable.
+  TDD work required on a `code` or `config` deliverable.
 
 ### Parser-Enforced Invariants
 
 When the manifest is present, these invariants are checked regardless of mode:
 
 - Schema-check every entry against the table above.
+- Reject `category: code` without `implementation_domain`.
 - Reject `tdd: true` unless the entry category is `code` or `config`.
 - Every `kind: deliverable` section has exactly one manifest entry referencing
   it via `source_section` (1:1 invariant).
@@ -202,46 +210,38 @@ validation strictness:
 | Mode | Manifest | Used by | Behavior |
 | --- | --- | --- | --- |
 | `parse_mode="draft"` | optional | `validate_plan_file` (planner-side gate run before every adversary spawn); `/gobby plan` Phase 3a; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
-| `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; plan-adversary's post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
+| `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; taskless adversary/coordinator post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
 | `parse_mode="strict"` (default) | required | callers that want full validation regardless of context | Same strict invariants as `expansion`; default so any caller that omits `parse_mode` keeps full validation. |
 
 The deadlock between "review the plan" and "manifest must exist" is resolved by
 construction: the planner-side `validate_plan_file` gate parses in `draft` mode
-before each adversary spawn, the adversary then runs qualitative review without
+before each taskless adversary spawn, the adversary then runs qualitative review without
 re-parsing, writes the manifest on clean review, self-checks in `expansion`
 mode, and downstream `gobby expand` parses in `expansion` against the
 now-manifest-bearing plan.
 
-### Adversary-Writes-on-Approval Contract
+### Manifest-on-Approval Contract
 
-Plan authors do not write the manifest. The plan-adversary writes it as the
-final act of approval — emitting the `## M1 Task Manifest` is what forces the
-adversary to confront ambiguity it might otherwise wave through. If the
-adversary cannot write a manifest entry for a deliverable, the plan is not
-ready.
+First drafts are narrative-only. The approving `plan-adversary-taskless` run or
+interactive coordinator writes `## M1 Task Manifest` after user-approved review.
+If the planning agent already supplied complete category and implementation
+domain decisions, preserve them. The deterministic manifest emitter is fallback
+only for missing manifests or legacy drafts where planning agents did not assign
+enough category/domain data.
 
 Sequence on clean review (no blocking findings):
 
-1. Adversary appends the `## M1 Task Manifest` section to the plan file.
-2. Adversary self-checks via `parse_plan(plan_path, parse_mode="expansion")`.
-3. On `PlanParseError`, the adversary fixes the manifest in-place and retries
-   up to 3 times.
-4. After the cap is exhausted, behavior splits by yolo state: non-yolo
-   escalates with `escalate_task(reason="needs_human:manifest_emission_failure:...")`;
-   yolo NEVER escalates — instead writes a `## Yolo Fallbacks` audit section,
-   falls back to the deterministic
-   `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)` path, and
-   re-runs the strict parse. If even the stub fails, the agent appends a
-   second audit marker and force-approves the plan; downstream `gobby expand`
-   will reject the plan when it parses in `expansion` mode, surfacing the
-   issue at expansion time when a human can intervene.
-5. On success (clean parse or yolo force-approve), the adversary calls
-   `approve_review(stage_name="planning")` with `approval_notes` documenting the
-   manifest outcome.
+1. Append or repair the `## M1 Task Manifest` section in the plan file.
+2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`.
+3. On `PlanParseError`, fix the manifest in-place and retry up to 3 times.
+4. After the cap is exhausted, return `verdict: needs_review` with the parser
+   details. Do not approve.
+5. On success, return `verdict: approved` with manifest entry count and whether
+   fallback emission was used.
 
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
-between rounds are the planner's responsibility. Findings are routed through
-`reject_review(stage_name="planning", rejection_notes=...)` only.
+between rounds are the parent planner's responsibility. Findings are recorded in
+`## V1 Plan Changelog`.
 
 ## Coverage CLI
 

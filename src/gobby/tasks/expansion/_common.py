@@ -20,9 +20,8 @@ from gobby.plans.parser import (
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.tasks import Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
-_TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "holistic_qa", "pr"})
@@ -313,10 +312,6 @@ def _contract_agent_fields(
     )
 
 
-def _contract_task_ids(section_id: str) -> tuple[str, str, str]:
-    return f"{section_id}::test", f"{section_id}::impl", f"{section_id}::ref"
-
-
 def _contract_single_task_id(section_id: str) -> str:
     return f"{section_id}::single"
 
@@ -338,14 +333,6 @@ def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
             for item in section.deferral.original_acceptance_items
         ],
     }
-
-
-def _stable_test_id(phase_id: str) -> str:
-    return f"{phase_id}::__test"
-
-
-def _stable_ref_id(phase_id: str) -> str:
-    return f"{phase_id}::__ref"
 
 
 def _strip_frontmatter(markdown: str) -> str:

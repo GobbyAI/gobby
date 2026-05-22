@@ -1,4 +1,4 @@
-"""Content tests for delegated mode in /gobby plan skill."""
+"""Content tests for taskless /gobby plan skill behavior."""
 
 from pathlib import Path
 
@@ -14,109 +14,62 @@ def body() -> str:
     return SKILL_PATH.read_text()
 
 
-def test_step_1a_presents_yn_opt_in(body: str) -> None:
-    assert "## Step 1: Adversarial Opt-in" in body
-    assert "Do you want adversarial review on this plan?" in body
-    assert "Y) Yes" in body
-    assert "N) No / Plain" in body
-    assert 'value="plain"' in body
-    assert 'name="plan_review_requested"' in body
-
-
-def test_step_6b_presents_interactive_delegated(body: str) -> None:
-    assert "## Step 6b: Adversary Mode Selection" in body
-    assert "I) Interactive" in body
-    assert "D) Delegated" in body
-    assert 'value="adversarial" | "delegated"' in body
-    assert "How many adversary rounds?" in body
-
-
-def test_pre_set_plan_review_mode_skips_menu(body: str) -> None:
-    assert "If `plan_review_mode` is already set" in body
-    assert '"adversarial"' in body
-    assert '"delegated"' in body
-    assert '"plain"' in body
-
-
-def test_step_7_requires_artifact_path(body: str) -> None:
-    assert "## Step 7: Review Loop" in body
-    assert "### 7.0. Artifact precondition" in body
-    assert "artifact_path is missing" in body
-
-
-def test_delegated_mode_skips_per_round_plan_mode_reentry(body: str) -> None:
-    assert 'If `plan_review_mode == "delegated"`' in body
-    assert "without re-entering plan mode" in body
-    assert "Do not interrupt" in body
-
-
-def test_step_7_3a_pre_flight_factcheck_exists(body: str) -> None:
-    """Every round dispatches a mid-tier subagent to mechanically verify
-    line numbers, symbols, file paths, field names, and counts against the
-    actual codebase BEFORE adversary spawn. Catches factual drift cheaply
-    so adversary rounds focus on architecture, not "you said line X but
-    it's actually Y"."""
-    assert "### 7.3a. Pre-flight fact-check" in body
-    # CLI-agnostic — no specific model brand names.
+def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     lowered = body.lower()
-    for brand in ("sonnet", "haiku", "opus", "gpt-", "gemini-flash"):
-        assert brand not in lowered, f"step 7.3a must be CLI-agnostic; found {brand!r}"
-    assert "mid-tier subagent" in body
-    # The step must enumerate the categories to verify.
-    for keyword in (
-        "line number",
-        "symbol",
-        "file path",
-        "field",
-        "count",
-        "regex",
+
+    assert "artifact-first" in lowered
+    assert "does not create a planning" in lowered
+    assert "review-anchor task" in lowered
+    assert "per-round review tasks" in lowered
+    assert "do not create or claim tasks" in lowered
+    assert "do not create review anchors" in lowered
+
+
+def test_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:
+    assert 'get_skill(name="plan-draft")' in body
+    assert "uv run gobby plans validate <plan-file>" in body
+    assert "Ask the user to approve the draft for adversarial review" in body
+
+
+def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None:
+    assert "plan-adversary-taskless" in body
+    assert "without `task_id`" in body
+    assert 'isolation="none"' in body
+    assert "artifact_path" in body
+    assert "round_number" in body
+    assert "max_review_rounds" in body
+
+
+def test_review_history_uses_v1_changelog_verification_entries(body: str) -> None:
+    assert "## V1 Plan Changelog" in body
+    assert "`kind: verification`" in body
+    for field in (
+        "reviewer_run",
+        "reviewer_session",
+        "verdict: approved | needs_review | needs_requirements",
+        "findings",
+        "resolution_notes",
     ):
-        assert keyword in lowered, f"step 7.3a must list verification category: {keyword!r}"
+        assert field in body
+    assert "Keep prior rounds" in body
 
 
-def test_step_7_3a_iterates_until_clean(body: str) -> None:
-    """Pre-flight loops on drift (apply fixes, re-run) until the subagent
-    reports no drift; only then proceed to anchor + spawn."""
-    assert "Both `interactive` and `delegated` modes run this step every round" in body
-    # Phrasing wraps across lines; check both fragments present.
-    assert "Do NOT" in body
-    assert "modify the source code being verified" in body
-    assert "Re-run Step 7.3a" in body
+def test_build_handoff_uses_manifest_and_seed_flags(body: str) -> None:
+    assert "## M1 Task Manifest" in body
+    assert "uv run gobby plans validate <plan-file> --mode expansion" in body
+    assert "uv run gobby build <plan-file>" in body
+    assert "--planning-seed-state approved" in body
+    assert "--completed-plan-review-rounds <N>" in body
+    assert "planning_seed_state=drafted" in body
+    assert "planning_seed_state=needs_review" in body
+    assert "planning_seed_state=approved" in body
 
 
-def test_step_7_3a_revision_branches_route_through_factcheck(body: str) -> None:
-    """When a round rejects and the planner revises, the next round must
-    route through 7.3a (fact-check) before 7.4 (anchor + spawn). Skipping
-    straight to 7.4 reintroduces the drift problem the pre-flight prevents."""
-    assert "loop back to **Step 7.3a**" in body
-
-
-def test_step_7_3a_dispatch_failure_falls_through(body: str) -> None:
-    """Hosts that don't expose subagent dispatch must still run the loop —
-    the pre-flight failure mode falls through to the adversary round, not
-    aborts."""
-    assert "fails to dispatch" in body
-    assert "host CLI does not expose" in body
-    assert "The adversary round will still run" in body
-    assert "non-terminal review rejections" in body
-
-
-def test_step_7_4_prepares_review_anchor_before_spawn(body: str) -> None:
-    assert "### 7.4. Create the per-round anchor and spawn the adversary" in body
-    assert 'task_type="review_anchor"' in body
-    assert 'category="planning"' in body
-    assert '"max_review_rounds": max_rounds + 1' in body
-    assert "initialize_task_manifest(" in body
-    assert 'stage_names=["planning"]' in body
-    assert "old_anchor_id = get_variable" in body
-    assert 'set_variable(name="active_anchor_id", value=None' in body
-    assert 'set_variable(name="active_anchor_id", value=anchor.id' in body
-    assert 'start_stage(task_id=anchor.id, stage_name="planning")' in body
-    assert 'submit_for_review(task_id=anchor.id, stage_name="planning")' in body
-
-    stale = body.index("old_anchor_id = get_variable")
-    active = body.index('set_variable(name="active_anchor_id", value=anchor.id')
-    start = body.index('start_stage(task_id=anchor.id, stage_name="planning")')
-    submit = body.index('submit_for_review(task_id=anchor.id, stage_name="planning")')
-    spawn = body.index("run = spawn_agent(", submit)
-    assert stale < active < start < submit < spawn
+def test_old_anchor_workflow_is_absent(body: str) -> None:
+    for forbidden in (
+        "active_anchor_id",
+        'task_type="review_anchor"',
+        "submit_for_review(task_id=anchor.id",
+        "start_stage(task_id=anchor.id",
+    ):
+        assert forbidden not in body

@@ -49,6 +49,8 @@ def resolve_build_profile_options(
         reset_expansion_output=opts.reset_expansion_output,
         max_active_agents=opts.max_active_agents,
         max_retries=opts.max_retries,
+        planning_seed_state=opts.planning_seed_state,
+        completed_plan_review_rounds=opts.completed_plan_review_rounds,
     )
 
 

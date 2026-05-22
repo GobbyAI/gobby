@@ -59,6 +59,8 @@ class BuildRequest(BaseModel):
     reset_expansion_output: bool = False
     max_active_agents: int | None = Field(default=None, ge=1)
     max_retries: int | None = Field(default=None, ge=0)
+    planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
+    completed_plan_review_rounds: int = Field(default=0, ge=0)
 
 
 class BuildControlRequest(BaseModel):
@@ -97,6 +99,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         reset_expansion_output=request_data.reset_expansion_output,
         max_active_agents=request_data.max_active_agents,
         max_retries=request_data.max_retries,
+        planning_seed_state=request_data.planning_seed_state,
+        completed_plan_review_rounds=request_data.completed_plan_review_rounds,
     )
 
 

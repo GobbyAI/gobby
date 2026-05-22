@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal, cast
 
 import click
 
@@ -32,6 +32,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from .utils import resolve_project_ref
 
 logger = logging.getLogger(__name__)
+BuildPlanningSeedState = Literal["drafted", "needs_review", "approved"]
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
 _PROFILE_ERROR_RE = re.compile(
@@ -154,6 +155,8 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "reset_expansion_output": opts.reset_expansion_output,
         "max_active_agents": opts.max_active_agents,
         "max_retries": opts.max_retries,
+        "planning_seed_state": opts.planning_seed_state,
+        "completed_plan_review_rounds": opts.completed_plan_review_rounds,
     }
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
@@ -463,6 +466,20 @@ def _open_database() -> HubDatabase:
     type=click.IntRange(min=0),
     help="Maximum retries per build stage; 0 means one attempt.",
 )
+@click.option(
+    "--planning-seed-state",
+    type=click.Choice(["drafted", "needs_review", "approved"]),
+    default="drafted",
+    show_default=True,
+    help="Initial plan-file lifecycle state.",
+)
+@click.option(
+    "--completed-plan-review-rounds",
+    type=click.IntRange(min=0),
+    default=0,
+    show_default=True,
+    help="Review rounds already completed before plan-file build handoff.",
+)
 @click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
@@ -487,6 +504,8 @@ def build_command(
     reset_expansion_output: bool,
     max_active_agents: int | None,
     max_retries: int | None,
+    planning_seed_state: str,
+    completed_plan_review_rounds: int,
     dry_run: bool,
     force: bool,
     yes: bool,
@@ -534,6 +553,8 @@ def build_command(
         reset_expansion_output=reset_expansion_output,
         max_active_agents=max_active_agents,
         max_retries=max_retries,
+        planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
+        completed_plan_review_rounds=completed_plan_review_rounds,
     )
     project_id = resolve_project_id()
     result = _try_daemon_build(input_ref, opts)

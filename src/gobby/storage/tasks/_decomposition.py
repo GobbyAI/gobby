@@ -22,6 +22,7 @@ class TaskDecompositionMixin:
         category: str | None = None,
         validation_criteria: str | None = None,
         assigned_agent: str | None = None,
+        implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -40,6 +41,7 @@ class TaskDecompositionMixin:
             category: Optional validation category.
             validation_criteria: Observable acceptance criteria for code tasks.
             assigned_agent: Optional agent assignment.
+            implementation_domain: Optional code implementation domain.
             additional_skills: Optional skills requested for the task.
             **kwargs: Unexpected task metadata fields.
 
@@ -71,6 +73,7 @@ class TaskDecompositionMixin:
             category=category,
             validation_criteria=validation_criteria,
             assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
             additional_skills=additional_skills,
         )
         return {"task": task.to_dict()}

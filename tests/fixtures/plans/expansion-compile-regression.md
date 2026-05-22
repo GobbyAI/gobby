@@ -66,6 +66,7 @@ Add an end-to-end regression around the full dispatch cycle.
 ```yaml
 - title: "Dispatcher Schema"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on: []
   validation_criteria: "Dispatcher schema acceptance is satisfied."
@@ -77,6 +78,7 @@ Add an end-to-end regression around the full dispatch cycle.
   source_section: "1.1"
 - title: "Mutex Lease"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on:
     - "1.1"
@@ -100,6 +102,7 @@ Add an end-to-end regression around the full dispatch cycle.
   source_section: "1.3a"
 - title: "Dispatcher React UI"
   category: code
+  implementation_domain: frontend
   task_type: task
   depends_on:
     - "1.3a"

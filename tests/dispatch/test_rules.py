@@ -74,7 +74,13 @@ def _registry(stage_name: str, **overrides):
 def _agents(**overrides):
     agents = {
         agent_slug: SimpleNamespace(name=agent_slug, enabled=True)
-        for agent_slug in {*_STAGE_AGENTS.values(), *_REVIEW_AGENTS.values(), "doc-reviewer"}
+        for agent_slug in {
+            *_STAGE_AGENTS.values(),
+            *_REVIEW_AGENTS.values(),
+            "doc-reviewer",
+            "frontend-developer",
+            "fullstack-developer",
+        }
     }
     agents.update(overrides)
     return agents
@@ -324,6 +330,34 @@ def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None
 
     assert isinstance(action, SpawnAgentAction)
     assert action.agent_slug == "backend-developer"
+
+
+@pytest.mark.parametrize(
+    ("implementation_domain", "agent_slug"),
+    [
+        ("backend", "backend-developer"),
+        ("frontend", "frontend-developer"),
+        ("fullstack", "fullstack-developer"),
+    ],
+)
+def test_development_rule_routes_code_by_implementation_domain(
+    implementation_domain: str,
+    agent_slug: str,
+) -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain=implementation_domain,
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == agent_slug
 
 
 def test_development_rule_escalates_when_no_dispatchable_fallback_agent() -> None:

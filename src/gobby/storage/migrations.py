@@ -41,7 +41,7 @@ class MigrationUnsupportedError(Exception):
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 
-BASELINE_VERSION = 260
+BASELINE_VERSION = 261
 # Historical SQLite migration bands through v260 are accepted only as import sources.
 _MIN_MIGRATION_VERSION = 260
 

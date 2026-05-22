@@ -57,6 +57,8 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "agent": "backend-developer",
                 "max_active_agents": 4,
                 "max_retries": 0,
+                "planning_seed_state": "needs_review",
+                "completed_plan_review_rounds": 2,
             },
         )
 
@@ -95,6 +97,8 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.assigned_agent == "backend-developer"
     assert opts.max_active_agents == 4
     assert opts.max_retries == 0
+    assert opts.planning_seed_state == "needs_review"
+    assert opts.completed_plan_review_rounds == 2
     assert call.kwargs["project_id"] == "project-1"
     assert call.kwargs["services"] is not None
 

@@ -19,6 +19,7 @@ from gobby.plans.parser import (
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import Task
+from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
     _DEFAULT_PHASE_ID,
@@ -30,11 +31,7 @@ from gobby.tasks.expansion._common import (
     _contract_plan_id,
     _contract_section_body,
     _contract_single_task_id,
-    _contract_task_ids,
     _dedupe_dependencies,
-    _find_test_files,
-    _stable_ref_id,
-    _stable_test_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,14 +40,8 @@ logger = logging.getLogger(__name__)
 def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[str, Any]:
     """Compile a Plan-Coverage Contract document into a compiled expansion spec.
 
-    TDD shape (per ``docs/guides/tdd-enforcement.md``): each phase containing
-    TDD-eligible (``tdd: true``) manifest entries is wrapped with a single
-    phase-level ``[TEST] Phase N: Write failing tests`` task at the start
-    and a single ``[REF] Phase N: Refactor with green tests`` task at the
-    end. Per-entry ``[IMPL]`` tasks sit in the middle. Non-TDD entries
-    emit single tasks without a prefix. Cross-phase: phase ``N+1``'s
-    ``[TEST]`` depends on phase ``N``'s ``[REF]``. Cross-deliverable
-    ``depends_on`` edges link IMPL/single tasks directly.
+    Each manifest entry emits exactly one implementation-forward leaf. TDD is
+    represented as task metadata and validation evidence requirements.
     """
     plan_id = _contract_plan_id(plan_doc)
     section_by_id = {section.section_id: section for section in plan_doc.sections}
@@ -79,10 +70,9 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
             phase_id_order.append(phase_id)
         entries_by_phase_id[phase_id].append(entry)
 
-    # entry.source_section -> id of the per-entry IMPL or single task.
+    # entry.source_section -> id of the per-entry implementation task.
     # Used to wire cross-deliverable depends_on edges below.
     entry_work_task_id: dict[str, str] = {}
-    tdd_phase_chain: list[tuple[str, str]] = []
 
     for phase_id in phase_id_order:
         phase_section = phase_section_by_phase_id[phase_id]
@@ -93,85 +83,14 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
             task=task,
         )
         phase_entries = entries_by_phase_id[phase_id]
-        tdd_entries = [e for e in phase_entries if e.tdd]
-        non_tdd_entries = [e for e in phase_entries if not e.tdd]
 
-        # Aggregate phase test_intent from TDD entries before emitting the
-        # phase-level [TEST] task so its description / validation can cite
-        # cross-section behaviors.
-        for entry in tdd_entries:
-            section = section_by_id[entry.source_section]
-            phase["test_intent"]["behaviors"].extend(
-                item.prose for item in section.acceptance_items
-            )
-            phase["test_intent"]["suggested_test_files"] = sorted(
-                set(phase["test_intent"]["suggested_test_files"])
-                | set(_find_test_files(_contract_affected_files(section)))
-            )
-
-        phase_number = _contract_phase_number(
-            phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
-        )
-
-        if tdd_entries:
-            # Phase-level [TEST] at the start.
-            phase_test_id = _stable_test_id(phase_id)
-            phase_test_task = self._build_contract_phase_sandwich_task(
-                kind="test",
-                phase_id=phase_id,
-                phase=phase,
-                phase_number=phase_number,
-                tdd_entries=tdd_entries,
-                section_by_id=section_by_id,
-            )
-            tasks.append(phase_test_task)
-            phase["task_ids"].append(phase_test_id)
-            phase["tdd_sandwich_emitted"] = True
-
-            # Per-entry [IMPL] tasks.
-            impl_ids: list[str] = []
-            for entry in tdd_entries:
-                section = section_by_id[entry.source_section]
-                impl_task = self._build_contract_entry_work_task(
-                    plan_doc=plan_doc,
-                    entry=entry,
-                    section=section,
-                    phase_id=phase_id,
-                    title_prefix="IMPL",
-                )
-                tasks.append(impl_task)
-                phase["task_ids"].append(impl_task["id"])
-                dependencies.append({"task_id": impl_task["id"], "depends_on": phase_test_id})
-                entry_work_task_id[entry.source_section] = impl_task["id"]
-                impl_ids.append(impl_task["id"])
-
-            # Phase-level [REF] at the end.
-            phase_ref_id = _stable_ref_id(phase_id)
-            phase_ref_task = self._build_contract_phase_sandwich_task(
-                kind="ref",
-                phase_id=phase_id,
-                phase=phase,
-                phase_number=phase_number,
-                tdd_entries=tdd_entries,
-                section_by_id=section_by_id,
-            )
-            tasks.append(phase_ref_task)
-            phase["task_ids"].append(phase_ref_id)
-            for impl_id in impl_ids:
-                dependencies.append({"task_id": phase_ref_id, "depends_on": impl_id})
-            tdd_phase_chain.append((phase_test_id, phase_ref_id))
-        else:
-            phase["tdd_sandwich_emitted"] = False
-
-        # Non-TDD entries: emit a single task each (no prefix).
-        for entry in non_tdd_entries:
+        for entry in phase_entries:
             section = section_by_id[entry.source_section]
             single_task = self._build_contract_entry_work_task(
                 plan_doc=plan_doc,
                 entry=entry,
                 section=section,
                 phase_id=phase_id,
-                title_prefix=None,
             )
             tasks.append(single_task)
             phase["task_ids"].append(single_task["id"])
@@ -195,30 +114,6 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
                 }
             )
 
-    # Implicit phase sequencing is a default, not a stronger requirement than
-    # explicit manifest dependencies. Some plans intentionally have an earlier
-    # phase task depend on a later phase prerequisite; adding a phase N+1 TEST →
-    # phase N REF edge in that case would create a cycle and hide the real
-    # dependency order expressed by the manifest.
-    for (prior_test_id, prior_ref_id), (phase_test_id, _phase_ref_id) in zip(
-        tdd_phase_chain, tdd_phase_chain[1:], strict=False
-    ):
-        if _dependency_path_exists(
-            dependencies,
-            start_task_id=prior_ref_id,
-            target_task_id=phase_test_id,
-        ):
-            logger.info(
-                "Skipping implicit phase dependency that conflicts with manifest edges",
-                extra={
-                    "task_id": phase_test_id,
-                    "depends_on": prior_ref_id,
-                    "prior_phase_test_id": prior_test_id,
-                },
-            )
-            continue
-        dependencies.append({"task_id": phase_test_id, "depends_on": prior_ref_id})
-
     return {
         "version": 1,
         "parent_task_id": task.id,
@@ -231,6 +126,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
         "contract_plan": True,
         "plan_id": plan_id,
         "deliverable_count": len(plan_doc.manifest_entries),
+        "tdd_mode": "skill_backed",
     }
 
 
@@ -290,81 +186,19 @@ def _ensure_contract_phase(
         "title": phase_section.title if phase_section is not None else task.title,
         "summary": phase_section.title if phase_section is not None else task.description or "",
         "test_intent": {
-            "summary": f"Write failing tests for Phase {phase_number}.",
+            "summary": f"Validate Phase {phase_number} leaves with focused evidence.",
             "behaviors": [],
             "suggested_test_files": [],
-            "entry_criteria": ["Tests should fail before implementation begins."],
+            "entry_criteria": [
+                "TDD-required leaves provide red, green, refactor/final-green, "
+                "exact command, and test-quality evidence."
+            ],
         },
         "task_ids": [],
-        "tdd_sandwich_emitted": True,
     }
     phases.append(phase)
     phase_by_id[phase_id] = phase
     return phase
-
-
-def _build_contract_phase_sandwich_task(
-    self: Any,
-    *,
-    kind: str,
-    phase_id: str,
-    phase: dict[str, Any],
-    phase_number: int,
-    tdd_entries: list[ManifestEntry],
-    section_by_id: dict[str, PlanSection],
-) -> dict[str, Any]:
-    """Build a phase-level ``[TEST]`` (kind=``"test"``) or ``[REF]`` (kind=``"ref"``) task.
-
-    Aggregates labels, affected-file hints, and the assigned agent across
-    the TDD entries so the phase wrapper carries the union of provenance.
-    """
-    is_test = kind == "test"
-    title = (
-        f"[TEST] Phase {phase_number}: Write failing tests"
-        if is_test
-        else f"[REF] Phase {phase_number}: Refactor with green tests"
-    )
-    description = (
-        self._build_phase_test_description(phase, phase_number)
-        if is_test
-        else self._build_phase_refactor_description(phase, phase_number)
-    )
-    validation = (
-        self._build_phase_test_validation(phase)
-        if is_test
-        else "All tests remain green after refactoring."
-    )
-
-    labels: set[str] = set()
-    affected_files: set[str] = set()
-    for entry in tdd_entries:
-        labels.update(entry.labels)
-        section = section_by_id[entry.source_section]
-        section_files = _contract_affected_files(section)
-        if is_test:
-            affected_files.update(_find_test_files(section_files))
-        else:
-            affected_files.update(section_files)
-
-    assigned_agent = tdd_entries[0].assigned_agent if tdd_entries else None
-
-    task_id = _stable_test_id(phase_id) if is_test else _stable_ref_id(phase_id)
-    return {
-        "id": task_id,
-        "task_id": task_id,
-        "phase_id": phase_id,
-        "title": title,
-        "description": description,
-        "priority": 2,
-        "task_type": "task",
-        "category": "test" if is_test else "refactor",
-        "validation": validation,
-        "affected_files": sorted(affected_files),
-        "labels": sorted(labels),
-        "assigned_agent": assigned_agent,
-        "additional_skills": [],
-        "source_section_id": None,
-    }
 
 
 def _build_contract_entry_work_task(
@@ -374,11 +208,8 @@ def _build_contract_entry_work_task(
     entry: ManifestEntry,
     section: PlanSection,
     phase_id: str,
-    title_prefix: str | None,
 ) -> dict[str, Any]:
-    """Build the per-entry work task — ``[IMPL]``-prefixed for TDD entries
-    (``title_prefix="IMPL"``) or unprefixed for non-TDD entries
-    (``title_prefix=None``)."""
+    """Build the per-entry work task."""
     body = _contract_section_body(plan_doc, section)
     affected_files = _contract_affected_files(section)
     acceptance_lines = _contract_acceptance_lines(section)
@@ -387,28 +218,28 @@ def _build_contract_entry_work_task(
         description = f"{description}\n\nAcceptance items:\n" + "\n".join(acceptance_lines)
     validation = _contract_validation_criteria(entry, section)
 
-    if title_prefix is None:
-        task_id = _contract_single_task_id(section.section_id)
-        title = entry.title
-    else:
-        _test_id, impl_id, _ref_id = _contract_task_ids(section.section_id)
-        task_id = impl_id
-        title = f"[{title_prefix}] {entry.title}"
+    labels = list(entry.labels)
+    additional_skills: list[str] = []
+    if entry.tdd:
+        labels.append("tdd:required")
+        additional_skills.append("test-driven-development")
 
     return {
-        "id": task_id,
-        "task_id": task_id,
+        "id": _contract_single_task_id(section.section_id),
+        "task_id": _contract_single_task_id(section.section_id),
         "phase_id": phase_id,
-        "title": title,
+        "title": entry.title,
         "description": description,
         "priority": 2,
         "task_type": entry.task_type,
         "category": entry.category,
         "validation": validation,
         "affected_files": affected_files,
-        "labels": list(entry.labels),
-        "assigned_agent": entry.assigned_agent,
-        "additional_skills": [],
+        "labels": labels,
+        "assigned_agent": _assigned_agent_for_entry(entry),
+        "implementation_domain": entry.implementation_domain,
+        "additional_skills": additional_skills,
+        "tdd_required": entry.tdd,
         "source_section_id": section.section_id,
     }
 
@@ -422,7 +253,26 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
     if artifact_lines:
         lines.append("Acceptance artifacts:")
         lines.extend(artifact_lines)
+    if entry.tdd:
+        lines.extend(
+            [
+                "TDD evidence required:",
+                "- Red evidence: failing test output captured before implementation.",
+                "- Green evidence: minimal implementation made the new test pass.",
+                "- Refactor/final-green evidence: final validation after cleanup.",
+                "- Exact test command used for red and green/final checks.",
+                "- Test-quality audit output for touched test paths, or a documented reason it was not applicable.",
+            ]
+        )
     return "\n".join(line for line in lines if line)
+
+
+def _assigned_agent_for_entry(entry: ManifestEntry) -> str | None:
+    if entry.assigned_agent:
+        return entry.assigned_agent
+    if entry.implementation_domain:
+        return AGENT_BY_IMPLEMENTATION_DOMAIN[entry.implementation_domain]
+    return None
 
 
 def _contract_phase_index(self: Any, plan_doc: PlanDocument) -> dict[str, PlanSection]:

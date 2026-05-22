@@ -98,8 +98,10 @@ instructions: |
   Sequence:
   1. Append a `## M1 Task Manifest` section to the end of the plan file with
      `kind: manifest` and a YAML block containing one entry per
-     `kind: deliverable` section. The M1 ID is required by the canonical
-     heading regex (§2.21).
+     `kind: deliverable` section. Every `category: code` entry MUST include
+     `implementation_domain: backend | frontend | fullstack`; this routes the
+     leaf to the matching developer agent. The M1 ID is required by the
+     canonical heading regex (§2.21).
   2. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
      parse_mode="expansion")`. Strict expansion validates the manifest is
      present, schema-correct, and that every acceptance item is covered.

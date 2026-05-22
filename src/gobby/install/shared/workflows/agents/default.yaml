@@ -56,12 +56,10 @@ instructions: |
   - search_skills(query="...") on gobby-skills — find skills by topic
   - get_skill(name="...") on gobby-skills — load a skill's full content
 
-# Interactive sessions should not use pipeline-only review gates.
-# Coverage lives in the block-needs-review-interactive rule, which permits the
-# plan-coordinator's submit_for_review call against the active planning anchor
-# (review_anchor task in the planning stage, plan_review_mode set). Non-anchor
-# review calls from interactive sessions remain blocked by the rule.
-# Human-driven lifecycle resets such as reopen/de_escalate remain allowed when explicitly requested.
+# Interactive /gobby plan review is artifact-first and taskless. Interactive
+# sessions should not use pipeline-only review gates unless explicitly running
+# operator lifecycle workflows. Human-driven lifecycle resets such as
+# reopen/de_escalate remain allowed when explicitly requested.
 
 workflows:
   rule_selectors:

@@ -19,7 +19,7 @@ The `prompts/` directory contains LLM prompts used during expansion:
 | File | Purpose |
 |------|---------|
 | `prompts/expand-task.md` | Main expansion prompt: spec format, rules, validation criteria guidelines |
-| `prompts/expand-task-tdd.md` | TDD mode instructions: sandwich pattern, category rules |
+| `prompts/expand-task-tdd.md` | TDD mode instructions: skill-backed evidence, category rules |
 
 ## Expansion Flow
 
@@ -51,4 +51,4 @@ validate_task() called
 ## Guides
 
 - [Task Expansion](../../docs/guides/task-expansion.md) — How expansion works end-to-end
-- [TDD Enforcement](../../docs/guides/tdd-enforcement.md) — TDD sandwich pattern
+- [TDD Enforcement](../../docs/guides/tdd-enforcement.md) — Skill-backed TDD evidence

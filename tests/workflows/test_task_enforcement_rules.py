@@ -663,7 +663,7 @@ class TestBlockNeedsReviewInteractive:
         assert "block-needs-review-interactive" in (response.reason or "")
 
     @pytest.mark.asyncio
-    async def test_submit_for_review_allows_active_plan_anchor(self, db) -> None:
+    async def test_submit_for_review_blocks_even_with_stale_plan_anchor_variables(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
@@ -678,7 +678,8 @@ class TestBlockNeedsReviewInteractive:
             variables=variables,
         )
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+        assert "block-needs-review-interactive" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_approve_review_stays_blocked_for_active_plan_anchor(self, db) -> None:
