@@ -12,10 +12,8 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.tasks.categories import (
-    DEVELOPMENT_FORWARD_LEAF_CATEGORIES,
-    TDD_ELIGIBLE_CATEGORIES,
-)
+from gobby.plans.manifest_parser import ManifestEntry
+from gobby.plans.manifest_parser import resolve_manifest as _resolve_manifest
 
 ParseMode = Literal["draft", "expansion", "strict"]
 logger = logging.getLogger(__name__)
@@ -108,20 +106,6 @@ class PlanSection:
     acceptance_items: tuple[AcceptanceItem, ...]
     deferral: Deferral | None
     source_span: tuple[int, int]
-
-
-@dataclass(frozen=True)
-class ManifestEntry:
-    title: str
-    category: str
-    task_type: str
-    depends_on: tuple[str, ...]
-    validation_criteria: str
-    labels: tuple[str, ...]
-    assigned_agent: str
-    tdd: bool
-    source_section: str
-    source_line: int
 
 
 @dataclass(frozen=True)
@@ -267,9 +251,10 @@ def parse_plan(
         lines=lines,
         sections=sections,
         plan_id=plan_id,
-        plan_kind=plan_kind,
+        plan_kind=plan_kind.value,
         parse_mode=parse_mode,
         errors=errors,
+        find_yaml_fence=_find_yaml_fence,
     )
 
     if errors:
@@ -683,256 +668,6 @@ def _parse_original_acceptance_items(
             return None
         items.append(item)
     return tuple(items)
-
-
-_MANIFEST_REQUIRED_STR_FIELDS = (
-    "title",
-    "category",
-    "task_type",
-    "validation_criteria",
-    "assigned_agent",
-    "source_section",
-)
-
-
-def _resolve_manifest(
-    *,
-    lines: list[str],
-    sections: list[PlanSection],
-    plan_id: str | None,
-    plan_kind: PlanKind,
-    parse_mode: ParseMode,
-    errors: list[tuple[int, str]],
-) -> tuple[ManifestEntry, ...]:
-    manifest_sections = [section for section in sections if section.kind is Kind.manifest]
-
-    if plan_kind is PlanKind.strategy:
-        for manifest in manifest_sections:
-            errors.append(
-                (
-                    manifest.source_span[0],
-                    "strategy plans must not contain a kind: manifest section",
-                )
-            )
-        return ()
-
-    if len(manifest_sections) > 1:
-        for extra in manifest_sections[1:]:
-            errors.append(
-                (
-                    extra.source_span[0],
-                    "more than one kind: manifest section is not allowed",
-                )
-            )
-        return ()
-
-    if not manifest_sections:
-        if parse_mode in ("expansion", "strict"):
-            errors.append((max(len(lines), 1), "missing manifest"))
-        return ()
-
-    manifest_section = manifest_sections[0]
-    span_start = manifest_section.source_span[0] - 1
-    span_end = manifest_section.source_span[1] - 1
-    block = _find_yaml_fence(lines, span_start, span_end)
-    if block is None:
-        errors.append((manifest_section.source_span[0], "manifest section missing YAML block"))
-        return ()
-
-    block_start, raw_block = block
-    try:
-        data = yaml.safe_load(raw_block)
-    except yaml.YAMLError as exc:
-        errors.append((block_start, f"invalid manifest YAML: {exc}"))
-        return ()
-
-    if not isinstance(data, list) or not data:
-        errors.append((block_start, "manifest YAML must be a non-empty list"))
-        return ()
-
-    entries: list[ManifestEntry] = []
-    for index, raw_entry in enumerate(data, start=1):
-        entry = _build_manifest_entry(raw_entry, block_start, index, errors)
-        if entry is not None:
-            entries.append(entry)
-
-    if entries:
-        _validate_manifest_invariants(
-            entries=tuple(entries),
-            sections=sections,
-            plan_id=plan_id,
-            errors=errors,
-        )
-
-    return tuple(entries)
-
-
-def _build_manifest_entry(
-    raw: object,
-    source_line: int,
-    index: int,
-    errors: list[tuple[int, str]],
-) -> ManifestEntry | None:
-    if not isinstance(raw, dict):
-        errors.append((source_line, f"manifest entry {index} must be a mapping"))
-        return None
-
-    missing_fields = [
-        field_name
-        for field_name in _MANIFEST_REQUIRED_STR_FIELDS
-        if not isinstance(raw.get(field_name), str) or not raw[field_name]
-    ]
-    if missing_fields:
-        errors.append(
-            (
-                source_line,
-                f"manifest entry {index} missing fields: {', '.join(missing_fields)}",
-            )
-        )
-        return None
-
-    if not isinstance(raw.get("tdd"), bool):
-        errors.append((source_line, f"manifest entry {index} field 'tdd' must be a bool"))
-        return None
-
-    category = str(raw["category"])
-    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
-        allowed = ", ".join(sorted(DEVELOPMENT_FORWARD_LEAF_CATEGORIES))
-        errors.append(
-            (
-                source_line,
-                f"manifest entry {index} has unsupported category {category!r}; "
-                f"expansion manifests only support development-forward categories: {allowed}",
-            )
-        )
-        return None
-
-    tdd = bool(raw["tdd"])
-    if tdd and category not in TDD_ELIGIBLE_CATEGORIES:
-        eligible = ", ".join(sorted(TDD_ELIGIBLE_CATEGORIES))
-        errors.append(
-            (
-                source_line,
-                f"manifest entry {index} has tdd: true for category {category!r}; "
-                f"TDD is only allowed for: {eligible}",
-            )
-        )
-        return None
-
-    depends_on_raw = raw.get("depends_on", [])
-    if not isinstance(depends_on_raw, list) or not all(
-        isinstance(item, str) for item in depends_on_raw
-    ):
-        errors.append(
-            (source_line, f"manifest entry {index} field 'depends_on' must be a list of strings")
-        )
-        return None
-
-    labels_raw = raw.get("labels", [])
-    if not isinstance(labels_raw, list) or not all(isinstance(item, str) for item in labels_raw):
-        errors.append(
-            (source_line, f"manifest entry {index} field 'labels' must be a list of strings")
-        )
-        return None
-
-    return ManifestEntry(
-        title=str(raw["title"]),
-        category=category,
-        task_type=str(raw["task_type"]),
-        depends_on=tuple(depends_on_raw),
-        validation_criteria=str(raw["validation_criteria"]),
-        labels=tuple(labels_raw),
-        assigned_agent=str(raw["assigned_agent"]),
-        tdd=tdd,
-        source_section=str(raw["source_section"]),
-        source_line=source_line,
-    )
-
-
-def _validate_manifest_invariants(
-    *,
-    entries: tuple[ManifestEntry, ...],
-    sections: list[PlanSection],
-    plan_id: str | None,
-    errors: list[tuple[int, str]],
-) -> None:
-    deliverables = {
-        section.section_id: section for section in sections if section.kind is Kind.deliverable
-    }
-
-    entries_by_section: dict[str, list[ManifestEntry]] = {}
-    for entry in entries:
-        if entry.source_section not in deliverables:
-            errors.append(
-                (
-                    entry.source_line,
-                    f"manifest entry {entry.title!r} references unknown deliverable section "
-                    f"{entry.source_section!r} (orphan)",
-                )
-            )
-            continue
-        entries_by_section.setdefault(entry.source_section, []).append(entry)
-
-    valid_section_ids = {entry.source_section for entry in entries}
-    for entry in entries:
-        for dependency in entry.depends_on:
-            if dependency not in valid_section_ids:
-                errors.append(
-                    (
-                        entry.source_line,
-                        f"manifest entry source_section={entry.source_section!r} depends on "
-                        f"{dependency!r}, which has no manifest entry",
-                    )
-                )
-
-    for section_id, deliverable in deliverables.items():
-        bucket = entries_by_section.get(section_id, [])
-        if not bucket:
-            errors.append(
-                (
-                    deliverable.source_span[0],
-                    f"deliverable section {section_id!r} has no manifest entry",
-                )
-            )
-        elif len(bucket) > 1:
-            errors.append(
-                (
-                    bucket[1].source_line,
-                    f"deliverable section {section_id!r} has multiple manifest entries "
-                    f"({len(bucket)})",
-                )
-            )
-
-    for entry in entries:
-        target = deliverables.get(entry.source_section)
-        if target is None:
-            continue
-        resolved_plan_id = resolve_plan_id(plan_id)
-        expected_labels = {
-            f"covers:{resolved_plan_id}:{target.section_id}:{item.item_id}"
-            for item in target.acceptance_items
-        }
-        actual_covers = tuple(label for label in entry.labels if label.startswith("covers:"))
-        actual_set = set(actual_covers)
-
-        for label in actual_covers:
-            if label not in expected_labels:
-                errors.append(
-                    (
-                        entry.source_line,
-                        f"manifest entry {entry.title!r} covers label {label!r} does not match "
-                        f"any acceptance item in section {target.section_id!r}",
-                    )
-                )
-
-        for label in expected_labels - actual_set:
-            errors.append(
-                (
-                    entry.source_line,
-                    f"manifest entry for section {target.section_id!r} missing covers "
-                    f"label {label!r}",
-                )
-            )
 
 
 def _parent_for_heading(section_stack: list[PlanSection], heading_level: int) -> str | None:

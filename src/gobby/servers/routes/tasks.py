@@ -23,6 +23,7 @@ from gobby.storage.tasks._models import (
 )
 from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._stage_views import stage_state_view
+from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 if TYPE_CHECKING:
@@ -57,6 +58,11 @@ class TaskCreateRequest(BaseModel):
         description=f"Task domain: {', '.join(sorted(VALID_CATEGORIES))}",
     )
     validation_criteria: str | None = Field(default=None, description="Acceptance criteria")
+    implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
+        default=None,
+        description="Required for code tasks; routes implementation to the matching developer.",
+        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+    )
     assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
         default=None, description="Project ID (resolved from cwd if omitted)"
@@ -89,6 +95,11 @@ class TaskUpdateRequest(BaseModel):
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
     validation_criteria: str | None = Field(default=None, description="New validation criteria")
+    implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
+        default=None,
+        description="Code task implementation domain.",
+        json_schema_extra={"enum": sorted(IMPLEMENTATION_DOMAINS)},
+    )
     allow_automation: bool | None = Field(
         default=None,
         description="Enable or disable dispatcher automation for this task.",
@@ -375,6 +386,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Create a new task."""
         try:
             project_id = _resolve_project(request_data.project_id)
+            if request_data.category == "code" and request_data.implementation_domain is None:
+                raise ValueError("Code tasks require implementation_domain.")
             task = server.task_manager.create_task(
                 project_id=project_id,
                 title=request_data.title,
@@ -385,6 +398,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 labels=request_data.labels,
                 category=request_data.category,
                 validation_criteria=request_data.validation_criteria,
+                implementation_domain=request_data.implementation_domain,
                 assignee=request_data.assignee,
             )
             result = task.to_dict()

@@ -222,6 +222,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         category: str | None = None,
         validation_criteria: str | None = None,
         assigned_agent: str | None = None,
+        implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
@@ -246,6 +247,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             category=category,
             validation_criteria=validation_criteria,
             assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
             additional_skills=additional_skills,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
@@ -362,6 +364,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         yolo: MaybeUnset[bool | None] = UNSET,
         isolation: MaybeUnset[Isolation | str | None] = UNSET,
         assigned_agent: MaybeUnset[str | None] = UNSET,
+        implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
@@ -404,6 +407,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             yolo=yolo,
             isolation=isolation,
             assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
             additional_skills=additional_skills,
             **kwargs,
         )

@@ -123,6 +123,30 @@ def test_create_native_backup_uses_local_postgres_tools(
     assert commands[1][:2] == ["pg_restore", "--list"]
 
 
+def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    monkeypatch.setattr(
+        backup._bootstrap,
+        "read_bootstrap_yaml",
+        lambda _path: (_ for _ in ()).throw(backup.yaml.YAMLError("bad yaml")),
+    )
+
+    assert backup.postgres_backup_configured(gobby_home=tmp_path) is False
+
+    monkeypatch.setattr(
+        backup._bootstrap,
+        "read_bootstrap_yaml",
+        lambda _path: (_ for _ in ()).throw(ValueError("unexpected")),
+    )
+
+    with pytest.raises(ValueError, match="unexpected"):
+        backup.postgres_backup_configured(gobby_home=tmp_path)
+
+
 def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

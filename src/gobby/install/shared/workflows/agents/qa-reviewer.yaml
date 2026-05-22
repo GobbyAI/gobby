@@ -25,6 +25,10 @@ instructions: |
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
         required behavior.
+        If the task has label `tdd:required`, additional skill
+        `test-driven-development`, or validation criteria requiring TDD, verify
+        red evidence, minimal green evidence, refactor/final-green evidence,
+        exact test commands, and test-quality audit output before approval.
      b. code_quality: only after spec_compliance passes, review tests,
         maintainability, regressions, safety, style, and repo fit.
   4. DECIDE:
@@ -147,11 +151,15 @@ steps:
       1. spec_compliance: compare task description, validation criteria, coverage labels,
          required files/tests, and diff. Reject before code_quality if required behavior
          is missing or incorrect.
-      2. code_quality: after spec_compliance passes, review tests, maintainability,
+      2. tdd_required: when the task is marked `tdd:required` or requests
+         test-driven-development, reject unless the implementation handoff
+         contains red, green, refactor/final-green, exact test command, and
+         test-quality audit evidence.
+      3. code_quality: after spec_compliance passes, review tests, maintainability,
          regressions, safety, style, and repo fit.
-      3. APPROVE: call approve_review with stage_name="development" only when both pass
-      4. REJECT: call reject_review with stage_name="development" and blocking findings
-      5. ESCALATE: call escalate_task only if your workflow is broken and you
+      4. APPROVE: call approve_review with stage_name="development" only when all pass
+      5. REJECT: call reject_review with stage_name="development" and blocking findings
+      6. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
       After successful final validation, immediately call one of those verdict tools.
       If get_task shows the task is no longer at development:needs_review,

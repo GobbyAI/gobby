@@ -16,6 +16,7 @@ from gobby.search import (
     SearchMode,
     UnifiedSearcher,
 )
+from gobby.search.keyword import KeywordAsyncSearchBackend
 
 pytestmark = pytest.mark.unit
 
@@ -436,6 +437,31 @@ class TestUnifiedSearcher:
             await searcher.fit_async([("id1", "test")])
 
             assert searcher.get_active_backend() == "keyword"
+
+
+class TestDeprecatedSqliteKeywordSearch:
+    """Tests for the legacy SQLite keyword fallback used by fixtures."""
+
+    @pytest.mark.asyncio
+    async def test_fit_items_allow_partial_token_matches_with_ranked_scores(self) -> None:
+        """Partial token matches are returned with lower scores than full matches."""
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="sqlite"), "skills")
+        await backend.fit_async(
+            [
+                ("full", "deprecated sqlite import"),
+                ("partial", "deprecated sqlite"),
+                ("single", "deprecated"),
+                ("none", "unrelated"),
+            ]
+        )
+
+        results = await backend.search_async("deprecated sqlite import", top_k=10)
+
+        assert results == [
+            ("full", 1.0),
+            ("partial", 2 / 3),
+            ("single", 1 / 3),
+        ]
 
 
 class TestEmbeddingBackend:

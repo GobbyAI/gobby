@@ -24,6 +24,7 @@ from gobby.storage.tasks._models import (
     Task,
     TaskIDCollisionError,
     TaskNotFoundError,
+    validate_implementation_domain,
     validate_task_type,
 )
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
@@ -84,6 +85,7 @@ def create_task(
     category: str | None = None,
     validation_criteria: str | None = None,
     assigned_agent: str | None = None,
+    implementation_domain: str | None = None,
     additional_skills: list[str] | None = None,
     github_issue_number: int | None = None,
     github_pr_number: int | None = None,
@@ -107,6 +109,7 @@ def create_task(
 
     # Default validation status
     task_type = validate_task_type(task_type)
+    implementation_domain = validate_implementation_domain(implementation_domain)
     validation_status = "pending" if validation_criteria else None
     canonical_owner = _derive_claimed_by_session_id(
         db,
@@ -137,10 +140,10 @@ def create_task(
                         labels, created_at, updated_at,
                         validation_status, category,
                         validation_criteria, validation_fail_count,
-                        assigned_agent, additional_skills,
+                        assigned_agent, implementation_domain, additional_skills,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -160,6 +163,7 @@ def create_task(
                         category,
                         validation_criteria,
                         assigned_agent,
+                        implementation_domain,
                         additional_skills_json,
                         github_issue_number,
                         github_pr_number,
@@ -537,6 +541,7 @@ def update_task(
     yolo: MaybeUnset[bool | None] = UNSET,
     isolation: MaybeUnset[Isolation | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
+    implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
 ) -> bool:
     """Internal storage primitive for task field updates.
@@ -638,6 +643,9 @@ def update_task(
     if assigned_agent is not UNSET:
         updates.append("assigned_agent = ?")
         params.append(assigned_agent)
+    if implementation_domain is not UNSET:
+        updates.append("implementation_domain = ?")
+        params.append(validate_implementation_domain(cast(str | None, implementation_domain)))
     if additional_skills is not UNSET:
         updates.append("additional_skills = ?")
         params.append(json.dumps(additional_skills) if additional_skills is not None else None)
@@ -744,6 +752,7 @@ def update_task_metadata(
     yolo: MaybeUnset[bool | None] = UNSET,
     isolation: MaybeUnset[Isolation | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
+    implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
     **kwargs: Any,
 ) -> bool:
@@ -828,5 +837,6 @@ def update_task_metadata(
         yolo=yolo,
         isolation=isolation,
         assigned_agent=assigned_agent,
+        implementation_domain=implementation_domain,
         additional_skills=additional_skills,
     )

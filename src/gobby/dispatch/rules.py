@@ -18,6 +18,7 @@ from gobby.dispatch.actions import (
 )
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.prompts import PROMPT_BUILDERS
+from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
 
 logger = logging.getLogger(__name__)
 
@@ -717,6 +718,10 @@ def _development_agent(task: object, stage: object, context: object) -> str:
                 "assigned_agent": assigned_slug,
             },
         )
+    if _field(task, "category") == "code":
+        implementation_domain = _field(task, "implementation_domain")
+        if implementation_domain in IMPLEMENTATION_DOMAINS:
+            return AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
     if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"
     return _default_agent(stage, context) or "backend-developer"

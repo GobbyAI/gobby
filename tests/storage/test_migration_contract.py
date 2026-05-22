@@ -72,10 +72,25 @@ def test_legacy_migrations_list_is_empty_in_source_and_runtime() -> None:
     assert assignments[0].value.elts == []
 
 
-def test_no_postgres_sql_migrations_are_pending_after_flattening() -> None:
+def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert sorted(path.name for path in migrations_dir.glob("*.sql")) == []
+    assert sorted(path.name for path in migrations_dir.glob("*.sql")) == [
+        "261_implementation_domain.sql"
+    ]
+
+
+def test_implementation_domain_migration_adds_column_and_backfills_open_code_tasks() -> None:
+    migration = (SRC_ROOT / "storage" / "migrations" / "261_implementation_domain.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ADD COLUMN IF NOT EXISTS implementation_domain" in migration
+    assert "category = 'code'" in migration
+    assert "closed_at IS NULL" in migration
+    assert "assigned_agent = 'frontend-developer'" in migration
+    assert "assigned_agent = 'fullstack-developer'" in migration
+    assert "ELSE 'backend'" in migration
 
 
 def test_legacy_migrations_guard_rejects_callable_and_string_entries(monkeypatch) -> None:

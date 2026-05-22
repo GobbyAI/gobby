@@ -18,6 +18,7 @@ NEW_TASK_FIELDS = {
     "unattended",
     "isolation",
     "assigned_agent",
+    "implementation_domain",
     "additional_skills",
 }
 
@@ -45,6 +46,7 @@ def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
     assert task_fields["unattended"].default is False
     assert task_fields["isolation"].default is Isolation.worktree
     assert task_fields["assigned_agent"].default is None
+    assert task_fields["implementation_domain"].default is None
     assert task_fields["additional_skills"].default is None
     for field_name in NEW_TASK_FIELDS:
         assert task_fields[field_name].default_factory is MISSING
@@ -65,6 +67,7 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
         unattended=True,
         isolation=Isolation.clone,
         assigned_agent="backend-developer",
+        implementation_domain="backend",
         additional_skills=["sql-review", "perf-review"],
     )
 
@@ -77,4 +80,5 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
     assert payload["unattended"] is True
     assert payload["isolation"] == Isolation.clone
     assert payload["assigned_agent"] == "backend-developer"
+    assert payload["implementation_domain"] == "backend"
     assert payload["additional_skills"] == ["sql-review", "perf-review"]

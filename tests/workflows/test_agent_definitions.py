@@ -46,6 +46,8 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "backend-developer": ("codex", "gpt-5.5", "xhigh"),
+        "fullstack-developer": ("codex", "gpt-5.5", "xhigh"),
+        "frontend-developer": ("codex", "gpt-5.5", "high"),
         "tech-writer": ("codex", "gpt-5.5", "high"),
         "qa-reviewer": ("claude", "opus", "xhigh"),
         "doc-reviewer": ("claude", "opus", "xhigh"),
@@ -173,6 +175,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     [
         ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
         ("backend-developer", {"pytest", "mypy", "ruff", "sqlite3", "uv", "poetry"}),
+        ("fullstack-developer", {"pytest", "ruff", "npm", "pnpm", "playwright", "uv"}),
     ],
 )
 def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
@@ -180,12 +183,18 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     tool_words: set[str],
 ) -> None:
     agent = _agent(agent_name)
+    load_required = _step(agent, "load_required_skills")
     load_skills = _step(agent, "load_additional_skills")
     implement = _step(agent, "implement")
     terminate = _step(agent, "terminate")
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
+    assert agent["step_variables"]["required_skills"] == ["development-discipline"]
+    assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
+    assert 'get_skill(name="development-discipline")' in load_required["status_message"]
+    assert "development-discipline" in agent["instructions"]
+    assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_variables"]
@@ -197,6 +206,39 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "submit_for_review" in implement["status_message"]
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
     assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
+
+
+def test_tdd_discipline_skills_are_bundled() -> None:
+    discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
+    tdd = (SKILLS_DIR / "test-driven-development/SKILL.md").read_text()
+
+    assert "test judgment" in discipline.lower()
+    assert "test-driven-development" in discipline
+    assert "red" in tdd.lower()
+    assert "minimal green" in tdd.lower()
+    assert "refactor/final-green" in tdd.lower()
+    assert "test-quality audit" in tdd.lower()
+
+
+def test_qa_and_holistic_reviewers_check_tdd_required_evidence() -> None:
+    qa = _agent("qa-reviewer")
+    holistic = _agent("holistic-reviewer")
+    qa_skill = (SKILLS_DIR / "qa/SKILL.md").read_text()
+    holistic_skill = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+
+    for text in (
+        qa["instructions"],
+        _step(qa, "review")["status_message"],
+        holistic["instructions"],
+        _step(holistic, "review")["status_message"],
+        qa_skill,
+        holistic_skill,
+    ):
+        assert "tdd:required" in text
+        assert "test-driven-development" in text
+        assert "red" in text.lower()
+        assert "green" in text.lower()
+        assert "test-quality" in text.lower()
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:

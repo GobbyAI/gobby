@@ -52,6 +52,7 @@ _MINIMAL_DELIVERABLE = """
 _MINIMAL_MANIFEST = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "foo.py exists"
@@ -77,6 +78,7 @@ _TWO_DELIVERABLES = """
 _LINKED_MANIFEST = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: ["A2"]
   validation_criteria: "foo.py exists"
@@ -87,6 +89,7 @@ _LINKED_MANIFEST = """
   source_section: "A1"
 - title: "Build bar"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "bar.py exists"
@@ -124,6 +127,7 @@ def test_draft_tolerates_missing_manifest_but_validates_present_one(tmp_path: Pa
     malformed_yaml = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
 """
     plan_malformed = _plan_with_manifest(
         tmp_path,
@@ -168,6 +172,7 @@ def test_manifest_invariants_enforced_in_all_modes(tmp_path: Path) -> None:
     orphan_yaml = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "foo.py exists"
@@ -178,6 +183,7 @@ def test_manifest_invariants_enforced_in_all_modes(tmp_path: Path) -> None:
   source_section: "A1"
 - title: "Orphan entry"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "bar.py exists"
@@ -211,6 +217,7 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert isinstance(entry, ManifestEntry)
     assert entry.title == "Build foo"
     assert entry.category == "code"
+    assert entry.implementation_domain == "backend"
     assert entry.task_type == "feature"
     assert entry.source_section == "A1"
     assert entry.tdd is True
@@ -233,6 +240,22 @@ def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
     message = str(excinfo.value)
     assert "unsupported category 'manual'" in message
     assert "development-forward categories" in message
+
+
+def test_code_manifest_entry_requires_implementation_domain(tmp_path: Path) -> None:
+    """Code manifest entries must route through an explicit implementation domain."""
+    manifest_yaml = _MINIMAL_MANIFEST.replace("  implementation_domain: backend\n", "")
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=manifest_yaml,
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion")
+
+    message = str(excinfo.value)
+    assert "category 'code' requires implementation_domain" in message
 
 
 def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:
@@ -282,6 +305,7 @@ def test_task_filename_fallback_sets_plan_id(tmp_path: Path) -> None:
         ```yaml
         - title: "Build foo"
           category: code
+          implementation_domain: backend
           task_type: feature
           depends_on: []
           validation_criteria: "foo.py exists"
@@ -459,6 +483,7 @@ def test_duplicate_manifest_entry_for_one_deliverable_fails(tmp_path: Path) -> N
         """
         - title: "Build foo again"
           category: code
+          implementation_domain: backend
           task_type: feature
           depends_on: []
           validation_criteria: "foo.py exists also"
@@ -493,6 +518,7 @@ def test_missing_covers_label_for_acceptance_item_fails(tmp_path: Path) -> None:
     manifest_yaml = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "foo.py exists"
@@ -529,6 +555,7 @@ def test_more_than_one_manifest_section_fails(tmp_path: Path) -> None:
         ```yaml
         - title: "Build foo"
           category: code
+          implementation_domain: backend
           task_type: feature
           depends_on: []
           validation_criteria: "foo.py exists"
@@ -545,6 +572,7 @@ def test_more_than_one_manifest_section_fails(tmp_path: Path) -> None:
         ```yaml
         - title: "Other"
           category: code
+          implementation_domain: backend
           task_type: feature
           depends_on: []
           validation_criteria: "x"
@@ -603,6 +631,7 @@ def test_manifest_entry_schema_missing_required_field_fails(tmp_path: Path) -> N
     schema_bad_yaml = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
 """
     plan = _plan_with_manifest(
         tmp_path,
@@ -632,6 +661,7 @@ def test_covers_label_with_wrong_plan_id_fails(tmp_path: Path) -> None:
     manifest_yaml = """
 - title: "Build foo"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "foo.py exists"

@@ -122,6 +122,10 @@ def _initial_stage_names(
         manifest = [_canonical_stage_name(override.stage_name) for override in opts.stage_caps]
     elif input_kind == "leaf":
         manifest = [_leaf_primary_stage(task)]
+    elif input_kind == "plan_file" and opts.planning_seed_state == "approved" and opts.quick:
+        manifest = ["expansion"]
+    elif input_kind == "plan_file" and opts.planning_seed_state == "approved":
+        manifest = ["expansion", "development", "holistic_qa", "pr", "merge"]
     elif input_kind == "plan_file" and opts.quick:
         manifest = ["planning"]
     elif input_kind == "plan_file":

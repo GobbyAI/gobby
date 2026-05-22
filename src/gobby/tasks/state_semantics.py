@@ -197,5 +197,6 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
         "unattended": bool(_read_field(task, "unattended")),
         "isolation": _read_field(task, "isolation") or "worktree",
         "assigned_agent": _read_field(task, "assigned_agent"),
+        "implementation_domain": _read_field(task, "implementation_domain"),
         "additional_skills": _read_field(task, "additional_skills"),
     }

@@ -32,8 +32,8 @@ class TestToolSchemas:
     def test_create_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
         """The create_task category enum must include refactor.
 
-        Expansion emits refactor-category tasks (see expansion_service._build_phase_refactor_description);
-        without the enum accepting it, every expansion round hits an MCP validation error.
+        Refactor remains a valid standalone task category; without the enum accepting it,
+        task creation and updates hit an MCP validation error.
         """
         schema = task_registry.get_schema("create_task")
 
@@ -51,6 +51,15 @@ class TestToolSchemas:
             "planning",
             "manual",
         }
+
+    def test_create_task_schema_has_implementation_domain(self, task_registry) -> None:
+        """Code task creation exposes implementation_domain for deterministic routing."""
+        schema = task_registry.get_schema("create_task")
+
+        assert schema is not None
+        implementation_domain = schema["inputSchema"]["properties"]["implementation_domain"]
+        assert set(implementation_domain["enum"]) == {"backend", "frontend", "fullstack"}
+        assert "implementation_domain" not in schema["inputSchema"]["required"]
 
     def test_update_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
         """The update_task category enum must match create_task and accept refactor."""
@@ -94,11 +103,15 @@ class TestToolSchemas:
             "start_date",
             "due_date",
             "isolation",
+            "assigned_agent",
+            "implementation_domain",
+            "additional_skills",
         ]
 
         for prop in expected_props:
             assert prop in props, f"Missing property: {prop}"
         assert set(props["isolation"]["enum"]) == {"none", "worktree", "clone"}
+        assert set(props["implementation_domain"]["enum"]) == {"backend", "frontend", "fullstack"}
 
     def test_close_task_schema_has_all_fields(self, task_registry) -> None:
         """Test close_task schema includes all options."""

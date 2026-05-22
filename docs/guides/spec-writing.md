@@ -35,9 +35,9 @@ front-matter line:
 `kind: deliverable | framing | verification | deferred`
 ```
 
-The parser also recognizes `kind: manifest`, but plan authors do not write that
-section. The plan-adversary writes `## M1 Task Manifest` as its final approval
-act.
+The parser also recognizes `kind: manifest`. The approving
+`plan-adversary-taskless` agent or the interactive coordinator writes
+`## M1 Task Manifest` after user-approved review.
 
 ## Canonical Template
 
@@ -159,23 +159,28 @@ does not resolve.
 
 Every deliverable heading needs a `[category: X]` tag. Expansion manifest categories are:
 
-| Category | TDD wrapper | Use for |
+| Category | TDD eligible | Use for |
 | --- | --- | --- |
-| `code` | yes | Behavior-changing implementation |
-| `config` | yes | Configuration changes |
+| `code` | yes | Behavior-changing implementation; manifest requires `implementation_domain` |
+| `config` | conditional | Configuration changes with executable behavior that can be pinned first |
 | `docs` | no | Documentation |
 | `refactor` | no | Code restructuring with no behavior change |
 | `test` | no | Standalone test infrastructure or regression suites |
-| `research` | no | Investigation with no code output |
-| `planning` | no | Design or architecture work |
 
-Use `planning` only for parent or intermediate planning work. Leaf deliverables
-that produce implementation artifacts should use their concrete output category
-such as `code`, `config`, `docs`, `test`, or `refactor`.
+Expansion manifests accept `code`, `config`, `docs`, `refactor`, and `test`.
+Use `research`, `planning`, or `manual` only for direct task creation outside
+approved-plan expansion.
 
-`code` and `config` deliverables may use TDD. Expansion emits the TEST, IMPL,
-and REF wrapper tasks for those categories. Do not add filler deliverables such
-as "write tests for X" when they duplicate the wrapper.
+For `category: code`, manifest entries must include
+`implementation_domain: backend | frontend | fullstack`. Expansion derives the
+developer agent from that domain unless a privileged manual override is present.
+
+`code` deliverables that change behavior should use `tdd: true`. `config`
+deliverables may use `tdd: true` only when the plan identifies executable
+behavior that can be pinned before the config change. Expansion emits one leaf
+with `additional_skills: ["test-driven-development"]`, `tdd:required`, and
+TDD evidence criteria. Do not add filler deliverables such as "write tests for
+X" when they duplicate the TDD-required leaf.
 
 Standalone `category: test` deliverables are valid when they have their own
 target, acceptance criteria, and behavior-pinning or test-infrastructure scope.
@@ -207,8 +212,9 @@ carries one manifest section at the end:
 `kind: manifest`
 ```
 
-The plan-adversary writes that section on approval. Each manifest entry maps
-one `kind: deliverable` section to one synthesized leaf task and includes:
+The approving adversary or coordinator writes that section on approval. Each
+manifest entry maps one `kind: deliverable` section to one synthesized leaf
+task and includes:
 
 | Field | Meaning |
 | --- | --- |
@@ -218,7 +224,8 @@ one `kind: deliverable` section to one synthesized leaf task and includes:
 | `depends_on` | Other manifest `source_section` IDs |
 | `validation_criteria` | One-line pass/fail check |
 | `labels` | One `covers:<plan-id>:<section-id>:<item-id>` per acceptance item |
-| `assigned_agent` | Agent route |
+| `implementation_domain` | Required for `category: code`; routes the developer agent |
+| `assigned_agent` | Optional explicit/manual override |
 | `tdd` | `true` only for `code` or `config` |
 | `source_section` | The source `kind: deliverable` section ID |
 
@@ -251,7 +258,7 @@ Before presenting or expanding a plan:
 3. Confirm every deliverable has a category tag and an acceptance block.
 4. Confirm every acceptance item has a valid artifact reference.
 5. Confirm dependencies name existing section IDs.
-6. Remove filler test tasks duplicated by TDD wrappers.
+6. Remove filler test tasks duplicated by TDD-required implementation leaves.
 7. Confirm the bootstrap `.coverage-ledger.yaml` companion exists for new epic
    plans before expansion.
 8. Run `uv run gobby plans validate <plan-file>`.

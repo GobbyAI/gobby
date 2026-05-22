@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 
 import click
 import psycopg
+import yaml
 
 from gobby import __version__
 from gobby.cli import postgres_bootstrap as _bootstrap
@@ -24,7 +25,7 @@ from gobby.cli.installers.postgres import (
     _read_bootstrap_database_url,
 )
 from gobby.cli.postgres_bootstrap import InstallMode
-from gobby.cli.utils import get_gobby_home
+from gobby.cli.utils import _redact_dsn, get_gobby_home
 from gobby.config.bootstrap import BootstrapConfigError
 
 POSTGRES_DUMP_NAME = "gobby.dump"
@@ -41,7 +42,7 @@ def postgres_backup_configured(*, gobby_home: Path | None = None) -> bool:
     home = gobby_home or get_gobby_home()
     try:
         data = _bootstrap.read_bootstrap_yaml(_bootstrap.bootstrap_path(home))
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return False
     return _has_text(data.get("database_url")) or _has_text(data.get("database_url_ref"))
 
@@ -438,20 +439,6 @@ def _process_output(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
     return ""
-
-
-def _redact_dsn(dsn: str) -> str:
-    if "@" not in dsn:
-        return dsn
-    prefix, suffix = dsn.split("@", 1)
-    scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
-    if ":" not in auth:
-        return dsn
-    user = auth.split(":", 1)[0]
-    redacted_auth = f"{user}:****"
-    if scheme:
-        return f"{scheme}://{redacted_auth}@{suffix}"
-    return f"{redacted_auth}@{suffix}"
 
 
 def _dsn_user(dsn: str) -> str | None:

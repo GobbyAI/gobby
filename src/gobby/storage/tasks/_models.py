@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES as TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.state_semantics import serialize_task_state
 
 # Priority name to numeric value mapping
@@ -120,6 +120,19 @@ def validate_category(category: str | None) -> str | None:
         return None
     normalized = category.lower().strip()
     return normalized if normalized in VALID_CATEGORIES else None
+
+
+def validate_implementation_domain(value: str | None) -> str | None:
+    """Validate and normalize an implementation domain value."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("implementation_domain must be a string")
+    normalized = value.strip().lower()
+    if normalized not in IMPLEMENTATION_DOMAINS:
+        allowed = ", ".join(sorted(IMPLEMENTATION_DOMAINS))
+        raise ValueError(f"Invalid implementation_domain '{value}'. Expected one of: {allowed}.")
+    return normalized
 
 
 def normalize_priority(priority: int | str | None) -> int:
@@ -236,6 +249,7 @@ class Task:
     unattended: bool = False
     isolation: Isolation = Isolation.worktree
     assigned_agent: str | None = None
+    implementation_domain: str | None = None
     additional_skills: list[str] | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
@@ -247,6 +261,7 @@ class Task:
         """Normalize enum-backed fields for manually constructed tasks."""
         self.task_type = validate_task_type(self.task_type)
         self.isolation = Isolation(self.isolation)
+        self.implementation_domain = validate_implementation_domain(self.implementation_domain)
         if self.escalated_at and not self.closed_at:
             self.is_escalated = True
 
@@ -329,6 +344,9 @@ class Task:
                 else Isolation.worktree
             ),
             assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
+            implementation_domain=(
+                row["implementation_domain"] if "implementation_domain" in keys else None
+            ),
             additional_skills=(
                 json.loads(row["additional_skills"])
                 if "additional_skills" in keys and row["additional_skills"]
@@ -382,6 +400,7 @@ class Task:
             "unattended": self.unattended,
             "isolation": self.isolation,
             "assigned_agent": self.assigned_agent,
+            "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }
@@ -426,6 +445,7 @@ class Task:
             "unattended": self.unattended,
             "isolation": self.isolation,
             "assigned_agent": self.assigned_agent,
+            "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }

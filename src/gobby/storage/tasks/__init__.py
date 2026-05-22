@@ -46,7 +46,6 @@ from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     TASK_TYPE_CHOICES,
-    TDD_ELIGIBLE_CATEGORIES,
     UNSET,
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
@@ -62,8 +61,10 @@ from gobby.storage.tasks._models import (
     UnsetType,
     normalize_priority,
     validate_category,
+    validate_implementation_domain,
     validate_task_type,
 )
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
 from gobby.storage.tasks._stage_registry import (
     ReviewPolicy,
@@ -113,6 +114,7 @@ __all__ = [
     # Functions
     "generate_task_id",
     "validate_category",
+    "validate_implementation_domain",
     "normalize_priority",
     "order_tasks_hierarchically",
     "cascade_build_state_to_subtree",

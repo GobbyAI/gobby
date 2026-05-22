@@ -66,22 +66,26 @@ class TestPlanDraftContent:
         must reflect that."""
         assert "`refactor`" in body
 
-    def test_code_and_config_marked_tdd(self, body: str) -> None:
-        """Only code and config receive TDD sandwiches — the skill must tell
-        the drafter this so they don't scatter TDD across docs/test tasks."""
-        # Category table must note 'yes' for TDD on code + config; permissive
-        # check — look for the category names plus a yes marker near them.
-        assert "code" in body and "config" in body
+    def test_code_and_config_marked_tdd_eligible(self, body: str) -> None:
+        """Only code and config are TDD-eligible expansion categories."""
+        assert "`code` | yes" in body
+        assert "`config` | conditional" in body
+        assert "use `tdd: true` only for executable behavior" in body
 
     # --- TDD anti-patterns --------------------------------------------------
 
     def test_forbids_explicit_test_tasks(self, body: str) -> None:
-        """[TDD] / [IMPL] / [REF] prefixes must be flagged as forbidden in drafts.
-        Expansion inserts the sandwich; pre-inserted wrappers break it."""
+        """Wrapper prefixes must be flagged as forbidden in drafts.
+
+        Expansion now emits one leaf per manifest entry and skill-backed TDD
+        metadata on required leaves; pre-inserted wrappers still break that.
+        """
         for pattern in ("[TDD]", "[IMPL]", "[REF]"):
             assert pattern in body, f"TDD-forbidden pattern not called out: {pattern}"
         assert "Write tests for" in body
         assert "duplicate TDD-wrapper" in body
+        assert 'additional_skills: ["test-driven-development"]' in body
+        assert "label `tdd:required`" in body
         assert "standalone `category: test`" in body
         assert "parity regression suite" in body
 

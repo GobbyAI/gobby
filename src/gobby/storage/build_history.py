@@ -121,7 +121,7 @@ class BuildHistoryStorage:
                     now,
                 ),
             )
-        return self.get_run(run_id)
+        return self._require_run(run_id)
 
     def finish_run(
         self,
@@ -146,7 +146,7 @@ class BuildHistoryStorage:
                 """,
                 (status, root_task_id, _json_dump(summary), error, now, run_id),
             )
-        return self.get_run(run_id)
+        return self._require_run(run_id)
 
     def record_run(
         self,
@@ -186,7 +186,7 @@ class BuildHistoryStorage:
                     completed_at,
                 ),
             )
-        return self.get_run(run_id)
+        return self._require_run(run_id)
 
     def record_event(
         self,
@@ -228,11 +228,15 @@ class BuildHistoryStorage:
             raise RuntimeError("Build history event disappeared after insert")
         return event
 
-    def get_run(self, run_id: str) -> BuildRun:
+    def get_run(self, run_id: str) -> BuildRun | None:
         row = self.db.fetchone("SELECT * FROM build_runs WHERE id = ?", (run_id,))
-        if row is None:
-            raise RuntimeError(f"Build run not found: {run_id}")
-        return BuildRun.from_row(row)
+        return BuildRun.from_row(row) if row is not None else None
+
+    def _require_run(self, run_id: str) -> BuildRun:
+        run = self.get_run(run_id)
+        if run is None:
+            raise RuntimeError(f"Build run disappeared after insert/update: {run_id}")
+        return run
 
     def get_event(self, event_id: int) -> BuildHistoryEvent | None:
         row = self.db.fetchone("SELECT * FROM build_history_events WHERE id = ?", (event_id,))

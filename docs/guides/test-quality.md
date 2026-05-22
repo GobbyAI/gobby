@@ -14,6 +14,11 @@ Use the audit before adding or expanding tests in an area with known quality
 concerns. Use focused mutation testing when static checks pass but the risk is in
 behavioral coverage.
 
+For TDD-required Gobby tasks, developer agents run the audit on touched test
+paths after adding or heavily editing tests. QA and holistic QA treat missing
+test-quality evidence as a blocker when `tdd:required` or
+`test-driven-development` applies.
+
 ## Quick Start
 
 Audit all tests:

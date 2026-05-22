@@ -43,6 +43,10 @@ validation, and emits exactly one verdict:
 - reject with `reject_review(stage_name="development")`
 - escalate with `escalate_task`
 
+For tasks marked `tdd:required` or requesting `test-driven-development`, the
+reviewer must reject unless red, green, refactor/final-green, exact test command,
+and test-quality audit evidence are present.
+
 Use the explicit user-facing summary `approve / reject / escalate` when
 describing possible outcomes.
 

@@ -6,8 +6,8 @@ gobby plan document. It is consumed from two places:
   - the autonomous plan-adversary.yaml agent (load_skill step before reviewing).
 
 These tests guard content drift: the review-rejection contract matches
-plan-adversary.yaml/stage-native planning expectations, the round-scoped heading matches
-what the interactive planner extracts from the task description, and the
+taskless plan-adversary expectations, the round-scoped heading matches
+what the interactive planner records in the plan changelog, and the
 attitude-vs-quota guidance is deliberately the opposite of BMAD's "at least
 10 findings" instruction so adversary approval is a valid outcome on clean
 plans.
@@ -98,21 +98,21 @@ class TestPlanReviewContent:
         """These are contract-level and must all be flagged as blocking.
         Silent drift here breaks the expand-task pipeline on accepted plans."""
         for check in (
-            "explicit test tasks",  # TDD sandwich model
+            "explicit test tasks",
             "file path",  # concrete target for code/config
             "refactor",  # canonical category (added in #12038)
-            "Phase N: Name",  # canonical phase heading
+            "P<N>: Name",  # canonical phase heading
+            "implementation_domain",  # code routing contract
         ):
             assert check in body, f"Missing gobby-specific check: {check}"
 
     # --- escalation ---------------------------------------------------------
 
     def test_blocking_findings_use_review_rejection(self, body: str) -> None:
-        """Routine revision rounds should use reject_review and
-        return the planning task to open."""
-        assert "reject_review" in body
+        """Routine taskless revision rounds should return needs_review."""
+        assert "verdict: needs_review" in body
         assert "round_number" in body
-        assert "returns the anchor to `open`" in body
+        assert "## V1 Plan Changelog" in body
 
     def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
         """Insufficient-context halt uses the same prefix the autonomous
@@ -123,8 +123,9 @@ class TestPlanReviewContent:
         assert "end_agent_run" in body
         assert "session_id" not in body
 
-    def test_autonomous_exit_allows_review_rejection_before_end_agent_run(self, body: str) -> None:
-        assert "reject_review" in body
+    def test_autonomous_exit_returns_structured_review_result(self, body: str) -> None:
+        assert "verdict: approved" in body
+        assert "verdict: needs_review" in body
 
     def test_nits_do_not_block_approval(self, body: str) -> None:
         """Severity distinction: blocking vs nit. Nits alone approve."""
@@ -135,9 +136,7 @@ class TestPlanReviewContent:
     # --- output format ------------------------------------------------------
 
     def test_round_scoped_findings_header(self, body: str) -> None:
-        """The interactive planner extracts the section matching the CURRENT
-        display round. The heading must be `## Adversary Findings — Round N`
-        (with em-dash)."""
+        """The interactive planner records the current display round."""
         assert "## Adversary Findings" in body
         assert "Round N" in body
         assert "em-dash" in body.lower() or "—" in body

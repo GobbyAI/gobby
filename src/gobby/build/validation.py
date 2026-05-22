@@ -53,6 +53,13 @@ def _validate_max_active_agents(opts: BuildOptions) -> None:
         raise ValueError("max_active_agents must be greater than or equal to 1")
 
 
+def _validate_planning_seed(opts: BuildOptions) -> None:
+    if opts.planning_seed_state not in {"drafted", "needs_review", "approved"}:
+        raise ValueError("planning_seed_state must be drafted, needs_review, or approved")
+    if opts.completed_plan_review_rounds < 0:
+        raise ValueError("completed_plan_review_rounds must be greater than or equal to 0")
+
+
 def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArtifacts) -> None:
     if isolation == "clone" and artifacts.worktree_path:
         logger.info(

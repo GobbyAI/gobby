@@ -45,10 +45,11 @@ instructions: |
   project commands when the repository requires it.
 
   ADDITIONAL SKILLS:
-  After claiming the task, inspect the prompt's additional_skills list. For each
-  entry, call get_skill(name=<skill>) on gobby-skills before implementing. The
-  list is usually empty; baseline frontend competence is defined in this YAML's
-  skills block.
+  After claiming the task, first load development-discipline with
+  get_skill(name="development-discipline") on gobby-skills. Then inspect the
+  prompt's additional_skills list. For each entry, call get_skill(name=<skill>)
+  on gobby-skills before implementing. TDD-required leaves include
+  test-driven-development in additional_skills.
 
   HANDOFF:
   Inspect the assigned task's stage manifest. If the current development row has
@@ -73,6 +74,9 @@ workflows:
 
 step_variables:
   task_claimed: false
+  required_skills:
+    - development-discipline
+  required_skills_loaded: false
   additional_skills: []
   additional_skills_loaded: false
   implementation_complete: false
@@ -97,8 +101,32 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: load_additional_skills
+      - to: load_required_skills
         when: "vars.task_claimed"
+
+  - name: load_required_skills
+    description: "Load required developer discipline skills"
+    status_message: |
+      Call get_skill(name="development-discipline") on gobby-skills before
+      loading optional task skills or implementing.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    transitions:
+      - to: load_additional_skills
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: load_additional_skills
     description: "Load optional task-specific skills"

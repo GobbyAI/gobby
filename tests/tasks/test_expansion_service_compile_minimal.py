@@ -69,6 +69,7 @@ original_acceptance_items:
 ```yaml
 - title: "Foundation"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on: []
   validation_criteria: "Foundation acceptance is satisfied."
@@ -79,6 +80,7 @@ original_acceptance_items:
   source_section: "1.1"
 - title: "Follow-up"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on:
     - "1.1"
@@ -129,6 +131,7 @@ Expose the expansion hook used by the scanner.
 ```yaml
 - title: "Scanner"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on:
     - "2.1"
@@ -140,6 +143,7 @@ Expose the expansion hook used by the scanner.
   source_section: "1.1"
 - title: "Expansion Hook"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on: []
   validation_criteria: "Expansion hook acceptance is satisfied."
@@ -213,16 +217,15 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
-    # Per-phase sandwich: phase-p1 = TEST + 1.1::impl + REF; phase-p2 same shape.
-    assert len(spec["tasks"]) == 6
+    assert len(spec["tasks"]) == 2
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
-        "phase-p1": 3,
-        "phase-p2": 3,
+        "phase-p1": 1,
+        "phase-p2": 1,
     }
-    # Cross-phase chain: phase N+1's [TEST] depends on phase N's [REF].
-    assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} in spec["dependencies"]
-    # Cross-deliverable manifest depends_on: 2.1 → 1.1 wires IMPL → IMPL.
-    assert {"task_id": "2.1::impl", "depends_on": "1.1::impl"} in spec["dependencies"]
+    assert all(not any(key.startswith("tdd_") for key in phase) for phase in spec["phases"])
+    assert spec["tdd_mode"] == "skill_backed"
+    # Cross-deliverable manifest depends_on: 2.1 -> 1.1 wires single leaf to single leaf.
+    assert {"task_id": "2.1::single", "depends_on": "1.1::single"} in spec["dependencies"]
     assert spec["deferrals"] == [
         {
             "section_id": "2.2",
@@ -262,7 +265,7 @@ def test_compile_skips_implicit_phase_edge_when_manifest_requires_later_phase_fi
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
-    assert {"task_id": "1.1::impl", "depends_on": "2.1::impl"} in spec["dependencies"]
+    assert {"task_id": "1.1::single", "depends_on": "2.1::single"} in spec["dependencies"]
     assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} not in spec[
         "dependencies"
     ]
@@ -324,19 +327,18 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
     applied = service.apply_run(run.id, session_id=None)
 
     created_task_ids = applied.created_task_ids or []
-    # 2 phase parent tasks + 6 leaf tasks (3 per phase: TEST + IMPL + REF).
-    assert len(created_task_ids) == 8
+    # 2 phase parent tasks + 2 implementation leaves.
+    assert len(created_task_ids) == 4
     created = [service.task_manager.get_task(task_id) for task_id in created_task_ids]
     assert all(task is not None for task in created)
     titles = [task.title for task in created if task is not None]
-    # Exactly one phase-level [TEST] Phase N and [REF] Phase N per phase —
-    # the contract compile emits the sandwich, the apply step must NOT
-    # double-wrap (tdd_sandwich_emitted=True suppresses the apply-side
-    # wrapper). Two phases → two TEST + two REF.
-    assert sum(1 for title in titles if title.startswith("[TEST] Phase")) == 2
-    assert sum(1 for title in titles if title.startswith("[REF] Phase")) == 2
+    assert not any(title.startswith("[TEST] Phase") for title in titles)
+    assert not any(title.startswith("[REF] Phase") for title in titles)
     assert any(
         "covers:minimal-contract:1.1:1.1.1" in (task.labels or [])
         for task in created
         if task is not None
     )
+    tdd_leaf = next(task for task in created if task is not None and task.title == "Foundation")
+    assert "tdd:required" in (tdd_leaf.labels or [])
+    assert tdd_leaf.additional_skills == ["test-driven-development"]

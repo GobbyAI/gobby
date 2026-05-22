@@ -15,11 +15,7 @@ from gobby.tasks.expansion_service import ExpansionService
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 MIN_DELIVERABLE_COUNT = 32
-# Per-phase TDD sandwich: each TDD-phase adds two wrappers ([TEST] Phase N
-# and [REF] Phase N) on top of one IMPL/single task per manifest entry.
-# A floor that is robust to plan growth: MIN_DELIVERABLE_COUNT + 2 wrappers
-# for at least one phase having TDD entries.
-MIN_COMPILED_TASK_COUNT = 34
+MIN_COMPILED_TASK_COUNT = 32
 MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
 MIN_ANNOTATED_DEPENDENCY_COUNT = 24
 
@@ -62,18 +58,12 @@ def test_plan_12725_compiles_clean(
 
     manifest_by_source = {entry.source_section: entry for entry in doc.manifest_entries}
     section_by_id = {section.section_id: section for section in doc.sections}
-    impl_or_single_tasks = [
-        task for task in spec["tasks"] if not task["title"].startswith(("[TEST]", "[REF]"))
-    ]
+    impl_or_single_tasks = list(spec["tasks"])
     assert len(impl_or_single_tasks) >= MIN_IMPL_OR_SINGLE_TASK_COUNT
     for task in impl_or_single_tasks:
         section_id = task["source_section_id"]
         entry = manifest_by_source[section_id]
-        if entry.tdd:
-            expected_title = f"[IMPL] {entry.title}"
-        else:
-            expected_title = entry.title
-        assert task["title"] == expected_title, (
+        assert task["title"] == entry.title, (
             f"title drift for {section_id}: manifest={entry.title!r}, compiled={task['title']!r}"
         )
         assert task["category"] == entry.category, section_id
@@ -86,7 +76,8 @@ def test_plan_12725_compiles_clean(
                 item.item_id,
             )
         assert task["assigned_agent"] == entry.assigned_agent, section_id
-        assert sorted(task["labels"]) == sorted(entry.labels), section_id
+        expected_labels = [*entry.labels, *(["tdd:required"] if entry.tdd else [])]
+        assert sorted(task["labels"]) == sorted(expected_labels), section_id
 
     assert spec["deferrals"] == []
 
@@ -101,20 +92,15 @@ def test_plan_12725_compiles_clean(
     )
 
     for entry in annotated_entries:
-        # Cross-deliverable depends_on edges link IMPL/single tasks directly:
-        # source uses ::impl for TDD entries and ::single for non-TDD.
-        caller_lead = (
-            f"{entry.source_section}::impl" if entry.tdd else f"{entry.source_section}::single"
-        )
+        # Cross-deliverable depends_on edges link single implementation leaves directly.
+        caller_lead = f"{entry.source_section}::single"
         for blocker_section in entry.depends_on:
             blocker_entry = manifest_by_source.get(blocker_section)
             assert blocker_entry is not None, (
                 f"unresolved depends_on target: {entry.source_section} depends on "
                 f"{blocker_section}, which is not a manifest entry"
             )
-            blocker_terminal = (
-                f"{blocker_section}::impl" if blocker_entry.tdd else f"{blocker_section}::single"
-            )
+            blocker_terminal = f"{blocker_section}::single"
             assert blocker_terminal in edges_by_caller.get(caller_lead, set()), (
                 f"missing dependency edge: {caller_lead} -> {blocker_terminal} "
                 f"from {entry.source_section} depends_on {blocker_section}"

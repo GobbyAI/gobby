@@ -212,12 +212,24 @@ gobby build restart REF [--dry-run] [--force] [--yes] [--no-resume]
 | `--reset-expansion-output` | Clear prior expansion output before building. |
 | `--max-active-agents N` | Cap immediately active automation agents. |
 | `--max-retries N` | Cap retries per build stage. |
+| `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
+| `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
 | `--dry-run` | Preview `clean` or `restart` effects. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
 | `--yes` | Confirm destructive `clean` or `restart` prompts. |
 | `--no-resume` | For `restart`, reset state and leave automation paused. |
 
 Use `gobby build stop [REF]` to pause future dispatch work for a target.
+
+For `/gobby plan` handoff, use:
+
+```bash
+gobby build .gobby/plans/example.md --planning-seed-state approved --completed-plan-review-rounds 1
+```
+
+`planning_seed_state=approved` starts at expansion. `needs_review` starts at
+the remaining planning review loop with the completed round count already
+applied. `drafted` starts from planning.
 
 ## Task Lifecycle
 

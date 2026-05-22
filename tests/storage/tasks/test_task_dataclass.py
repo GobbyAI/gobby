@@ -19,3 +19,18 @@ def test_is_escalated_field(temp_db, sample_project) -> None:
     assert fetched is not None
     assert hasattr(fetched, "is_escalated")
     assert fetched.is_escalated is True
+
+
+def test_implementation_domain_persists(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Backend leaf",
+        category="code",
+        implementation_domain="backend",
+    )
+
+    fetched = manager.get_task(task.id)
+
+    assert fetched.implementation_domain == "backend"
+    assert fetched.to_dict()["implementation_domain"] == "backend"

@@ -80,6 +80,21 @@ def get_gobby_home() -> Path:
     return Path.home() / ".gobby"
 
 
+def _redact_dsn(dsn: str) -> str:
+    """Redact the password component from a PostgreSQL DSN for CLI output."""
+    if "@" not in dsn:
+        return dsn
+    prefix, suffix = dsn.split("@", 1)
+    scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
+    if ":" not in auth:
+        return dsn
+    user = auth.split(":", 1)[0]
+    redacted_auth = f"{user}:****"
+    if scheme:
+        return f"{scheme}://{redacted_auth}@{suffix}"
+    return f"{redacted_auth}@{suffix}"
+
+
 def get_resources_dir(project_path: str | None = None) -> Path:
     """Get the resources directory for storing media files.
 

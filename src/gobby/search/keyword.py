@@ -211,24 +211,29 @@ class DeprecatedSqliteKeywordSearchBackend:
         if self._fit_items:
             return _search_deprecated_sqlite_fit_items(query, limit, self._fit_items)
 
-        escaped_query = _escape_sqlite_like(query.strip())
-        if not escaped_query:
+        query_tokens = _keyword_tokens(query)
+        if not query_tokens:
             return []
 
         params: list[Any] = []
         columns = _sqlite_search_columns(self._config)
         search_clauses = []
-        for column in columns:
-            search_clauses.append(f"COALESCE({column}, '') LIKE ? ESCAPE '\\'")
-            params.append(f"%{escaped_query}%")
+        for token in query_tokens:
+            escaped_token = _escape_sqlite_like(token)
+            token_clauses = []
+            for column in columns:
+                token_clauses.append(f"COALESCE({column}, '') LIKE ? ESCAPE '\\'")
+                params.append(f"%{escaped_token}%")
+            search_clauses.append(f"({' OR '.join(token_clauses)})")
 
         where = [f"({' OR '.join(search_clauses)})"]
         if filters:
             where.extend(_sqlite_filter_clauses(params, self._config, filters))
 
-        params.append(limit)
+        params.append(max(limit * len(query_tokens), limit))
+        selected_columns = ", ".join(columns)
         sql = f"""
-            SELECT id
+            SELECT id, {selected_columns}
               FROM {self._config.table}
              WHERE {" AND ".join(where)}
              ORDER BY id ASC
@@ -245,7 +250,16 @@ class DeprecatedSqliteKeywordSearchBackend:
             )
             return []
 
-        return [SearchHit(id=str(row_value(row, "id")), score=1.0) for row in rows]
+        hits = []
+        for row in rows:
+            content = " ".join(
+                str(value) for column in columns if (value := row_value(row, column)) is not None
+            )
+            score = _deprecated_sqlite_match_score(query_tokens, content)
+            if score:
+                hits.append(SearchHit(id=str(row_value(row, "id")), score=score))
+        hits.sort(key=lambda hit: (-hit.score, hit.id))
+        return hits[:limit]
 
     def get_stats(self) -> dict[str, Any]:
         try:
@@ -383,13 +397,9 @@ def _search_deprecated_sqlite_fit_items(
 
     hits: list[SearchHit] = []
     for item_id, content in items:
-        content_lower = content.lower()
-        content_tokens = set(_keyword_tokens(content))
-        matched = sum(
-            1 for token in query_tokens if token in content_tokens or token in content_lower
-        )
-        if matched == len(query_tokens):
-            hits.append(SearchHit(id=item_id, score=matched / len(query_tokens)))
+        score = _deprecated_sqlite_match_score(query_tokens, content)
+        if score:
+            hits.append(SearchHit(id=item_id, score=score))
 
     hits.sort(key=lambda hit: (-hit.score, hit.id))
     return hits[:limit]
@@ -397,6 +407,13 @@ def _search_deprecated_sqlite_fit_items(
 
 def _keyword_tokens(value: str) -> list[str]:
     return re.findall(r"[a-z0-9_]+", value.lower())
+
+
+def _deprecated_sqlite_match_score(query_tokens: list[str], content: str) -> float:
+    content_lower = content.lower()
+    content_tokens = set(_keyword_tokens(content))
+    matched = sum(1 for token in query_tokens if token in content_tokens or token in content_lower)
+    return matched / len(query_tokens) if matched else 0.0
 
 
 def _table_config(table: str) -> _TableConfig:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from gobby.build.workspaces import WorkspaceBackend
 from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
@@ -33,6 +34,8 @@ class BuildOptions:
     reset_expansion_output: bool = False
     max_active_agents: int | None = None
     max_retries: int | None = None
+    planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
+    completed_plan_review_rounds: int = 0
 
     @property
     def workspace_backend(self) -> WorkspaceBackend:

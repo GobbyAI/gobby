@@ -8,12 +8,7 @@ from typing import Any, cast
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
-from gobby.tasks.expansion._common import (
-    _TDD_CATEGORIES,
-    _manifest_stage_names,
-    _stable_ref_id,
-    _stable_test_id,
-)
+from gobby.tasks.expansion._common import _manifest_stage_names
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
@@ -107,19 +102,6 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     tasks = spec["tasks"]
     dependency_edges = spec["dependencies"]
     multi_phase = len(phase_list) > 1
-    phase_index_by_id = {phase["id"]: i + 1 for i, phase in enumerate(phase_list)}
-    phase_has_tdd = {
-        phase["id"]: (
-            not phase.get("tdd_sandwich_emitted")
-            and any(
-                task_item.get("category") in _TDD_CATEGORIES
-                for task_item in tasks
-                if task_item["phase_id"] == phase["id"]
-            )
-        )
-        for phase in phase_list
-    }
-
     epic_validation = "All expanded child tasks must be completed."
     plan_ref_block = ""
     if run.plan_file:
@@ -182,44 +164,6 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
         for phase in phase_list:
             phase_id = phase["id"]
             parent_id = phase_parent_map[phase_id]
-            phase_number = phase_index_by_id[phase_id]
-            tdd_enabled = phase_has_tdd[phase_id]
-
-            if tdd_enabled:
-                test_description = self._build_phase_test_description(phase, phase_number)
-                test_validation = self._build_phase_test_validation(phase)
-                test_result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=f"[TEST] Phase {phase_number}: Write failing tests",
-                    description=f"{plan_ref_block}{test_description}"
-                    if plan_ref_block
-                    else test_description,
-                    priority=self._phase_priority(tasks_by_phase[phase_id]),
-                    task_type="task",
-                    parent_task_id=parent_id,
-                    category="test",
-                    validation_criteria=test_validation,
-                    created_in_session_id=session_id,
-                )
-                created_task_map[_stable_test_id(phase_id)] = test_result["task"]["id"]
-                phase_child_ids[phase_id].append(test_result["task"]["id"])
-                if leaf_manifest_specs:
-                    self.task_manager.stage_states.initialize_manifest(
-                        test_result["task"]["id"],
-                        leaf_manifest_specs,
-                        by_session_id=session_id,
-                    )
-                _inherit_build_state(
-                    self,
-                    parent=task,
-                    task_id=test_result["task"]["id"],
-                    target_branch=target_branch,
-                )
-                suggested_tests = phase.get("test_intent", {}).get("suggested_test_files") or []
-                if suggested_tests:
-                    self.af_manager.set_files(
-                        test_result["task"]["id"], suggested_tests, "expansion"
-                    )
 
             for task_item in tasks_by_phase[phase_id]:
                 raw_description = task_item.get("description") or ""
@@ -238,6 +182,7 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     created_in_session_id=session_id,
                     labels=task_label_map.get(task_item["id"]),
                     assigned_agent=task_item.get("assigned_agent"),
+                    implementation_domain=task_item.get("implementation_domain"),
                     additional_skills=task_item.get("additional_skills"),
                 )
                 created_id = create_result["task"]["id"]
@@ -259,81 +204,18 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                 if affected_files:
                     self.af_manager.set_files(created_id, affected_files, "expansion")
 
-            if tdd_enabled:
-                ref_description = self._build_phase_refactor_description(phase, phase_number)
-                ref_result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=f"[REF] Phase {phase_number}: Refactor with green tests",
-                    description=f"{plan_ref_block}{ref_description}"
-                    if plan_ref_block
-                    else ref_description,
-                    priority=self._phase_priority(tasks_by_phase[phase_id]),
-                    task_type="task",
-                    parent_task_id=parent_id,
-                    category="refactor",
-                    validation_criteria="All tests remain green after refactoring.",
-                    created_in_session_id=session_id,
-                )
-                created_task_map[_stable_ref_id(phase_id)] = ref_result["task"]["id"]
-                phase_child_ids[phase_id].append(ref_result["task"]["id"])
-                if leaf_manifest_specs:
-                    self.task_manager.stage_states.initialize_manifest(
-                        ref_result["task"]["id"],
-                        leaf_manifest_specs,
-                        by_session_id=session_id,
-                    )
-                _inherit_build_state(
-                    self,
-                    parent=task,
-                    task_id=ref_result["task"]["id"],
-                    target_branch=target_branch,
-                )
-
         deps_by_task: dict[str, list[str]] = defaultdict(list)
-        external_phase_deps: dict[str, set[str]] = defaultdict(set)
         for edge in dependency_edges:
             deps_by_task[edge["task_id"]].append(edge["depends_on"])
 
         for task_item in tasks:
-            phase_id = task_item["phase_id"]
             stable_id = task_item["id"]
             created_id = created_task_map[stable_id]
             blockers = deps_by_task.get(stable_id, [])
-            is_tdd_task = task_item.get("category") in _TDD_CATEGORIES and phase_has_tdd[phase_id]
-            if is_tdd_task:
-                # All implementation tasks in a TDD phase depend on the phase's failing-test task.
-                self._add_dependency(created_id, created_task_map[_stable_test_id(phase_id)])
             for blocker_id in blockers:
-                blocker_task = next((item for item in tasks if item["id"] == blocker_id), None)
-                if blocker_task is None:
-                    continue
-                blocker_phase_id = blocker_task["phase_id"]
-                if is_tdd_task and blocker_phase_id != phase_id:
-                    external_phase_deps[phase_id].add(
-                        self._external_blocker_id(blocker_task, phase_has_tdd)
-                    )
-                    continue
-                blocker_created = self._resolve_created_blocker(
-                    blocker_id,
-                    tasks_by_id={item["id"]: item for item in tasks},
-                    created_task_map=created_task_map,
-                    phase_has_tdd=phase_has_tdd,
-                )
+                blocker_created = created_task_map.get(blocker_id)
                 if blocker_created:
                     self._add_dependency(created_id, blocker_created)
-
-        for phase in phase_list:
-            phase_id = phase["id"]
-            if phase_has_tdd[phase_id]:
-                test_id = created_task_map[_stable_test_id(phase_id)]
-                for blocker_stable in sorted(external_phase_deps.get(phase_id, set())):
-                    blocker_created = created_task_map.get(blocker_stable)
-                    if blocker_created:
-                        self._add_dependency(test_id, blocker_created)
-                ref_id = created_task_map[_stable_ref_id(phase_id)]
-                for task_item in tasks_by_phase[phase_id]:
-                    if task_item.get("category") in _TDD_CATEGORIES:
-                        self._add_dependency(ref_id, created_task_map[task_item["id"]])
 
         if multi_phase:
             for phase in phase_list:
@@ -417,83 +299,6 @@ def _get_expansion_config(self: Any) -> Any | None:
     if self.config is None:
         return None
     return self.config.get_gobby_tasks_config().expansion
-
-
-def _phase_priority(self: Any, phase_tasks: list[dict[str, Any]]) -> int:
-    """Use the highest-priority task in a phase as the sandwich task priority."""
-    priorities = [int(task_item.get("priority", 2)) for task_item in phase_tasks]
-    return min(priorities) if priorities else 2
-
-
-def _build_phase_test_description(self: Any, phase: dict[str, Any], phase_number: int) -> str:
-    """Create deterministic test-task description from explicit phase metadata."""
-    test_intent = phase.get("test_intent") or {}
-    lines = [test_intent.get("summary") or f"Write failing tests for Phase {phase_number}."]
-    behaviors = list(test_intent.get("behaviors") or [])
-    if behaviors:
-        lines.append("")
-        lines.append("Behaviors to verify:")
-        lines.extend(f"- {behavior}" for behavior in behaviors)
-    suggested_test_files = list(test_intent.get("suggested_test_files") or [])
-    if suggested_test_files:
-        lines.append("")
-        lines.append("Suggested test files:")
-        lines.extend(f"- {file_path}" for file_path in suggested_test_files)
-    entry_criteria = list(test_intent.get("entry_criteria") or [])
-    if entry_criteria:
-        lines.append("")
-        lines.append("Entry criteria:")
-        lines.extend(f"- {criterion}" for criterion in entry_criteria)
-    return "\n".join(lines)
-
-
-def _build_phase_test_validation(self: Any, phase: dict[str, Any]) -> str:
-    """Create deterministic test-task validation text."""
-    test_intent = phase.get("test_intent") or {}
-    behaviors = list(test_intent.get("behaviors") or [])
-    if behaviors:
-        return (
-            "Failing tests exist for the phase behaviors and fail for expected reasons: "
-            + "; ".join(behaviors)
-        )
-    return "Failing tests exist for the phase behavior and fail for expected reasons."
-
-
-def _build_phase_refactor_description(self: Any, phase: dict[str, Any], phase_number: int) -> str:
-    """Create deterministic refactor-task description from phase metadata."""
-    summary = phase.get("summary") or phase.get("title") or f"Phase {phase_number}"
-    return (
-        f"Refactor {summary} while keeping the new tests green.\n\n"
-        "Review for duplication, naming, dead code, and unnecessarily complex flows."
-    )
-
-
-def _external_blocker_id(
-    self: Any, blocker_task: dict[str, Any], phase_has_tdd: dict[str, bool]
-) -> str:
-    """Map an external blocker to the effective created task that should gate downstream work."""
-    blocker_phase_id = blocker_task["phase_id"]
-    if phase_has_tdd.get(blocker_phase_id) and blocker_task.get("category") in _TDD_CATEGORIES:
-        return _stable_ref_id(blocker_phase_id)
-    return cast(str, blocker_task["id"])
-
-
-def _resolve_created_blocker(
-    self: Any,
-    blocker_id: str,
-    *,
-    tasks_by_id: dict[str, dict[str, Any]],
-    created_task_map: dict[str, str],
-    phase_has_tdd: dict[str, bool],
-) -> str | None:
-    """Resolve a stable blocker ID to the created task that should enforce it."""
-    blocker_task = tasks_by_id.get(blocker_id)
-    if blocker_task is None:
-        return None
-    phase_id = blocker_task["phase_id"]
-    if phase_has_tdd.get(phase_id) and blocker_task.get("category") in _TDD_CATEGORIES:
-        return created_task_map.get(blocker_id)
-    return created_task_map.get(blocker_id)
 
 
 def _add_dependency(self: Any, task_id: str, depends_on: str) -> None:

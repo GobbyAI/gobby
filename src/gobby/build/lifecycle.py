@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,7 @@ from gobby.build.validation import (
     _validate_epic_isolation_artifacts,
     _validate_max_active_agents,
     _validate_no_merge,
+    _validate_planning_seed,
     _validate_retry_caps,
     _validate_task_ref_isolation_artifacts,
 )
@@ -148,6 +150,7 @@ async def _build_impl(
     _validate_clones_dir(opts)
     _validate_retry_caps(opts)
     _validate_max_active_agents(opts)
+    _validate_planning_seed(opts)
     target_branch = await _resolve_target_branch(db, project_id, opts, input_kind)
 
     if input_kind == "plan_file":
@@ -240,6 +243,7 @@ async def _build_plan_file(
     )
     record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "plan_file")
+    _seed_plan_file_stage_state(task_manager, task.id, opts)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
     tick = await _kick_dispatcher_tick(
@@ -262,6 +266,38 @@ async def _build_plan_file(
         manifest=specs_payload(specs),
         warnings=warnings,
     )
+
+
+def _seed_plan_file_stage_state(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    opts: BuildOptions,
+) -> None:
+    if opts.planning_seed_state != "needs_review":
+        return
+    if not task_manager.stage_states.get(task_id, "planning"):
+        raise ValueError("planning_seed_state=needs_review requires a planning stage")
+    now = datetime.now(UTC).isoformat()
+    with task_manager.db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'needs_review',
+                   review_round_count = ?,
+                   entered_at = COALESCE(entered_at, ?),
+                   updated_at = ?,
+                   notes = ?
+             WHERE task_id = ?
+               AND stage_name = 'planning'
+            """,
+            (
+                opts.completed_plan_review_rounds,
+                now,
+                now,
+                "Seeded plan review state from build input.",
+                task_id,
+            ),
+        )
 
 
 async def _build_leaf(

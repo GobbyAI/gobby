@@ -4,7 +4,7 @@ Specifically: deliverables-with-no-phases must fail validation. The parser's
 `draft` mode silently drops headings whose IDs do not match the canonical
 section regex, so a plan authored with `## Phase 1: Setup` (literal word
 "Phase") parses cleanly but yields zero phase sections — which the expansion
-compiler cannot anchor TDD wrappers to. The validator must surface this as
+compiler cannot turn into a phase hierarchy. The validator must surface this as
 ``valid: False`` instead of letting the compiler choke later.
 """
 

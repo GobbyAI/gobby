@@ -40,7 +40,7 @@ stages:
     position_hint: 50
   - name: expansion
     display_label: Expansion
-    description: Decompose plan into TDD-wrapped leaf tasks.
+    description: Decompose plan into manifest-backed leaf tasks.
     category: implementation
     reviewer_agent: expansion-qa
     review_policy: required
@@ -52,7 +52,7 @@ stages:
     position_hint: 80
   - name: development
     display_label: Development
-    description: Leaf implementation work; drives TDD sandwiches.
+    description: Leaf implementation work; carries skill-backed TDD when required.
     category: implementation
     default_agent: backend-developer
     reviewer_agent_selector:

@@ -12,10 +12,12 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
+from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
+IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
@@ -44,6 +46,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         depends_on: list[str] | None = None,
         labels: list[str] | None = None,
         validation_criteria: str | None = None,
+        implementation_domain: str | None = None,
         claim: bool = False,
         project: str | None = None,
         start_date: str | None = None,
@@ -65,6 +68,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             labels: List of labels
             category: Task domain category (test, code, document, research, config, manual)
             validation_criteria: Acceptance criteria for validating completion.
+            implementation_domain: Required code task implementation domain.
             claim: If True, auto-claim the task for the current session.
 
         Returns:
@@ -107,6 +111,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "error": "Code tasks require validation_criteria. "
                 "Describe what 'done' looks like so validate_task can check your diff against it."
             }
+        if category == "code" and implementation_domain is None:
+            return {
+                "error": "Code tasks require implementation_domain "
+                "('backend', 'frontend', or 'fullstack')."
+            }
 
         # Create task
         create_result = ctx.task_manager.create_task_with_decomposition(
@@ -119,6 +128,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            implementation_domain=implementation_domain,
             created_in_session_id=resolved_session_id,
         )
 
@@ -297,6 +307,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "Acceptance criteria for task completion. REQUIRED when category='code' — creation fails without it. Describe what 'done' looks like — validate_task checks the diff against this.",
                     "default": None,
                 },
+                "implementation_domain": {
+                    "type": "string",
+                    "enum": list(IMPLEMENTATION_DOMAIN_ENUM),
+                    "description": "Required for category='code'. Routes implementation to backend, frontend, or fullstack developer agents.",
+                    "default": None,
+                },
                 "claim": {
                     "type": "boolean",
                     "description": "If true, auto-claim the task for the current session. Default: false.",
@@ -409,6 +425,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         allow_automation: bool | None = None,
         isolation: str | None = None,
         assigned_agent: str | None = None,
+        implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
@@ -490,6 +507,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 return {"error": str(e)}
         if assigned_agent is not None:
             kwargs["assigned_agent"] = assigned_agent
+        if implementation_domain is not None:
+            kwargs["implementation_domain"] = implementation_domain
         if additional_skills is not None:
             kwargs["additional_skills"] = additional_skills
 
@@ -591,6 +610,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "assigned_agent": {
                     "type": "string",
                     "description": "Agent name to assign this task to (e.g. 'backend-developer'). Routes leaf work in dispatch.",
+                    "default": None,
+                },
+                "implementation_domain": {
+                    "type": "string",
+                    "enum": list(IMPLEMENTATION_DOMAIN_ENUM),
+                    "description": "Code task implementation domain. Expansion sets this; dispatch derives the developer agent from it unless manually overridden.",
                     "default": None,
                 },
                 "additional_skills": {
