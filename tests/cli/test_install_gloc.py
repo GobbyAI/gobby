@@ -23,6 +23,7 @@ from gobby.cli.install_setup import (
     _probe_gloc_version,
     _write_gloc_version_stamp,
 )
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
 
@@ -203,12 +204,31 @@ class TestInstallGloc:
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / "gloc").write_bytes(b"\x00")
-        (bin_dir / _GLOC_VERSION_STAMP).write_text("0.1.1\n")
+        pinned_version = MANAGED_BIN_VERSION_PINS["gloc"]
+        (bin_dir / _GLOC_VERSION_STAMP).write_text(f"{pinned_version}\n")
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_latest_gloc_version", return_value=pinned_version),
+        ):
+            result = _install_gloc()
+
+        assert result == {"installed": False, "skipped": True, "version": pinned_version}
+
+    def test_newer_installed_version_skips_when_latest_is_lower(
+        self, tmp_path: Path, _patch_platform: None
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        (bin_dir / "gloc").write_bytes(b"\x00")
+        (bin_dir / _GLOC_VERSION_STAMP).write_text("0.1.2\n")
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.cli.install_setup._get_latest_gloc_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup._install_gloc_from_github") as mock_github,
         ):
             result = _install_gloc()
 
-        assert result == {"installed": False, "skipped": True, "version": "0.1.1"}
+        assert result == {"installed": False, "skipped": True, "version": "0.1.2"}
+        mock_github.assert_not_called()

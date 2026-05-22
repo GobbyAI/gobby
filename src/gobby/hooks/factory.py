@@ -413,9 +413,15 @@ class HookManagerFactory:
             from gobby.storage.database import LocalDatabase
             from gobby.storage.migrations import run_migrations
 
-            db = LocalDatabase(Path(tempfile.mkdtemp()) / "hook-manager-test.db")
-            run_migrations(db)
-            return db
+            tempdir = tempfile.TemporaryDirectory(prefix="gobby-hook-manager-")
+            try:
+                db = LocalDatabase(Path(tempdir.name) / "hook-manager-test.db")
+                cast(Any, db)._gobby_tempdir = tempdir
+                run_migrations(db)
+                return db
+            except Exception:
+                tempdir.cleanup()
+                raise
 
         from gobby.storage.hub.runtime import open_runtime_hub_database
 

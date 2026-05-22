@@ -124,6 +124,7 @@ class MigrationRunner:
         for migration in self._discover_migrations():
             if migration.version in applied:
                 continue
+            logger.warning("Applying PostgreSQL migration %s_%s", migration.version, migration.name)
             with self._hub.transaction() as txn:
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration.version)
@@ -476,6 +477,10 @@ def _run_test_sqlite_baseline(db: LocalDatabase, schema_path: Path) -> int:
 
 def _run_test_sqlite_startup_repairs(db: LocalDatabase) -> None:
     """Run lightweight repair steps expected by legacy SQLite tests."""
+    from gobby.storage.auth import repair_legacy_sqlite_auth_sessions
+
+    repair_legacy_sqlite_auth_sessions(db)
+
     table = db.fetchone(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
         ("task_dispatch_mutex",),

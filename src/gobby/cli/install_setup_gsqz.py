@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+
 
 def get_latest_gsqz_version(module: Any) -> str | None:
     """Query crates.io for latest gsqz version."""
@@ -196,15 +198,8 @@ def install_gsqz(module: Any, force: bool = False) -> dict[str, Any]:
     latest_version = module._get_latest_gsqz_version()
 
     if gsqz_path.exists() and not force:
-        if installed_version and latest_version and installed_version == latest_version:
+        if managed_version_satisfies_pin("gsqz", installed_version):
             return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and latest_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
 
     target_version = latest_version
     bin_dir.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -17,12 +16,27 @@ class _TransactionConnection(Protocol):
     def execute(self, sql: str, params: Sequence[object] = ()) -> object: ...
 
 
-def is_session_unique_conflict(exc: sqlite3.IntegrityError) -> bool:
-    return any(
-        "UNIQUE constraint failed: sessions.external_id" in arg
-        for arg in exc.args
-        if isinstance(arg, str)
-    )
+_SESSION_UNIQUE_CONSTRAINT = "idx_sessions_unique"
+_SQLITE_SESSION_UNIQUE_PREFIX = "UNIQUE constraint failed:"
+_SESSION_UNIQUE_REQUIRED_COLUMNS = (
+    "sessions.external_id",
+    "sessions.machine_id",
+    "sessions.source",
+    "sessions.project_id",
+)
+
+
+def is_session_unique_conflict(exc: BaseException) -> bool:
+    messages = [str(arg) for arg in exc.args if isinstance(arg, str)]
+    messages.append(str(exc))
+    for message in messages:
+        if _SESSION_UNIQUE_CONSTRAINT in message:
+            return True
+        if _SQLITE_SESSION_UNIQUE_PREFIX in message and all(
+            column in message for column in _SESSION_UNIQUE_REQUIRED_COLUMNS
+        ):
+            return True
+    return False
 
 
 def update_existing_session(

@@ -1,7 +1,7 @@
 """Tests for agent_messaging module.
 
 Covers:
-- send_message: P2P messaging with same-project validation, auto-writes agent_runs.result
+    - send_message: target-based messaging, auto-writes agent_runs.result
 - send_command: ancestor-only command sending, rejects if active command exists
 - complete_command: clears session variables and sends result to parent
 - deliver_pending_messages: returns undelivered messages and marks them delivered
@@ -187,7 +187,7 @@ def messaging_registry(
 
 
 class TestSendMessage:
-    """send_message validates same project and auto-writes agent_runs.result."""
+    """send_message resolves explicit targets and auto-writes agent_runs.result."""
 
     @pytest.mark.asyncio
     async def test_send_message_success(
@@ -201,17 +201,22 @@ class TestSendMessage:
 
         result = await messaging_registry.call(
             "send_message",
-            {"from_session": "s-from", "to_session": "s-to", "content": "hi"},
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hi",
+            },
         )
 
         assert result["success"] is True
         mock_message_manager.create_message.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_accepts_to_session_and_metadata(
+    async def test_send_message_accepts_session_target_and_metadata(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Public send_message accepts to_session and forwards metadata."""
+        """Public send_message accepts session target_id and forwards metadata."""
         mock_session_manager.get.side_effect = lambda sid: {
             "s-from": MockSession(id="s-from", project_id="proj-1"),
             "s-to": MockSession(id="s-to", project_id="proj-1"),
@@ -221,7 +226,8 @@ class TestSendMessage:
             "send_message",
             {
                 "from_session": "s-from",
-                "to_session": "s-to",
+                "target": "session",
+                "target_id": "s-to",
                 "content": "assignment",
                 "priority": "high",
                 "message_type": "task_assignment",
@@ -248,7 +254,7 @@ class TestSendMessage:
         send_message = messaging_registry.get_tool("send_message")
         assert send_message is not None
 
-        result = await send_message("s-from", "s-to", "current", priority="high")
+        result = await send_message("s-from", "session", "current", "s-to", priority="high")
 
         assert result["success"] is True
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
@@ -265,57 +271,117 @@ class TestSendMessage:
         assert send_message is not None
 
         with pytest.raises(TypeError, match="positional"):
-            await send_message("s-from", "s-to", "legacy", "high")
+            await send_message("s-from", "session", "legacy", "s-to", "high")
 
         mock_session_manager.resolve_session_reference.assert_not_called()
 
-    def test_send_message_schema_documents_broadcast_parameters(self, messaging_registry) -> None:
-        """Tool description names broadcast args and keyword-only optional fields."""
+    def test_send_message_schema_documents_target_parameters(self, messaging_registry) -> None:
+        """Tool description names target args and keyword-only optional fields."""
         schema = messaging_registry.get_schema("send_message")
 
         assert schema is not None
         description = schema["description"]
         assert "keyword-only" in description
-        assert "send_to_all=true" in description
-        assert "send_to_all" in schema["inputSchema"]["properties"]
+        assert "target='session'" in description
+        assert "target='all' forbids target_id" in description
+        assert "target" in schema["inputSchema"]["properties"]
+        assert "target_id" in schema["inputSchema"]["properties"]
+        assert "to_session" not in schema["inputSchema"]["properties"]
+        assert "send_to_all" not in schema["inputSchema"]["properties"]
 
     @pytest.mark.asyncio
-    async def test_send_message_rejects_target_with_broadcast(
+    async def test_send_message_rejects_target_id_with_all(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Reject explicit target when broadcasting."""
+        """Reject target_id when sending to all."""
         result = await messaging_registry.call(
             "send_message",
             {
                 "from_session": "s-from",
-                "to_session": "s-to",
-                "send_to_all": True,
+                "target": "all",
+                "target_id": "s-to",
                 "content": "hi",
             },
         )
 
         assert result["success"] is False
-        assert result["error"] == "to_session cannot be combined with send_to_all=true."
+        assert result["error"] == "target_id is not allowed when target='all'."
         mock_session_manager.resolve_session_reference.assert_not_called()
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_requires_target_unless_broadcast(
+    async def test_send_message_requires_target_id_for_session_target(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Reject direct sends without exactly one target identifier."""
+        """Reject session target sends without a target identifier."""
         result = await messaging_registry.call(
             "send_message",
-            {"from_session": "s-from", "content": "hi"},
+            {"from_session": "s-from", "target": "session", "content": "hi"},
         )
 
         assert result["success"] is False
-        assert result["error"] == "Pass to_session unless send_to_all is true."
+        assert result["error"] == "target_id is required when target='session'."
         mock_session_manager.resolve_session_reference.assert_not_called()
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_send_to_all_fans_out_and_wakes(
+    async def test_send_message_rejects_unknown_target(
+        self, messaging_registry, mock_message_manager
+    ) -> None:
+        """Reject unknown target selectors."""
+        result = await messaging_registry.call(
+            "send_message",
+            {"from_session": "s-from", "target": "workspace", "content": "hi"},
+        )
+
+        assert result["success"] is False
+        assert "Unknown message target" in result["error"]
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_rejects_unknown_project_target_id(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Reject unknown target identifiers."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+        }.get(sid)
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "project",
+                "target_id": "missing-project",
+                "content": "hi",
+            },
+        )
+
+        assert result["success"] is False
+        assert "Project target not found" in result["error"]
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_rejects_empty_content(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Reject blank content before resolving sessions."""
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "all",
+                "content": "  ",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "content is required."
+        mock_session_manager.resolve_session_reference.assert_not_called()
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_project_target_fans_out_and_wakes(
         self,
         mock_session_manager,
         mock_message_manager,
@@ -323,7 +389,7 @@ class TestSendMessage:
         mock_session_var_manager,
         mock_db,
     ) -> None:
-        """send_to_all delegates broadcast fanout and optional wake to MailboxService."""
+        """Project target delegates fanout and optional wake to MailboxService."""
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
         wake_dispatcher = FakeWakeDispatcher()
@@ -344,6 +410,9 @@ class TestSendMessage:
             "s-from": MockSession(id="s-from", project_id="proj-1"),
             "s-child": MockSession(id="s-child", project_id="proj-1"),
         }.get(sid)
+        mock_db.fetchone.side_effect = lambda sql, params=(): (
+            {"id": "proj-1"} if "FROM projects" in sql else None
+        )
         mock_db.fetchall.return_value = [
             {
                 "child_session_id": "s-child",
@@ -366,7 +435,8 @@ class TestSendMessage:
             "send_message",
             {
                 "from_session": "s-from",
-                "send_to_all": True,
+                "target": "project",
+                "target_id": "proj-1",
                 "include_wakeup": True,
                 "content": "hello agents",
             },
@@ -427,7 +497,8 @@ class TestSendMessage:
             "send_message",
             {
                 "from_session": "s-from",
-                "to_session": "s-to",
+                "target": "session",
+                "target_id": "s-to",
                 "include_wakeup": True,
                 "content": "hello",
             },
@@ -461,7 +532,12 @@ class TestSendMessage:
 
         result = await messaging_registry.call(
             "send_message",
-            {"from_session": "s-from", "to_session": "s-to", "content": "hi"},
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hi",
+            },
         )
 
         assert result["success"] is False
@@ -481,7 +557,12 @@ class TestSendMessage:
 
         result = await messaging_registry.call(
             "send_message",
-            {"from_session": "s-child", "to_session": "s-parent", "content": "done"},
+            {
+                "from_session": "s-child",
+                "target": "session",
+                "target_id": "s-parent",
+                "content": "done",
+            },
         )
 
         assert result["success"] is True
@@ -499,7 +580,12 @@ class TestSendMessage:
 
         result = await messaging_registry.call(
             "send_message",
-            {"from_session": "no-such", "to_session": "s-to", "content": "hi"},
+            {
+                "from_session": "no-such",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hi",
+            },
         )
 
         assert result["success"] is False
