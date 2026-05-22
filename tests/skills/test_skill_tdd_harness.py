@@ -37,6 +37,7 @@ def test_writing_skills_requires_scenario_before_skill_body() -> None:
 
 
 def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
+    """Verify the loaded build coordinator scenario replaces manual waits with build fixes."""
     result = run_recorded_skill_scenario(
         SCENARIOS / "build-coordinator/unattended-build-coordination.yaml"
     )
@@ -65,6 +66,7 @@ def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
 
 
 def test_coderabbit_verifies_findings_before_fixing() -> None:
+    """Verify the loaded CodeRabbit scenario inspects findings before fixing and cleans up reports."""
     result = run_recorded_skill_scenario(SCENARIOS / "coderabbit/verify-before-fixing.yaml")
 
     assert result.baseline.action_names == ("apply_finding", "leave_report", "respond")

@@ -21,6 +21,7 @@ def _body() -> str:
 
 
 def test_coderabbit_skill_parses_and_is_discoverable() -> None:
+    """Verify the CodeRabbit SKILL.md parses and is discoverable by the skill loader."""
     parsed = parse_skill_file(SKILL_DIR / "SKILL.md")
     skills = SkillLoader().load_directory(SKILLS_ROOT)
 
@@ -31,6 +32,7 @@ def test_coderabbit_skill_parses_and_is_discoverable() -> None:
 
 
 def test_coderabbit_skill_requires_verification_before_fixes() -> None:
+    """Verify the skill requires agents to inspect current code before applying fixes."""
     body = _body()
 
     assert "Verify each item against current code" in body
@@ -41,6 +43,7 @@ def test_coderabbit_skill_requires_verification_before_fixes() -> None:
 
 
 def test_coderabbit_skill_documents_no_fix_decisions() -> None:
+    """Verify the skill requires documented no-fix decisions for stale or invalid findings."""
     body = _body()
 
     assert "`no-fix`" in body
@@ -50,6 +53,7 @@ def test_coderabbit_skill_documents_no_fix_decisions() -> None:
 
 
 def test_coderabbit_skill_handles_reports_and_cleanup() -> None:
+    """Verify the skill covers CodeRabbit report ingestion, CLI failures, and cleanup."""
     body = _body()
 
     assert "./reports/coderabbit-*.md" in body
@@ -60,6 +64,7 @@ def test_coderabbit_skill_handles_reports_and_cleanup() -> None:
 
 
 def test_coderabbit_skill_requires_validation_commit_and_task_close() -> None:
+    """Verify the skill requires validation, a task-referenced commit, and task closure."""
     body = _body()
 
     assert "REQUIRED SKILL: verification-before-completion" in body

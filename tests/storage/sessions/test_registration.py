@@ -32,6 +32,12 @@ def test_session_had_edits_updates_use_boolean_literals() -> None:
 
 
 def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
+    """test_session_unique_conflict_detection_uses_integrity_error_args verifies conflict matching.
+
+    MaskedIntegrityError message args drive session_upsert.is_session_unique_conflict,
+    including masking behavior.
+    """
+
     class MaskedIntegrityError(sqlite3.IntegrityError):
         def __str__(self) -> str:
             return "masked"
