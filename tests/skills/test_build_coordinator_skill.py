@@ -46,6 +46,7 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
     assert "coordinator intervention as evidence" in body
     assert "current coordinator session" in body
     assert "Do not\ncreate or switch to a separate agent definition" in body
+    assert "$gobby build-coordinator <target-ref>" in body
     assert "/gobby build-coordinator" in body
     assert "without `--quick`" in body
     assert "manual-ticking the dispatcher" in body

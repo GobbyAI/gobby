@@ -24,7 +24,8 @@ create or switch to a separate agent definition unless the user explicitly asks
 for that.
 
 When writing a prompt for another coordinator session, include an explicit load
-directive such as `/gobby build-coordinator` before the operating instructions.
+directive such as `$gobby build-coordinator <target-ref>` for Codex sessions.
+Use `/gobby build-coordinator <target-ref>` where the slash router is supported.
 
 ## Core Contract
 
@@ -150,7 +151,7 @@ build bug from the run is fixed or explicitly blocked on a user decision.
 When the user asks for a reusable `/goal` prompt, adapt this:
 
 ```text
-/gobby build-coordinator
+$gobby build-coordinator <target-ref>
 /goal Act as the Gobby build coordinator for <target-ref>.
 
 Create a separate coordination epic outside <target-ref>. Use it for coordinator
