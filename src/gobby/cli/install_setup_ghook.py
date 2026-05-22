@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+
 
 def get_latest_ghook_version(module: Any) -> str | None:
     """Query crates.io for latest ghook version."""
@@ -267,15 +269,8 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
     method_override = module._get_ghook_method_override()
 
     if ghook_path.exists() and not force:
-        if target_version and installed_version == target_version:
+        if managed_version_satisfies_pin("ghook", installed_version):
             return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and target_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
 
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None

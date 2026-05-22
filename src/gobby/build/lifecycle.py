@@ -505,6 +505,14 @@ async def _resume_existing_lifecycle(
     if task.task_type == "epic":
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         integration_target = target_branch or artifacts.target_branch
+        task_manager.cascade_build_state_to_subtree(
+            task.id,
+            isolation=resume_opts.isolation,
+            unattended=opts.unattended,
+            allow_automation=True,
+            include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
+            and not opts.no_merge,
+        )
         if resume_opts.isolation in {"worktree", "clone"}:
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
@@ -517,14 +525,6 @@ async def _resume_existing_lifecycle(
                 project_id=project_id,
                 services=services,
             )
-        task_manager.cascade_build_state_to_subtree(
-            task.id,
-            isolation=resume_opts.isolation,
-            unattended=opts.unattended,
-            allow_automation=True,
-            include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
-            and not opts.no_merge,
-        )
     elif resume_opts.isolation in {"worktree", "clone"}:
         await asyncio.to_thread(
             ensure_task_parent_integration_workspace,

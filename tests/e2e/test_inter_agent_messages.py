@@ -102,7 +102,8 @@ class TestInterAgentMessagingE2E:
             tool_name="send_message",
             arguments={
                 "from_session": parent_session_id,
-                "to_session": child_session_id,
+                "target": "session",
+                "target_id": child_session_id,
                 "content": "Hello child, please process this task!",
             },
         )
@@ -141,7 +142,8 @@ class TestInterAgentMessagingE2E:
             tool_name="send_message",
             arguments={
                 "from_session": child_session_id,
-                "to_session": parent_session_id,
+                "target": "session",
+                "target_id": parent_session_id,
                 "content": "Task completed successfully, parent!",
             },
         )
@@ -268,7 +270,8 @@ class TestInterAgentMessagingE2E:
             tool_name="send_message",
             arguments={
                 "from_session": parent_session_id,
-                "to_session": child_session_id,
+                "target": "session",
+                "target_id": child_session_id,
                 "content": "Test delivery tracking",
             },
         )
@@ -323,7 +326,8 @@ class TestInterAgentMessagingE2E:
             tool_name="send_message",
             arguments={
                 "from_session": session_id,
-                "to_session": "nonexistent-session-id",
+                "target": "session",
+                "target_id": "nonexistent-session-id",
                 "content": "Hello!",
             },
         )

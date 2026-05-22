@@ -803,6 +803,20 @@ class TestMcpCallToolUnwrapping:
         assert ctx["tool_input"] == original_input
 
     @pytest.mark.asyncio
+    async def test_non_dict_tool_input_becomes_empty_mapping(self, db: LocalDatabase) -> None:
+        """Rule conditions can safely call tool_input.get() for malformed hook input."""
+
+        engine = RuleEngine(db)
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Edit", "tool_input": "not a mapping"},
+        )
+
+        ctx = engine._build_eval_context(event, variables={})
+
+        assert ctx["tool_input"] == {}
+
+    @pytest.mark.asyncio
     async def test_rule_condition_sees_unwrapped_args(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:

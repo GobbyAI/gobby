@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -310,7 +311,8 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         """Return compact build status for a task tree or build input."""
         try:
             project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return get_build_status(
+            return await asyncio.to_thread(
+                get_build_status,
                 input_ref,
                 db=server.services.database,
                 project_id=project_id,
@@ -327,7 +329,8 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         """Explain dispatcher eligibility and proposed action without mutation."""
         try:
             project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return explain_dispatch(
+            return await asyncio.to_thread(
+                explain_dispatch,
                 task_id,
                 db=server.services.database,
                 project_id=project_id,
@@ -345,7 +348,8 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         """List recent build run and event rows."""
         try:
             project_id = server.resolve_project_id(project_id=None, cwd=None)
-            return list_build_history(
+            return await asyncio.to_thread(
+                list_build_history,
                 input_ref,
                 db=server.services.database,
                 project_id=project_id,

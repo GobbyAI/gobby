@@ -106,6 +106,7 @@ class TestAuthStoreLegacyRepair:
             (token, expires_at, 0),
         )
 
+        run_migrations(db)
         auth_store = AuthStore(db)
         columns = {row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")}
         row = db.fetchone("SELECT token_hash FROM auth_sessions")
@@ -114,6 +115,25 @@ class TestAuthStoreLegacyRepair:
         assert row is not None
         assert row["token_hash"] == hashlib.sha256(token.encode("utf-8")).hexdigest()
         assert auth_store.validate_session(token) is True
+
+    def test_constructor_does_not_repair_legacy_sqlite_tokens(self, db: LocalDatabase) -> None:
+        db.execute("DROP TABLE auth_sessions")
+        db.execute(
+            """
+            CREATE TABLE auth_sessions (
+                token TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                remember_me INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        AuthStore(db)
+        columns = {row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")}
+
+        assert "token" in columns
+        assert "token_hash" not in columns
 
 
 class TestSecretKeyDetection:

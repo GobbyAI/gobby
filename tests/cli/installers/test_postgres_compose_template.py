@@ -79,9 +79,11 @@ def test_postgres_service_preloads_pg_search_and_pgaudit(
 def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
     compose_data: dict[str, object],
 ) -> None:
+    environment = compose_data["services"]["postgres"]["environment"]
     healthcheck = compose_data["services"]["postgres"]["healthcheck"]
     test_command = " ".join(str(part) for part in healthcheck["test"])
 
+    assert environment["GOBBY_PGAUDIT_LOG"] == "${GOBBY_PGAUDIT_LOG:-ddl}"
     assert "pg_isready" in test_command
     assert "pg_extension" in test_command
     assert "extname='pgaudit'" in test_command
