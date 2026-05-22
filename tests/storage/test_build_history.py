@@ -56,6 +56,12 @@ def test_build_history_records_runs_and_events_in_newest_order(temp_db) -> None:
     assert events[0].payload == {"ok": True}
 
 
+def test_build_history_get_event_returns_none_for_missing_event(temp_db) -> None:
+    from gobby.storage.build_history import BuildHistoryStorage
+
+    assert BuildHistoryStorage(temp_db).get_event(999_999) is None
+
+
 def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
     from gobby.storage.projects import LocalProjectManager

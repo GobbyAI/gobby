@@ -223,7 +223,10 @@ class BuildHistoryStorage:
             ).fetchone()
         if row is None:
             raise RuntimeError("Database did not return a build history event id")
-        return self.get_event(int(row["id"]))
+        event = self.get_event(int(row["id"]))
+        if event is None:
+            raise RuntimeError("Build history event disappeared after insert")
+        return event
 
     def get_run(self, run_id: str) -> BuildRun:
         row = self.db.fetchone("SELECT * FROM build_runs WHERE id = ?", (run_id,))
@@ -231,11 +234,9 @@ class BuildHistoryStorage:
             raise RuntimeError(f"Build run not found: {run_id}")
         return BuildRun.from_row(row)
 
-    def get_event(self, event_id: int) -> BuildHistoryEvent:
+    def get_event(self, event_id: int) -> BuildHistoryEvent | None:
         row = self.db.fetchone("SELECT * FROM build_history_events WHERE id = ?", (event_id,))
-        if row is None:
-            raise RuntimeError(f"Build event not found: {event_id}")
-        return BuildHistoryEvent.from_row(row)
+        return BuildHistoryEvent.from_row(row) if row is not None else None
 
     def latest_run_for_input(self, project_id: str, input_ref: str) -> BuildRun | None:
         row = self.db.fetchone(
