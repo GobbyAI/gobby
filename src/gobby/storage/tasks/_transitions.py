@@ -289,7 +289,7 @@ def de_escalate_task(
         else f"De-escalated: {reason}"
     )
 
-    update_task(
+    release_task_claim(
         db,
         task_id,
         description=description,
