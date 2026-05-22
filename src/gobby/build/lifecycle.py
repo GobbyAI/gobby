@@ -176,7 +176,7 @@ async def _build_impl(
             target_branch,
         )
 
-    _prepare_task_ref_expansion_output(task_manager, task, opts)
+    _reset_task_ref_expansion_output(task_manager, task, opts)
     if input_kind == "leaf":
         return await _build_leaf(
             task_manager,
@@ -567,23 +567,17 @@ def _set_automation_for_task_tree(
     )
 
 
-def _prepare_task_ref_expansion_output(
+def _reset_task_ref_expansion_output(
     task_manager: LocalTaskManager,
     task: Task,
     opts: BuildOptions,
 ) -> None:
+    if not opts.reset_expansion_output:
+        return
     from gobby.tasks.expansion_service import ExpansionService
 
     service = ExpansionService(task_manager=task_manager, llm_service=None)
-    if opts.reset_expansion_output:
-        service.reset_expansion_output(task.id)
-        return
-    existing = service.find_existing_expansion_output(task.id)
-    if existing is not None:
-        raise ValueError(
-            "Expansion output already exists for this task. "
-            "Use --reset-expansion-output before rebuilding."
-        )
+    service.reset_expansion_output(task.id)
 
 
 def _current_stage_name(

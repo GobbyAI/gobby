@@ -1131,7 +1131,7 @@ async def test_build_leaf_rejects_non_automated_category(
 
 
 @pytest.mark.asyncio
-async def test_build_task_ref_requires_reset_for_existing_expansion_output(
+async def test_build_task_ref_automates_existing_expansion_output(
     temp_db,
     sample_project,
 ) -> None:
@@ -1163,13 +1163,51 @@ async def test_build_task_ref_requires_reset_for_existing_expansion_output(
         created_task_ids=[child.id],
     )
 
-    with pytest.raises(ValueError, match="reset-expansion-output"):
-        await _build(
-            f"#{parent.seq_num}",
-            _options(isolation="none"),
-            db=temp_db,
-            project_id=sample_project["id"],
-        )
+    result = await _build(
+        f"#{parent.seq_num}",
+        _options(isolation="none"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.task_id == parent.id
+    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (child.id,)) is not None
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in child_rows] == ["development", "pr", "merge"]
+
+
+@pytest.mark.asyncio
+async def test_build_task_ref_can_reset_existing_expansion_output(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.storage.expansion_runs import LocalExpansionRunManager
+
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expanded epic",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Generated child",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    run = LocalExpansionRunManager(temp_db).create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+    LocalExpansionRunManager(temp_db).save_apply_result(
+        run.id,
+        task_id_map={"child": child.id},
+        created_task_ids=[child.id],
+    )
 
     result = await _build(
         f"#{parent.seq_num}",
