@@ -343,12 +343,13 @@ class MetricsEventStore:
             WHERE created_at < ?
             GROUP BY event_type, COALESCE(project_id, ''), COALESCE(server_name, ''), name
             ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
-                call_count = call_count + excluded.call_count,
-                success_count = success_count + excluded.success_count,
-                failure_count = failure_count + excluded.failure_count,
-                total_latency_ms = total_latency_ms + excluded.total_latency_ms,
-                block_count = block_count + excluded.block_count,
-                allow_count = allow_count + excluded.allow_count
+                call_count = metrics_events_archive.call_count + excluded.call_count,
+                success_count = metrics_events_archive.success_count + excluded.success_count,
+                failure_count = metrics_events_archive.failure_count + excluded.failure_count,
+                total_latency_ms = metrics_events_archive.total_latency_ms +
+                                   excluded.total_latency_ms,
+                block_count = metrics_events_archive.block_count + excluded.block_count,
+                allow_count = metrics_events_archive.allow_count + excluded.allow_count
             """,
             (cutoff,),
         )

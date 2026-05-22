@@ -10,6 +10,7 @@ from gobby.mcp_proxy.metrics_events import MetricsEventStore
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -286,6 +287,69 @@ class TestArchive:
         """Archive with no old events should return 0."""
         event_store.record_event(event_type="tool_call", name="Read")
         assert event_store.archive_old_events(retention_days=30) == 0
+
+
+class TestPostgresArchive:
+    """PostgreSQL regressions for ON CONFLICT archive upserts."""
+
+    pytestmark = pytest.mark.integration
+
+    def test_archive_old_events_upsert_merges_existing_row(
+        self, postgres_db: "HubDatabase"
+    ) -> None:
+        event_store = MetricsEventStore(postgres_db)
+        old_date = datetime(2020, 1, 2, 12, tzinfo=UTC).isoformat()
+        project_id = "proj-pg-archive"
+
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events_archive (
+                event_type, project_id, server_name, name,
+                call_count, success_count, failure_count,
+                total_latency_ms, block_count, allow_count
+            ) VALUES (?, ?, ?, ?, 2, 1, 1, 40.0, 1, 0)
+            """,
+            ("tool_call", project_id, "context7", "get-docs"),
+        )
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events (
+                event_type, project_id, server_name, name,
+                success, latency_ms, result, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("tool_call", project_id, "context7", "get-docs", True, 10.0, "allow", old_date),
+        )
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events (
+                event_type, project_id, server_name, name,
+                success, latency_ms, result, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("tool_call", project_id, "context7", "get-docs", False, 20.0, "block", old_date),
+        )
+
+        assert event_store.archive_old_events(retention_days=30) == 2
+
+        row = postgres_db.fetchone(
+            """
+            SELECT
+                call_count, success_count, failure_count,
+                total_latency_ms, block_count, allow_count
+            FROM metrics_events_archive
+            WHERE event_type = ? AND project_id = ? AND server_name = ? AND name = ?
+            """,
+            ("tool_call", project_id, "context7", "get-docs"),
+        )
+
+        assert row is not None
+        assert row["call_count"] == 4
+        assert row["success_count"] == 2
+        assert row["failure_count"] == 2
+        assert row["total_latency_ms"] == 70.0
+        assert row["block_count"] == 2
+        assert row["allow_count"] == 1
 
 
 class TestMetricsManagerIntegration:

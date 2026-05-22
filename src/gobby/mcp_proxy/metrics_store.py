@@ -116,11 +116,12 @@ class ToolMetricsStore:
                 last_called_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
-                call_count = call_count + 1,
-                success_count = success_count + ?,
-                failure_count = failure_count + ?,
-                total_latency_ms = total_latency_ms + ?,
-                avg_latency_ms = (total_latency_ms + ?) / (call_count + 1),
+                call_count = tool_metrics.call_count + 1,
+                success_count = tool_metrics.success_count + ?,
+                failure_count = tool_metrics.failure_count + ?,
+                total_latency_ms = tool_metrics.total_latency_ms + ?,
+                avg_latency_ms = (tool_metrics.total_latency_ms + ?) /
+                                 (tool_metrics.call_count + 1),
                 last_called_at = ?,
                 updated_at = ?
             """,
@@ -343,12 +344,14 @@ class ToolMetricsStore:
                     total_latency_ms, avg_latency_ms, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
-                    call_count = call_count + excluded.call_count,
-                    success_count = success_count + excluded.success_count,
-                    failure_count = failure_count + excluded.failure_count,
-                    total_latency_ms = total_latency_ms + excluded.total_latency_ms,
-                    avg_latency_ms = (total_latency_ms + excluded.total_latency_ms) /
-                                     (call_count + excluded.call_count)
+                    call_count = tool_metrics_daily.call_count + excluded.call_count,
+                    success_count = tool_metrics_daily.success_count + excluded.success_count,
+                    failure_count = tool_metrics_daily.failure_count + excluded.failure_count,
+                    total_latency_ms = tool_metrics_daily.total_latency_ms +
+                                       excluded.total_latency_ms,
+                    avg_latency_ms = (
+                        tool_metrics_daily.total_latency_ms + excluded.total_latency_ms
+                    ) / (tool_metrics_daily.call_count + excluded.call_count)
                 """,
                 (
                     row["project_id"],
