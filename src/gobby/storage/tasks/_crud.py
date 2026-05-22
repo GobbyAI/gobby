@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, TaskSubtreeCascade
 from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
@@ -539,11 +540,14 @@ def _remove_pristine_omitted_stages_for_build_cascade(
         return False
 
     desired_name_set = set(desired_names)
+    current = stage_states.current_stage(task_id)
+    has_active_agent = _has_active_agent_run(db, task_id)
     omitted_rows = [row for row in existing_rows if row.stage_name not in desired_name_set]
-    if not omitted_rows or not all(_is_pristine_ready_stage(row) for row in omitted_rows):
+    if not omitted_rows or not all(
+        _is_removable_omitted_stage(row, current, has_active_agent) for row in omitted_rows
+    ):
         return False
 
-    current = stage_states.current_stage(task_id)
     omitted_names = {row.stage_name for row in omitted_rows}
     removed_current = current is not None and current.stage_name in omitted_names
     remaining_rows = [row for row in existing_rows if row.stage_name in desired_name_set]
@@ -615,6 +619,43 @@ def _is_pristine_ready_stage(row: Any) -> bool:
         and row.artifact_refs is None
         and row.notes is None
     )
+
+
+def _is_auto_started_without_agent(row: Any) -> bool:
+    return (
+        row.state == "in_progress"
+        and row.entered_by_session_id == "dispatcher"
+        and row.completed_at is None
+        and row.completed_by_session_id is None
+        and row.completed_commit_sha is None
+        and row.work_attempt_count == 1
+        and row.review_round_count == 0
+        and row.artifact_refs is None
+        and row.notes is None
+    )
+
+
+def _is_removable_omitted_stage(row: Any, current: Any, has_active_agent: bool) -> bool:
+    if _is_pristine_ready_stage(row):
+        return True
+    if current is None or row.stage_name != current.stage_name:
+        return False
+    return not has_active_agent and _is_auto_started_without_agent(row)
+
+
+def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:
+    placeholders = ", ".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
+    row = db.fetchone(
+        f"""
+        SELECT 1
+          FROM agent_runs
+         WHERE task_id = ?
+           AND status IN ({placeholders})
+         LIMIT 1
+        """,  # nosec B608 # placeholders are generated from static status constants.
+        (task_id, *ACTIVE_AGENT_RUN_STATUSES),
+    )
+    return row is not None
 
 
 def update_task(
