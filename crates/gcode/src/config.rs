@@ -546,6 +546,125 @@ mod tests {
         unsafe { std::env::remove_var("GOBBY_NEO4J_URL") };
     }
 
+    fn clear_falkordb_env() {
+        unsafe { std::env::remove_var("GOBBY_FALKORDB_HOST") };
+        unsafe { std::env::remove_var("GOBBY_FALKORDB_PORT") };
+        unsafe { std::env::remove_var("GOBBY_FALKORDB_PASSWORD") };
+    }
+
+    fn config_value_for<'a>(
+        values: &'a std::collections::HashMap<&'a str, &'a str>,
+    ) -> impl FnMut(&str) -> Option<String> + 'a {
+        |key| values.get(key).map(|value| (*value).to_string())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falkordb_config_store_only_resolves_host_port_password() {
+        clear_falkordb_env();
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", "falkor.local"),
+            ("databases.falkordb.port", "16380"),
+            ("databases.falkordb.requirepass", "stored-pass"),
+        ]);
+
+        let config = resolve_falkordb_config_from_values(
+            config_value_for(&values),
+            true,
+            |value| Ok(value.to_string()),
+        )
+        .expect("falkordb config");
+
+        assert_eq!(config.host, "falkor.local");
+        assert_eq!(config.port, 16380);
+        assert_eq!(config.password.as_deref(), Some("stored-pass"));
+        assert_eq!(config.graph_name, "gobby_code");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falkordb_env_only_resolves_host_port_password() {
+        clear_falkordb_env();
+        unsafe { std::env::set_var("GOBBY_FALKORDB_HOST", "env-falkor.local") };
+        unsafe { std::env::set_var("GOBBY_FALKORDB_PORT", "16381") };
+        unsafe { std::env::set_var("GOBBY_FALKORDB_PASSWORD", "env-pass") };
+
+        let values = std::collections::HashMap::new();
+        let config = resolve_falkordb_config_from_values(
+            config_value_for(&values),
+            true,
+            |value| Ok(value.to_string()),
+        )
+        .expect("falkordb config");
+
+        assert_eq!(config.host, "env-falkor.local");
+        assert_eq!(config.port, 16381);
+        assert_eq!(config.password.as_deref(), Some("env-pass"));
+        clear_falkordb_env();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falkordb_env_host_overrides_config_store_host() {
+        clear_falkordb_env();
+        unsafe { std::env::set_var("GOBBY_FALKORDB_HOST", "env-host.local") };
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", "stored-host.local"),
+            ("databases.falkordb.port", "16382"),
+        ]);
+
+        let config = resolve_falkordb_config_from_values(
+            config_value_for(&values),
+            true,
+            |value| Ok(value.to_string()),
+        )
+        .expect("falkordb config");
+
+        assert_eq!(config.host, "env-host.local");
+        assert_eq!(config.port, 16382);
+        clear_falkordb_env();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falkordb_secret_password_resolves_through_secret_resolver() {
+        clear_falkordb_env();
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", "falkor.local"),
+            ("databases.falkordb.requirepass", "$secret:requirepass"),
+        ]);
+
+        let config = resolve_falkordb_config_from_values(
+            config_value_for(&values),
+            true,
+            |value| {
+                assert_eq!(value, "$secret:requirepass");
+                Ok("resolved-pass".to_string())
+            },
+        )
+        .expect("falkordb config");
+
+        assert_eq!(config.password.as_deref(), Some("resolved-pass"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falkordb_config_missing_host_returns_none() {
+        clear_falkordb_env();
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.port", "16379"),
+            ("databases.falkordb.requirepass", "stored-pass"),
+        ]);
+
+        let config = resolve_falkordb_config_from_values(
+            config_value_for(&values),
+            true,
+            |value| Ok(value.to_string()),
+        );
+
+        assert!(config.is_none());
+    }
+
     #[test]
     fn test_resolve_project_id_requires_project_context() {
         let tmp = tempfile::tempdir().expect("tempdir");
