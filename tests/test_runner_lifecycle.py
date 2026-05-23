@@ -434,6 +434,26 @@ class TestInitSubsystems:
 
 
 class TestShutdownDaemonServices:
+    @staticmethod
+    def _minimal_shutdown_runner(intent: ShutdownIntent) -> SimpleNamespace:
+        return SimpleNamespace(
+            _shutdown_intent=intent,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _terminate_streamable_http_sessions=AsyncMock(),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
+            database=SimpleNamespace(close=MagicMock()),
+        )
+
     @pytest.mark.asyncio
     async def test_shutdown_marker_is_removed_after_cleanup(
         self,
@@ -487,6 +507,85 @@ class TestShutdownDaemonServices:
 
         assert cleanup_saw_marker is True
         assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_restart_lifecycle_manager_timeout_logs_info(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        real_wait_for = asyncio.wait_for
+        call_count = 0
+
+        async def timeout_lifecycle(awaitable, timeout: float):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                awaitable.close()
+                raise TimeoutError
+            return await real_wait_for(awaitable, timeout)
+
+        caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+        with patch(
+            "gobby.runner_lifecycle_shutdown.asyncio.wait_for",
+            side_effect=timeout_lifecycle,
+        ):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                server_task,
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        assert "Lifecycle manager shutdown exceeded timeout during daemon restart" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_stop_lifecycle_manager_timeout_still_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        real_wait_for = asyncio.wait_for
+        call_count = 0
+
+        async def timeout_lifecycle(awaitable, timeout: float):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                awaitable.close()
+                raise TimeoutError
+            return await real_wait_for(awaitable, timeout)
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        with patch(
+            "gobby.runner_lifecycle_shutdown.asyncio.wait_for",
+            side_effect=timeout_lifecycle,
+        ):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                server_task,
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        assert "Lifecycle manager shutdown timed out" in caplog.text
 
     @pytest.mark.asyncio
     async def test_restart_reaps_only_non_terminal_agent_children(

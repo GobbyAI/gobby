@@ -262,13 +262,7 @@ async def _stop_started_services(
         try:
             await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
         except TimeoutError:
-            if shutdown_intent is ShutdownIntent.RESTART:
-                logger.info(
-                    "Cron scheduler shutdown exceeded timeout during daemon restart; "
-                    "continuing with restart"
-                )
-            else:
-                logger.warning("Cron scheduler shutdown timed out")
+            _log_shutdown_timeout("Cron scheduler", shutdown_intent=shutdown_intent)
 
     if runner.message_processor:
         try:
@@ -281,6 +275,16 @@ async def _stop_started_services(
             await asyncio.wait_for(runner.communications_manager.stop(), timeout=5.0)
         except TimeoutError:
             logger.warning("CommunicationsManager shutdown timed out")
+
+
+def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent) -> None:
+    if shutdown_intent is ShutdownIntent.RESTART:
+        logger.info(
+            "%s shutdown exceeded timeout during daemon restart; continuing with restart",
+            service_name,
+        )
+    else:
+        logger.warning("%s shutdown timed out", service_name)
 
 
 def _stop_ui_dev_server_if_needed(runner: GobbyRunner) -> None:
@@ -350,7 +354,7 @@ async def shutdown_daemon_services(
     try:
         await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
     except TimeoutError:
-        logger.warning("Lifecycle manager shutdown timed out")
+        _log_shutdown_timeout("Lifecycle manager", shutdown_intent=shutdown_intent)
 
     try:
         logger.debug("Waiting for HTTP server lifespan shutdown")
