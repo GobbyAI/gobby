@@ -80,7 +80,7 @@ __all__ = [
 ]
 
 
-_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password have been removed in this release.
+_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password has been removed in 0.4.0.
 
 The knowledge graph backend has been replaced with FalkorDB.
 - Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
@@ -154,7 +154,7 @@ def _raise_graph_backend_removed() -> None:
     "--falkordb-password",
     "falkordb_password",
     default=None,
-    help="Set a custom FalkorDB password (default: auto-generated or reused)",
+    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
 )
 @click.option(
     "--neo4j-password",
@@ -165,6 +165,14 @@ def _raise_graph_backend_removed() -> None:
     callback=lambda _ctx, _param, value: _raise_graph_backend_removed()
     if value is not None
     else None,
+)
+@click.option(
+    "--neo4j",
+    "neo4j_flag",
+    is_flag=True,
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--project",
@@ -485,7 +493,7 @@ def install(
 )
 @click.option(
     "--neo4j",
-    "deprecated_neo4j_flag",
+    "neo4j_flag",
     is_flag=True,
     hidden=True,
     expose_value=False,
