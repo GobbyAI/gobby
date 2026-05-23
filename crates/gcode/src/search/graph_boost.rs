@@ -80,6 +80,7 @@ mod tests {
             project_root: PathBuf::from("/nonexistent"),
             project_id: "test".to_string(),
             quiet: true,
+            falkordb: None,
             neo4j: None,
             qdrant: None,
             embedding: None,

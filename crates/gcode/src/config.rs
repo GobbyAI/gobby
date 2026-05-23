@@ -22,6 +22,15 @@ pub struct Neo4jConfig {
     pub database: String,
 }
 
+/// FalkorDB connection configuration.
+#[derive(Debug, Clone)]
+pub struct FalkorConfig {
+    pub host: String,
+    pub port: u16,
+    pub password: Option<String>,
+    pub graph_name: String,
+}
+
 /// Qdrant connection configuration.
 #[derive(Debug, Clone)]
 pub struct QdrantConfig {
@@ -48,6 +57,8 @@ pub struct Context {
     pub project_id: String,
     /// Suppress warnings
     pub quiet: bool,
+    /// FalkorDB config (None if unavailable)
+    pub falkordb: Option<FalkorConfig>,
     /// Neo4j config (None if unavailable)
     pub neo4j: Option<Neo4jConfig>,
     /// Qdrant config (None if unavailable)
@@ -105,6 +116,7 @@ impl Context {
 
         // Resolve service configs from config_store (best-effort).
         let mut conn = db::connect_readonly(&database_url)?;
+        let falkordb = resolve_falkordb_config(&mut conn, quiet);
         let neo4j = resolve_neo4j_config(&mut conn, quiet);
         let qdrant = resolve_qdrant_config(&mut conn, quiet);
         let embedding = resolve_embedding_config(&mut conn, quiet);
@@ -116,6 +128,7 @@ impl Context {
             project_root,
             project_id,
             quiet,
+            falkordb,
             neo4j,
             qdrant,
             embedding,
@@ -360,6 +373,129 @@ fn decode_config_value(raw: &str) -> Option<String> {
         Ok(serde_json::Value::String(text)) => Some(text),
         Ok(value) => Some(value.to_string()),
         Err(_) => Some(raw.to_string()),
+    }
+}
+
+const FALKORDB_DEFAULT_PORT: u16 = 16379;
+const FALKORDB_GRAPH_NAME: &str = "gobby_code";
+
+trait FalkorConfigSource {
+    fn config_value(&mut self, key: &str) -> Option<String>;
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String>;
+}
+
+struct PostgresFalkorConfigSource<'a> {
+    conn: &'a mut Client,
+}
+
+impl FalkorConfigSource for PostgresFalkorConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        read_config_value(self.conn, key)
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        secrets::resolve_config_value(value, self.conn)
+    }
+}
+
+struct ClosureFalkorConfigSource<R, S> {
+    read_config_value: R,
+    resolve_value: S,
+}
+
+impl<R, S> FalkorConfigSource for ClosureFalkorConfigSource<R, S>
+where
+    R: FnMut(&str) -> Option<String>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        (self.read_config_value)(key)
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        (self.resolve_value)(value)
+    }
+}
+
+fn resolve_falkordb_config_from_values<R, S>(
+    read_config_value: R,
+    quiet: bool,
+    resolve_value: S,
+) -> Option<FalkorConfig>
+where
+    R: FnMut(&str) -> Option<String>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    let mut source = ClosureFalkorConfigSource {
+        read_config_value,
+        resolve_value,
+    };
+    resolve_falkordb_config_from_source(&mut source, quiet)
+}
+
+/// Resolve FalkorDB configuration from config_store + env vars.
+fn resolve_falkordb_config(conn: &mut Client, quiet: bool) -> Option<FalkorConfig> {
+    let mut source = PostgresFalkorConfigSource { conn };
+    resolve_falkordb_config_from_source(&mut source, quiet)
+}
+
+fn resolve_falkordb_config_from_source(
+    source: &mut impl FalkorConfigSource,
+    quiet: bool,
+) -> Option<FalkorConfig> {
+    let host = std::env::var("GOBBY_FALKORDB_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            source
+                .config_value("databases.falkordb.host")
+                .filter(|value| !value.trim().is_empty())
+        })?;
+
+    let raw_port = std::env::var("GOBBY_FALKORDB_PORT")
+        .ok()
+        .or_else(|| source.config_value("databases.falkordb.port"));
+    let port = parse_falkordb_port(raw_port.as_deref(), quiet);
+
+    let raw_password = std::env::var("GOBBY_FALKORDB_PASSWORD")
+        .ok()
+        .or_else(|| source.config_value("databases.falkordb.requirepass"))
+        .filter(|value| !value.trim().is_empty());
+    let password = match raw_password {
+        Some(value) => match source.resolve_value(&value) {
+            Ok(resolved) => Some(resolved),
+            Err(e) => {
+                if !quiet {
+                    eprintln!("Warning: failed to resolve FalkorDB password: {e}");
+                }
+                None
+            }
+        },
+        None => None,
+    };
+
+    Some(FalkorConfig {
+        host,
+        port,
+        password,
+        graph_name: FALKORDB_GRAPH_NAME.to_string(),
+    })
+}
+
+fn parse_falkordb_port(raw_port: Option<&str>, quiet: bool) -> u16 {
+    match raw_port {
+        Some(raw) => match raw.parse::<u16>() {
+            Ok(port) => port,
+            Err(e) => {
+                if !quiet {
+                    eprintln!(
+                        "Warning: invalid FalkorDB port `{raw}` ({e}); using {FALKORDB_DEFAULT_PORT}"
+                    );
+                }
+                FALKORDB_DEFAULT_PORT
+            }
+        },
+        None => FALKORDB_DEFAULT_PORT,
     }
 }
 

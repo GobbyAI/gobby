@@ -139,6 +139,7 @@ mod tests {
             project_root: root.to_path_buf(),
             project_id: "proj".to_string(),
             quiet: true,
+            falkordb: None,
             neo4j: None,
             qdrant: None,
             embedding: None,
