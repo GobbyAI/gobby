@@ -36,6 +36,72 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _LINEAR_GOBBY_REF_TITLE_RE = re.compile(r"^#(?P<seq>\d+):\s*(?P<title>.+)$")
+_LINEAR_FETCH_FAILURE_SUMMARY_INTERVAL = 10
+
+
+class _RepeatedFetchFailureLimiter:
+    """Suppress repeated identical fetch failures while preserving recovery visibility."""
+
+    def __init__(self, *, summary_interval: int) -> None:
+        self._summary_interval = summary_interval
+        self._message: str | None = None
+        self._suppressed_count = 0
+
+    def reset(self) -> None:
+        self._message = None
+        self._suppressed_count = 0
+
+    def log_failure(self, log: logging.Logger, error: BaseException) -> None:
+        message = str(error)
+        if message != self._message:
+            self._log_changed_failure(log)
+            self._message = message
+            self._suppressed_count = 0
+            log.error("Failed to fetch Linear issues: %s", message)
+            return
+
+        self._suppressed_count += 1
+        if self._suppressed_count % self._summary_interval == 0:
+            log.info(
+                "Still failing to fetch Linear issues after %d suppressed repeat(s): %s",
+                self._suppressed_count,
+                message,
+            )
+            return
+
+        log.debug(
+            "Suppressing repeated Linear issue fetch failure #%d: %s",
+            self._suppressed_count,
+            message,
+        )
+
+    def log_success(self, log: logging.Logger) -> None:
+        if self._message is None:
+            return
+        if self._suppressed_count:
+            log.info(
+                "Linear issue fetch recovered after %d suppressed repeat(s); last error: %s",
+                self._suppressed_count,
+                self._message,
+            )
+        else:
+            log.info("Linear issue fetch recovered after previous failure: %s", self._message)
+        self.reset()
+
+    def _log_changed_failure(self, log: logging.Logger) -> None:
+        if self._message is None or not self._suppressed_count:
+            return
+        log.info(
+            "Linear issue fetch failure changed after %d suppressed repeat(s); "
+            "previous error: %s",
+            self._suppressed_count,
+            self._message,
+        )
+
+
+_linear_fetch_failure_limiter = _RepeatedFetchFailureLimiter(
+    summary_interval=_LINEAR_FETCH_FAILURE_SUMMARY_INTERVAL
+)
 
 
 class LinearSyncError(Exception):
@@ -715,7 +781,7 @@ class LinearSyncService:
         except Exception as e:
             client = self._get_graphql_client()
             if not client:
-                logger.error(f"Failed to fetch Linear issues: {e}")
+                _linear_fetch_failure_limiter.log_failure(logger, e)
                 stats["errors"] = len(rows)
                 return stats
             try:
@@ -724,9 +790,10 @@ class LinearSyncService:
                     project_id=self._get_linear_project_id(),
                 )
             except (LinearGraphQLError, httpx.HTTPError) as graphql_error:
-                logger.error(f"Failed to fetch Linear issues: {graphql_error}")
+                _linear_fetch_failure_limiter.log_failure(logger, graphql_error)
                 stats["errors"] = len(rows)
                 return stats
+        _linear_fetch_failure_limiter.log_success(logger)
         issue_map = {issue.get("id"): issue for issue in issues if issue.get("id")}
 
         for row in rows:
