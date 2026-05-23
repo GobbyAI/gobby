@@ -384,6 +384,9 @@ class TestIsSecretKeyName:
     def test_password_suffix(self) -> None:
         assert is_secret_key_name("db.db_password") is True
 
+    def test_requirepass_suffix(self) -> None:
+        assert is_secret_key_name("databases.falkordb.requirepass") is True
+
     def test_access_token_suffix(self) -> None:
         assert is_secret_key_name("oauth.user_access_token") is True
 
