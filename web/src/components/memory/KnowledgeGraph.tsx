@@ -147,7 +147,7 @@ const DEFAULT_CENTER = 0.05
 
 export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limit, onError }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const fgRef = useRef<any>(null)  
+  const fgRef = useRef<any>(null)
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -306,7 +306,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   const isSearchActive = searchQuery.length > 0
 
   // Node click: expand neighbors
-  const handleNodeClick = useCallback((node: any) => {  
+  const handleNodeClick = useCallback((node: any) => {
     if (expandingNode) return
     const entityKey = node.id as string
     const displayName = (node.name as string) || entityKey
@@ -324,7 +324,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
   // Custom node rendering — iOS: simple colored spheres (zero per-node textures);
   // other mobile: lightweight SpriteText; desktop: full SpriteText with backgrounds
-  const nodeThreeObject = useCallback((node: any) => {  
+  const nodeThreeObject = useCallback((node: any) => {
     try {
       const label = node.name as string
       const color = node.color as string
@@ -369,7 +369,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   }, [isSearchActive, searchLower, sphereGeo])
 
   // Link styling
-  const linkColor = useCallback((link: any) => {  
+  const linkColor = useCallback((link: any) => {
     if (isSearchActive) {
       const sourceLabel = typeof link.source === 'object'
         ? (link.source.name ?? link.source.id)
@@ -384,14 +384,14 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return link.color || resolveCssVar('--text-muted', 0.4)
   }, [isSearchActive, searchLower])
 
-  const linkLabel = useCallback((link: any) => link.type as string, [])  
+  const linkLabel = useCallback((link: any) => link.type as string, [])
 
   // Node breathing effect — use ref to avoid prop changes that trigger graph rebuilds
   const animateRef = useRef(animateIdle)
   useEffect(() => {
     animateRef.current = animateIdle
   }, [animateIdle])
-  const nodePositionUpdate = useCallback((obj: any) => {  
+  const nodePositionUpdate = useCallback((obj: any) => {
     if (!animateRef.current) {
       // Restore original scale when animation stops
       if (obj.__origScale) {
@@ -436,7 +436,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         <div className={EMPTY_CLS}>
           <div>No entities found</div>
           <div className="mt-1 text-[length:var(--text-sm)]">
-            Connect a Neo4j instance to explore knowledge graph entities and relationships.
+            Connect a FalkorDB instance to explore knowledge graph entities and relationships.
           </div>
         </div>
       </div>
@@ -451,7 +451,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         height={dimensions.height}
         graphData={forceData}
         nodeId="id"
-        nodeLabel={(node: any) => {  
+        nodeLabel={(node: any) => {
           const e = node.entity as KnowledgeEntity
           const props = Object.entries(e.properties || {}).slice(0, 4)
             .map(([k, v]) => `${k}: ${String(v).slice(0, 30)}`)
