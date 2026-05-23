@@ -103,11 +103,15 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     terminate = _step(agent, "terminate")
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"holistic-review", "tech-writer"}.issubset(
-        set(agent["step_variables"]["required_skills"])
-    )
-    assert 'get_skill(name="holistic-review")' in load_skill["status_message"]
-    assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
+    assert {
+        "code-index",
+        "holistic-review",
+        "tech-writer",
+        "task-transitions",
+        "verification-before-completion",
+    }.issubset(set(agent["step_variables"]["required_skills"]))
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
     assert "Discovery Brief" in agent["instructions"]
     assert "descendant task set" in agent["instructions"]
     assert review["allowed_tools"] == "all"
