@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 
 from .code_linker import KnowledgeGraphCodeLinker
@@ -131,6 +132,9 @@ class KnowledgeGraphService:
 
         try:
             extracted_entities = await self._extract_entities(content)
+        except LLMProviderCancellation as e:
+            logger.info("Entity extraction cancelled for memory %s: %s", memory_ref, e)
+            return self._cancellation_result(e)
         except Exception as e:
             logger.warning("Entity extraction failed for memory %s: %s", memory_ref, e)
             return self._failure_result(e)
@@ -144,6 +148,9 @@ class KnowledgeGraphService:
 
         try:
             extracted_relationships = await self._extract_relationships(content, extracted_entities)
+        except LLMProviderCancellation as e:
+            logger.info("Relationship extraction cancelled for memory %s: %s", memory_ref, e)
+            return self._cancellation_result(e, entities=len(entities))
         except Exception as e:
             logger.warning("Relationship extraction failed for memory %s: %s", memory_ref, e)
             partial_errors.append(f"relationship_extraction:{e}")
@@ -160,6 +167,13 @@ class KnowledgeGraphService:
                 entities=entities,
                 new_relations=relationships,
                 project_id=project_id,
+            )
+        except LLMProviderCancellation as e:
+            logger.info("Relation cleanup cancelled for memory %s: %s", memory_ref, e)
+            return self._cancellation_result(
+                e,
+                entities=len(entities),
+                relationships=len(relationships),
             )
         except Exception as e:
             logger.warning("Relation cleanup failed for memory %s: %s", memory_ref, e)
@@ -335,6 +349,21 @@ class KnowledgeGraphService:
             else KnowledgeGraphStatus.DETERMINISTIC_FAILURE
         )
         return KnowledgeGraphResult(status=status, errors=[str(error)])
+
+    @staticmethod
+    def _cancellation_result(
+        error: LLMProviderCancellation,
+        *,
+        entities: int = 0,
+        relationships: int = 0,
+    ) -> KnowledgeGraphResult:
+        """Build a retryable result for provider shutdown cancellation."""
+        return KnowledgeGraphResult(
+            status=KnowledgeGraphStatus.RETRYABLE_FAILURE,
+            entities_extracted=entities,
+            relationships_extracted=relationships,
+            errors=[str(error) or error.__class__.__name__],
+        )
 
     @staticmethod
     def _connection_failure_result(

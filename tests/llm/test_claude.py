@@ -53,6 +53,12 @@ class MockClaudeAgentOptions:
         self.stderr: object = None
 
 
+class MockExitCodeError(Exception):
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
 @pytest.fixture
 def claude_config() -> DaemonConfig:
     """DaemonConfig with Claude provider."""
@@ -128,6 +134,18 @@ class TestIsTransientError:
 
         error = Exception("Claude Code returned an error result: success")
         assert ClaudeLLMProvider._is_transient_error(error) is False
+
+    def test_sigterm_exit_code_is_not_retried(self) -> None:
+        """Claude SDK SIGTERM exits are shutdown cancellation, not transient LLM errors."""
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        attr_error = MockExitCodeError("Claude process exited", 143)
+        message_error = Exception("Claude process exited with exit code 143")
+
+        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(attr_error) is True
+        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(message_error) is True
+        assert ClaudeLLMProvider._is_transient_error(attr_error) is False
+        assert ClaudeLLMProvider._is_transient_error(message_error) is False
 
 
 # ─── _retry_async tests ─────────────────────────────────────────────────
@@ -231,6 +249,49 @@ class TestRetryAsync:
             assert len(retry_calls) == 2
             assert retry_calls[0][0] == 0
             assert retry_calls[1][0] == 1
+
+
+class TestExecuteSdkQuery:
+    """Tests for SDK query execution failure classification."""
+
+    @pytest.mark.asyncio
+    async def test_sigterm_exit_does_not_retry_or_warn(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Exit code 143 is raised as cancellation without retry warning noise."""
+        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKShutdownCancellation
+
+            provider = ClaudeLLMProvider(claude_config)
+            options = MockClaudeAgentOptions()
+            call_count = 0
+            caplog.clear()
+
+            async def terminated() -> str:
+                nonlocal call_count
+                call_count += 1
+                raise MockExitCodeError("Claude process exited", 143)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.INFO, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKShutdownCancellation, match="generate_json cancelled"),
+            ):
+                await provider._execute_sdk_query(
+                    "generate_json",
+                    terminated,
+                    options,
+                    max_retries=3,
+                    retry_delay=0.01,
+                )
+
+        sleep.assert_not_awaited()
+        assert call_count == 1
+        assert "retrying" not in caplog.text
+        assert not any(
+            record.name == "gobby.llm.claude" and record.levelno >= logging.WARNING
+            for record in caplog.records
+        )
 
 
 # ─── _format_summary_context tests ──────────────────────────────────────

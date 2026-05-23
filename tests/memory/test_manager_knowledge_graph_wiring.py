@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.services.knowledge_graph import KnowledgeGraphResult, KnowledgeGraphStatus
 from tests._timing import wait_for_async_condition
 
@@ -286,6 +287,37 @@ class TestGraphDelegation:
                 "errors": ["bad-json"],
             }
         ]
+
+    async def test_rebuild_knowledge_graph_treats_llm_cancellation_as_retryable(self) -> None:
+        """Provider shutdown cancellation leaves memory pending instead of permanent-failed."""
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        mem = MagicMock(id="mem-1", content="First memory", project_id="proj-1")
+        manager._fetch_all_project_memories = AsyncMock(return_value=[mem])
+        manager._kg_service.add_to_graph = AsyncMock(
+            side_effect=LLMProviderCancellation("Claude SDK process terminated [exit_code=143]")
+        )
+        manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
+
+        result = await manager.rebuild_knowledge_graph(project_id="proj-1")
+
+        assert result["success"] is True
+        assert result["errors"] == 1
+        assert result["failed_memories"] == [
+            {
+                "memory_id": "mem-1",
+                "project_id": "proj-1",
+                "status": "retryable_failure",
+                "errors": ["Claude SDK process terminated [exit_code=143]"],
+            }
+        ]
+        manager.mark_graph_processed.assert_not_called()
 
 
 class TestGraphBackgroundTask:

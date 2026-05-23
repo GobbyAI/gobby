@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
@@ -574,6 +575,27 @@ class TestGracefulDegradation:
         mock_falkor.merge_node.assert_not_called()
         assert mock_falkor.merge_node.call_count == 0
         assert not mock_falkor.merge_node.called
+
+    async def test_add_to_graph_treats_llm_cancellation_as_retryable(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Provider shutdown cancellation is retryable and not a permanent KG failure."""
+        mock_llm.generate_json = AsyncMock(
+            side_effect=LLMProviderCancellation("Claude SDK terminated [exit_code=143]")
+        )
+
+        with caplog.at_level("INFO"):
+            result = await service.add_to_graph("some content", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == ["Claude SDK terminated [exit_code=143]"]
+        assert "Entity extraction cancelled for memory mem-123" in caplog.text
+        assert not any(record.levelname == "WARNING" for record in caplog.records)
+        mock_falkor.merge_node.assert_not_called()
 
     async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
         self,

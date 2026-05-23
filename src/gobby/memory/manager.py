@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.config.persistence import MemoryConfig
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.backends.storage_adapter import StorageAdapter
 from gobby.memory.components.ingestion import IngestionService
 from gobby.memory.context import build_memory_context
@@ -832,11 +833,18 @@ class MemoryManager:
 
         async def _rebuild_kg(mem: Memory) -> KnowledgeGraphResult:
             nonlocal errors, kg_done, processed
-            result = await kg_service.add_to_graph(
-                mem.content,
-                memory_id=mem.id,
-                project_id=mem.project_id,
-            )
+            try:
+                result = await kg_service.add_to_graph(
+                    mem.content,
+                    memory_id=mem.id,
+                    project_id=mem.project_id,
+                )
+            except LLMProviderCancellation as e:
+                logger.info("KG extraction cancelled for memory %s: %s", mem.id, e)
+                result = KnowledgeGraphResult(
+                    KnowledgeGraphStatus.RETRYABLE_FAILURE,
+                    errors=[str(e) or e.__class__.__name__],
+                )
             async with kg_done_lock:
                 status_counts[result.status.value] += 1
                 kg_done += 1

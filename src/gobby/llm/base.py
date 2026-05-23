@@ -9,6 +9,10 @@ from typing import Any, Literal
 AuthMode = Literal["subscription", "api_key", "adc"]
 
 
+class LLMProviderCancellation(RuntimeError):
+    """Raised when an LLM provider operation is cancelled by shutdown/termination."""
+
+
 class LLMProvider(ABC):
     """
     Abstract base class for LLM providers.

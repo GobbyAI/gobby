@@ -7,6 +7,7 @@ Uses the Claude Agent SDK via the Claude CLI.
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from claude_agent_sdk import (
 )
 
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMProvider
+from gobby.llm.base import LLMProvider, LLMProviderCancellation
 from gobby.utils.json_helpers import extract_json_from_text
 
 # Headless settings file — zeroes out all hooks so internal LLM calls
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 class ClaudeSDKProviderFailure(RuntimeError):
     """Typed failure for known Claude SDK/provider degradation paths."""
+
+
+class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
+    """Raised when the Claude SDK child process is terminated during shutdown."""
 
 
 class ClaudeLLMProvider(LLMProvider):
@@ -137,6 +142,10 @@ class ClaudeLLMProvider(LLMProvider):
         Permanent errors (auth failures, invalid requests) are not retried.
         Transient errors (timeouts, rate limits, server errors) are retried.
         """
+        if isinstance(e, LLMProviderCancellation):
+            return False
+        if ClaudeLLMProvider._is_sdk_sigterm_shutdown(e):
+            return False
         if ClaudeLLMProvider._is_error_result_success(e):
             return False
         msg = str(e).lower()
@@ -164,18 +173,63 @@ class ClaudeLLMProvider(LLMProvider):
         return "claude code returned an error result: success" in str(e).lower()
 
     @staticmethod
+    def _is_sdk_sigterm_shutdown(e: BaseException) -> bool:
+        """Return whether the Claude SDK/process was terminated by SIGTERM."""
+        return ClaudeLLMProvider._extract_exit_code(e) == 143
+
+    @staticmethod
+    def _iter_exception_tree(e: BaseException) -> Iterator[BaseException]:
+        """Walk exception, causes, contexts, and exception-group children."""
+        stack: list[BaseException] = [e]
+        seen: set[int] = set()
+        while stack:
+            current = stack.pop()
+            current_id = id(current)
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+            yield current
+            if current.__cause__ is not None:
+                stack.append(current.__cause__)
+            if current.__context__ is not None:
+                stack.append(current.__context__)
+            children = getattr(current, "exceptions", None)
+            if isinstance(children, tuple):
+                stack.extend(child for child in children if isinstance(child, BaseException))
+
+    @staticmethod
+    def _extract_exit_code_from_message(message: str) -> int | None:
+        """Parse common SDK/process messages like 'exit code 143'."""
+        normalized = message.lower().replace("_", " ").replace("=", " ").replace(":", " ")
+        parts = normalized.split()
+        for index, part in enumerate(parts[:-2]):
+            if part.strip("([{") == "exit" and parts[index + 1] == "code":
+                candidate = parts[index + 2].strip(".,;])}")
+                try:
+                    return int(candidate)
+                except ValueError:
+                    return None
+        return None
+
+    @staticmethod
     def _extract_exit_code(e: BaseException) -> int | None:
         """Walk __cause__ chain to find ProcessError exit code.
 
         The SDK's ProcessError has an exit_code attribute, but it gets
         wrapped as a plain Exception through the message stream. This
-        walks the chain defensively in case the SDK fixes that.
+        walks the exception tree defensively and also handles message-only
+        wrappers like "exit code 143".
         """
-        current: BaseException | None = e
-        while current is not None:
-            if hasattr(current, "exit_code"):
-                return int(current.exit_code)
-            current = current.__cause__
+        for current in ClaudeLLMProvider._iter_exception_tree(e):
+            exit_code = getattr(current, "exit_code", None)
+            if exit_code is not None:
+                try:
+                    return int(exit_code)
+                except (TypeError, ValueError):
+                    pass
+            parsed = ClaudeLLMProvider._extract_exit_code_from_message(str(current))
+            if parsed is not None:
+                return parsed
         return None
 
     async def _retry_async(
@@ -264,14 +318,30 @@ class ClaudeLLMProvider(LLMProvider):
             )
             stderr_lines.clear()
 
+        def _shutdown_cancellation(error: BaseException) -> ClaudeSDKShutdownCancellation:
+            exit_code = self._extract_exit_code(error) or 143
+            stderr_text = "\n".join(stderr_lines)
+            message = (
+                f"{operation} cancelled: Claude SDK process terminated "
+                f"[exit_code={exit_code}]"
+                + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
+            )
+            self.logger.info(message)
+            return ClaudeSDKShutdownCancellation(message)
+
         try:
             return await self._retry_async(
                 query_fn, max_retries=max_retries, delay=retry_delay, on_retry=_on_retry
             )
-        except ExceptionGroup:
+        except ExceptionGroup as e:
+            if self._is_sdk_sigterm_shutdown(e):
+                raise _shutdown_cancellation(e) from e
             # Let ExceptionGroup propagate for callers that handle it
             raise
         except Exception as e:
+            if self._is_sdk_sigterm_shutdown(e):
+                raise _shutdown_cancellation(e) from e
+
             if self._is_error_result_success(e):
                 exit_code = self._extract_exit_code(e)
                 stderr_text = "\n".join(stderr_lines)
