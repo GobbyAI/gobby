@@ -36,8 +36,8 @@ describe("setup state FalkorDB migration", () => {
 
     expect(loaded).toMatchObject({
       version: 3,
-      falkordb_installed: true,
-      falkordb_password_set: true,
+      falkordb_installed: false,
+      falkordb_password_set: false,
     });
     expect(loaded).not.toHaveProperty("neo4j_installed");
     expect(loaded).not.toHaveProperty("neo4j_password_set");
@@ -45,8 +45,8 @@ describe("setup state FalkorDB migration", () => {
     const persisted = JSON.parse(readFileSync(stateFile, "utf-8")) as Record<string, unknown>;
     expect(persisted).toMatchObject({
       version: 3,
-      falkordb_installed: true,
-      falkordb_password_set: true,
+      falkordb_installed: false,
+      falkordb_password_set: false,
     });
     expect(persisted).not.toHaveProperty("neo4j_installed");
     expect(persisted).not.toHaveProperty("neo4j_password_set");

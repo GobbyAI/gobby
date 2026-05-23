@@ -9,6 +9,10 @@ import type { StepProps } from "../types.js";
 
 type Phase = "prompt" | "password" | "installing" | "done";
 
+function isValidFalkorPassword(password: string): boolean {
+  return /^[\x21-\x7E]+$/.test(password);
+}
+
 export function Services({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>("prompt");
   const [customPassword, setCustomPassword] = useState("");
@@ -18,8 +22,8 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
     setState((prev) => {
       const next = {
         ...prev,
-        neo4j_installed: installed,
-        neo4j_password_set: passwordSet,
+        falkordb_installed: installed,
+        falkordb_password_set: passwordSet,
         completed_step_id: "services" as const,
       };
       saveState(next);
@@ -29,32 +33,48 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   };
 
   const install = (password?: string): void => {
+    if (password && !isValidFalkorPassword(password)) {
+      setResult({
+        success: false,
+        message: "FalkorDB password must use printable ASCII without spaces.",
+      });
+      setPhase("password");
+      return;
+    }
+
     setPhase("installing");
 
-    const args = ["install", "--neo4j"];
+    const args = ["install", "--falkordb"];
     if (password) {
-      args.push("--neo4j-password", password);
+      args.push("--falkordb-password", password);
     }
 
     const r = runGobby(args, { timeout: 120000 });
 
+    if (r.success) {
+      setResult({ success: true, message: "FalkorDB installed successfully." });
+      setPhase("done");
+      finish(true, !!password);
+      return;
+    }
+
     setResult({
-      success: r.success,
-      message: r.success
-        ? "Neo4j installed successfully."
-        : `Installation failed: ${r.output.trim().slice(0, 200)}`,
+      success: false,
+      message: `Installation failed: ${r.output.trim().slice(0, 200)}`,
     });
-    setPhase("done");
-    finish(r.success, r.success && !!password);
+    setPhase(password ? "password" : "done");
+    if (!password) {
+      finish(false, false);
+    }
   };
 
   if (phase === "prompt") {
     return (
       <Box flexDirection="column">
-        <Text>{"  "}Install Neo4j knowledge graph? (requires Docker)</Text>
+        <Text>{"  "}Install FalkorDB knowledge graph? (requires Docker)</Text>
         <Text> </Text>
         <Text dimColor>
-          {"  "}Neo4j enables relationship-based memory search across sessions.
+          {"  "}FalkorDB enables relationship-based memory search across sessions.
         </Text>
         <Text> </Text>
         <Text>
@@ -87,7 +107,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   if (phase === "password") {
     return (
       <Box flexDirection="column">
-        <Text>{"  "}Enter Neo4j password (leave blank to auto-generate):</Text>
+        <Text>{"  "}Enter FalkorDB password (leave blank to auto-generate):</Text>
         <Box marginTop={1}>
           <Text dimColor>{"  "}</Text>
           <TextInput
@@ -106,7 +126,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   if (phase === "installing") {
     return (
       <Text>
-        <Spinner type="dots" /> Installing Neo4j (pulling Docker image)...
+        <Spinner type="dots" /> Installing FalkorDB (pulling Docker image)...
       </Text>
     );
   }
