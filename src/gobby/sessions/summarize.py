@@ -280,15 +280,23 @@ def _summary_source_text(value: str | None) -> str:
 def _digest_markdown_for_summary(session: Any) -> str:
     """Return digest context with the latest completed turn when digest lags."""
     digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
-    last_turn_markdown = _summary_source_text(getattr(session, "last_turn_markdown", None))
-    if not last_turn_markdown or last_turn_markdown in digest_markdown:
-        return digest_markdown
+    pending_turns = [
+        _summary_source_text(getattr(session, "last_turn_markdown", None)),
+        _summary_source_text(getattr(session, "last_assistant_content", None)),
+    ]
 
+    summary_parts = [digest_markdown] if digest_markdown else []
     next_turn = len(TURN_PATTERN.findall(digest_markdown)) + 1
-    latest_turn = f"### Turn {next_turn}\n{last_turn_markdown}"
-    if not digest_markdown:
-        return latest_turn
-    return f"{digest_markdown}\n\n{latest_turn}"
+    for turn_markdown in pending_turns:
+        if not turn_markdown:
+            continue
+        joined_summary = "\n\n".join(summary_parts)
+        if turn_markdown in joined_summary:
+            continue
+        summary_parts.append(f"### Turn {next_turn}\n{turn_markdown}")
+        next_turn += 1
+
+    return "\n\n".join(summary_parts)
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:

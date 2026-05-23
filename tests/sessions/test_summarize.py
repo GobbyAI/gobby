@@ -31,6 +31,7 @@ def _make_session(
     summary_markdown: str | None = None,
     digest_markdown: str | None = None,
     last_turn_markdown: str | None = None,
+    last_assistant_content: str | None = None,
 ) -> MagicMock:
     session = MagicMock()
     session.id = session_id
@@ -39,6 +40,7 @@ def _make_session(
     session.summary_markdown = summary_markdown
     session.digest_markdown = digest_markdown
     session.last_turn_markdown = last_turn_markdown
+    session.last_assistant_content = last_assistant_content
     return session
 
 
@@ -400,6 +402,57 @@ class TestGenerateSessionSummaries:
         )
         assert context["last_messages"].endswith(
             "Current build state: #12746 is development:in_progress."
+        )
+
+    @pytest.mark.asyncio
+    async def test_digest_primary_context_includes_current_assistant_content(self) -> None:
+        session = _make_session(
+            session_id="sess-digest",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nOld coordinator state.",
+            last_turn_markdown="Old coordinator state.",
+            last_assistant_content="Current handoff: #14997 open and #12746 still running.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = "clean"
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Digest Summary"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"message": {"role": "user", "content": "raw transcript"}}],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Digest Summary"
+        assert full_error is None
+        mock_format.assert_not_called()
+        context = provider.generate_summary.await_args.args[0]
+        assert "Old coordinator state." in context["transcript_summary"]
+        assert (
+            "Current handoff: #14997 open and #12746 still running."
+            in context["transcript_summary"]
+        )
+        assert context["last_messages"].endswith(
+            "Current handoff: #14997 open and #12746 still running."
         )
 
     @pytest.mark.asyncio
