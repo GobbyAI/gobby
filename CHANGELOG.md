@@ -425,8 +425,8 @@ This section summarizes the non-merge changes since `v0.3.8`.
 - Neo4j graph data is not migrated to FalkorDB. Rebuild memory graph data with
   the `gobby-memory` `rebuild_knowledge_graph` MCP tool and rebuild code graph
   data with `gcode index <project>` after installing FalkorDB.
-- Upgrade the Rust `gobby-cli` crate to a matching FalkorDB-era release
-  (`gcode 0.7.0+`) at the same time as `gobby 0.4.0+`. Mismatched versions can
+- Upgrade the Rust `gobby-cli` crate to the managed `gcode 0.8.4+` floor at
+  the same time as `gobby 0.4.0+`. Mismatched versions can
   degrade graph features to "graph unavailable" because old daemons still write
   Neo4j-era config keys.
 - The legacy aliases are intentionally absent because accepting both old and new
@@ -448,7 +448,7 @@ This section summarizes the non-merge changes since `v0.3.8`.
 1. Land `gobby:falkordb-migration` first after Phase 1-6 and Phase 8.1-8.2 are
    complete, then cut and publish `gobby 0.4.0-rc1`.
 2. Validate `gobby-cli:falkordb-migration` against `gobby 0.4.0-rc1`, then cut
-   `gcode 0.7.0-rc1`.
+   a matching managed `gcode` release.
 3. Run the joint matrix below against one live Docker FalkorDB instance before
    either branch merges to `main`.
 4. Bump both repos from `-rc1` to final versions in coordinated PRs that land in

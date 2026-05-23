@@ -269,6 +269,45 @@ def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
         reset_seeded_contexts(tokens)
 
 
+def test_override_mode_hash_n_ref_can_use_separate_session_scope_ref() -> None:
+    """Cross-project calls resolve #N session refs in caller scope and target project context."""
+    mgr = _make_session_manager()
+
+    def resolve_ref(project_ref: str) -> MagicMock:
+        project = MagicMock()
+        project.id = {
+            "caller-project": PROJECT_A_UUID,
+            "target-project": PROJECT_B_UUID,
+        }[project_ref]
+        return project
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value="target-token",
+        ) as mock_from_ref,
+    ):
+        mock_pm = MagicMock()
+        mock_pm.resolve_ref.side_effect = resolve_ref
+        mock_pm_class.return_value = mock_pm
+
+        tokens = resolve_and_seed_contexts(
+            session_ref="#5",
+            session_manager=mgr,
+            project_ref="target-project",
+            session_scope_ref="caller-project",
+            db=mgr.db,
+        )
+    try:
+        mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_A_UUID)
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == "target-token"
+        mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
 def test_fallback_mode_uuid_session_ref_not_scoped_by_header_project() -> None:
     """HTTP header project is a context hint, not a scope for UUID session refs."""
     mgr = _make_session_manager()

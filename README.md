@@ -326,8 +326,8 @@ gobby init                   # initialize .gobby/ for this repo
   "mcpServers": {
     "gobby": {
       "type": "stdio",
-      "command": "uv",
-      "args": ["run", "gobby", "mcp-server"]
+      "command": "gobby",
+      "args": ["mcp-server"]
     }
   }
 }

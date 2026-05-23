@@ -109,6 +109,30 @@ async def test_call_tool_session_id_override_replaces_stale_cached_header() -> N
 
 
 @pytest.mark.asyncio
+async def test_call_tool_sends_caller_project_header_with_target_project_override() -> None:
+    proxy = DaemonProxy(60887)
+    proxy._project_id = "caller-project"
+
+    with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+        mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            client = _mock_http_client(mock_client_cls)
+
+            await proxy.call_tool(
+                "gobby-tasks",
+                "list_tasks",
+                {},
+                project_id="target-project",
+                session_id="#7",
+            )
+
+    _, kwargs = client.request.call_args
+    assert kwargs["headers"]["X-Gobby-Project-Id"] == "target-project"
+    assert kwargs["headers"]["X-Gobby-Caller-Project-Id"] == "caller-project"
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == "#7"
+
+
+@pytest.mark.asyncio
 async def test_variable_tools_send_requested_session_as_target_and_header() -> None:
     proxy = DaemonProxy(60887)
     proxy._session_id = "old-session"

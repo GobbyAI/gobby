@@ -191,9 +191,12 @@ class DaemonProxy:
         # Build context headers so the daemon resolves the correct project
         headers: dict[str, str] = {}
         effective_project_id = project_id or self._project_id
+        caller_project_id = self._project_id
         effective_session_id = session_id or self._session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
+        if caller_project_id:
+            headers["X-Gobby-Caller-Project-Id"] = caller_project_id
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
 

@@ -180,16 +180,17 @@ def resolve_and_seed_contexts(
     session_manager: SessionManager | None,
     *,
     project_ref: str | None = None,
+    session_scope_ref: str | None = None,
     project_ref_is_fallback: bool = False,
     db: DatabaseProtocol | None = None,
 ) -> SeededContextTokens:
     """Resolve session and project refs, seed both ContextVars, return tokens.
 
-    Session-scoping rule: ``project_ref`` is passed to the resolver only when
-    the session_ref is ``#N`` / numeric (which requires a project scope by
-    definition). For UUID or prefix refs, the resolver is called with
-    ``project_id=None`` — an ``external_id`` UUID is authoritative across
-    projects and must not be constrained by a project *context* override.
+    Session-scoping rule: ``session_scope_ref`` (or ``project_ref`` when no
+    separate scope is supplied) is passed to the resolver only when the
+    session_ref is ``#N`` / numeric. For UUID or prefix refs, the resolver is
+    called with ``project_id=None`` — an ``external_id`` UUID is authoritative
+    across projects and must not be constrained by a project *context* override.
 
     The mode flag affects project *context* precedence when a session resolves:
 
@@ -203,6 +204,9 @@ def resolve_and_seed_contexts(
       preserves the current "session's own project wins" contract).
 
     Both modes fall through to ``project_ref`` when session resolution fails.
+    ``session_scope_ref`` can be supplied when wrapper session identity must be
+    resolved in the caller project while ``project_ref`` seeds a target project
+    context for the downstream tool.
     On ``db is None`` with a ``project_ref`` that cannot be enriched, emit a
     minimal project context of ``{"id": project_ref}``.
 
@@ -224,12 +228,19 @@ def resolve_and_seed_contexts(
 
     tokens = SeededContextTokens()
     canonical_project_id = _canonicalize_project_ref(project_ref, db)
+    canonical_session_scope_id = (
+        _canonicalize_project_ref(session_scope_ref, db)
+        if session_scope_ref
+        else canonical_project_id
+    )
     tokens.resolved_project_id = canonical_project_id
 
     resolved_session_id: str | None = None
     if session_ref and session_manager is not None:
         # UUID / prefix refs resolve globally; only #N needs project scope.
-        session_scope = canonical_project_id if _ref_requires_project_scope(session_ref) else None
+        session_scope = (
+            canonical_session_scope_id if _ref_requires_project_scope(session_ref) else None
+        )
         try:
             resolved_session_id = str(
                 session_manager.resolve_session_reference(session_ref, session_scope)

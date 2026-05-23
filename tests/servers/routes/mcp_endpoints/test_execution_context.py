@@ -34,11 +34,14 @@ def _make_server(db: MagicMock | None = None) -> MagicMock:
 def _make_request(
     project_id: str | None = None,
     session_id: str | None = None,
+    caller_project_id: str | None = None,
 ) -> MagicMock:
     request = MagicMock()
     headers: dict[str, str] = {}
     if project_id:
         headers["x-gobby-project-id"] = project_id
+    if caller_project_id:
+        headers["x-gobby-caller-project-id"] = caller_project_id
     if session_id:
         headers["x-gobby-session-id"] = session_id
     request.headers = headers
@@ -171,6 +174,28 @@ class TestSetContextForRequest:
             _set_context_for_request(server, {}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
+
+    def test_caller_project_header_scopes_wrapper_session_separately_from_target(self) -> None:
+        """Cross-project calls keep caller session scope distinct from target project context."""
+        server = _make_server()
+        caller_project_id = str(uuid.uuid4())
+        request = _make_request(
+            project_id=PROJECT_ID,
+            caller_project_id=caller_project_id,
+            session_id="#7",
+        )
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(),
+        ) as mock_helper:
+            _set_context_for_request(server, {}, request)
+
+        kwargs = mock_helper.call_args.kwargs
+        assert kwargs["session_ref"] == "#7"
+        assert kwargs["project_ref"] == PROJECT_ID
+        assert kwargs["session_scope_ref"] == caller_project_id
+        assert kwargs["project_ref_is_fallback"] is False
 
     def test_header_session_wins_over_target_argument_session(self) -> None:
         """Body session_id remains the tool target; header is workflow context."""

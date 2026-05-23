@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -95,6 +96,44 @@ class TestConfigureMCPServerJSON:
         assert result["success"] is True
         assert result["already_configured"] is True
         assert result["added"] is False
+
+    def test_repairs_uv_run_existing_server(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            )
+        )
+        result = configure_mcp_server_json(settings)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"] == {
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
+
+    def test_keeps_uv_run_project_existing_server(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        stale = {
+            "command": "uv",
+            "args": ["run", "--project", "/repo/gobby", "gobby", "mcp-server"],
+        }
+        settings.write_text(json.dumps({"mcpServers": {"gobby": stale}}))
+        result = configure_mcp_server_json(settings)
+
+        assert result["success"] is True
+        assert result["already_configured"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"] == stale
 
     def test_invalid_json(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -239,7 +278,11 @@ class TestConfigureMCPServerTOML:
         assert result["added"] is True
         content = config.read_text()
         assert "[mcp_servers.gobby]" in content
-        assert 'command = "uv"' in content
+        parsed = tomllib.loads(content)
+        assert parsed["mcp_servers"]["gobby"] == {
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
 
     def test_appends_to_existing(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -258,6 +301,50 @@ class TestConfigureMCPServerTOML:
         result = configure_mcp_server_toml(config)
         assert result["success"] is True
         assert result["already_configured"] is True
+
+    def test_repairs_uv_run_stale_config(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\nargs = ["run", "gobby", "mcp-server"]\n'
+        )
+        result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        assert result["backup_path"] is not None
+        parsed = tomllib.loads(config.read_text())
+        assert parsed["mcp_servers"]["gobby"] == {
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
+
+    def test_repairs_uv_run_directory_stale_config(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            'args = ["run", "--directory", "/repo/gobby", "gobby", "mcp-server"]\n'
+        )
+        result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        parsed = tomllib.loads(config.read_text())
+        assert parsed["mcp_servers"]["gobby"] == {
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
+
+    def test_keeps_uv_run_project_config(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            'args = ["run", "--project", "/repo/gobby", "gobby", "mcp-server"]\n'
+        )
+        result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["already_configured"] is True
+        assert result["updated"] is False
 
     def test_read_error(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -530,6 +617,13 @@ class TestConfigureProjectMCPServer:
             result = configure_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["added"] is True
+        data = json.loads((tmp_path / ".claude.json").read_text())
+        abs_path = str(project_path.resolve())
+        assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
+            "type": "stdio",
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
 
     def test_already_configured(self, tmp_path: Path) -> None:
         project_path = tmp_path / "my-project"
@@ -543,6 +637,40 @@ class TestConfigureProjectMCPServer:
             result = configure_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["already_configured"] is True
+
+    def test_repairs_project_scoped_uv_run_config(self, tmp_path: Path) -> None:
+        project_path = tmp_path / "my-project"
+        project_path.mkdir()
+        abs_path = str(project_path.resolve())
+        settings_path = tmp_path / ".claude.json"
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "projects": {
+                        abs_path: {
+                            "mcpServers": {
+                                "gobby": {
+                                    "type": "stdio",
+                                    "command": "uv",
+                                    "args": ["run", "gobby", "mcp-server"],
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+            result = configure_project_mcp_server(project_path)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        data = json.loads(settings_path.read_text())
+        assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
+            "type": "stdio",
+            "command": "gobby",
+            "args": ["mcp-server"],
+        }
 
     def test_invalid_json(self, tmp_path: Path) -> None:
         project_path = tmp_path / "my-project"

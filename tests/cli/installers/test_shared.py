@@ -581,8 +581,8 @@ class TestConfigureMcpServerToml:
 
         content = config_path.read_text()
         assert "[mcp_servers.gobby]" in content
-        assert 'command = "uv"' in content
-        assert 'args = ["run", "gobby", "mcp-server"]' in content
+        assert 'command = "gobby"' in content
+        assert 'args = ["mcp-server"]' in content
 
     def test_configure_existing_toml_no_mcp(self, temp_dir: Path) -> None:
         """Test adding MCP server to existing TOML without mcp_servers."""

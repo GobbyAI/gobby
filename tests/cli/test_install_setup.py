@@ -501,6 +501,40 @@ class TestGcodeHelpers:
         assert res["installed"] is True
         assert res["version"] == MANAGED_BIN_VERSION_PINS["gcode"]
 
+    def test_install_gcode_uses_managed_pin_for_download_and_cargo_paths(self, tmp_path):
+        pin = MANAGED_BIN_VERSION_PINS["gcode"]
+
+        with (
+            patch("gobby.cli.install_setup.sys.platform", "darwin"),
+            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.1.0"),
+            patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=False),
+            patch(
+                "gobby.cli.install_setup._install_gcode_from_github", return_value=False
+            ) as github,
+            patch(
+                "gobby.cli.install_setup._install_gcode_from_cargo_binstall",
+                return_value=False,
+            ) as binstall,
+            patch(
+                "gobby.cli.install_setup._install_gcode_from_cargo_install",
+                return_value=True,
+            ) as cargo_install,
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+        ):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gcode").write_bytes(b"\x00")
+
+            res = _install_gcode()
+
+        assert res["installed"] is True
+        assert res["version"] == pin
+        github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", pin)
+        binstall.assert_called_once_with(bin_dir, pin)
+        cargo_install.assert_called_once_with(bin_dir, pin)
+
     @patch("gobby.cli.install_setup.urlopen")
     def test_get_latest_gcode_version(self, mock_url):
         fake_resp = MagicMock()

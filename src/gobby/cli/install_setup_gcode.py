@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 
 def get_latest_gcode_version(module: Any) -> str | None:
@@ -223,13 +224,11 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
         }
 
     installed_version = module._get_installed_gcode_version(bin_dir)
-    latest_version = module._get_latest_gcode_version()
-
     if gcode_path.exists() and not force:
         if managed_version_satisfies_pin("gcode", installed_version):
             return {"installed": False, "skipped": True, "version": installed_version}
 
-    target_version = latest_version
+    target_version = MANAGED_BIN_VERSION_PINS["gcode"]
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 

@@ -74,6 +74,14 @@ class GobbyDaemonTools:
             config=config.recommend_tools if config else None,
         )
 
+    def _caller_project_ref(self) -> str | None:
+        ctx = project_context_utils.get_project_context()
+        project_id = ctx.get("id") if ctx else None
+        if project_id:
+            return str(project_id)
+        manager_project_id = getattr(self._mcp_manager, "project_id", None)
+        return str(manager_project_id) if manager_project_id else None
+
     # --- System Tools ---
 
     async def status(self) -> dict[str, Any]:
@@ -225,10 +233,14 @@ class GobbyDaemonTools:
             )
 
         db = self._session_manager.db if self._session_manager else None
+        session_scope_ref = (
+            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
+        )
         tokens = resolve_and_seed_contexts(
             session_ref=session_id,
             session_manager=self._session_manager,
             project_ref=project_id,
+            session_scope_ref=session_scope_ref,
             db=db,
         )
 
