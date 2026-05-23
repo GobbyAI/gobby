@@ -15,7 +15,7 @@ vi.mock('../../../hooks/useMemory', () => ({
     fetchKnowledgeGraph: vi.fn(),
     fetchEntityNeighbors: vi.fn(),
   }),
-  useFalkorStatus: vi.fn(() => ({ configured: true, url: 'bolt://localhost:6379' })),
+  useFalkorStatus: vi.fn(() => ({ configured: true, url: 'redis://localhost:6379' })),
 }))
 
 vi.mock('../MemoryFilters', () => ({
