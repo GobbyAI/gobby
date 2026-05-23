@@ -21,7 +21,8 @@ from gobby.utils.project_context import (
 from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
-PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
+PLANNED_RESTART_MARKER_MIN_AGE_SECONDS = 120.0
+PLANNED_RESTART_MARKER_BUFFER_SECONDS = 120.0
 
 
 class CronScheduler:
@@ -250,12 +251,24 @@ class CronScheduler:
         return delays[idx]
 
     def _planned_restart_source(self) -> str | None:
-        record = read_active_shutdown_intent(max_age_seconds=PLANNED_RESTART_MARKER_MAX_AGE_SECONDS)
+        record = read_active_shutdown_intent(
+            max_age_seconds=self._planned_restart_marker_max_age_seconds()
+        )
         if record is None or record.stale or record.error:
             return None
         if record.intent is not ShutdownIntent.RESTART:
             return None
         return record.source
+
+    def _planned_restart_marker_max_age_seconds(self) -> float:
+        return max(
+            PLANNED_RESTART_MARKER_MIN_AGE_SECONDS,
+            float(
+                self.config.running_timeout_seconds
+                + self.config.check_interval_seconds
+                + PLANNED_RESTART_MARKER_BUFFER_SECONDS
+            ),
+        )
 
     def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
         if job.is_system:
