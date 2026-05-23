@@ -194,10 +194,17 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
-    assert agent["step_variables"]["required_skills"] == ["development-discipline"]
+    assert agent["step_variables"]["required_skills"] == [
+        "development-discipline",
+        "task-transitions",
+        "verification-before-completion",
+    ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
-    assert 'get_skill(name="development-discipline")' in load_required["status_message"]
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
     assert "development-discipline" in agent["instructions"]
+    assert "task-transitions" in agent["instructions"]
+    assert "verification-before-completion" in agent["instructions"]
     assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
