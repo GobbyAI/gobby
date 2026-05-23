@@ -136,6 +136,17 @@ describe("Services FalkorDB setup", () => {
     },
   );
 
+  it("rejects custom passwords with leading or trailing whitespace without trimming them", () => {
+    const view = renderServices();
+
+    submit("p");
+    submit(" ValidPassword123!");
+
+    expect(mocks.runGobby).not.toHaveBeenCalled();
+    expect(view.setState).not.toHaveBeenCalled();
+    expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
+  });
+
   it("clears the password rejection when the operator edits the value", () => {
     renderServices();
 
