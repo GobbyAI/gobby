@@ -11,10 +11,12 @@ Replace score-only synchronous memory recall with an LLM-judgment-driven backgro
 - The synchronous fast-recall path (`memory-recall-on-prompt`) and the rolling digest pipeline (`digest-on-response`) are out of scope — they continue unchanged. The helper consumes the digest produced at `turn_end` of the previous turn; it never produces it.
 - Helper must run backgrounded. Adding LLM latency to `turn_start` is unacceptable.
 - `PreToolUse` (`before_tool`) does not fire on text-only assistant turns in Claude Code, so delivery happens at the next `turn_start` only.
-- **Dedup tracking is on the parent's delivery side, on the inline `inject_result` path inside `_apply_effect` (`src/gobby/workflows/engine/effects.py:57+`), NOT in `HookManager._evaluate_workflow_rules` (`src/gobby/hooks/hook_manager.py:597–698`).** The hook-manager dedup loop only runs on deferred `dispatch_result` items; the `inject_result: true` path is inline-dispatched directly inside `_apply_effect` and never produces a dispatch_result. Phase 2.4 implements the full delivery-time pipeline (normalize → drop-cancelled-from-session → dedup → strip handled messages → format) on the inline path so it actually fires for `deliver_pending_messages` results.
+- **Dedup tracking is on the parent's delivery side, on the inline `inject_result` path inside `_apply_effect` (`src/gobby/workflows/engine/effects.py:57-255`), NOT in `HookManager._evaluate_workflow_rules`.** The hook-manager dedup loop (`_dedup_memory_results` at `src/gobby/hooks/hook_manager.py:490` on HEAD) only runs on deferred `dispatch_result` items; the `inject_result: true` path is inline-dispatched directly inside `_apply_effect` and never produces a dispatch_result. Phase 2.4 implements the full delivery-time pipeline (normalize → drop-cancelled-from-session → dedup → strip handled messages → format) on the inline path so it actually fires for `deliver_pending_messages` results.
 - **Helper is read-only on `injected_memory_ids`.** Helper reads it before selecting (to avoid re-surfacing already-seen memories) but never writes. Writing happens in 2.4 via `SessionVariableManager.append_to_set_variable` — the existing atomic primitive `_dedup_memory_results` uses. This eliminates the round-1 race where IDs got marked injected before the parent ever saw them and the read-modify-write loss between concurrent writers. The read-only contract is enforced at the runtime layer by 2.2, which makes agent `blocked_tools` override the default infrastructure-tool exempt so the helper's `mcp__gobby__set_variable` calls are actually blocked (the `is_infrastructure_tool` exempt path in `_check_agent_tool_enforcement` (`src/gobby/workflows/engine/enforcement.py`) currently returns before any block-list is consulted, which makes `blocked_mcp_tools` and a naive `blocked_tools` placement non-functional for proxy infra tools).
-- **Same-turn cross-source dedup is owned by the inline `inject_result` path, keyed off the canonical platform session id.** Both fast-recall (`memory-recall-on-prompt`, priority 10) AND helper-delivery (`deliver-pending-messages`, priority 10 firing on the next turn) inject memories on `turn_start`. Without explicit handling, the same memory id can render twice in the same turn — once from fast recall's inline `search_memories` formatter, once from helper-delivery's `memory_recall` payload — because fast recall today does NOT consult or write `injected_memory_ids` on the inline path. Phase 2.4 places dedup-against-and-append-to `injected_memory_ids` inside the `_apply_effect` pipeline for BOTH `("gobby-memory", "search_memories")` AND `("gobby-agents", "deliver_pending_messages")`. **Both formatters MUST resolve the session id via `event.metadata.get('_platform_session_id')`**, NOT `event.session_id`. `HookEvent.session_id` is the CLI external id (Claude `external_id`, Codex `thread_id`); the canonical Gobby session row uses the platform session id, and `SessionVariableManager` is keyed by it. The existing deferred memory-dedup (`_dedup_memory_results` at `src/gobby/hooks/hook_manager.py:741`) reads `_platform_session_id` for exactly this reason. If the formatters used `event.session_id`, fast recall and helper delivery would write `injected_memory_ids` under the wrong key and same-turn/session dedup would silently fail. Both writers go through `SessionVariableManager.append_to_set_variable`, race-free across concurrent rule evaluations.
-- **Freshness contract: two independent guards.** A backgrounded helper for prompt N can produce a `memory_recall` payload that lands in the inter-session message queue at one of three times relative to prompt N+1's `turn_start`: (i) before N+1's spawn fires → in-flight, gets cancelled; (ii) before N+1's deliver runs → message in queue from a `success` run, intended delivery; (iii) after N+1's deliver runs → message in queue from a `success` run, missed its window, will deliver at N+2 against an unrelated prompt — STALE. Cancellation alone catches (i) but does NOT catch (iii) because the source run's status is `success`, not `cancelled`. Two guards together close the hole: **(A) Cancellation guard.** A dedicated `cancel-stale-memory-recall-helpers` rule (3.2) at priority 5 invokes a new MCP tool `cancel_stale_helpers(parent_session_id, agent_name)` (added in 2.5). The cancel rule's effect uses `inject_result: true` purely as a sync marker so it is inline-awaited before priority-10 delivery (per `EffectsMixin._apply_effect`, only `inject_result: true` non-background effects are awaited inline; everything else is queued and dispatched after the workflow handler returns — too late). 2.4's delivery formatter has a dedicated `cancel_stale_helpers` formatter case that returns None so the cancel call injects no context. After cancellation, 2.4's delivery formatter drops queued messages whose `from_session` belongs to a cancelled run via `LocalAgentRunManager.get_cancelled_session_ids` (added in 2.3). **(B) Turn-sequence guard.** A monotonic per-parent session variable `parent_turn_seq` (seeded `0` at session_start in 1.3; incremented at every parent `turn_start` by a new priority-1 rule in 3.4) gives every turn a unique number. The 3.3 spawn rule's helper prompt includes the current `parent_turn_seq` value (the helper is spawned at this turn, so its intended-delivery turn is `parent_turn_seq + 1`). The helper instructions (1.4) require including `"origin_turn_seq": <int>` in every `memory_recall` payload. 2.4's delivery formatter drops payloads where `payload.origin_turn_seq != current_parent_turn_seq - 1` — i.e., not from the immediately previous turn. This catches the (iii) case: a `success`-status helper from turn N whose message lands at N+2 has `origin_turn_seq=N`, but `current_parent_turn_seq - 1 = N+1`, so the payload is dropped. **Both guards together** ensure: at every parent turn_start, the order is **increment turn-seq (1) → cancel stale (5) → deliver pending with both filters (10) → spawn fresh (12)**, and no helper output ever injects against an unrelated later prompt regardless of whether the prior helper was cancelled-mid-run or completed-too-late. Note: this design replaces the rejected round-1 design that added a `supersede: bool` to `spawn_agent`; supersede couldn't address the rule-priority race (delivery at 10 fired before the spawn rule at 12 had a chance to cancel) AND `spawn_agent`'s factory does not have access to the lifecycle/process-kill deps that proper cancellation requires.
+- **Same-turn cross-source dedup is owned by the inline `inject_result` path, keyed off the canonical platform session id.** Both fast-recall (`memory-recall-on-prompt`, priority 10) AND helper-delivery (`deliver-pending-messages`, priority 10 firing on the next turn) inject memories on `turn_start`. Without explicit handling, the same memory id can render twice in the same turn — once from fast recall's inline `search_memories` formatter, once from helper-delivery's `memory_recall` payload — because fast recall today does NOT consult or write `injected_memory_ids` on the inline path. Phase 2.4 places dedup-against-and-append-to `injected_memory_ids` inside the `_apply_effect` pipeline for BOTH `("gobby-memory", "search_memories")` AND `("gobby-agents", "deliver_pending_messages")`. **Both formatters MUST resolve the session id via `event.metadata.get('_platform_session_id')`**, NOT `event.session_id`. `HookEvent.session_id` is the CLI external id (Claude `external_id`, Codex `thread_id`); the canonical Gobby session row uses the platform session id, and `SessionVariableManager` is keyed by it. The existing deferred memory-dedup (`_dedup_memory_results` at `src/gobby/hooks/hook_manager.py:490` on HEAD) and `HookManager`'s rule-evaluation paths read `_platform_session_id` (HEAD references at `hook_manager.py:312, 400, 490`) for exactly this reason. If the formatters used `event.session_id`, fast recall and helper delivery would write `injected_memory_ids` under the wrong key and same-turn/session dedup would silently fail. Both writers go through `SessionVariableManager.append_to_set_variable`, race-free across concurrent rule evaluations.
+- **Freshness contract: two independent guards.** A backgrounded helper for prompt N can produce a `memory_recall` payload that lands in the inter-session message queue at one of three times relative to prompt N+1's `turn_start`: (i) before N+1's spawn fires → in-flight, gets cancelled; (ii) before N+1's deliver runs → message in queue from a `success` run, intended delivery; (iii) after N+1's deliver runs → message in queue from a `success` run, missed its window, will deliver at N+2 against an unrelated prompt — STALE. Cancellation alone catches (i) but does NOT catch (iii) because the source run's status is `success`, not `cancelled`. Two guards together close the hole: **(A) Cancellation guard.** A dedicated `cancel-stale-memory-recall-helpers` rule (3.2) at priority 5 invokes a new MCP tool `cancel_stale_helpers(parent_session_id, agent_name)` (added in 2.5). The cancel rule's effect uses `inject_result: true` purely as a sync marker so it is inline-awaited before priority-10 delivery (per `EffectsMixin._apply_effect`, only `inject_result: true` non-background effects are awaited inline; everything else is queued and dispatched after the workflow handler returns — too late). 2.4's delivery formatter has a dedicated `cancel_stale_helpers` formatter case that returns None so the cancel call injects no context. After cancellation, 2.4's delivery formatter drops queued messages whose `from_session` belongs to a cancelled run via `LocalAgentRunManager.get_cancelled_session_ids` (added in 2.3). **(B) Turn-sequence guard.** A monotonic per-parent session variable `parent_turn_seq` (seeded `0` at session_start in 1.3; incremented at every parent `turn_start` by a new priority-1 rule in 3.4) gives every turn a unique number. The 3.3 spawn rule's helper prompt includes the current `parent_turn_seq` value (the helper is spawned at this turn, so its intended-delivery turn is `parent_turn_seq + 1`). The helper instructions (1.4) require including `"origin_turn_seq": <int>` in every `memory_recall` payload. 2.4's delivery formatter drops payloads where `payload.origin_turn_seq != current_parent_turn_seq - 1` — i.e., not from the immediately previous turn. This catches the (iii) case: a `success`-status helper from turn N whose message lands at N+2 has `origin_turn_seq=N`, but `current_parent_turn_seq - 1 = N+1`, so the payload is dropped. **Both guards together** ensure: at every parent turn_start, the order is **increment turn-seq (1) → cancel stale (5) → deliver pending with both filters (10) → spawn fresh (12)**, and no helper output ever injects against an unrelated later prompt regardless of whether the prior helper was cancelled-mid-run or completed-too-late.
+
+**Fail-open posture on cancel error.** If `cancel_stale_helpers` returns `success: False` (e.g., transient daemon error or a partial best-effort failure), `_apply_effect` aborts ONLY the cancel rule's remaining effects — the delivery rule (different rule, same `turn_start` event, priority 10) and the spawn rule (priority 12) run independently. This is fail-open for guard A: a stale helper may keep running into the next turn. Guard B (origin_turn_seq) is the safety net: a helper from turn N has `origin_turn_seq=N` and 2.4's delivery formatter compares it against `current_parent_turn_seq - 1`, so any `success`-status payload from a not-cancelled prior helper still drops on the turn-seq check. The two guards are intentionally non-redundant — guard A minimizes work (cancel fast so the helper stops burning tokens) and guard B is the correctness backstop. Note: this design replaces the rejected round-1 design that added a `supersede: bool` to `spawn_agent`; supersede couldn't address the rule-priority race (delivery at 10 fired before the spawn rule at 12 had a chance to cancel) AND `spawn_agent`'s factory does not have access to the lifecycle/process-kill deps that proper cancellation requires.
 - **Empty pending-message queues must be no-op injections.** Without explicit handling, `inject_result: true` would inject `{"success": true, "messages": [], "count": 0}` as visible JSON on every routine turn where no helper has anything to surface. Phase 2.4's pipeline includes an early empty-payload short-circuit so the inline path skips injection cleanly.
 - **First-time deliveries must render each helper memory exactly once.** Without explicit handling, `inject_result` would dump the raw `messages[*].content` AND the normalized top-level `memories`, so a fresh memory would render twice on the first delivery. Phase 2.4's pipeline strips handled `memory_recall` messages out of the `messages` array before formatting, so rendered output contains the deduped helper memories once and any non-`memory_recall` messages still passing through.
 - **The existing `deliver-pending-messages` rule needs an explicit `arguments: { target_session_id: "{{ event.metadata.get('_platform_session_id') }}" }` block.** The dispatcher does not auto-inject `target_session_id` (only `session_id`, which `deliver_pending_messages` does not accept). The current rule, with no `arguments`, would not actually invoke the tool successfully. The templated value MUST resolve via `event.metadata['_platform_session_id']` (the canonical Gobby session row id), NOT `event.session_id` (the CLI external id — Claude `external_id` / Codex `thread_id`). Phase 3.1 fixes this in the rule body. The same canonical-id rule applies to `parent_session_id` in 3.2 (`cancel-stale-memory-recall-helpers`) and 3.3 (`spawn-memory-recall-helper` — both the `arguments.parent_session_id` field AND the helper prompt's `Parent session:` line).
@@ -28,49 +30,25 @@ Replace score-only synchronous memory recall with an LLM-judgment-driven backgro
 ## P1 Phase 1: Foundation
 `kind: framing`
 
-**Goal**: Establish the monolith-gate prerequisite for `_session_start.py`, add the helper agent's master-toggle config, thread it through `EventHandlers` so its `enabled` flag is seeded into every new session as a variable, and create the helper's YAML definition.
+**Goal**: Add the helper agent's master-toggle config, thread it through `EventHandlers` so its `enabled` flag is seeded into every new session as a variable, and create the helper's YAML definition.
 
-The expander compiles each `## Phase N` independently and prefixes every task and dependency id with the phase prefix; cross-phase dependency edges do NOT survive the compile. The monolith gate must therefore live in the SAME phase as the task that depends on it (1.3, the `_session_start.py` edit). That's why the gate is 1.1 here, not in a separate Phase 0.
-
-### 1.1 `_session_start.py` monolith gate [category: manual] (external observable: #12919)
-`kind: deliverable`
-
-Target: a `manual` gate task created by the expander. Performs no code changes itself.
-
-The gate task is the in-Phase-1 dependency edge that 1.3's task hard-blocks on, with explicit close conditions tied to the external #12919:
-
-- The implementer (or the conductor in autonomous mode) must verify two conditions before closing this gate task:
-  1. Task **#12919** ("Refactor _session_start.py below the 1,000-line project limit") is in `closed` status. **Normative check (works for both humans and autonomous agents)**: call `gobby-tasks.get_task(task_id="#12919")` via the MCP `call_tool` path and confirm `state.is_closed == true`. The MCP path is required because (a) the bare `gobby tasks` CLI is blocked for agent sessions by the `block-gobby-tasks-cli` hook, and (b) the available human CLI command `gobby tasks show #12919` returns a plain-text `Lifecycle: closed` line but has no `--json` option, so it is unsuitable for automated parsing. Humans may run `gobby tasks show #12919` for a quick visual sanity check, but the MCP path is what the gate-check should rely on.
-  2. `wc -l src/gobby/hooks/event_handlers/_session_start.py` reports a value < 1000.
-- If either condition is unmet, the gate stays open. 1.3's task is blocked. The implementer escalates to the human owner if #12919 is stalled.
-
-This plan does NOT prescribe the extraction shape that #12919 chooses; that's #12919's call. This plan only owns the intra-Phase-1 dependency edge from 1.3 → 1.1 and the close-condition documentation on 1.1.
-
-**Operational gate, not engine-enforced.** Round 8's adversary established that the current task expander does not deterministically parse markdown header annotations like `(depends: 1.1, 1.2)` into `tasks.dependencies` edges; whether a `depends_on` edge gets emitted depends on the LLM compiler's behavior, and `validate_applied_run` only checks task mappings, not plan-required edges. Asserting "the expander MUST abort if the edge is absent" is therefore not enforceable from current CLI/code.
-
-Instead, this gate is enforced **operationally** by 1.3's own preconditions:
-
-1. The task expander materializes 1.1 as a `category: manual` task with the close conditions above as `validation_criteria`. (If the expander's LLM compiler also emits a `1.3 depends_on 1.1` edge, that's a bonus belt-and-suspenders, but the design does not depend on it.)
-2. **1.3's task body itself includes a hard precondition** (added in 1.3's prose) requiring the implementer to verify both close conditions BEFORE making any code changes: (a) `gobby-tasks.get_task(task_id="#12919")` via the MCP `call_tool` path returns `state.is_closed == true`, (b) `wc -l src/gobby/hooks/event_handlers/_session_start.py` reports < 1000. If either is unmet, the implementer must escalate the task with reason `"#12919 not yet closed; _session_start.py monolith gate (1.1) still open"` rather than starting the edit.
-3. 1.1 stays open as a tracking task and is closed by hand (or by an automation watching #12919) when both conditions hold.
-
-This is operational, not DB-enforced, but is enforceable by current tooling: implementers (human or autonomous) read task bodies before claiming, and the explicit "MUST verify before any code changes" precondition is the same shape as other gating criteria in this codebase.
-
-Validation criteria: 1.1 task exists with `category: manual` and the documented `validation_criteria`. 1.3's task body contains the explicit pre-edit gate-check prose (verifiable by reading the rendered task description). If the LLM compiler does happen to emit a `1.3 depends_on 1.1` edge, `gobby-tasks.get_task(task_id="<1.3-task-ref>")` returns `1.1` in `dependencies.blocked_by` — but absence of that edge does NOT fail this validation; the operational gate in 1.3's body is the load-bearing mechanism.
-
-**Acceptance:**
-
-- 1.1.1 — A `category: manual` gate task tracking #12919 close-out exists in the expanded tree, with validation_criteria covering the documented close conditions. behavior: "Manual gate task for #12919 exists with category=manual" in `.gobby/plans/task-12898-memory-recall-helper.md`.
-- 1.1.2 — Section 1.3's task body contains the explicit pre-edit gate-check prose so the implementer verifies #12919 closure before any edits. behavior: "1.3 task body carries pre-edit gate-check prose" in `.gobby/plans/task-12898-memory-recall-helper.md`.
+Earlier rounds of this plan included a manual monolith-gate task (1.1) tracking the
+external `_session_start.py` refactor (originally filed as #12919). That refactor has
+since landed: commit `ac8a4114c` ("refactor: decompose session start handler")
+decomposed the single file into a `src/gobby/hooks/event_handlers/_session_start/`
+package. The new file 1.3 edits is `_session_start/agents.py` (`activate_default_agent`
+at lines 82–199 on HEAD), which is well under the 1,000-line monolith limit. No gate
+task is required and the section that previously carried it is intentionally absent
+in this revision; section IDs in P1 jump directly from the phase header to 1.2.
 
 ### 1.2 Add `MemoryRecallHelperConfig` (single field) to `DaemonConfig` [category: code]
 `kind: deliverable`
 
 Target: `src/gobby/config/sessions.py` (config class) and `src/gobby/config/app.py` (`DaemonConfig` field).
 
-Add a minimal `MemoryRecallHelperConfig` (Pydantic `BaseModel`, NOT extending `FeatureDefaultConfig`) with a single `enabled: bool` field, and attach it to `DaemonConfig` as a sibling of the existing `digest: DigestConfig` field at `src/gobby/config/app.py:288+`. The helper's model, timeouts, and search-tuning values are intentionally hardcoded in the helper agent YAML (1.4) — they are not user-tunable and adding orphan config fields would just be dead surface.
+Add a minimal `MemoryRecallHelperConfig` (Pydantic `BaseModel`, NOT extending `FeatureDefaultConfig`) with a single `enabled: bool` field, and attach it to `DaemonConfig` as a sibling of the existing `digest: DigestConfig = Field(...)` field (in `src/gobby/config/app.py` around lines 292–295 on HEAD). The helper's model, timeouts, and search-tuning values are intentionally hardcoded in the helper agent YAML (1.4) — they are not user-tunable and adding orphan config fields would just be dead surface.
 
-In `src/gobby/config/sessions.py`, add the class right after `DigestConfig` (which ends at line 151):
+In `src/gobby/config/sessions.py`, add the class right after `DigestConfig` (lines 140–151 on HEAD, ending at line 151):
 
 ```python
 class MemoryRecallHelperConfig(BaseModel):
@@ -84,7 +62,7 @@ class MemoryRecallHelperConfig(BaseModel):
 
 `BaseModel` is the right base here; we are not exposing provider/model/tier overrides because the helper's runtime values are pinned in its YAML definition (1.4). If a future requirement exposes any of those for tuning, it can extend this class then.
 
-Then in `src/gobby/config/app.py`, in the `DaemonConfig` class (around line 288, sub-config block), add immediately after the `digest: DigestConfig = Field(...)` declaration:
+Then in `src/gobby/config/app.py`, in the `DaemonConfig` class (around lines 292–295 on HEAD), add immediately after the `digest: DigestConfig = Field(...)` declaration:
 
 ```python
     memory_recall_helper: MemoryRecallHelperConfig = Field(
@@ -112,26 +90,17 @@ Validation criteria: `MemoryRecallHelperConfig` exists in `src/gobby/config/sess
 - 1.2.2 — `DaemonConfig.memory_recall_helper` field present with `default_factory=MemoryRecallHelperConfig`. symbol: `gobby.config.app.DaemonConfig.memory_recall_helper`.
 - 1.2.3 — Default-construct, YAML round-trip, and exact-field-set tests cover the config shape. test: `tests/config/test_sessions.py::test_memory_recall_helper_config_shape`.
 
-### 1.3 Thread `memory_recall_helper` config to `EventHandlers` and seed `memory_recall_helper_enabled` on session_start [category: code] (depends: 1.1, 1.2)
+### 1.3 Thread `memory_recall_helper` config to `EventHandlers` and seed `memory_recall_helper_enabled` on session_start [category: code] (depends: 1.2)
 `kind: deliverable`
 
-**HARD PRECONDITION (gate-check; do BEFORE any code changes):**
-
-This task adds ~15 lines to `src/gobby/hooks/event_handlers/_session_start.py`. HEAD has that file at 1,021 lines, over the project's 1,000-line monolith limit (principle #2). 1.1 is the manual gate task tracking the external refactor #12919. Before claiming or editing for 1.3:
-
-1. Verify task #12919 is closed. **Normative check (humans and agents both)**: call `gobby-tasks.get_task(task_id="#12919")` via the MCP `call_tool` path; confirm `state.is_closed == true` in the response. The bare `gobby tasks` CLI is blocked for autonomous agents by the `block-gobby-tasks-cli` hook, and `gobby tasks show #12919` (the human CLI) has no `--json` option (its plain-text `Lifecycle: closed` line is fine for visual confirmation but not for automated parsing), so the MCP path is the only programmatic option valid for both audiences.
-2. Run `wc -l src/gobby/hooks/event_handlers/_session_start.py` (allowed via Bash for both humans and autonomous agents) and confirm the value is `< 1000`.
-
-If either condition is unmet, **DO NOT** start the edits. Escalate the task with reason `"#12919 not yet closed; _session_start.py monolith gate (1.1) still open"`. The LLM-driven expander may or may not emit a `1.3 depends_on 1.1` edge in `tasks.dependencies` (current expander behavior is non-deterministic per the round-8 adversary finding), so this precondition check is the load-bearing gate — the dependency edge, if present, is bonus belt-and-suspenders.
-
 Targets:
-
 - `src/gobby/hooks/event_handlers/_base.py` (`EventHandlersBase` — add typed slot for the config)
 - `src/gobby/hooks/event_handlers/__init__.py` (`EventHandlers.__init__` — accept and store the config)
-- `src/gobby/hooks/factory.py` (factory call site at line 232 — pass `config.memory_recall_helper`)
-- `src/gobby/hooks/event_handlers/_session_start.py` (`SessionStartMixin._activate_default_agent` — write the seeded variable into `changes` before `sv_mgr.merge_variables`)
+- `src/gobby/hooks/factory.py` (factory call site that constructs `EventHandlers(...)` — pass `config.memory_recall_helper`; the call site assigns `skills_config=config.skills if config else None` and the new keyword sits next to that pattern)
+- `src/gobby/hooks/event_handlers/_session_start/agents.py` (`activate_default_agent` — write the seeded variable into `changes` before `sv_mgr.merge_variables`)
+- `tests/hooks/event_handlers/test_session_variable_preservation.py` (new preservation + fresh-session test cases for `parent_turn_seq`)
 
-Mirror the existing `skills_config: SkillsConfig | None` pattern (`src/gobby/hooks/event_handlers/_base.py:34`, `__init__.py:110`, `factory.py:241`).
+Mirror the existing `skills_config: SkillsConfig | None` pattern (`src/gobby/hooks/event_handlers/_base.py:37`, `__init__.py:108`, `factory.py:254`).
 
 In `src/gobby/hooks/event_handlers/_base.py`, add the typed slot inside `class EventHandlersBase` alongside `_skills_config`:
 
@@ -146,7 +115,7 @@ class EventHandlersBase:
     # ... existing slots ...
 ```
 
-In `src/gobby/hooks/event_handlers/__init__.py`, in `EventHandlers.__init__` (line 52–151), add a new keyword param and assignment paralleling `skills_config`:
+In `src/gobby/hooks/event_handlers/__init__.py`, in `EventHandlers.__init__` (line 52–118 on HEAD), add a new keyword param and assignment paralleling `skills_config` (current assignment lives at line 108):
 
 ```python
 def __init__(
@@ -164,7 +133,7 @@ def __init__(
 
 Add a docstring entry for the new param matching the surrounding style.
 
-In `src/gobby/hooks/factory.py` at line 232 where `EventHandlers(...)` is constructed, add the keyword argument right after `skills_config`:
+In `src/gobby/hooks/factory.py` at the `EventHandlers(...)` construction (line 245–260 on HEAD; the `skills_config=...` assignment is at line 254), add the keyword argument right after `skills_config`:
 
 ```python
 event_handlers = EventHandlers(
@@ -176,27 +145,29 @@ event_handlers = EventHandlers(
 )
 ```
 
-In `src/gobby/hooks/event_handlers/_session_start.py`, in `_activate_default_agent` (lines 841–965), insert the two new `changes[...]` writes **BEFORE the existing-variable filter pass**. HEAD's flow is (verified at this file):
+In `src/gobby/hooks/event_handlers/_session_start/agents.py`, in `activate_default_agent` (lines 82–199 on HEAD; module-level function, **not** a mixin method — first parameter is `handler: Any`, called from `flow.py` at lines 211 and 399 via `handler._activate_default_agent(...)` which is the mixin shim defined in `_session_start/__init__.py`), insert the two new `changes[...]` writes **BEFORE the existing-variable filter pass**. HEAD's flow is (verified at this file):
 
 ```
-... <changes is built up> ...
+... <changes is built up via handler._build_agent_changes(...)> ...
 existing = sv_mgr.get_variables(session_id)
 if existing:
-    _ALWAYS_REAPPLY = { ... }
-    changes = {k: v for k, v in changes.items() if k in _ALWAYS_REAPPLY or k not in existing}
+    always_reapply = { ... }
+    changes = {k: v for k, v in changes.items() if k in always_reapply or k not in existing}
 sv_mgr.merge_variables(session_id, changes)
 ```
 
-Both new writes must land in the "changes is built up" region, BEFORE the `existing = sv_mgr.get_variables(session_id)` read. The filter then handles preservation correctly: `memory_recall_helper_enabled` is added to `_ALWAYS_REAPPLY` so it re-applies every session_start; `parent_turn_seq` is NOT added to `_ALWAYS_REAPPLY`, so the `k not in existing` clause preserves its existing value on compact/restart and only seeds it (to 0) on the first session_start when the key is absent. Inserting these writes AFTER the filter (e.g., right before `sv_mgr.merge_variables(...)`) would bypass the preservation logic and reset `parent_turn_seq` to 0 on every re-activation — breaking the freshness guard.
+(Note: HEAD names the local set `always_reapply` (lowercase, function-local), not `_ALWAYS_REAPPLY`. There is also a separate `internal_keys` set defined a few lines earlier (~line 137) for `variables_count` filtering; both sets currently hold the same seven entries.)
 
-Concrete edit, placed before the `existing = sv_mgr.get_variables(session_id)` line (no `setdefault` — unconditional assignment is correct because the filter at line 88 owns preservation):
+Both new writes must land in the "changes is built up" region, BEFORE the `existing = sv_mgr.get_variables(session_id)` read. The filter then handles preservation correctly: `memory_recall_helper_enabled` is added to `always_reapply` so it re-applies every session_start; `parent_turn_seq` is NOT added to `always_reapply`, so the `k not in existing` clause preserves its existing value on compact/restart and only seeds it (to 0) on the first session_start when the key is absent. Inserting these writes AFTER the filter (e.g., right before `sv_mgr.merge_variables(...)`) would bypass the preservation logic and reset `parent_turn_seq` to 0 on every re-activation — breaking the freshness guard.
+
+Concrete edit, placed after `changes, active_rules, _ = handler._build_agent_changes(...)` and before the `existing = sv_mgr.get_variables(session_id)` line (no `setdefault` — unconditional assignment is correct because the filter owns preservation). The function takes `handler` as its first param (it's module-level), so the config slot is read off `handler._memory_recall_helper_config`:
 
 ```python
 # Seed runtime toggle for memory-recall-helper from DaemonConfig.
 # Re-applied on every session_start so a config change at restart
 # propagates to existing sessions on next session_start (because
-# `memory_recall_helper_enabled` is in `_ALWAYS_REAPPLY` below).
-helper_cfg = self._memory_recall_helper_config
+# `memory_recall_helper_enabled` is in `always_reapply` below).
+helper_cfg = handler._memory_recall_helper_config
 changes["memory_recall_helper_enabled"] = (
     bool(helper_cfg.enabled) if helper_cfg is not None else True
 )
@@ -205,15 +176,15 @@ changes["memory_recall_helper_enabled"] = (
 # Incremented at every parent turn_start by the priority-1 rule in 3.4.
 # Spawn rule (3.3) reads it; delivery formatter (2.4) compares
 # payload.origin_turn_seq against (current value - 1). NOT in
-# `_ALWAYS_REAPPLY`, so the existing-variable filter preserves the
+# `always_reapply`, so the existing-variable filter preserves the
 # counter across compact/restart and only seeds 0 on first session_start.
 changes["parent_turn_seq"] = 0
 ```
 
-Add `"memory_recall_helper_enabled"` to the `_ALWAYS_REAPPLY` literal set defined inside `_activate_default_agent` (the set is built inside the `if existing:` block) so the value re-applies on compact/restart rather than being preserved as a stale truthy value. **Do NOT add `"parent_turn_seq"` to `_ALWAYS_REAPPLY`** — its preservation across compact/restart is what makes the freshness guard correct, and that preservation is provided by the `k not in existing` clause of the filter. The unconditional `changes["parent_turn_seq"] = 0` write above is fine: the filter drops it on subsequent activations because the key already exists in `existing`, and keeps it on the first activation because the key is absent.
+Add `"memory_recall_helper_enabled"` to the `always_reapply` literal set defined inside `activate_default_agent` (the set is built inside the `if existing:` block) so the value re-applies on compact/restart rather than being preserved as a stale truthy value. **Do NOT add `"parent_turn_seq"` to `always_reapply`** — its preservation across compact/restart is what makes the freshness guard correct, and that preservation is provided by the `k not in existing` clause of the filter. The unconditional `changes["parent_turn_seq"] = 0` write above is fine: the filter drops it on subsequent activations because the key already exists in `existing`, and keeps it on the first activation because the key is absent.
 
 ```python
-_ALWAYS_REAPPLY = {
+always_reapply = {
     "_agent_type",
     "_active_rule_names",
     "_active_skill_names",
@@ -230,33 +201,36 @@ _ALWAYS_REAPPLY = {
     # the runtime-incremented counter. When `parent_turn_seq` is ABSENT
     # from `existing` (i.e., a first activation, or a session whose
     # variable row was created without this key), the filter keeps the
-    # write so the counter is seeded to 0. Note: per HEAD comments at
-    # this site, `existing` may be truthy even on a "fresh" session
-    # because `get_variables()` merges definition defaults — the
-    # relevant condition is "is `parent_turn_seq` in `existing`",
-    # NOT "is `existing` empty".
+    # write so the counter is seeded to 0. Note: `existing` may be truthy
+    # even on a "fresh" session because `get_variables()` merges
+    # definition defaults — the relevant condition is "is `parent_turn_seq`
+    # in `existing`", NOT "is `existing` empty".
 }
 ```
 
-Also add `"memory_recall_helper_enabled"` to the `internal_keys` set (~line 907) so `variables_count` continues to report only user-facing variables, not this internal flag.
+Also add `"memory_recall_helper_enabled"` to the `internal_keys` set (~line 137 on HEAD; defined inside `activate_default_agent` before `variables_count` is computed) so `variables_count` continues to report only user-facing variables, not this internal flag.
 
-Validation criteria: `EventHandlersBase._memory_recall_helper_config` exists with the `MemoryRecallHelperConfig | None` type. `EventHandlers(memory_recall_helper_config=...)` round-trips the value to `self._memory_recall_helper_config`. `factory.py` line 232+ passes `config.memory_recall_helper` when `config` is non-None and `None` otherwise. After daemon start with default config, every new session has `variables.get("memory_recall_helper_enabled") == True` AND `variables.get("parent_turn_seq") == 0`. Setting `memory_recall_helper.enabled: false` in the config YAML and restarting the daemon causes new sessions to have `variables.get("memory_recall_helper_enabled") == False`. Existing sessions on compact/restart re-apply `memory_recall_helper_enabled` (because it is in `_ALWAYS_REAPPLY`) but DO NOT reset `parent_turn_seq` (because it is NOT in `_ALWAYS_REAPPLY`, the `k not in existing` filter clause drops the seed write when the variable already exists). **Preservation test (required, not optional)**: a test that exercises the actual `_activate_default_agent` merge flow end-to-end — set `parent_turn_seq=42` on a session via `SessionVariableManager.merge_variables`, then trigger another `_activate_default_agent` call for that session, then read back via `SessionVariableManager.get_variables` and assert `parent_turn_seq == 42`. Use the same fixture as the existing `tests/hooks/test_event_handlers.py::test_activate_default_agent` (or whichever covers the merge path today — verify the suite name in HEAD before adding) so the test actually goes through the filter logic, not a stub. **Fresh-session test**: simulate a first activation where `existing` may already contain definition defaults but does NOT contain `parent_turn_seq`. Trigger `_activate_default_agent` and assert `parent_turn_seq == 0` after the call (the seed write reaches `merge_variables` because `"parent_turn_seq" not in existing`, regardless of whether `existing` is otherwise empty or contains defaults). The condition that matters is "key absent from `existing`", NOT "`existing` is empty" — the latter is rarely true at HEAD because `get_variables()` merges definition defaults. Both new tests must fail if `parent_turn_seq` is incorrectly added to `_ALWAYS_REAPPLY` (which would clobber preservation), and must fail if the seed write is moved AFTER the existing-variable filter (which would also clobber preservation).
+Validation criteria: `EventHandlersBase._memory_recall_helper_config` exists with the `MemoryRecallHelperConfig | None` type. `EventHandlers(memory_recall_helper_config=...)` round-trips the value to `self._memory_recall_helper_config`. `factory.py` (line 245–260 on HEAD) passes `config.memory_recall_helper` when `config` is non-None and `None` otherwise. After daemon start with default config, every new session has `variables.get("memory_recall_helper_enabled") == True` AND `variables.get("parent_turn_seq") == 0`. Setting `memory_recall_helper.enabled: false` in the config YAML and restarting the daemon causes new sessions to have `variables.get("memory_recall_helper_enabled") == False`. Existing sessions on compact/restart re-apply `memory_recall_helper_enabled` (because it is in `always_reapply`) but DO NOT reset `parent_turn_seq` (because it is NOT in `always_reapply`, the `k not in existing` filter clause drops the seed write when the variable already exists). **Preservation test (required, not optional)**: a test that exercises the actual `activate_default_agent` merge flow end-to-end — set `parent_turn_seq=42` on a session via `SessionVariableManager.merge_variables`, then trigger another `activate_default_agent` call for that session, then read back via `SessionVariableManager.get_variables` and assert `parent_turn_seq == 42`. Add the test alongside the existing variable-merge coverage under `tests/hooks/event_handlers/` (e.g. `test_session_variable_preservation.py`, which already exercises the merge filter via the same fixtures) so it actually goes through the filter logic, not a stub. **Fresh-session test**: simulate a first activation where `existing` may already contain definition defaults but does NOT contain `parent_turn_seq`. Trigger `activate_default_agent` and assert `parent_turn_seq == 0` after the call (the seed write reaches `merge_variables` because `"parent_turn_seq" not in existing`, regardless of whether `existing` is otherwise empty or contains defaults). The condition that matters is "key absent from `existing`", NOT "`existing` is empty" — the latter is rarely true at HEAD because `get_variables()` merges definition defaults. Both new tests must fail if `parent_turn_seq` is incorrectly added to `always_reapply` (which would clobber preservation), and must fail if the seed write is moved AFTER the existing-variable filter (which would also clobber preservation).
 
 **Acceptance:**
 
 - 1.3.1 — `EventHandlersBase._memory_recall_helper_config` typed slot exists. symbol: `gobby.hooks.event_handlers._base.EventHandlersBase`.
 - 1.3.2 — `EventHandlers.__init__` accepts `memory_recall_helper_config` and round-trips it to the instance. symbol: `gobby.hooks.event_handlers.EventHandlers.__init__`.
 - 1.3.3 — `factory.py` passes `config.memory_recall_helper` to `EventHandlers` on construction. file: `src/gobby/hooks/factory.py`.
-- 1.3.4 — `_activate_default_agent` seeds both `memory_recall_helper_enabled` and `parent_turn_seq` into `changes` before the existing-variable filter runs. symbol: `gobby.hooks.event_handlers._session_start.SessionStartMixin._activate_default_agent`.
-- 1.3.5 — `memory_recall_helper_enabled` is added to `_ALWAYS_REAPPLY`; `parent_turn_seq` is intentionally NOT. file: `src/gobby/hooks/event_handlers/_session_start.py`.
-- 1.3.6 — `internal_keys` filter contains `memory_recall_helper_enabled` so `variables_count` excludes the internal flag. file: `src/gobby/hooks/event_handlers/_session_start.py`.
-- 1.3.7 — Preservation test asserts `parent_turn_seq=42` survives a second `_activate_default_agent` call end-to-end through the merge filter. test: `tests/hooks/test_event_handlers.py::test_parent_turn_seq_preserved_across_activation`.
-- 1.3.8 — Fresh-session test asserts `parent_turn_seq=0` is seeded on first activation when the key is absent from `existing` (regardless of whether `existing` is otherwise empty). test: `tests/hooks/test_event_handlers.py::test_parent_turn_seq_seeded_on_first_activation`.
+- 1.3.4 — `activate_default_agent` seeds both `memory_recall_helper_enabled` and `parent_turn_seq` into `changes` before the existing-variable filter runs. symbol: `gobby.hooks.event_handlers._session_start.agents.activate_default_agent`.
+- 1.3.5 — `memory_recall_helper_enabled` is added to `always_reapply`; `parent_turn_seq` is intentionally NOT. file: `src/gobby/hooks/event_handlers/_session_start/agents.py`.
+- 1.3.6 — `internal_keys` filter contains `memory_recall_helper_enabled` so `variables_count` excludes the internal flag. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_internal_keys_excludes_memory_recall_helper_enabled_from_variables_count`.
+- 1.3.7 — Preservation test asserts `parent_turn_seq=42` survives a second `activate_default_agent` call end-to-end through the merge filter. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_parent_turn_seq_preserved_across_activation`.
+- 1.3.8 — Fresh-session test asserts `parent_turn_seq=0` is seeded on first activation when the key is absent from `existing` (regardless of whether `existing` is otherwise empty). test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_parent_turn_seq_seeded_on_first_activation`.
 
 ### 1.4 Create `memory-recall-helper` agent definition [category: config]
 `kind: deliverable`
 
-Target: `src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml` (new file).
+Targets:
+- `src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml` (new file — primary deliverable).
+- `tests/agents/test_sync.py` (add bundled-agent sync test case for the new template).
+- `tests/workflows/test_agent_resolver.py` (add resolver test case for the new agent name).
+- `tests/workflows/test_step_enforcement.py` (add enforcement test asserting `blocked_tools` overrides infra exempt for helper-equivalent agents — this leans on 2.2 landing first, but the test fixture itself lives with the agent contract).
 
 This agent definition is consumed by the spawn rule in 3.3. It conforms to the `AgentDefinitionBody` schema (`src/gobby/workflows/definitions.py:303–408`) — specifically `name`, `description`, `enabled`, `surfaces`, `provider`, `model`, `timeout`, `max_turns`, `role`, `goal`, `instructions`, `blocked_tools`, `blocked_mcp_tools`. There is **no** `inputs:`, `system_prompt:`, or `allowed_tools:` block at the agent level — the schema does not accept them.
 
@@ -324,24 +298,38 @@ instructions: |
 
   6. If you have selections:
        gobby-agents.send_message with:
-         to_session = <parent_session_id>
-         content    = JSON-encoded string with this exact shape:
-                      {"type": "memory_recall",
-                       "origin_turn_seq": <integer from your prompt>,
-                       "memories": [<full memory records>],
-                       "rationale": "<one short sentence>"}
+         target    = "session"
+         target_id = <parent_session_id>
+         content   = JSON-encoded string with this exact shape:
+                     {"type": "memory_recall",
+                      "origin_turn_seq": <integer from your prompt>,
+                      "memories": [<full memory records>],
+                      "rationale": "<one short sentence>"}
      OMIT the `from_session` argument — the proxy auto-fills it from your
-     session context (this is the runtime change made in 2.1). Each memory
-     record MUST include `id` so the parent's delivery-side dedup can track
-     it. The literal string "memory_recall" in the `type` field is what
-     2.4's normalization pipeline keys off; do not use a different value.
-     The `origin_turn_seq` field MUST be the integer you were given in the
-     spawn prompt — copy it verbatim. The parent's delivery formatter
-     uses it to drop payloads that miss their delivery window (see
-     Constraints / freshness contract guard B).
+     session context (this is the runtime change made in 2.1). Note that
+     HEAD's `send_message` signature is `(from_session, target, content,
+     target_id=None, *, priority, include_wakeup, message_type, metadata)`,
+     so a session-scoped delivery requires `target="session"` AND
+     `target_id=<parent_session_id>`. Do NOT use `to_session` — there is
+     no such parameter on this tool. Each memory record MUST include `id`
+     so the parent's delivery-side dedup can track it. The literal string
+     "memory_recall" in the `type` field is what 2.4's normalization
+     pipeline keys off; do not use a different value. The `origin_turn_seq`
+     field MUST be the integer you were given in the spawn prompt — copy
+     it verbatim. The parent's delivery formatter uses it to drop payloads
+     that miss their delivery window (see Constraints / freshness contract
+     guard B).
 
-  7. If nothing is clearly relevant, finish your turn without calling
-     send_message. Do not pad.
+  7. If nothing is clearly relevant, do NOT call send_message. Skip
+     straight to step 8.
+
+  8. Call gobby-agents.end_agent_run with no arguments to exit cleanly.
+     Without this call you will idle until max_turns (3) is reached,
+     burning two extra Haiku round-trips per spawn for no value. Call
+     it whether or not you sent a message in step 6 — end_agent_run is
+     the canonical exit primitive for backgrounded agents (same shape
+     plan-adversary-taskless uses). Skipping this step is the most
+     common source of helper-budget waste; do not skip it.
 
   Hard constraints:
   - Cap: 3 surfaced memories per turn.
@@ -354,6 +342,9 @@ instructions: |
     a different value will cause the parent's delivery formatter to drop
     your payload as stale.
   - You have at most 3 turns. Spend them on judgment, not exhaustive search.
+  - ALWAYS finish by calling end_agent_run (step 8 above). The agent
+    has no exit_condition in YAML; without an explicit end_agent_run
+    you will hit max_turns and waste up to two unnecessary turns.
 
 # Belt-and-suspenders: keep the helper out of file edits and tool zoos.
 # Top-level blocked_tools is a denylist (no `allowed_tools` at agent level
@@ -383,6 +374,8 @@ This file is synced to `workflow_definitions` in the DB on the next daemon start
 
 Validation criteria: file exists at the listed path; the YAML parses against `AgentDefinitionBody` (`src/gobby/workflows/definitions.py:303–408`) without validation errors; `model` field is `claude-haiku-4-5`; `max_turns` is `3`; `timeout` is `60`; `blocked_tools` contains `"mcp__gobby__set_variable"` (NOT `blocked_mcp_tools` — that field is for inner `call_tool` wrapped invocations and does not apply to top-level proxy tools); `blocked_mcp_tools` is empty.
 
+The helper instructions tell it to read the parent's session digest via `gobby-sessions.get_session(session_id=<parent_session_id>)` and consume the `digest_markdown` field. This is verified on HEAD: `Session.to_dict()` at `src/gobby/storage/session_models.py:216-247` includes `digest_markdown` (line 247), and `get_session` (`src/gobby/mcp_proxy/tools/sessions/_crud.py:38-74`) returns `**session.to_dict()` so the field reaches the helper unchanged. If a future refactor strips `digest_markdown` from `Session.to_dict()`, the helper's read returns None and gracefully falls back to query-only semantic search per its instructions (step 1: "It may be empty for fresh sessions — that's fine.").
+
 Definition-load verification: after daemon restart, run `gobby agents list` and confirm `memory-recall-helper` appears in the output (per the post-cleanup CLI: `gobby agents list/show` inspect agent **definitions**, `gobby agents runs list/show` inspect runs). Then run `gobby agents show memory-recall-helper --json` and assert the returned JSON's `model` field equals `"claude-haiku-4-5"`, `max_turns` equals `3`, `timeout` equals `60`, and `blocked_tools` includes `"mcp__gobby__set_variable"`. Equivalent direct-DB check (use either, prefer the CLI for human verification): query `workflow_definitions` for `name='memory-recall-helper' AND workflow_type='agent'` and confirm exactly one row with `enabled=1` and matching definition_json fields. Add a test case to `tests/agents/test_sync.py` asserting that after `sync_bundled_agents` runs against this template, the DB row exists with the documented fields. Add a test case to `tests/workflows/test_agent_resolver.py` asserting `resolve_agent("memory-recall-helper", db)` returns a non-None body whose `model`, `max_turns`, `timeout`, and `blocked_tools` match the documented values.
 
 The helper's `instructions` block contains explicit "OMIT the `from_session` argument", "Do NOT write to injected_memory_ids", "ALWAYS include `origin_turn_seq`", and the literal strings `"memory_recall"` and `"origin_turn_seq"` in the documented JSON content shape. A spawned helper that attempts to call top-level `mcp__gobby__set_variable` is blocked at the tool-routing layer with a `[agent-enforcement:memory-recall-helper]` reason (made functional by 2.2's enforcement reorder — verify by integration test in `tests/workflows/test_step_enforcement.py` that spawns a helper-equivalent agent definition with `mcp__gobby__set_variable` in `blocked_tools` and asserts the call is blocked).
@@ -398,7 +391,7 @@ The helper's `instructions` block contains explicit "OMIT the `from_session` arg
 ## P2 Phase 2: Runtime correctness fixes (pre-wiring)
 `kind: framing`
 
-**Goal**: Five targeted runtime changes that make Phase 3 wiring correct out of the box: (2.1) auto-fill `from_session` on `send_message` so the helper does not need its own child session id; (2.2) reorder `_check_agent_tool_enforcement` so explicit `blocked_tools` listings override the infrastructure-tool exempt and the helper's read-only contract is actually enforced; (2.3) add `LocalAgentRunManager.get_cancelled_session_ids` storage helper for the delivery filter to reference; (2.4) implement helper-aware delivery + same-turn cross-source dedup on `_apply_effect`'s inline `inject_result` path — applies BOTH freshness guards (cancelled-session AND `origin_turn_seq` matches `parent_turn_seq - 1`), dedupes against `injected_memory_ids` keyed by `_platform_session_id`, includes a no-op formatter case for `cancel_stale_helpers` that returns None (so the cancel rule's `inject_result: true` sync marker injects no context), and renders helper memory payloads exactly once; (2.5) add a `cancel_stale_helpers` MCP tool sharing `stop_agent`'s lifecycle path via an extracted `_stop_run` helper so the priority-5 cancel rule has a correctly-wired cancellation primitive that performs the full process-kill + lifecycle-monitor + terminal-cleanup chain. All five come BEFORE the wiring (Phase 3) so the wiring works correctly the first time the helper actually runs end-to-end.
+**Goal**: Five targeted runtime changes that make Phase 3 wiring correct out of the box: (2.1) auto-fill `from_session` on `send_message` so the helper does not need its own child session id; (2.2) reorder `_check_agent_tool_enforcement` so explicit `blocked_tools` listings override the infrastructure-tool exempt and the helper's read-only contract is actually enforced; (2.3) add `_AgentRunQueryMixin.get_cancelled_session_ids` (composed into `LocalAgentRunManager`) for the delivery filter to reference; (2.4) implement helper-aware delivery + same-turn cross-source dedup on `_apply_effect`'s inline `inject_result` path — applies BOTH freshness guards (cancelled-session AND `origin_turn_seq` matches `parent_turn_seq - 1`), dedupes against `injected_memory_ids` keyed by `_platform_session_id`, includes a no-op formatter case for `cancel_stale_helpers` that returns None (so the cancel rule's `inject_result: true` sync marker injects no context), and renders helper memory payloads exactly once; (2.5) add a `cancel_stale_helpers` MCP tool sharing `stop_agent`'s lifecycle path via an extracted `_stop_run` helper so the priority-5 cancel rule has a correctly-wired cancellation primitive that performs the full process-kill + terminalize + terminal-cleanup chain. All five come BEFORE the wiring (Phase 3) so the wiring works correctly the first time the helper actually runs end-to-end.
 
 **Phase 2 entry criteria (operational, not DB-enforced):** Phase 2 has no hard cross-phase dependency on Phase 1's CODE changes — it touches different files (`mcp_proxy/tools/agent_messaging.py`, `workflows/engine/enforcement.py`, `storage/agents.py`, `workflows/engine/effects.py`, `mcp_proxy/tools/agents.py`). Phase 2 tasks may be claimed and worked in parallel with Phase 1's later sections. The cross-phase `(depends: ...)` annotations seen in earlier rounds of this plan have been removed — the current task expander does NOT deterministically emit cross-phase `tasks.dependencies` edges from header annotations (round-8 adversary finding), so they were misleading rather than load-bearing. Coordination between Phase 1 and Phase 2 happens at PR-merge time and via the conductor's task ordering, not via DB dependency edges. The implementer is responsible for not merging Phase 3 until both Phase 1 and Phase 2 are complete (see Phase 3 entry criteria).
 
@@ -407,9 +400,28 @@ The helper's `instructions` block contains explicit "OMIT the `from_session` arg
 ### 2.1 Default `from_session` on `send_message` from SessionContext when omitted [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/mcp_proxy/tools/agent_messaging.py`, the `send_message` function (around line 88–157) and its registered MCP schema.
+Targets:
+- `src/gobby/mcp_proxy/tools/agent_messaging.py` (the `send_message` function at lines 115–220 on HEAD; defined inside the `add_messaging_tools` factory closure — primary edit + its registered MCP schema).
+- `tests/mcp_proxy/tools/test_agent_messaging.py` (new test cases for the default-fill path, no-context error path, and positional-caller guard).
+- `tests/e2e/test_inter_agent_messages.py` (regression coverage — confirm `test_parent_child_message_exchange` still passes after the parameter reorder).
 
-Today `send_message` requires `from_session: str` (`get_tool_schema(gobby-agents, send_message)` confirms `required: ["from_session", "to_session", "content"]`). For a spawned helper, the helper does not know its own child session id at prompt-construction time (the spawn rule cannot capture `child_session_id` from the spawn return value because the spawn is `background: true`). We have two options: (a) ask the helper to look itself up at runtime, (b) make `from_session` optional at the tool boundary and default it from the proxy's `SessionContext` (which the MCP proxy already populates from the calling session's `X-Gobby-Session-Id` header — see the `mcp__gobby__call_tool` docstring: "Propagated to the daemon via X-Gobby-Session-Id header so tools can read it from the SessionContext ContextVar").
+Today `send_message` requires `from_session: str` as the first positional parameter. The full HEAD signature is:
+
+```python
+async def send_message(
+    from_session: str,
+    target: str,
+    content: str,
+    target_id: str | None = None,
+    *,
+    priority: str = "normal",
+    include_wakeup: bool = False,
+    message_type: str = "message",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+```
+
+`target` is an enum (`"all"`, `"session"`, …); `target_id` carries the specific session id when `target == "session"`. There is no `to_session` parameter. For a spawned helper, the helper does not know its own child session id at prompt-construction time (the spawn rule cannot capture `child_session_id` from the spawn return value because the spawn is `background: true`). We have two options: (a) ask the helper to look itself up at runtime, (b) make `from_session` optional at the tool boundary and default it from the proxy's `SessionContext` (which the MCP proxy already populates from the calling session's `X-Gobby-Session-Id` header — see the `mcp__gobby__call_tool` docstring: "Propagated to the daemon via X-Gobby-Session-Id header so tools can read it from the SessionContext ContextVar").
 
 Choose (b) — it generalizes to any future caller running through the proxy and matches the existing pattern used by other gobby MCP tools.
 
@@ -418,11 +430,15 @@ Concrete change to `send_message`:
 ```python
 # In src/gobby/mcp_proxy/tools/agent_messaging.py, send_message function:
 async def send_message(
-    to_session: str,
+    target: str,
     content: str,
-    from_session: str | None = None,  # was: from_session: str (required)
+    target_id: str | None = None,
+    from_session: str | None = None,   # was: from_session: str (required positional)
     *,
     priority: str = "normal",
+    include_wakeup: bool = False,
+    message_type: str = "message",
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Resolve from_session: explicit argument > SessionContext > error.
     if from_session is None:
@@ -436,24 +452,33 @@ async def send_message(
             }
         from_session = ctx_session_id
 
-    # ... rest of function unchanged: resolve, validate same project, write inter-session message,
-    #     auto-write to agent_runs.result if to_session is parent ...
+    # ... rest of function unchanged: resolve via local `_resolve(ref)` at lines
+    #     80–86, validate target/target_id combination, call `mailbox.send(...)`,
+    #     auto-write to agent_runs.result when sending to the parent, broadcast
+    #     the agent_message event ...
 ```
 
-Update the MCP schema declaration so `from_session` is no longer in the required list. The exact location of the schema declaration is wherever this tool is registered — grep for `"send_message"` in `src/gobby/mcp_proxy/tools/agent_messaging.py` and adjust the registration's `required` list. Document the auto-fill behavior in the tool's docstring (which becomes its description in the MCP schema): "from_session defaults to the calling session's id from SessionContext when omitted."
+Reordering the parameters so `from_session` becomes the fourth positional (after `target`, `content`, `target_id`) is required to keep the tool's existing keyword-only block consistent — making `from_session` keyword-only would force every existing caller to switch from positional to keyword, which is a wider blast radius than the new-default change. The MCP schema is regenerated from the function signature on tool registration, so the schema update is automatic; verify `get_tool_schema("gobby-agents", "send_message")` no longer lists `from_session` in `required` after the change.
 
-The HEAD-correct accessor is `gobby.utils.session_context.get_current_session_id` (`src/gobby/utils/session_context.py:61` — returns the calling session's UUID from a ContextVar populated by the proxy from the `X-Gobby-Session-Id` header, or `None` if no session context is set). Do NOT use `gobby.mcp_proxy.session_context.SessionContext.get_session_id()` — that module/accessor does not exist on HEAD (round-13 F2 finding). Other MCP tools in `src/gobby/mcp_proxy/tools/` already use `get_current_session_id` directly; mirror that pattern.
+Document the auto-fill behavior in the tool's docstring (which becomes its description in the MCP schema): "from_session defaults to the calling session's id from SessionContext when omitted."
 
-Do NOT relax cross-session validation: the function still validates that `from_session` and `to_session` are in the same project after defaulting. The default just resolves the unknown, it does not bypass authorization.
+The HEAD-correct accessor is `gobby.utils.session_context.get_current_session_id` (`src/gobby/utils/session_context.py:61` — returns the calling session's UUID from a ContextVar populated by the proxy from the `X-Gobby-Session-Id` header, or `None` if no session context is set). Do NOT use `gobby.mcp_proxy.session_context.SessionContext.get_session_id()` — that module/accessor does not exist on HEAD. Other MCP tools in `src/gobby/mcp_proxy/tools/` already use `get_current_session_id` directly; mirror that pattern.
 
-Validation criteria: calling `send_message(to_session="<peer>", content="hi")` from within a session context (e.g. through the proxy with `X-Gobby-Session-Id` set) succeeds with `from_session` resolved to the calling session's id, verifiable in `agent_runs.result` / inter-session message DB row. Calling `send_message(to_session="<peer>", content="hi")` from outside any session context returns `{"success": False, "error": "from_session is required and no SessionContext session_id is available"}` rather than crashing. Existing callers that pass `from_session` explicitly (e.g. `tests/e2e/test_inter_agent_messages.py`) continue to work unchanged. The MCP tool schema fetched via `get_tool_schema("gobby-agents", "send_message")` no longer lists `from_session` in `required`. Adding new test cases to `tests/mcp_proxy/tools/test_agent_messaging.py` covers both the default-fill path and the no-context error path.
+Do NOT relax cross-session validation: the function still goes through `mailbox.send(...)`, which validates project scoping and target shape. The default just resolves the unknown, it does not bypass authorization.
+
+**Caller-update audit (load-bearing).** Because `from_session` shifts from the first positional to the fourth positional, every call site that passes it positionally MUST be updated to keyword form or rearranged to the new positional order. Before merging this change, grep for `send_message(` across the whole tree (production + tests) and convert every positional `from_session` to keyword.
+
+**Audit baseline (2026-05-23 HEAD)**: a grep of `src/` for `send_message(from_session` returned zero matches; no current production caller passes `from_session` positionally. The 2.1.5 guard test is therefore a forward-compat invariant, not addressing a current footgun — the implementer does not need to chase ghosts. The audit should still run because (a) test fixtures and `tests/e2e/test_inter_agent_messages.py` may have positional callers, (b) any in-flight branches could add one, and (c) the rule-engine `mcp_call` effect path passes `arguments:` as a kwargs dict (so rule YAMLs are unaffected by positional ordering — they always go through kwargs).
+
+Validation criteria: calling `send_message(target="session", target_id="<peer>", content="hi")` from within a session context (e.g. through the proxy with `X-Gobby-Session-Id` set) succeeds with `from_session` resolved to the calling session's id, verifiable in `agent_runs.result` / `inter_session_messages` DB row. Calling the same from outside any session context returns `{"success": False, "error": "from_session is required and no SessionContext session_id is available"}` rather than crashing. Existing callers that pass `from_session` explicitly (after the caller-audit conversion) continue to work unchanged. The MCP tool schema fetched via `get_tool_schema("gobby-agents", "send_message")` no longer lists `from_session` in `required`. New test cases in `tests/mcp_proxy/tools/test_agent_messaging.py` cover both the default-fill path and the no-context error path. A grep check in `tests/mcp_proxy/tools/test_agent_messaging.py` (or a new test file) asserts no production call site under `src/` passes `from_session` as the first positional argument, guarding against partial caller updates.
 
 **Acceptance:**
 
-- 2.1.1 — `send_message` accepts `from_session` as optional and resolves it from `SessionContext` when omitted. symbol: `gobby.mcp_proxy.tools.agent_messaging.send_message`.
+- 2.1.1 — `send_message` accepts `from_session` as optional and resolves it from `SessionContext` when omitted; `from_session` moves to the fourth positional (after `target`, `content`, `target_id`). symbol: `gobby.mcp_proxy.tools.agent_messaging.send_message`.
 - 2.1.2 — Out-of-context call without `from_session` returns `{"success": False, "error": ...}` rather than crashing. test: `tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_no_session_context_returns_error`.
 - 2.1.3 — `get_tool_schema("gobby-agents", "send_message")` no longer lists `from_session` as required. behavior: "send_message MCP schema marks from_session optional" in `src/gobby/mcp_proxy/tools/agent_messaging.py`.
 - 2.1.4 — Default-fill path test asserts the tool resolves to the calling session's id and writes the inter-session message row with that `from_session`. test: `tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_defaults_from_session_from_context`.
+- 2.1.5 — Caller audit: every call site under `src/` that passes `from_session` is updated to keyword form or to the new positional order; a guard test asserts no production caller passes `from_session` first-positional. test: `tests/mcp_proxy/tools/test_agent_messaging.py::test_no_positional_from_session_in_production_callers`.
 
 ### 2.2 Reorder `_check_agent_tool_enforcement` so `blocked_tools` overrides the infrastructure-tool exempt [category: code]
 `kind: deliverable`
@@ -546,16 +571,20 @@ Validation criteria: in `_check_agent_tool_enforcement`, the explicit-block chec
 - 2.2.2 — With `_agent_blocked_tools=["mcp__gobby__set_variable"]`, the call is blocked with the documented `[agent-enforcement:<agent>]` reason. test: `tests/workflows/test_step_enforcement.py::test_explicit_block_overrides_infra_exempt`.
 - 2.2.3 — With empty `_agent_blocked_tools`, infra tools still pass via the exempt path. test: `tests/workflows/test_step_enforcement.py::test_infra_exempt_default_when_no_explicit_block`.
 
-### 2.3 Add `LocalAgentRunManager.get_cancelled_session_ids` storage helper [category: code]
+### 2.3 Add `get_cancelled_session_ids` to `_AgentRunQueryMixin` [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/storage/agents.py` — `LocalAgentRunManager` class.
+Target: `src/gobby/storage/agents/_queries.py` — `_AgentRunQueryMixin` (lines 34–224 on HEAD), which is composed into `LocalAgentRunManager` (`src/gobby/storage/agents/_manager.py:14-27`). Tests live alongside the manager in `tests/storage/test_storage_agents.py` under the `TestLocalAgentRunManager` class.
 
 Read-only helper used by 2.4's delivery formatter to identify queued P2P messages whose `from_session` belongs to an agent run that has been cancelled (e.g., by 2.5's `cancel_stale_helpers` tool). Recency-bounded so the query stays fast even with many historical cancellations.
 
+Use the codebase's portable time-window helper `older_than_now_expr(db, column, placeholder, unit)` (already used by `_AgentRunCleanupMixin.cleanup_stale_pending_runs` at `_cleanup.py:112-153`) rather than writing SQLite-only `datetime('now', ?)` expressions. The hub database dialect layer translates the helper output to the underlying SQL flavor (Postgres uses `INTERVAL`; SQLite uses `datetime('now', ?)`). Application-level placeholders stay as `?` — the hub DSN layer rewrites them to `$N` for Postgres.
+
 ```python
+# In src/gobby/storage/agents/_queries.py, inside _AgentRunQueryMixin:
+
 def get_cancelled_session_ids(
-    self,
+    self: _AgentRunQueryHost,
     since_hours: int = 24,
     agent_name: str | None = None,
 ) -> set[str]:
@@ -576,22 +605,20 @@ def get_cancelled_session_ids(
             from cancelled non-helper children must still be deliverable
             to their parent.
     """
-    # Normalize the left side via datetime() so the comparison is
-    # datetime semantics, not lexicographic. agent_runs.created_at is
-    # stored as Python's `datetime.now(UTC).isoformat()` (e.g.
-    # "2026-04-25T22:00:00+00:00"); SQLite's `datetime('now', ?)`
-    # returns "YYYY-MM-DD HH:MM:SS" with a space separator. Without
-    # the wrapping `datetime(created_at)` call, lexicographic
-    # comparison treats the "T" in stored timestamps as greater than
-    # the space in the cutoff, which can either include rows older
-    # than the recency window or exclude rows that should match.
+    from gobby.storage.sql_dialect import newer_than_now_expr
+
+    # `newer_than_now_expr(db, column, placeholder, unit)` is the
+    # dialect-correct "column is within the last N <unit>s" primitive
+    # already exported from `gobby.storage.sql_dialect` (sibling of
+    # `older_than_now_expr` which `_AgentRunCleanupMixin.cleanup_stale_pending_runs`
+    # uses). The hub layer renders it as the right SQL flavor for the
+    # active dialect (Postgres `INTERVAL` vs SQLite `datetime('now', ?)`).
+    recency_sql = newer_than_now_expr(self.db, "created_at", "?", "hour")
     sql = (
         "SELECT child_session_id FROM agent_runs "
-        "WHERE status = 'cancelled' "
-        "AND child_session_id IS NOT NULL "
-        "AND datetime(created_at) > datetime('now', ?)"
-    )
-    params: list[Any] = [f"-{since_hours} hours"]
+        f"WHERE status = 'cancelled' AND child_session_id IS NOT NULL AND {recency_sql}"
+    )  # nosec B608 - recency_sql is selected by storage dialect.
+    params: list[Any] = [since_hours]
     if agent_name is not None:
         sql += " AND agent_name = ?"
         params.append(agent_name)
@@ -600,21 +627,24 @@ def get_cancelled_session_ids(
     return {row["child_session_id"] for row in rows}
 ```
 
-This is purely additive — no existing call sites touch `agent_runs` filtered by cancelled status with this signature, so there's no risk of regression. The class is `LocalAgentRunManager` (verified against HEAD); the prior plan's reference to `AgentRunStorage` was wrong.
+This is purely additive on `agent_runs` — no existing call sites filter by cancelled status with this signature, so there's no risk of regression. The host class is `LocalAgentRunManager`, but the method is defined on `_AgentRunQueryMixin` (per the mixin composition pattern HEAD uses for the storage package).
 
-Validation criteria: unit test in `tests/storage/test_agent_runs.py` (or the equivalent existing test file for `LocalAgentRunManager`) creates rows with mixed statuses (`success`, `running`, `cancelled` recent, `cancelled` old) and asserts `get_cancelled_session_ids(since_hours=24)` returns exactly the recent-cancelled set. Test with `since_hours=1` and a row cancelled 2h ago confirms recency window is honored. Test with no rows returns empty set without error. **Agent-name scoping test (required, not optional)**: with three cancelled-recent rows (`agent_name='memory-recall-helper'`, `agent_name='other-agent'`, `agent_name=NULL`), assert `get_cancelled_session_ids(agent_name='memory-recall-helper')` returns only the helper row's child_session_id; assert `get_cancelled_session_ids()` (no `agent_name`) returns all three. This test guards the F1 round-5 fix — without the scoping, the delivery formatter would silently discard cancelled non-helper children's plain P2P messages. **Datetime-normalization test (required, not optional)**: insert two cancelled-recent rows with `created_at` set to ISO-8601 with `T` separator and `+00:00` offset (matching what `datetime.now(UTC).isoformat()` actually produces), one stamped 30 minutes ago and one stamped 90 minutes ago. Assert `get_cancelled_session_ids(since_hours=1)` returns only the 30-minutes-ago row. Without the SQL `datetime(created_at)` wrap, lexicographic string comparison would either include the 90-minutes-ago row (wrong) or exclude the 30-minutes-ago row (also wrong) depending on how the cutoff string formats — this test catches the F1 round-6 regression.
+Validation criteria: unit test in `tests/storage/test_storage_agents.py::TestLocalAgentRunManager` creates rows with mixed statuses (`success`, `running`, `cancelled` recent, `cancelled` old) and asserts `get_cancelled_session_ids(since_hours=24)` returns exactly the recent-cancelled set. Test with `since_hours=1` and a row cancelled 2h ago confirms recency window is honored. Test with no rows returns empty set without error. **Agent-name scoping test (required, not optional)**: with three cancelled-recent rows (`agent_name='memory-recall-helper'`, `agent_name='other-agent'`, `agent_name=NULL`), assert `get_cancelled_session_ids(agent_name='memory-recall-helper')` returns only the helper row's child_session_id; assert `get_cancelled_session_ids()` (no `agent_name`) returns all three. Without the scoping, the delivery formatter would silently discard cancelled non-helper children's plain P2P messages. **Dialect-parity test (required, not optional)**: run the test suite against both the SQLite and PostgreSQL hub backends (the existing test infrastructure already parameterizes by backend) so the time-window query returns the same row set under both dialects. Insert two cancelled-recent rows with `created_at` set to ISO-8601 with `T` separator and `+00:00` offset (matching what `utc_now_iso()` produces), one stamped 30 minutes ago and one stamped 90 minutes ago. Assert `get_cancelled_session_ids(since_hours=1)` returns only the 30-minutes-ago row under both dialects. This guards against the SQLite-only `datetime()` wrapping idiom — which is wrong on Postgres — and the lexicographic-string-comparison regression that motivated the wrap in the first place.
 
 **Acceptance:**
 
-- 2.3.1 — `LocalAgentRunManager.get_cancelled_session_ids(since_hours, agent_name)` returns recent-cancelled child_session_ids. symbol: `gobby.storage.agents.LocalAgentRunManager.get_cancelled_session_ids`.
-- 2.3.2 — Recency-window unit test confirms only rows within the window are returned. test: `tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_honors_recency_window`.
-- 2.3.3 — Agent-name scoping test confirms `agent_name="memory-recall-helper"` returns only helper rows; absent-filter form returns all. test: `tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_agent_name_scoping`.
-- 2.3.4 — Datetime-normalization test confirms `datetime(created_at)` wrap handles ISO-8601 `T`-separator timestamps correctly. test: `tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_datetime_normalization`.
+- 2.3.1 — `_AgentRunQueryMixin.get_cancelled_session_ids(since_hours, agent_name)` returns recent-cancelled child_session_ids and composes into `LocalAgentRunManager`. symbol: `gobby.storage.agents._queries._AgentRunQueryMixin.get_cancelled_session_ids`.
+- 2.3.2 — Recency-window unit test confirms only rows within the window are returned. test: `tests/storage/test_storage_agents.py::TestLocalAgentRunManager::test_get_cancelled_session_ids_honors_recency_window`.
+- 2.3.3 — Agent-name scoping test confirms `agent_name="memory-recall-helper"` returns only helper rows; absent-filter form returns all. test: `tests/storage/test_storage_agents.py::TestLocalAgentRunManager::test_get_cancelled_session_ids_agent_name_scoping`.
+- 2.3.4 — Dialect-parity test confirms the query returns the same row set under SQLite and Postgres hub backends. test: `tests/storage/test_storage_agents.py::TestLocalAgentRunManager::test_get_cancelled_session_ids_dialect_parity`.
 
 ### 2.4 Helper-aware delivery + same-turn dedup on the inline `inject_result` path [category: code] (depends: 2.1, 2.3)
 `kind: deliverable`
 
-Target: `src/gobby/workflows/engine/effects.py`, inside `EffectsMixin._apply_effect` (around line 100–119 — the `effect.type == "mcp_call"` branch where `effect.inject_result and not effect.background and self._mcp_dispatcher` is true).
+Targets:
+- `src/gobby/workflows/engine/effects.py` (inside `EffectsMixin._apply_effect` at lines 57–255 on HEAD; the `effect.type == "mcp_call"` branch where `effect.inject_result and not effect.background and self._mcp_dispatcher` is true sits around line 109 — primary edit).
+- `src/gobby/hooks/dispatchers/mcp.py` (`format_discovery_result` is imported and reused; add a `search_memories` formatter case here if one does not already exist on HEAD, so the helper-surfaced memories render identically to fast-recall memories).
+- `tests/workflows/test_delivery_pipeline.py` (new test file for the formatters).
 
 This is the path that BOTH the existing `memory-recall-on-prompt` rule (priority 10, calling `gobby-memory.search_memories`) AND 3.1's modified `deliver-pending-messages` rule (calling `gobby-agents.deliver_pending_messages`) invoke. Today fast recall renders raw `search_memories` results without consulting `injected_memory_ids`, so on the same `turn_start` where the helper-delivery path also tries to surface a memory id the fast path already rendered, the parent sees the same memory twice. 2.4 places the dedup-against-and-append-to `injected_memory_ids` filter inside this inline path so both writers share one source of truth.
 
@@ -985,7 +1015,7 @@ Validation criteria: unit tests in a new `tests/workflows/test_delivery_pipeline
 
 - 2.4.1 — `EffectsMixin._format_delivery_result` implements the helper-aware delivery pipeline (empty short-circuit, cancelled-session drop, freshness guards A and B, kill-switch catch-all, dedup, atomic append, format). symbol: `gobby.workflows.engine.effects.EffectsMixin._format_delivery_result`.
 - 2.4.2 — `EffectsMixin._format_search_memories_result` dedupes fast-recall results against `injected_memory_ids` keyed by `_platform_session_id`. symbol: `gobby.workflows.engine.effects.EffectsMixin._format_search_memories_result`.
-- 2.4.3 — `_apply_effect` switches on `(effect.server, effect.tool)` to dispatch the appropriate formatter, including the `cancel_stale_helpers` no-op-formatter case. file: `src/gobby/workflows/engine/effects.py`.
+- 2.4.3 — `_apply_effect` switches on `(effect.server, effect.tool)` to dispatch the appropriate formatter, including the `cancel_stale_helpers` no-op-formatter case (returns None so the cancel rule's `inject_result: true` sync marker injects no context). test: `tests/workflows/test_delivery_pipeline.py::test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op`.
 - 2.4.4 — `_is_empty_inject_payload` short-circuit helper covers `count=0`, empty-`messages`, and empty-`memories` shapes. symbol: `gobby.workflows.engine.effects._is_empty_inject_payload`.
 - 2.4.5 — Empty-result delivery returns None without mutating `injected_memory_ids`. test: `tests/workflows/test_delivery_pipeline.py::test_empty_delivery_no_mutation`.
 - 2.4.6 — Single-helper-memory delivery formats and atomic-appends the id. test: `tests/workflows/test_delivery_pipeline.py::test_single_memory_recall_inject`.
@@ -1002,11 +1032,18 @@ Validation criteria: unit tests in a new `tests/workflows/test_delivery_pipeline
 ### 2.5 Add `cancel_stale_helpers` MCP tool sharing `stop_agent`'s lifecycle path [category: code] (depends: 2.3)
 `kind: deliverable`
 
-Target: `src/gobby/mcp_proxy/tools/agents.py` — the registry factory that owns `stop_agent` (lines ~304–419) and `kill_agent` (lines ~420+). Both `stop_agent` and the new `cancel_stale_helpers` will share an extracted private helper so the same lifecycle/process-kill/terminal-cleanup path runs for every cancellation.
+Targets:
+- `src/gobby/mcp_proxy/tools/agents.py` (the `create_agents_registry` factory at lines 215–984 on HEAD that owns `stop_agent` at 393–453, `kill_agent` at 502–672, and `end_agent_run` at 462–492 — primary edit: extract `_stop_run` helper and register the new tool).
+- `src/gobby/mcp_proxy/tools/agent_cancellation.py` (`terminalize_cancelled_agent_run` at lines 48–86 — consumed unchanged; no edit, but the new code depends on its existing contract).
+- `tests/mcp_proxy/tools/test_agents.py` (existing `TestStopAgent` coverage must continue to pass after the extract).
+- `tests/mcp_proxy/tools/test_agent_cancellation.py` (existing coverage of the underlying terminalize helper).
+- `tests/mcp_proxy/tools/test_cancel_stale_helpers.py` (new file — cancel-tool-specific cases).
 
-Why not put cancellation into `spawn_agent`'s factory? The round-2 adversary correctly observed that `create_spawn_agent_registry` does NOT currently receive the lifecycle monitor, hook cleanup, or terminal-cleanup dependencies that `stop_agent` requires. Falling back to `runner.cancel_run(run_id)` alone would mark the DB row cancelled but leave the helper's subprocess alive and able to keep issuing MCP calls — defeating the freshness contract. Putting cancellation alongside `stop_agent` (which already has all the right deps wired) is the simpler, correct shape.
+Both `stop_agent` and the new `cancel_stale_helpers` will share an extracted private helper so the same lifecycle/process-kill/terminal-cleanup path runs for every cancellation.
 
-Step 1 — extract the per-run stop body into a private helper inside the same registry closure (so it captures `runner`, `agent_run_manager`, `db`, `lifecycle_monitor`, `completion_registry`, `session_manager`, `hook_manager_resolver`, `_kill_agent_process`, `_cleanup_terminal_artifacts` from the existing closure). The body is the verbatim contents of the current `async def stop_agent(run_id)` at `src/gobby/mcp_proxy/tools/agents.py:304-371` (verified line range against HEAD). It MUST preserve every step in that body; specifically, in this exact order:
+Why not put cancellation into `spawn_agent`'s factory? `create_spawn_agent_registry` does NOT receive the lifecycle monitor, hook cleanup, or terminal-cleanup dependencies that `stop_agent` requires. Falling back to `runner.cancel_run(run_id)` alone would mark the DB row cancelled but leave the helper's subprocess alive and able to keep issuing MCP calls — defeating the freshness contract. Putting cancellation alongside `stop_agent` (which already has all the right deps wired) is the simpler, correct shape.
+
+Step 1 — extract the per-run stop body into a private helper inside the same registry closure (so it captures `runner`, `agent_run_manager`, `db`, `lifecycle_monitor`, `completion_registry`, `task_manager`, `session_manager`, `hook_manager_resolver`, `_kill_agent_process` (aliased import of `gobby.agents.kill.kill_agent`), `_cleanup_terminal_artifacts`, and the module-level `terminalize_cancelled_agent_run` helper from `gobby.mcp_proxy.tools.agent_cancellation:48-86`). The body is the verbatim contents of the current `async def stop_agent(run_id)` at `src/gobby/mcp_proxy/tools/agents.py:393-453` (verified line range against HEAD). It MUST preserve every step in that body; specifically, in this exact order:
 
 ```python
 async def _stop_run(run_id: str) -> dict[str, Any]:
@@ -1033,28 +1070,23 @@ async def _stop_run(run_id: str) -> dict[str, Any]:
     if not result.get("success") and result.get("error") != "No target PID found":
         return result  # Real kill failure — abort early.
 
-    # Step 3: Transition the DB row to cancelled.
-    # If lifecycle_monitor is wired, it owns this transition AND emits
-    # the completion notification + terminalization side effects.
-    # Otherwise fall back to runner.cancel_run + manual completion notify.
-    transitioned = False
-    if lifecycle_monitor is not None:
-        transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-            run_id, terminal_reason="user_cancelled",
-        )
-    else:
-        transitioned = runner.cancel_run(run_id)
-        if transitioned and completion_registry is not None:
-            await completion_registry.notify(
-                run_id,
-                {"status": "cancelled", "terminal_reason": "user_cancelled", "run_id": run_id},
-                message=f"Agent {run_id} cancelled",
-            )
+    # Step 3: Transition the DB row to cancelled via the canonical
+    # terminalize helper (it owns the lifecycle_monitor vs fallback
+    # split and also recovers the task claim on the fallback path).
+    transitioned = await terminalize_cancelled_agent_run(
+        runner=runner,
+        run_id=run_id,
+        terminal_reason="user_cancelled",
+        lifecycle_monitor=lifecycle_monitor,
+        completion_registry=completion_registry,
+        task_manager=task_manager,
+        message=f"Agent {run_id} cancelled",
+    )
 
     if not transitioned:
         current = runner.get_run(run_id)
         logger.debug(
-            "stop_run no-op for run %s; current status=%s",
+            "_stop_run no-op for run %s; current status=%s",
             run_id, current.status if current else "missing",
         )
 
@@ -1062,6 +1094,8 @@ async def _stop_run(run_id: str) -> dict[str, Any]:
     # internally if applicable). MUST run regardless of whether the DB
     # transition succeeded — terminal/tmux state still needs cleanup.
     await _cleanup_terminal_artifacts(
+        run_id=run.id,
+        db=kill_db,
         tmux_session_name=run.tmux_session_name,
         agent_session_id=run.child_session_id,
         debug=False,
@@ -1081,12 +1115,11 @@ async def _stop_run(run_id: str) -> dict[str, Any]:
 Required cleanup steps the implementer MUST preserve (any omission is a regression vs HEAD's `stop_agent`):
 - `runner.get_run(run_id)` lookup + status guard.
 - `_kill_agent_process(run, kill_db, signal_name="TERM", close_terminal=True)` — process kill + terminal close.
-- Conditional `lifecycle_monitor.terminalize_cancelled_run(run_id, terminal_reason="user_cancelled")` when `lifecycle_monitor` is not None.
-- Fallback `runner.cancel_run(run_id)` + `completion_registry.notify(...)` when `lifecycle_monitor` is None.
-- `_cleanup_terminal_artifacts(tmux_session_name=..., agent_session_id=..., session_manager=..., hook_manager_resolver=..., result=result)` — fires the synthetic stop hook (`_fire_synthetic_stop`) internally per its body; this is how the SessionStop hook chain stays intact for cancelled runs.
+- `terminalize_cancelled_agent_run(...)` — single entry point that internally owns the `lifecycle_monitor.terminalize_cancelled_run` vs `runner.cancel_run` + `completion_registry.notify` + `task_manager` claim-recovery split. Do NOT re-implement that split here; the helper already has its own test surface at `tests/mcp_proxy/tools/test_agent_cancellation.py`.
+- `_cleanup_terminal_artifacts(run_id=..., db=kill_db, tmux_session_name=..., agent_session_id=..., session_manager=..., hook_manager_resolver=..., result=result)` — fires the synthetic stop hook (`_fire_synthetic_stop`) internally per its body; this is how the SessionStop hook chain stays intact for cancelled runs.
 - Return-shape parity: `{"success": True, "message": ..., "run_id": ..., "status": "cancelled", "terminal_reason": "user_cancelled"}`.
 
-Refactor existing `async def stop_agent(run_id: str) -> dict[str, Any]:` to delegate: `return await _stop_run(run_id)`. No external behavior change — this is a pure extract.
+Refactor existing `async def stop_agent(run_id: str) -> dict[str, Any]:` to delegate: `return await _stop_run(run_id)`. No external behavior change — this is a pure extract. Verify by running `tests/mcp_proxy/tools/test_agents.py::TestStopAgent` unchanged after the refactor.
 
 Step 2 — add the new public MCP tool in the same factory closure, using the same `@registry.tool(...)` decorator pattern as the surrounding tools (`stop_agent`, `kill_agent`, `end_agent_run`, etc.) — HEAD's `create_agents_registry` constructs `registry = InternalToolRegistry(...)` and registers tools via that decorator. There is no `server` variable in this closure; using `@server.tool()` would be a NameError:
 
@@ -1165,7 +1198,7 @@ Notes:
 - The (`pending`, `running`) status filter mirrors what 2.3's storage helper assumes "needs cancellation" — both are not-yet-terminal states that could still emit `send_message`.
 - The MCP rule schema and the rule-engine's effect dispatcher both already accept arbitrary kwargs as `arguments:`; no changes needed to the rule layer to call this tool.
 
-Validation criteria: tool callable via `mcp__gobby__call_tool(server_name="gobby-agents", tool_name="cancel_stale_helpers", arguments={"parent_session_id": "#X", "agent_name": "memory-recall-helper"})`. With no running helpers for `#X`, returns `{"success": True, "cancelled": [], "errors": [], "count": 0}`. With one running helper for `#X`, returns `{"success": True, "cancelled": ["run-…"], "errors": [], "count": 1}`, the run's `agent_runs.status` becomes `cancelled` (DB-verifiable), AND the helper's tmux pane is dead (per `_cleanup_terminal_artifacts` in the shared `_stop_run`). With two stale helpers where stopping the first raises an exception, the second is still cancelled and `errors` contains the first's failure — best-effort guarantee. Missing `parent_session_id` or `agent_name` returns `{"success": False, "error": "..."}`. **Cleanup-step parity**: integration test that asserts `_stop_run` invokes `_kill_agent_process(..., close_terminal=True)`, then `lifecycle_monitor.terminalize_cancelled_run(...)` (or the fallback `runner.cancel_run(...)` + `completion_registry.notify(...)`), then `_cleanup_terminal_artifacts(...)` — in that order — for every successful path. Use mocks/spies on these functions in the registry closure and assert call order; this protects against accidentally dropping a step during the extract. **db-less registry contract test (round 10 guard)**: instantiate `create_agents_registry(runner=mock_runner, db=None, ...)` where `mock_runner.run_storage.list_by_parent` returns a list with one running helper. Call the registered `cancel_stale_helpers` tool with the corresponding parent and `agent_name="memory-recall-helper"`. Assert (a) no `db is None` failure is raised, (b) the cancellation succeeds via the runner.run_storage fallback. Without reusing the closure's `agent_run_manager`, this test fails. Existing `stop_agent` still works identically (delegates to `_stop_run` now); existing tests `tests/mcp_proxy/tools/test_agents_*.py` pass without modification. New unit test `tests/mcp_proxy/tools/test_cancel_stale_helpers.py` covers all the cases above.
+Validation criteria: tool callable via `mcp__gobby__call_tool(server_name="gobby-agents", tool_name="cancel_stale_helpers", arguments={"parent_session_id": "#X", "agent_name": "memory-recall-helper"})`. With no running helpers for `#X`, returns `{"success": True, "cancelled": [], "errors": [], "count": 0}`. With one running helper for `#X`, returns `{"success": True, "cancelled": ["run-…"], "errors": [], "count": 1}`, the run's `agent_runs.status` becomes `cancelled` (DB-verifiable), AND the helper's tmux pane is dead (per `_cleanup_terminal_artifacts` in the shared `_stop_run`). With two stale helpers where stopping the first raises an exception, the second is still cancelled and `errors` contains the first's failure — best-effort guarantee. Missing `parent_session_id` or `agent_name` returns `{"success": False, "error": "..."}`. **Cleanup-step parity**: integration test that asserts `_stop_run` invokes `_kill_agent_process(..., close_terminal=True)`, then `lifecycle_monitor.terminalize_cancelled_run(...)` (or the fallback `runner.cancel_run(...)` + `completion_registry.notify(...)`), then `_cleanup_terminal_artifacts(...)` — in that order — for every successful path. Use mocks/spies on these functions in the registry closure and assert call order; this protects against accidentally dropping a step during the extract. **db-less registry contract test (round 10 guard)**: instantiate `create_agents_registry(runner=mock_runner, db=None, ...)` where `mock_runner.run_storage.list_by_parent` returns a list with one running helper. Call the registered `cancel_stale_helpers` tool with the corresponding parent and `agent_name="memory-recall-helper"`. Assert (a) no `db is None` failure is raised, (b) the cancellation succeeds via the runner.run_storage fallback. Without reusing the closure's `agent_run_manager`, this test fails. Existing `stop_agent` still works identically (delegates to `_stop_run` now); existing tests in `tests/mcp_proxy/tools/test_agents.py` (notably `TestStopAgent`) pass without modification. New unit test `tests/mcp_proxy/tools/test_cancel_stale_helpers.py` covers all the cases above.
 
 **Acceptance:**
 
@@ -1181,11 +1214,13 @@ Validation criteria: tool callable via `mcp__gobby__call_tool(server_name="gobby
 
 **Goal**: At every parent `turn_start`, in priority order: increment turn counter (3.4 at priority 1) → cancel any stale helper (3.2 at priority 5) → deliver pending P2P messages with dedup, cancelled-session filter, and origin_turn_seq freshness filter (3.1 at priority 10) → spawn fresh helper for the new prompt with the current `parent_turn_seq` baked into its prompt (3.3 at priority 12). This rule ordering is what makes the freshness contract correct: by the time delivery runs, the counter has advanced and any stale helper is already DB-marked `cancelled`, and 2.4's delivery formatter applies BOTH freshness guards (cancelled-session AND origin_turn_seq) before injecting any helper memory_recall payload.
 
+**Co-tenant rule note (Phase 3 timing context).** The priority slots used by 3.1–3.4 are not exclusive owners. At HEAD the same `turn_start` event also fires `reset-subagent-flag` (priority 5, gated on `is_subagent`), `prepare-clear-handoff` (priority 5, gated on `/clear` or `/exit`), `bootstrap-session-title-on-prompt` (priority 9, no-op for established sessions), `memory-recall-on-prompt` (priority 10, the fast-recall path 2.4 also dedupes), and `handle-plan-mode-entry` (priority 10, gated on plan-mode entry). None of those touch `parent_turn_seq`, `injected_memory_ids`, or the helper-run agent type, so they don't interfere with the contract. Order within the same priority is undefined, but the contract only requires ordering BETWEEN priorities (1 < 5 < 10 < 12), which the rule engine guarantees.
+
 **Phase 3 entry criteria (operational, NOT DB-enforced; verify before claiming any Phase 3 task):**
 
 Phase 3 wires up rules and an agent definition that REFERENCE Phase 1 and Phase 2 outputs. None of Phase 3 will function correctly until those outputs are merged. Per the round-8 adversary finding, the current task expander does NOT deterministically emit cross-phase `tasks.dependencies` edges from header annotations, so we cannot rely on the dependency engine to block Phase 3 on Phase 1/2 outputs. The implementer is operationally responsible for this gating. Before claiming or working any Phase 3 task, verify ALL of:
 
-- Phase 1: 1.2 (`MemoryRecallHelperConfig`) merged. 1.3 (config thread + `parent_turn_seq` seed in `_session_start.py`) merged AND 1.1 monolith gate closed. 1.4 (helper YAML) present in `src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml` and synced to `workflow_definitions` (verifiable via `gobby agents show memory-recall-helper --json`).
+- Phase 1: 1.2 (`MemoryRecallHelperConfig`) merged. 1.3 (config thread + `parent_turn_seq` seed in `_session_start/agents.py`) merged. 1.4 (helper YAML) present in `src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml` and synced to `workflow_definitions` (verifiable via `gobby agents show memory-recall-helper --json`). The earlier monolith-gate task (formerly 1.1) is dropped from this revision because the underlying `_session_start.py` decomposition already landed; no gate is required.
 - Phase 2: 2.1 (`send_message` `from_session` default), 2.2 (`_check_agent_tool_enforcement` reorder), 2.3 (`get_cancelled_session_ids`), 2.4 (delivery + same-turn dedup formatters in `EffectsMixin`), 2.5 (`cancel_stale_helpers` MCP tool) ALL merged. Verify 2.5 by calling `mcp__gobby__call_tool(server_name="gobby-agents", tool_name="cancel_stale_helpers", arguments={"parent_session_id":"#<self>","agent_name":"memory-recall-helper"})` and observing a successful `{"success": true, ...}` response. (Note: the wrapper schema uses `server_name` and `tool_name`, NOT `server`/`tool` — the latter are valid only inside rule `mcp_call` effects, not the top-level wrapper call.)
 
 If any output is missing, escalate the Phase 3 task with a specific reason naming the missing output. Do NOT proceed.
@@ -1197,12 +1232,21 @@ If any output is missing, escalate the Phase 3 task with a specific reason namin
 
 **Cross-phase preconditions (operational; verify before editing): 2.4 merged.** This rule's behavior is meaningless without 2.4's `_format_delivery_result` formatter — without it the inline `inject_result: true` path injects raw `messages[*].content` JSON. Without 3.4 merged (the priority-1 counter rule), the `parent_turn_seq` variable is missing, which 2.4 treats as fail-closed (drops all `memory_recall` payloads with a warning). 3.1 itself does not technically depend on 3.4 at expansion time (no same-phase edge), but the e2e behavior is tested only after 3.4 is also wired.
 
-Target: `src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml` (existing file).
+Targets:
+- `src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml` (existing file — primary edit).
+- `tests/workflows/test_messaging_rules.py` (`TestDeliverPendingMessages` updated to assert the new contract).
+- `tests/e2e/test_inter_agent_messages.py` (regression coverage — `test_parent_child_message_exchange` must continue to pass).
 
-Three changes vs the current file:
+Current file (HEAD) has:
 
-1. Drop the `when: "variables.get('is_spawned_agent')"` line so the rule fires for parents too (the underlying tool is session-scoped).
-2. Add an explicit `arguments: { target_session_id: "{{ event.metadata.get('_platform_session_id') }}" }` block — the dispatcher does not auto-inject `target_session_id` (only `session_id`), and `deliver_pending_messages`'s schema requires `target_session_id`. The template MUST resolve via `event.metadata['_platform_session_id']` (canonical Gobby session row id), NOT `event.session_id` (CLI external id — Claude `external_id` / Codex `thread_id`). Using the external id would force `deliver_pending_messages` through the proxy's external-id fallback resolver, which is ambiguous for non-UUID externals and entirely wrong when the external id maps to a different Gobby session than the platform id (legitimate mid-session reattach scenarios).
+```yaml
+when: "variables.get('is_spawned_agent') and event.metadata.get('_platform_session_id')"
+```
+
+and an `arguments:` block already templated from `_platform_session_id` (no `inject_result`). Three changes:
+
+1. Drop ONLY the `variables.get('is_spawned_agent')` conjunct from `when:` so the rule fires for parents too (the underlying tool is session-scoped). KEEP the `event.metadata.get('_platform_session_id')` conjunct — it guards against firing when the platform session id has not yet been resolved (legitimate during the first event of a session before the platform-id propagation completes), which would render `target_session_id` to an empty string and explode the tool call. After this change the `when:` clause is `"event.metadata.get('_platform_session_id')"`.
+2. The existing `arguments: { target_session_id: "{{ event.metadata.get('_platform_session_id', '') }}" }` block stays — the templated reference is already correct on HEAD. Confirm the template still resolves `_platform_session_id` (canonical Gobby session row id), NOT `event.session_id` (CLI external id — Claude `external_id` / Codex `thread_id`). If a future edit ever swaps to `event.session_id`, this rule breaks for any session where the external id differs from the platform id.
 3. Add `inject_result: true` to the `mcp_call` effect. Phase 2.4's pipeline is the consumer of `inject_result` for this tool.
 
 Replace the entire file contents with:
@@ -1215,24 +1259,25 @@ rules:
     description: "Deliver pending inter-session messages on each agent turn"
     event: turn_start
     enabled: true
+    when: "event.metadata.get('_platform_session_id')"
     priority: 10
     effects:
       - type: mcp_call
         server: gobby-agents
         tool: deliver_pending_messages
         arguments:
-          target_session_id: "{{ event.metadata.get('_platform_session_id') }}"
+          target_session_id: "{{ event.metadata.get('_platform_session_id', '') }}"
         inject_result: true
 ```
 
 Existing tests touching this rule (`tests/e2e/test_inter_agent_messages.py::test_parent_child_message_exchange`) must continue to pass — child → parent and parent → child messaging both still rely on this rule, so gate removal must not regress those flows.
 
-Validation criteria: file at the listed path matches the YAML above exactly. Daemon restart loads the rule; `gobby rules show deliver-pending-messages --json` returns a payload where (a) `when` is `null`/empty (the gate is removed), (b) `enabled` is `true`, (c) `priority` is `10`, (d) `event` is `turn_start`, (e) `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `deliver_pending_messages`, `effects[0].inject_result` is `true`, and `effects[0].arguments.target_session_id` is the literal templated string `"{{ event.metadata.get('_platform_session_id') }}"` (NOT `"{{ event.session_id }}"` — the external id resolution path is wrong here and was the round-12 F1 finding). (`gobby rules list` only returns summaries — name/event/priority/enabled — and CANNOT verify `when`/`arguments`/`inject_result`. Use `gobby rules show <name> --json` for structural assertions; `gobby rules list` is acceptable only as an existence check.)
+Validation criteria: file at the listed path matches the YAML above exactly. Daemon restart loads the rule; `gobby rules show deliver-pending-messages --json` returns a payload where (a) `when` (string) contains `event.metadata.get('_platform_session_id')` AND does NOT contain `is_spawned_agent` (the agent gate is dropped, the platform-session-id presence guard is kept), (b) `enabled` is `true`, (c) `priority` is `10`, (d) `event` is `turn_start`, (e) `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `deliver_pending_messages`, `effects[0].inject_result` is `true`, and `effects[0].arguments.target_session_id` is the literal templated string `"{{ event.metadata.get('_platform_session_id', '') }}"` (NOT `"{{ event.session_id }}"` — the external id resolution path is wrong here). (`gobby rules list` only returns summaries — name/event/priority/enabled — and CANNOT verify `when`/`arguments`/`inject_result`. Use `gobby rules show <name> --json` for structural assertions; `gobby rules list` is acceptable only as an existence check.)
 
-**Rule-definition tests (required, not optional)**: update `tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages` (which currently hard-codes the old `is_spawned_agent` gate and no-arguments effect) to assert the new contract:
+**Rule-definition tests (required, not optional)**: update `tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages` (which currently hard-codes the old `is_spawned_agent` gate and no-`inject_result` effect) to assert the new contract:
 
-- No `when:` clause on the rule definition (the test must explicitly check `rule.condition is None` or equivalent — failing if a stale `is_spawned_agent` gate is reintroduced).
-- Effect's `arguments` field equals `{"target_session_id": "{{ event.metadata.get('_platform_session_id') }}"}` (string match on the templated value, exactly as written in the YAML — must NOT contain the external-id form `"{{ event.session_id }}"`).
+- `when:` clause does NOT contain `is_spawned_agent` but DOES contain `event.metadata.get('_platform_session_id')` (string match on `rule.condition`).
+- Effect's `arguments` field equals `{"target_session_id": "{{ event.metadata.get('_platform_session_id', '') }}"}` (string match on the templated value, exactly as written in the YAML — must NOT contain the external-id form `"{{ event.session_id }}"`).
 - Effect's `inject_result` field is `True`.
 - Effect's `server` is `"gobby-agents"` and `tool` is `"deliver_pending_messages"`.
 - Rule's `event` is `"turn_start"` and `priority` is `10`.
@@ -1250,8 +1295,8 @@ A turn_start with no pending messages results in NO `inject_result` noise in the
 
 **Acceptance:**
 
-- 3.1.1 — `deliver-pending-messages.yaml` drops the `is_spawned_agent` `when:` gate, adds the `target_session_id` argument templated from `_platform_session_id`, and sets `inject_result: true`. file: `src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml`.
-- 3.1.2 — Rule-definition test asserts the new contract (no `when:`, exact `arguments` shape, `inject_result: true`). test: `tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages`.
+- 3.1.1 — `deliver-pending-messages.yaml` drops only the `is_spawned_agent` conjunct from `when:` (keeping the `_platform_session_id` presence guard) and sets `inject_result: true` on the effect. file: `src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml`.
+- 3.1.2 — Rule-definition test asserts the new contract (`when:` contains `_platform_session_id` and NOT `is_spawned_agent`, exact `arguments` shape, `inject_result: true`). test: `tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages`.
 - 3.1.3 — `tests/e2e/test_inter_agent_messages.py` continues to pass after the gate removal. test: `tests/e2e/test_inter_agent_messages.py::test_parent_child_message_exchange`.
 
 ### 3.2 Create `cancel-stale-memory-recall-helpers` rule (priority 5, before delivery) [category: config]
@@ -1259,7 +1304,11 @@ A turn_start with no pending messages results in NO `inject_result` noise in the
 
 **Cross-phase precondition (operational; verify before claiming): 2.5 merged.** This rule invokes `cancel_stale_helpers` which is added in 2.5. Verify the tool exists by `list_tools(server_name='gobby-agents')` showing `cancel_stale_helpers` in the result before working this task.
 
-Target: `src/gobby/install/shared/workflows/rules/memory-lifecycle/cancel-stale-memory-recall-helpers.yaml` (new file).
+Targets:
+- `src/gobby/install/shared/workflows/rules/memory-lifecycle/cancel-stale-memory-recall-helpers.yaml` (new file — primary deliverable).
+- `tests/workflows/test_memory_lifecycle_rules.py` (add `TestCancelStaleMemoryRecallHelpers` class and extend the `MEMORY_RULES` set).
+- `tests/workflows/test_memory_recall_helper_ordering.py` (new file — ordering and session-id resolution regression tests).
+- `src/gobby/hooks/events.py` (referenced only — `HookEventType.BEFORE_AGENT` is consumed by the regression test fixture; no edit).
 
 This rule fires at every parent `turn_start` and invokes the `cancel_stale_helpers` MCP tool from 2.5 with `agent_name="memory-recall-helper"`. Priority `5` ensures it runs strictly before `deliver-pending-messages` at priority `10`. By the time the delivery rule reads the inter-session message queue and 2.4's formatter checks `LocalAgentRunManager.get_cancelled_session_ids`, any in-flight helper from the previous turn has already been cancelled — so any of its racy-queued `memory_recall` messages get dropped instead of injected against an unrelated prompt.
 
@@ -1276,6 +1325,7 @@ rules:
     priority: 5
     when: >
       not variables.get('is_spawned_agent')
+      and event.metadata.get('_platform_session_id')
     effects:
       - type: mcp_call
         server: gobby-agents
@@ -1292,7 +1342,7 @@ Why each clause:
 - **Intentionally NOT gated on `memory_recall_helper_enabled`.** The kill-switch only controls whether NEW helpers are spawned. If a helper was spawned while enabled and the user toggles disable BEFORE that helper completes, the helper is still in the runtime; this rule must continue cancelling it on the next parent turn even though the feature is disabled, otherwise its eventual `send_message` payload would sit in the queue and inject when the feature is re-enabled. (Round 9 adversary finding: gating cancel on the toggle reintroduced a stale-injection path across disable/re-enable cycles.) When the feature is disabled and no helpers exist, this rule's `cancel_stale_helpers` call is a cheap no-op (returns `cancelled: []`).
 - **`inject_result: true` is REQUIRED** as a synchronous-await marker, not because the cancellation result is meant to be injected. Per `EffectsMixin._apply_effect` in HEAD (`src/gobby/workflows/engine/effects.py:57+`), an `mcp_call` effect is inline-awaited ONLY when `effect.inject_result and not effect.background and self._mcp_dispatcher` is true; otherwise it is appended to `mcp_calls` metadata and dispatched only after `workflow_handler.handle(event)` returns. Without `inject_result: true` here, the cancel call would defer, the priority-10 delivery (which DOES set `inject_result: true`) would run inline first, and delivery would read the queue with the stale helper still `running` — exactly the bug round-3 found. 2.4's `_apply_effect` formatter switch has a dedicated `("gobby-agents", "cancel_stale_helpers") → return None` case so this awaited call injects no visible context. **`background:` MUST remain unset/false**: `background: true` would also defer the call regardless of `inject_result`, breaking the sync contract. An expansion worker who removes `inject_result: true` or sets `background: true` for "tidiness" reintroduces the round-3 race.
 
-Validation criteria: file at the listed path; daemon restart loads the rule; `gobby rules show cancel-stale-memory-recall-helpers --json` returns a payload where `priority` is `5`, `event` is `turn_start`, `enabled` is `true`, `when` (string) contains `is_spawned_agent` AND does NOT contain `memory_recall_helper_enabled` (the toggle gate must NOT be on this rule — see freshness rationale above), `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `cancel_stale_helpers`, `effects[0].arguments.parent_session_id` is `"{{ event.metadata.get('_platform_session_id') }}"` (canonical platform id, NOT external `"{{ event.session_id }}"` — round-12 F1 finding), `effects[0].arguments.agent_name` is `"memory-recall-helper"`, AND `effects[0].inject_result` is `true` (this is the sync marker — the formatter returns None so it injects nothing).
+Validation criteria: file at the listed path; daemon restart loads the rule; `gobby rules show cancel-stale-memory-recall-helpers --json` returns a payload where `priority` is `5`, `event` is `turn_start`, `enabled` is `true`, `when` (string) contains `is_spawned_agent` AND `_platform_session_id` (presence guard, parallels 3.1) AND does NOT contain `memory_recall_helper_enabled` (the toggle gate must NOT be on this rule — see freshness rationale above), `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `cancel_stale_helpers`, `effects[0].arguments.parent_session_id` is `"{{ event.metadata.get('_platform_session_id') }}"` (canonical platform id, NOT external `"{{ event.session_id }}"`), `effects[0].arguments.agent_name` is `"memory-recall-helper"`, AND `effects[0].inject_result` is `true` (this is the sync marker — the formatter returns None so it injects nothing).
 
 **Ordering regression test (required, not optional)**: add `tests/workflows/test_memory_recall_helper_ordering.py`. Construct a `RuleEngine` with both `cancel-stale-memory-recall-helpers` (priority 5, with `inject_result: true`) and `deliver-pending-messages` (priority 10, with `inject_result: true`) loaded. Stub `_mcp_dispatcher` to record (server, tool, timestamp, arguments) for each call. Fire a `turn_start` event. Assert: (a) the `cancel_stale_helpers` dispatch's timestamp strictly precedes the `deliver_pending_messages` dispatch's timestamp; (b) BOTH appear in the inline-await order, NEITHER appears in the deferred `mcp_calls` list returned by `_evaluate_workflow_rules`. This protects against a future regression where someone removes `inject_result: true` from the cancel rule (which would silently make it deferred and break the freshness contract). A second test: with a real DB and a manually-inserted `agent_runs` row of `status='running'` for `agent_name='memory-recall-helper'` and a queued `inter_session_messages` row from that run's child session, fire a `turn_start` and assert: the run's status transitions to `cancelled` BEFORE `_format_delivery_result` runs (verifiable by checking `LocalAgentRunManager.get(...).status` between the two dispatcher invocations).
 
@@ -1337,7 +1387,9 @@ End-to-end (manual): start a session, submit a 6+-word prompt to spawn helper N.
 
 **Cross-phase preconditions (operational; verify before claiming):** 1.3 merged (`parent_turn_seq` seeded; this rule reads it via `{{ variables.parent_turn_seq }}` in the helper prompt template). 1.4 merged (helper YAML; this rule references `agent: memory-recall-helper`). 2.2 merged (enforcement reorder; without it the helper's `blocked_tools` listing of `mcp__gobby__set_variable` does not actually take effect). Verify 1.4 sync via `gobby agents show memory-recall-helper --json` returning a non-error payload before claiming this task.
 
-Target: `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml` (new file).
+Targets:
+- `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml` (new file — primary deliverable).
+- `tests/workflows/test_memory_lifecycle_rules.py` (add `TestSpawnMemoryRecallHelper` class and extend the `MEMORY_RULES` set).
 
 This rule fires at every parent `turn_start` and spawns a backgrounded `memory-recall-helper` agent. The helper's runtime context (parent session ID, parent's user prompt) is composed into the `prompt` argument — `spawn_agent` (`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py:141–336`) takes a single `prompt: str` plus static knobs; there is no separate `inputs:` parameter.
 
@@ -1356,6 +1408,8 @@ rules:
       len((event.data.get('prompt') or '').split()) >= 6
       and not variables.get('is_spawned_agent')
       and variables.get('memory_recall_helper_enabled', True)
+      and event.metadata.get('_platform_session_id')
+      and variables.get('parent_turn_seq') is not none
     effects:
       - type: mcp_call
         server: gobby-agents
@@ -1365,7 +1419,7 @@ rules:
           parent_session_id: "{{ event.metadata.get('_platform_session_id') }}"
           prompt: |
             Parent session: {{ event.metadata.get('_platform_session_id') }}
-            origin_turn_seq: {{ variables.parent_turn_seq | int }}
+            origin_turn_seq: {{ (variables.parent_turn_seq | default(0)) | int }}
             Parent's user prompt for this turn:
 
             {{ event.data.prompt }}
@@ -1391,18 +1445,21 @@ Why each clause:
 - `when: len(prompt.split()) >= 6` — mirrors the existing recall rule's skip-trivial-prompts check.
 - `when: not variables.get('is_spawned_agent')` — prevents the helper from spawning *another* helper if a spawned agent ever issues a prompt (the helper itself is a spawned agent, so without this it would self-fork).
 - `when: variables.get('memory_recall_helper_enabled', True)` — runtime master kill-switch. Seeded from `DaemonConfig.memory_recall_helper.enabled` at every `session_start` by 1.3. Default-True means a fresh session with a misconfigured daemon (no daemon_config available to `EventHandlers`) still spawns the helper rather than silently disabling it.
+- `when: event.metadata.get('_platform_session_id')` — presence guard mirroring 3.1 and 3.2. Without it the rule fires on the rare first-event-of-session race where platform-id resolution is still in flight, passing an empty string into `parent_session_id` and tripping spawn_agent's input validation.
+- `when: variables.get('parent_turn_seq') is not none` — presence guard for the seed written by 1.3 in `_activate_default_agent`. If activation was skipped (default agent name resolved to `"none"`, or the call site bypassed the mixin), `parent_turn_seq` is absent and the prompt template would default `origin_turn_seq` to 0. That defaulted value can accidentally match `current_parent_turn_seq - 1` on the next turn (because 3.4 also seeds from 0), causing 2.4's guard B to FALSE-ACCEPT a stale payload. Refusing to spawn when the seed is missing is the safe posture — the helper feature is unusable without it anyway.
+- Behavioral note (accepted design tradeoff): the helper picks memories at prompt N and delivers them at prompt N+1. If N and N+1 are topically unrelated, the helper's selection is irrelevant noise rather than useful context. The plan's "Helper must run backgrounded" constraint rules out the alternative (block turn_start on helper completion), so this latency-for-relevance trade is intentional. The `memory_recall_helper.enabled` kill-switch lets users opt out if the prompt mix is too topic-volatile for the helper to be useful.
 - `background: true` — `mcp_call` effect runs without blocking turn_start (per `src/gobby/workflows/engine/effects.py:142–166`).
 - `parent_session_id` and the prompt's `Parent session:` line are composed via `{{ event.metadata.get('_platform_session_id') }}` (NOT `event.session_id`); the user prompt body is composed via `{{ event.data.prompt }}`. The rule template engine exposes `event` directly per `_build_eval_context` (`src/gobby/workflows/engine/templating.py:36–105`), and `HookEvent.metadata` is a `dict[str, Any]` field on `HookEvent` (`src/gobby/hooks/events.py:85–124`), so `event.metadata.get(...)` resolves at template time. `event.session_id` is the CLI external id (Claude `external_id` / Codex `thread_id`); the helper needs the canonical Gobby platform session id for `get_session`, `get_variable`, and `injected_memory_ids` reads.
 - The prompt explicitly tells the helper to omit `from_session` on `send_message` calls. 2.1's runtime change auto-fills it from the helper's SessionContext (the proxy populates it from the helper's session header), so the helper does not need to know its own child session id.
 - The freshness contract — "at most one running helper per parent, no stale memory_recall payload ever injects regardless of how the prior helper terminated" — is owned by two guards: (A) 3.2 (`cancel-stale-memory-recall-helpers` at priority 5) + 2.4's cancelled-session filter, and (B) 3.4 (priority-1 `parent_turn_seq` increment) + 2.4's `origin_turn_seq` freshness check. 3.3 itself stays simple: it always spawns. By the time 3.3 fires at priority 12, 3.4 has already incremented `parent_turn_seq`, 3.2 has cancelled any in-flight helper from the prior turn, and 3.1 has delivered the queue with both filters applied. There is no per-spawn `supersede` flag — that approach was rejected because (a) the rule-priority race meant delivery at 10 would inject stale payloads before a spawn-time supersede at 12 could cancel them, and (b) `spawn_agent`'s factory does not have access to the lifecycle/process-kill deps that proper cancellation requires.
 - `origin_turn_seq: {{ variables.parent_turn_seq | int }}` is templated into the helper prompt. At priority 12, `parent_turn_seq` has already been incremented by 3.4 (priority 1), so the helper receives the CURRENT turn's number. The helper echoes that integer in its `memory_recall` payload. At the next parent turn_start, 2.4's delivery formatter compares the payload's echoed value against `current_parent_turn_seq - 1` (where `current_parent_turn_seq` is THIS turn's value, also already incremented). Match → fresh, accept. Mismatch (older or future) → stale, drop.
 
-Validation criteria: file exists at the listed path; daemon restart loads the rule; `gobby rules show spawn-memory-recall-helper --json` returns a payload where (a) `enabled` is `true`, (b) `priority` is `12`, (c) `event` is `turn_start`, (d) `when` (string) contains all three guards as substrings: `event.data.get('prompt')`, `is_spawned_agent`, and `memory_recall_helper_enabled`, (e) `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `spawn_agent`, `effects[0].background` is `true`, (f) `effects[0].arguments.agent` is `"memory-recall-helper"`, `effects[0].arguments.parent_session_id` is `"{{ event.metadata.get('_platform_session_id') }}"` (NOT external `"{{ event.session_id }}"`), `effects[0].arguments` does NOT contain a `supersede` key, and `effects[0].arguments.prompt` contains all three template references: `"{{ event.metadata.get('_platform_session_id') }}"` (the `Parent session:` line — NOT `"{{ event.session_id }}"`), `"{{ event.data.prompt }}"`, AND `"{{ variables.parent_turn_seq"`. **The plan MUST NOT contain any literal `{{ event.session_id }}` reference inside Phase 3 rule YAMLs or their validation criteria — this is the round-12 F1 fix.** `gobby rules list` may be used as an existence check (it shows name/event/priority/enabled summary only) but cannot verify `when`/`arguments`/`effects` internals — use `--json` for those.
+Validation criteria: file exists at the listed path; daemon restart loads the rule; `gobby rules show spawn-memory-recall-helper --json` returns a payload where (a) `enabled` is `true`, (b) `priority` is `12`, (c) `event` is `turn_start`, (d) `when` (string) contains all five guards as substrings: `event.data.get('prompt')`, `is_spawned_agent`, `memory_recall_helper_enabled`, `_platform_session_id` (presence guard parallels 3.1/3.2), and `variables.get('parent_turn_seq') is not none` (presence guard for the seed, so the helper never receives a defaulted `origin_turn_seq=0`), (e) `effects[0].type` is `mcp_call`, `effects[0].server` is `gobby-agents`, `effects[0].tool` is `spawn_agent`, `effects[0].background` is `true`, (f) `effects[0].arguments.agent` is `"memory-recall-helper"`, `effects[0].arguments.parent_session_id` is `"{{ event.metadata.get('_platform_session_id') }}"` (NOT external `"{{ event.session_id }}"`), `effects[0].arguments` does NOT contain a `supersede` key, and `effects[0].arguments.prompt` contains all three template references: `"{{ event.metadata.get('_platform_session_id') }}"` (the `Parent session:` line — NOT `"{{ event.session_id }}"`), `"{{ event.data.prompt }}"`, AND `"variables.parent_turn_seq"` somewhere inside a `default(0) | int` chain. **The plan MUST NOT contain any literal `{{ event.session_id }}` reference inside Phase 3 rule YAMLs or their validation criteria.** `gobby rules list` may be used as an existence check (it shows name/event/priority/enabled summary only) but cannot verify `when`/`arguments`/`effects` internals — use `--json` for those.
 
 **Rule-definition tests (required, not optional)**: add a new rule-level test class `TestSpawnMemoryRecallHelper` to `tests/workflows/test_memory_lifecycle_rules.py` paralleling the existing `TestMemoryRecallOnPrompt` class in the same file (which is the closest structural analog — both are `turn_start` rules with a `when:` clause and a single `mcp_call` effect). The new class asserts the rule's contract:
 
 - Rule's `event` is `"turn_start"`, `priority` is `12`, `enabled` is `True`.
-- Rule's `condition` (the `when:` clause) contains all three guards as substrings (or parses to an AST including all three): (a) `len((event.data.get('prompt') or '').split()) >= 6`, (b) `not variables.get('is_spawned_agent')`, (c) `variables.get('memory_recall_helper_enabled', True)`.
+- Rule's `condition` (the `when:` clause) contains all five guards as substrings (or parses to an AST including all five): (a) `len((event.data.get('prompt') or '').split()) >= 6`, (b) `not variables.get('is_spawned_agent')`, (c) `variables.get('memory_recall_helper_enabled', True)`, (d) `event.metadata.get('_platform_session_id')` (parallels 3.1/3.2 presence guard), (e) `variables.get('parent_turn_seq') is not none` (presence guard for the seed).
 - Rule has exactly one effect of type `mcp_call`.
 - Effect's `server` is `"gobby-agents"`, `tool` is `"spawn_agent"`, `background` is `True`.
 - Effect's `arguments` includes `agent: "memory-recall-helper"` and `parent_session_id: "{{ event.metadata.get('_platform_session_id') }}"` (string match — NOT external `"{{ event.session_id }}"`). MUST NOT include `supersede` (the round-2 design that placed cancellation at spawn time was rejected — cancellation now lives in rule 3.2).
@@ -1414,7 +1471,7 @@ Behavioral validation: submitting a real prompt of ≥ 6 words to a parent (non-
 
 **Acceptance:**
 
-- 3.3.1 — `spawn-memory-recall-helper.yaml` exists with priority 12, `event: turn_start`, the three-guard `when:` clause, `background: true`, and prompt template referencing `_platform_session_id`, `event.data.prompt`, and `variables.parent_turn_seq`. file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml`.
+- 3.3.1 — `spawn-memory-recall-helper.yaml` exists with priority 12, `event: turn_start`, the five-guard `when:` clause (prompt length, not-spawned-agent, helper-enabled, platform-session-id present, parent_turn_seq seeded), `background: true`, and prompt template referencing `_platform_session_id`, `event.data.prompt`, and `(variables.parent_turn_seq | default(0)) | int`. file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml`.
 - 3.3.2 — `TestSpawnMemoryRecallHelper` rule-definition test asserts the contract and that arguments do NOT include `supersede`. test: `tests/workflows/test_memory_lifecycle_rules.py::TestSpawnMemoryRecallHelper`.
 - 3.3.3 — `MEMORY_RULES` set in the test module includes `spawn-memory-recall-helper`. file: `tests/workflows/test_memory_lifecycle_rules.py`.
 - 3.3.4 — 6+-word prompts on parent (non-spawned-agent) sessions trigger a `memory-recall-helper` run; 1-word prompts and `is_spawned_agent` sessions do not. behavior: "spawn rule fires on prompt length >= 6 for non-spawned-agent parents only" in `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml`.
@@ -1422,9 +1479,12 @@ Behavioral validation: submitting a real prompt of ≥ 6 words to a parent (non-
 ### 3.4 Create `increment-parent-turn-seq` rule (priority 1, before all other turn_start rules) [category: config]
 `kind: deliverable`
 
-**Cross-phase precondition (operational; verify before claiming): 1.3 merged.** This rule increments the `parent_turn_seq` session variable seeded at session_start by 1.3's edits to `_activate_default_agent`. Without 1.3 merged, the variable does not exist on new sessions and the increment template falls back to `0 + 1 = 1` on every turn (still functional, but the seed is bypassed). Verify 1.3 by checking that a fresh session has `variables['parent_turn_seq'] == 0` immediately after session_start (before any turn_start rule fires).
+**Cross-phase precondition (operational; verify before claiming): 1.3 merged.** This rule increments the `parent_turn_seq` session variable seeded at session_start by 1.3's edits to `activate_default_agent`. Without 1.3 merged, the variable does not exist on new sessions and the increment template falls back to `0 + 1 = 1` on every turn (still functional, but the seed is bypassed). Verify 1.3 by checking that a fresh session has `variables['parent_turn_seq'] == 0` immediately after session_start (before any turn_start rule fires).
 
-Target: `src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml` (new file).
+Targets:
+- `src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml` (new file — primary deliverable).
+- `tests/workflows/test_memory_lifecycle_rules.py` (add `TestIncrementParentTurnSeq` class and extend the `MEMORY_RULES` set).
+- `tests/workflows/test_memory_recall_helper_ordering.py` (extend with the four-rule behavioral test).
 
 This rule fires at every parent `turn_start` BEFORE any other turn_start rule (priority 1) and increments the session-scoped `parent_turn_seq` variable seeded by 1.3. The increment uses Jinja2 templating (which `_apply_set_variable` calls via `_render_template`, then coerces the rendered string back to int via `_coerce_rendered_value` — verified at `src/gobby/workflows/engine/effects.py`'s `_apply_set_variable` and `_coerce_rendered_value`). The cast `| int` defends against the value somehow being stored as a string after a serialization round-trip.
 
@@ -1467,6 +1527,31 @@ End-to-end (manual): submit two prompts. After the first turn_start, `get_variab
 - 3.4.2 — `TestIncrementParentTurnSeq` rule-definition test asserts the contract and that the `when:` clause does NOT contain `memory_recall_helper_enabled`. test: `tests/workflows/test_memory_lifecycle_rules.py::TestIncrementParentTurnSeq`.
 - 3.4.3 — `MEMORY_RULES` set in the test module includes `increment-parent-turn-seq`. file: `tests/workflows/test_memory_lifecycle_rules.py`.
 - 3.4.4 — Behavioral test asserts two consecutive turn_starts increment `parent_turn_seq` 0→1→2, the spawn rule's resolved prompt for turn 2 contains `origin_turn_seq: 2`, fresh memory_recall payloads with matching `origin_turn_seq` inject, and stale ones drop. test: `tests/workflows/test_memory_recall_helper_ordering.py::test_turn_seq_increment_and_freshness_filter`.
+
+## V1 Plan Changelog
+`kind: verification`
+
+**Round 1** (reviewer_run: run-5231d2f026de — workflow-blocked on `send_message` per #15100; findings re-derived in-session by the parent coordinator. reviewer_session: 01cce3e3-9a81-47af-a4b8-af3f2b563b99. verdict: needs_review → resolved in this pass.)
+
+- F1 (blocking, traceability): stale `hook_manager.py` line refs in Constraints. Actual HEAD: `_dedup_memory_results` at line 490; `_platform_session_id` reads at 312, 400, 490. **Resolved**: Constraints updated to cite HEAD line numbers.
+- F2 (blocking, unhandled-edge): freshness contract did not document fail-open posture when `cancel_stale_helpers` returns `success: False`. Guard B (origin_turn_seq) is the correctness backstop in that case. **Resolved**: Constraints freshness section adds an explicit "Fail-open posture on cancel error" paragraph.
+- F3 (blocking, weak-testability): 2.4.3 lacked a concrete behavioral test for the `_apply_effect` formatter dispatch switch including the cancel_stale_helpers no-op case. **Resolved**: 2.4.3 now names `test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op` in `tests/workflows/test_delivery_pipeline.py`.
+- F4 (nit, traceability): 2.1 caller-audit guard was a forward-compat invariant — HEAD grep returned zero positional `send_message(from_session` callers in `src/`. **Resolved**: 2.1 body now records the audit-baseline grep result so the implementer doesn't chase ghosts.
+- F5 (nit, gobby-format): 1.4 never cited the proof point that `Session.to_dict()` exposes `digest_markdown` (verified at `storage/session_models.py:247`). **Resolved**: 1.4 validation criteria cite the verification chain.
+
+Spawn-surface bug (#15100): `plan-adversary-taskless`'s `review` step whitelists only `gobby-agents:end_agent_run` and `gobby-skills:get_skill`, blocking `gobby-agents:send_message`. The adversary ran 57 turns / 90 tool calls and completed `success`, but its structured findings never reached the parent. Tracked separately so the next round can use the spawned adversary surface once #15100 lands.
+
+**Round 2** (reviewer_run: in-session — adversary spawn still blocked by #15100. verdict: needs_review → resolved in this pass.)
+
+- F6 (blocking, unhandled-edge): rules 3.2 and 3.3 lacked the `_platform_session_id` presence guard 3.1 carries. Early-lifecycle race could fire the rules with an empty `parent_session_id`, tripping `cancel_stale_helpers` / `spawn_agent` input validation and aborting sibling effects of those rules. **Resolved**: both rules' `when:` clauses now require `event.metadata.get('_platform_session_id')`.
+- F7 (blocking, unhandled-edge): 3.3's spawn prompt template `{{ variables.parent_turn_seq | int }}` defaulted to 0 when the seed was missing, which could match 2.4's expected `current - 1 = 0` on the first turn after a missed-seed activation and FALSE-ACCEPT a stale payload. **Resolved**: spawn rule's `when:` now gates on `variables.get('parent_turn_seq') is not none` and the template uses `(variables.parent_turn_seq | default(0)) | int` belt-and-suspenders.
+- F8 (nit, unhandled-edge): helper picks memories at prompt N, delivers at N+1; topical prompt switches make selections irrelevant. **Resolved**: documented in 3.3's clause-by-clause section as an accepted design tradeoff (the alternative — block turn_start on helper completion — is ruled out by the "Helper must run backgrounded" constraint).
+- F9 (blocking, weak-testability): 1.3.6 (`internal_keys` includes `memory_recall_helper_enabled`) was named as a `file:` artifact only. **Resolved**: 1.3.6 now names `test_internal_keys_excludes_memory_recall_helper_enabled_from_variables_count` in `tests/hooks/event_handlers/test_session_variable_preservation.py`.
+
+**Round 3** (reviewer_run: in-session — #15100 still open. verdict: needs_review → resolved in this pass.)
+
+- F10 (nit, traceability): Phase 3's prose understated rule co-tenancy at the priority slots (`reset-subagent-flag` and `prepare-clear-handoff` at 5, `memory-recall-on-prompt` and `handle-plan-mode-entry` at 10). **Resolved**: Phase 3 framing now lists co-tenants and confirms none interfere with the helper contract.
+- F11 (blocking, weak-testability): 1.4's helper instructions never told the helper to call `end_agent_run`, leaving it to burn the full `max_turns: 3` budget per spawn. **Resolved**: helper instructions now have an explicit step 8 (`end_agent_run`) plus a hard-constraint reminder.
 
 ## Task Mapping
 `kind: framing`
