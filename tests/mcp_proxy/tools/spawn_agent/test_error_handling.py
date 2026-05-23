@@ -318,11 +318,11 @@ class TestSpawnAgentImplErrorBranches:
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ) as sync,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
             patch(
@@ -369,6 +369,110 @@ class TestSpawnAgentImplErrorBranches:
             isolated_path=str(worktree_path),
             provider="gemini",
         )
+        mock_execute.assert_awaited_once()
+        spawn_request = mock_execute.await_args.args[0]
+        assert spawn_request.cwd == str(worktree_path)
+        assert spawn_request.worktree_id == "wt-1"
+
+    @pytest.mark.asyncio
+    async def test_reused_worktree_rebase_conflict_uses_fresh_retry_worktree(
+        self, tmp_path
+    ) -> None:
+        from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "ok", 0)
+        runner.child_session_manager = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
+        old_path = tmp_path / "old-worktree"
+        old_path.mkdir()
+        fresh_path = tmp_path / "fresh-worktree"
+        fresh_path.mkdir()
+        worktree = MagicMock(id="wt-old", worktree_path=str(old_path), branch_name="branch")
+        worktree_storage = MagicMock()
+        worktree_storage.get.return_value = worktree
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
+        fallback_handler = MagicMock()
+        fallback_handler.prepare_environment = AsyncMock(
+            return_value=IsolationContext(
+                cwd=str(fresh_path),
+                branch_name="branch-retry",
+                worktree_id="wt-fresh",
+                isolation_type="worktree",
+                extra={"main_repo_path": str(tmp_path / "repo")},
+            )
+        )
+        fallback_handler.cleanup_environment = AsyncMock()
+        fallback_handler.build_context_prompt.return_value = "fresh prompt"
+        conflict = ReusedWorktreeRebaseConflict(
+            "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted",
+            worktree_path=str(old_path),
+            base_ref="main",
+            base_commit_sha="base-sha",
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
+                new=AsyncMock(side_effect=conflict),
+            ) as sync,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.get_isolation_handler",
+                return_value=fallback_handler,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+                new=AsyncMock(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_execute.return_value = MagicMock(
+                success=True,
+                child_session_id="c-1",
+                status="ok",
+                pid=1,
+                terminal_type=None,
+                tmux_session_name=None,
+                message="ok",
+                process=None,
+            )
+
+            result = await spawn_agent_impl(
+                prompt="test",
+                runner=runner,
+                parent_session_id="sess-1",
+                provider="gemini",
+                worktree_id="wt-old",
+                worktree_storage=worktree_storage,
+                git_manager=git_manager,
+            )
+
+        assert result["success"] is True
+        sync.assert_awaited_once_with(
+            git_manager=git_manager,
+            worktree_path=str(old_path),
+            base_branch="main",
+        )
+        fallback_handler.prepare_environment.assert_awaited_once()
+        retry_config = fallback_handler.prepare_environment.await_args.args[0]
+        assert retry_config.branch_name.startswith("branch-retry-")
+        assert fallback_handler.cleanup_environment.await_count == 0
+        spawn_request = mock_execute.call_args.args[0]
+        assert spawn_request.cwd == str(fresh_path)
+        assert spawn_request.worktree_id == "wt-fresh"
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_indexes_workspace_before_spawn(self, tmp_path) -> None:
@@ -404,11 +508,11 @@ class TestSpawnAgentImplErrorBranches:
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 side_effect=sync,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
                 side_effect=repair,
             ),
             patch(
@@ -490,11 +594,11 @@ class TestSpawnAgentImplErrorBranches:
                 return_value="task-1",
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
                 new=AsyncMock(),
             ),
             patch(
@@ -534,6 +638,11 @@ class TestSpawnAgentImplErrorBranches:
 
         assert result["success"] is True
         index.assert_not_awaited()
+        mock_execute.assert_awaited_once()
+        spawn_request = mock_execute.await_args.args[0]
+        assert spawn_request.cwd == str(worktree_path)
+        assert spawn_request.initial_variables["assigned_task_id"] == "#123"
+        assert "code_index_preflight_warning" not in spawn_request.initial_variables
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_continues_when_code_index_preflight_fails(self, tmp_path) -> None:
@@ -569,11 +678,11 @@ class TestSpawnAgentImplErrorBranches:
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
                 new=AsyncMock(),
             ),
             patch(
@@ -636,11 +745,11 @@ class TestSpawnAgentImplErrorBranches:
                 return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.sync_reused_worktree_to_base",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
                 new=AsyncMock(),
             ),
             patch(

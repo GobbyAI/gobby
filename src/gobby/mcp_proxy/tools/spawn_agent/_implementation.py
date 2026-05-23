@@ -22,7 +22,6 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
-from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
@@ -38,6 +37,7 @@ from ._code_index import (
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
 from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -507,7 +507,22 @@ async def spawn_agent_impl(
         return non_actionable_task_spawn_response(
             resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
         )
-    # 5. Handle worktree_id/clone_id reuse: skip isolation creation when existing resource provided
+    # 5. Build spawn config and handle worktree_id/clone_id reuse.
+    spawn_config = SpawnConfig(
+        prompt=prompt,
+        task_id=resolved_task_id,
+        task_title=task_title,
+        task_seq_num=task_seq_num,
+        branch_name=branch_name,
+        branch_prefix=None,
+        base_branch=effective_base_branch,
+        project_id=project_id,
+        project_path=resolved_project_path,
+        provider=effective_provider,
+        parent_session_id=parent_session_id,
+    )
+
+    # Explicit reuse skips isolation creation when the existing resource can be prepared.
     isolation_ctx = None
     if worktree_id and worktree_storage:
         existing_worktree = worktree_storage.get(worktree_id)
@@ -526,30 +541,18 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            await sync_reused_worktree_to_base(
+            isolation_ctx, handler = await prepare_reused_worktree(
+                existing_worktree=existing_worktree,
                 git_manager=git_manager,
-                worktree_path=existing_worktree.worktree_path,
-                base_branch=effective_base_branch,
-            )
-            await repair_isolation_environment(
+                worktree_storage=worktree_storage,
+                clone_manager=clone_manager,
+                clone_storage=clone_storage,
+                spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
-                isolated_path=existing_worktree.worktree_path,
-                provider=effective_provider,
             )
+            effective_isolation = "worktree"
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
-
-        from gobby.agents.isolation import IsolationContext
-
-        isolation_ctx = IsolationContext(
-            cwd=existing_worktree.worktree_path,
-            branch_name=existing_worktree.branch_name,
-            worktree_id=existing_worktree.id,
-            isolation_type="worktree",
-            extra={"main_repo_path": resolved_project_path, "reused_worktree": True},
-        )
-        effective_isolation = "worktree"
-        handler = get_isolation_handler("none")
     elif clone_id and clone_storage:
         existing_clone = clone_storage.get(clone_id)
         if not existing_clone:
@@ -592,21 +595,6 @@ async def spawn_agent_impl(
             clone_manager=clone_manager,
             clone_storage=clone_storage,
         )
-
-    # 6. Build spawn config
-    spawn_config = SpawnConfig(
-        prompt=prompt,
-        task_id=resolved_task_id,
-        task_title=task_title,
-        task_seq_num=task_seq_num,
-        branch_name=branch_name,
-        branch_prefix=None,
-        base_branch=effective_base_branch,
-        project_id=project_id,
-        project_path=resolved_project_path,
-        provider=effective_provider,
-        parent_session_id=parent_session_id,
-    )
 
     # 7. Prepare environment (worktree/clone creation) — skipped if clone_id was reused
     if isolation_ctx is None:
