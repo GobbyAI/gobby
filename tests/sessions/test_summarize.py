@@ -378,7 +378,9 @@ class TestGenerateSessionSummaries:
                 "gobby.workflows.summary_actions._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.sessions.summarize._get_claimed_tasks", return_value="task context") as claimed,
+            patch(
+                "gobby.sessions.summarize._get_claimed_tasks", return_value="task context"
+            ) as claimed,
             patch(
                 "gobby.sessions.summarize._get_session_memories",
                 return_value="memory context",

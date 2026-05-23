@@ -37,6 +37,7 @@ from ._code_index import (
 )
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._provider_resolution import defaulted_provider, provider_prefixed_model
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -108,38 +109,6 @@ def _active_task_spawn_blocker(
             continue
         return active_run
     return None
-
-
-_MODEL_PROVIDER_PREFIXES = {
-    "anthropic": "claude",
-    "claude": "claude",
-    "google": "gemini",
-    "gemini": "gemini",
-    "openai": "codex",
-    "codex": "codex",
-    "qwen": "qwen",
-    "droid": "droid",
-}
-
-
-def _provider_prefixed_model(value: str | None) -> tuple[str, str] | None:
-    """Return provider/model from values like ``claude/sonnet-4-6``."""
-    if not value or "/" not in value:
-        return None
-    prefix, model = value.split("/", 1)
-    provider = _MODEL_PROVIDER_PREFIXES.get(prefix.strip().lower())
-    model = model.strip()
-    if not provider or not model:
-        return None
-    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-")):
-        model = f"claude-{model}"
-    return provider, model
-
-
-def _defaulted_provider(value: str | None) -> str:
-    if value is None or value == "inherit":
-        return "claude"
-    return value
 
 
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
@@ -358,13 +327,13 @@ async def spawn_agent_impl(
     )
 
     provider_was_overridden = provider is not None
-    model_from_prefix = _provider_prefixed_model(_normalize_optional_model(model))
+    model_from_prefix = provider_prefixed_model(_normalize_optional_model(model))
     _raw_provider: str | None = provider
     if _raw_provider is None and model_from_prefix is not None:
         _raw_provider = model_from_prefix[0]
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
-    effective_provider = _defaulted_provider(_raw_provider)
+    effective_provider = defaulted_provider(_raw_provider)
 
     if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
         return {
@@ -378,7 +347,7 @@ async def spawn_agent_impl(
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
-        provider_differs_from_agent = effective_provider != _defaulted_provider(agent_body.provider)
+        provider_differs_from_agent = effective_provider != defaulted_provider(agent_body.provider)
 
     effective_model = (
         model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)

@@ -365,10 +365,16 @@ def _prompt_api_keys(
 _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
     "claude": ("Claude Code", "~/.claude/settings.json", ".claude/settings.json", "~/.claude.json"),
     "gemini": (
-        "Gemini CLI",
+        "Gemini CLI (deprecated)",
         "~/.gemini/settings.json",
         ".gemini/settings.json",
         "~/.gemini/settings.json",
+    ),
+    "grok": (
+        "Grok CLI",
+        "~/.grok/hooks/gobby.json",
+        ".grok/hooks/gobby.json",
+        None,
     ),
     "qwen": (
         "Qwen CLI",

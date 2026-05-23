@@ -8,6 +8,9 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.grok import GrokAdapter
+from gobby.hooks.events import HookEventType, SessionSource
+
 pytestmark = pytest.mark.unit
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
@@ -79,3 +82,22 @@ def test_provider_json_fixtures_have_contract_metadata(path: Path) -> None:
 
     assert isinstance(payload, dict)
     assert {"provider", "capture_type"}.issubset(payload)
+
+
+def test_grok_hook_payload_fixture_translates_to_unified_events() -> None:
+    records = _load_jsonl(PROVIDER_CONTRACT_ROOT / "grok" / "hook-payloads.jsonl")
+    adapter = GrokAdapter()
+
+    events = [adapter.translate_to_hook_event(record["payload"]) for record in records]
+    by_native_event = {
+        record["payload"]["hookEventName"]: event
+        for record, event in zip(records, events, strict=True)
+    }
+
+    assert by_native_event["session_start"].event_type is HookEventType.SESSION_START
+    assert by_native_event["session_start"].source is SessionSource.GROK
+    assert by_native_event["user_prompt_submit"].event_type is HookEventType.BEFORE_AGENT
+    assert by_native_event["pre_tool_use"].event_type is HookEventType.BEFORE_TOOL
+    assert by_native_event["pre_tool_use"].data["tool_name"] == "Bash"
+    assert by_native_event["post_tool_use"].event_type is HookEventType.AFTER_TOOL
+    assert by_native_event["post_tool_use"].data["tool_name"] == "Bash"

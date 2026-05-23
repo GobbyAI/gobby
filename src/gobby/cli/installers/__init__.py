@@ -11,6 +11,7 @@ from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
 from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
+from .grok import install_grok, uninstall_grok
 from .mcp_config import install_default_mcp_servers
 from .neo4j import install_neo4j, uninstall_neo4j
 from .postgres import install_postgres, uninstall_postgres
@@ -37,6 +38,9 @@ __all__ = [
     # Gemini
     "install_gemini",
     "uninstall_gemini",
+    # Grok
+    "install_grok",
+    "uninstall_grok",
     # Qwen
     "install_qwen",
     "uninstall_qwen",

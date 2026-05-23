@@ -34,6 +34,7 @@ def _provider_from_adapter_name(adapter_name: str) -> str:
         "CodexHooksAdapter": "codex",
         "CodexNotifyAdapter": "codex",
         "GeminiAdapter": "gemini",
+        "GrokAdapter": "grok",
         "QwenAdapter": "qwen",
         "DroidAdapter": "droid",
     }

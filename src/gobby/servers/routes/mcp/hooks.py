@@ -110,6 +110,16 @@ def _graceful_error_response(
         if isinstance(gemini_response, dict):
             return gemini_response
 
+    if provider == "grok":
+        from gobby.adapters.grok import GrokAdapter
+
+        grok_response = GrokAdapter().translate_from_hook_response(
+            hook_response,
+            hook_type=hook_type,
+        )
+        if isinstance(grok_response, dict):
+            return grok_response
+
     if provider == "qwen":
         from gobby.adapters.qwen import QwenAdapter
 
@@ -474,6 +484,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
             from gobby.adapters.gemini import GeminiAdapter
+            from gobby.adapters.grok import GrokAdapter
             from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
@@ -482,6 +493,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "qwen":
                 adapter = QwenAdapter(hook_manager=hook_manager)
+            elif source == "grok":
+                adapter = GrokAdapter(hook_manager=hook_manager)
             elif source == "codex":
                 # Always use CodexHooksAdapter for HTTP hook requests from
                 # Gobby-managed hook commands. app.state.codex_adapter is the
@@ -499,7 +512,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail=(
                         f"Unsupported source: {source}. "
-                        "Supported: claude, gemini, qwen, codex, droid"
+                        "Supported: claude, gemini, grok, qwen, codex, droid"
                     ),
                 )
 

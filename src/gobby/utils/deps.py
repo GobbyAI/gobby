@@ -132,6 +132,15 @@ def get_gemini_cli_version() -> str | None:
     return None
 
 
+def get_grok_cli_version() -> str | None:
+    """Get Grok CLI version."""
+    output = _run_cmd(["grok", "version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
 def get_codex_cli_version() -> str | None:
     """Get Codex CLI version."""
     output = _run_cmd(["codex", "--version"])
@@ -144,6 +153,15 @@ def get_codex_cli_version() -> str | None:
 def get_qwen_cli_version() -> str | None:
     """Get Qwen CLI version."""
     output = _run_cmd(["qwen", "--version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
+def get_agy_cli_version() -> str | None:
+    """Get AGY CLI version."""
+    output = _run_cmd(["agy", "--version"])
     if output:
         match = re.search(r"(\d+\.\d+\.\d+)", output)
         return match.group(1) if match else output
@@ -174,6 +192,13 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     # Gemini: ~/.gemini/settings.json
     gemini_settings = Path.home() / ".gemini" / "settings.json"
     result["gemini"] = _check_hooks_in_file(gemini_settings)
+
+    # Grok: ~/.grok/hooks/gobby.json
+    grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
+    result["grok"] = _check_hooks_in_file(grok_hooks)
+
+    # AGY: no supported hook transport
+    result["agy"] = False
 
     # Codex: ~/.codex/hooks.json
     codex_hooks = Path.home() / ".codex" / "hooks.json"
@@ -462,8 +487,15 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
     if providers.gemini and not shutil.which("gemini"):
         issues.append(
             {
-                "subsystem": "Gemini",
+                "subsystem": "Gemini (deprecated)",
                 "error": "provider configured but gemini CLI not in PATH",
+            }
+        )
+    if getattr(providers, "grok", None) and not shutil.which("grok"):
+        issues.append(
+            {
+                "subsystem": "Grok",
+                "error": "provider configured but grok CLI not in PATH",
             }
         )
 
@@ -519,9 +551,11 @@ def collect_all_deps() -> dict[str, Any]:
         "coding_clis": {
             "claude": get_claude_code_version(),
             "gemini": get_gemini_cli_version(),
+            "grok": get_grok_cli_version(),
             "codex": get_codex_cli_version(),
             "droid": get_droid_cli_version(),
             "qwen": get_qwen_cli_version(),
+            "agy": get_agy_cli_version(),
             "hooks": get_coding_cli_hooks_status(),
         },
         "dependencies": {

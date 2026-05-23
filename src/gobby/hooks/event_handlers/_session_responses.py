@@ -77,15 +77,15 @@ def get_claimed_task_info(
                 project_id=project_id,
             )
             if db_tasks:
-                reconciled = {}
+                db_reconciled: dict[str, str] = {}
                 db_result: list[tuple[str, str, str]] = []
                 for task in db_tasks:
                     ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-                    reconciled[task.id] = ref
+                    db_reconciled[task.id] = ref
                     db_result.append((ref, _task_state_label(task), task.title))
                 # Reconcile session variables with DB state
                 sv_mgr.set_variable(session_id, "task_claimed", True)
-                sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
+                sv_mgr.set_variable(session_id, "claimed_tasks", db_reconciled)
                 return db_result or None
         except Exception as e:
             _logger.debug(f"Failed to reconcile claimed tasks from DB: {e}")

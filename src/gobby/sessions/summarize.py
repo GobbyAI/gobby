@@ -447,6 +447,10 @@ async def _generate_full_summary(
                 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
                 parser = GeminiTranscriptParser()
+            elif source == "grok":
+                from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+                parser = GrokTranscriptParser()
             elif source == "codex":
                 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 

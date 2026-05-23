@@ -25,6 +25,7 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter, CodexNoti
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.grok import GrokAdapter
 
 __all__ = [
     "BaseAdapter",
@@ -36,5 +37,6 @@ __all__ = [
     "DROID_PASCAL_HOOK_NAMES",
     "DroidAdapter",
     "GeminiAdapter",
+    "GrokAdapter",
     "get_provider_capabilities",
 ]

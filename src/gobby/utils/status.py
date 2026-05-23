@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 # Label width for alignment in status sections
 _LW = 18
 _CODING_CLI_LABELS = (
+    ("agy", "AGY CLI"),
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
-    ("gemini", "Gemini CLI"),
+    ("gemini", "Gemini CLI (deprecated)"),
+    ("grok", "Grok CLI"),
     ("qwen", "Qwen CLI"),
 )
 
@@ -146,6 +148,8 @@ def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name
     parts = []
     if hooks.get(name):
         parts.append("hooks installed")
+    if name == "agy":
+        parts.append("unavailable: no machine transport")
 
     model_count = _provider_model_count(provider_models, name)
     if model_count is not None:

@@ -633,6 +633,89 @@ class TestExecuteSpawn:
             assert result.success is False
             assert "Terminal not found" in (result.error or "")
 
+    @pytest.mark.asyncio
+    async def test_grok_terminal_spawn_constructs_headless_command(self):
+        """Grok spawn uses the documented single-shot command and hook env linkage."""
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="grok",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            model="grok-build",
+            effective_reasoning_effort="high",
+        )
+
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-grok123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-grok123",
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
+        ):
+            result = await execute_spawn(request)
+
+        mock_prepare.assert_called_once()
+        call_kwargs = mock_prepare.call_args.kwargs
+        assert call_kwargs["source"] == "grok"
+        mock_preapprove.assert_called_once_with("grok", "/path")
+
+        spawn_kwargs = mock_spawner.spawn.call_args.kwargs
+        assert spawn_kwargs["cwd"] == "/path"
+        assert spawn_kwargs["env"]["GOBBY_SESSION_ID"] == "gobby-sess-123"
+        assert spawn_kwargs["command"] == [
+            "grok",
+            "--always-approve",
+            "--no-alt-screen",
+            "--cwd",
+            "/path",
+            "--model",
+            "grok-build",
+            "--reasoning-effort",
+            "high",
+            "--single",
+            "Test",
+        ]
+        assert result.success is True
+        assert result.run_id == "run-grok123"
+        assert result.child_session_id == "gobby-sess-123"
+
+    @pytest.mark.asyncio
+    async def test_agy_spawn_rejects_unavailable_provider(self):
+        """AGY is visible but explicitly unavailable for agent spawning."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+        )
+
+        result = await execute_spawn(request)
+
+        assert result.success is False
+        assert result.child_session_id is None
+        assert "machine transport" in (result.error or "")
+
 
 class TestExecuteSpawnSandbox:
     """Integration tests for sandbox configuration in spawn flow."""

@@ -277,11 +277,7 @@ class TestStatuslineEndpoint:
         assert (
             "statusline_usage_gap_warnings_total",
             {"attributes": {"source": "claude"}},
-        ) not in [
-            (call.args[0], call.kwargs)
-            for call in mock_counter.call_args_list
-            if call.args
-        ]
+        ) not in [(call.args[0], call.kwargs) for call in mock_counter.call_args_list if call.args]
 
     def test_throttles_repeated_anomalous_gap_warnings(
         self, client, mock_server, caplog, enable_log_propagation

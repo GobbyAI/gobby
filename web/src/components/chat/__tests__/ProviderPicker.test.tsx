@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProviderPicker } from "../ProviderPicker";
+import { clearProviderModelCache } from "../../../lib/providerModels";
 
 function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
   return {
@@ -54,6 +55,7 @@ describe("ProviderPicker", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    clearProviderModelCache();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () =>
@@ -65,6 +67,7 @@ describe("ProviderPicker", () => {
   });
 
   afterEach(() => {
+    clearProviderModelCache();
     global.fetch = originalFetch;
     vi.clearAllMocks();
   });
@@ -120,6 +123,61 @@ describe("ProviderPicker", () => {
       .getAllByText(/^(Claude|Codex|Droid|Gemini|Qwen)$/)
       .map((element) => element.textContent);
     expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Gemini", "Qwen"]);
+  });
+
+  it("shows Grok, disables AGY, and labels Gemini as deprecated", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          ...buildCatalog([{ value: "default", label: "Default" }]).providers,
+          {
+            provider: "grok",
+            available: true,
+            models: [{ value: "grok-build", label: "Grok Build" }],
+            source: "live",
+            supports_web_chat: true,
+          },
+          {
+            provider: "agy",
+            available: false,
+            models: [],
+            source: "unsupported",
+            supports_web_chat: false,
+            unavailable_reason: "No documented machine transport",
+          },
+          {
+            provider: "gemini",
+            available: true,
+            models: [{ value: "gemini-3.1-pro-preview", label: "pro-3.1" }],
+            source: "static",
+            deprecated: true,
+          },
+        ],
+      }),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    expect(await screen.findByText("Grok Build")).toBeTruthy();
+    expect(screen.getByText("deprecated")).toBeTruthy();
+    expect(screen.getByText("unavailable")).toBeTruthy();
+    expect(screen.getByText("No documented machine transport")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Default" }).some(
+      (button) => button.hasAttribute("disabled"),
+    )).toBe(true);
   });
 
   it("switches provider, model, and conversation when picking a new provider before first send", async () => {

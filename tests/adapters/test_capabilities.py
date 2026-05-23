@@ -16,6 +16,7 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse, SessionSource
 from gobby.servers.routes.mcp.hooks import _graceful_error_response
@@ -50,17 +51,22 @@ def test_capability_registry_covers_current_http_adapters() -> None:
         GeminiAdapter.EVENT_MAP.keys()
     )
     assert get_provider_capabilities(SessionSource.QWEN).hook_events.keys() == (
-        GeminiAdapter.EVENT_MAP.keys()
+        QwenAdapter.EVENT_MAP.keys()
+    )
+    assert get_provider_capabilities(SessionSource.GROK).hook_events.keys() == (
+        GrokAdapter.EVENT_MAP.keys()
     )
     assert tuple(get_provider_capabilities(SessionSource.DROID).hook_events) == (
         DROID_PASCAL_HOOK_NAMES
     )
+    assert get_provider_capabilities(SessionSource.AGY).hook_events == {}
 
 
 def test_current_context_and_decision_capabilities_are_declared() -> None:
     claude_pre_tool = get_provider_capabilities("claude").get_hook("pre-tool-use")
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
     gemini_before_model = get_provider_capabilities("gemini").get_hook("BeforeModel")
+    grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     droid_pre_tool = get_provider_capabilities("droid").get_hook("PreToolUse")
 
     assert claude_pre_tool is not None
@@ -74,6 +80,10 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert gemini_before_model is not None
     assert gemini_before_model.context_channel is ContextChannel.ADDITIONAL_CONTEXT
     assert gemini_before_model.supports_response_field("modify_args")
+
+    assert grok_pre_tool is not None
+    assert grok_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
+    assert grok_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert droid_pre_tool is not None
     assert droid_pre_tool.context_channel is ContextChannel.NONE

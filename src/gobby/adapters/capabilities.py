@@ -313,6 +313,77 @@ def _codex_capabilities() -> ProviderCapabilities:
     )
 
 
+GROK_EVENT_MAP: dict[str, HookEventType] = {
+    "session_start": HookEventType.SESSION_START,
+    "session_end": HookEventType.SESSION_END,
+    "user_prompt_submit": HookEventType.BEFORE_AGENT,
+    "pre_tool_use": HookEventType.BEFORE_TOOL,
+    "post_tool_use": HookEventType.AFTER_TOOL,
+    "post_tool_use_failure": HookEventType.AFTER_TOOL,
+    "pre_compact": HookEventType.PRE_COMPACT,
+    "stop": HookEventType.STOP,
+    "notification": HookEventType.NOTIFICATION,
+}
+
+GROK_HOOK_ALIASES: dict[str, str] = {
+    "SessionStart": "session_start",
+    "SessionEnd": "session_end",
+    "UserPromptSubmit": "user_prompt_submit",
+    "PreToolUse": "pre_tool_use",
+    "PostToolUse": "post_tool_use",
+    "PostToolUseFailure": "post_tool_use_failure",
+    "PreCompact": "pre_compact",
+    "Stop": "stop",
+    "Notification": "notification",
+}
+
+GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"session_start", "user_prompt_submit", "post_tool_use"})
+GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS = frozenset({"pre_tool_use", "pre_compact", "stop"})
+
+
+def _grok_capabilities() -> ProviderCapabilities:
+    events: dict[str, HookCapability] = {}
+    for hook_name, event_type in GROK_EVENT_MAP.items():
+        if hook_name in GROK_ADDITIONAL_CONTEXT_HOOKS:
+            context_channel = ContextChannel.ADDITIONAL_CONTEXT
+        elif hook_name in GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS:
+            context_channel = ContextChannel.SYSTEM_MESSAGE
+        else:
+            context_channel = ContextChannel.NONE
+
+        decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
+        extra_fields: list[str] = []
+        if hook_name == "pre_tool_use":
+            decision_style = ProviderDecisionStyle.PRE_TOOL_USE
+            extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
+        elif hook_name in {"pre_compact", "stop"}:
+            decision_style = ProviderDecisionStyle.HARD_STOP
+        elif hook_name in {"session_start", "user_prompt_submit", "post_tool_use"}:
+            decision_style = ProviderDecisionStyle.NONE
+
+        events[hook_name] = HookCapability(
+            hook_name=hook_name,
+            event_type=event_type,
+            decision_style=decision_style,
+            context_channel=context_channel,
+            supported_response_fields=_response_fields(
+                *extra_fields,
+                context_channel=context_channel,
+            ),
+        )
+
+    return ProviderCapabilities(
+        source=SessionSource.GROK,
+        hook_events=events,
+        hook_aliases=GROK_HOOK_ALIASES,
+        supports_permissions=True,
+    )
+
+
+def _unsupported_capabilities(source: SessionSource) -> ProviderCapabilities:
+    return ProviderCapabilities(source=source, hook_events={})
+
+
 def _droid_capabilities() -> ProviderCapabilities:
     events: dict[str, HookCapability] = {}
     for hook_name, contract in DROID_HOOK_CONTRACTS.items():
@@ -342,9 +413,11 @@ def _droid_capabilities() -> ProviderCapabilities:
 
 
 PROVIDER_CAPABILITIES: dict[SessionSource, ProviderCapabilities] = {
+    SessionSource.AGY: _unsupported_capabilities(SessionSource.AGY),
     SessionSource.CLAUDE: _claude_capabilities(),
     SessionSource.CODEX: _codex_capabilities(),
     SessionSource.GEMINI: _gemini_like_capabilities(SessionSource.GEMINI),
+    SessionSource.GROK: _grok_capabilities(),
     SessionSource.QWEN: _gemini_like_capabilities(SessionSource.QWEN),
     SessionSource.DROID: _droid_capabilities(),
 }
@@ -354,8 +427,10 @@ SOURCE_ALIASES: dict[str, SessionSource] = {
     "claude": SessionSource.CLAUDE,
     "codex": SessionSource.CODEX,
     "gemini": SessionSource.GEMINI,
+    "grok": SessionSource.GROK,
     "qwen": SessionSource.QWEN,
     "droid": SessionSource.DROID,
+    "agy": SessionSource.AGY,
 }
 
 
