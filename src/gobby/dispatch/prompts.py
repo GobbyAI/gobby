@@ -185,7 +185,13 @@ def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
         "call get_workflow_status. Do not run full pytest, Vitest, or Jest "
         "suites; run only focused validation relevant to the task diff. If a "
         "worker-safety hook blocks a command, read the block reason, switch to "
-        "a focused file/filter command, and never retry that blocked command."
+        "a focused file/filter command, and never retry that blocked command. "
+        "Run validation commands in the foreground. Do not use shell "
+        "backgrounding, detached commands, shell sleep loops, Monitor, "
+        "TaskOutput, or tmux polling to observe validation. If validation "
+        "cannot complete or be observed promptly, interrupt or abandon it once, "
+        "record the limitation in verdict evidence, and do not launch duplicate "
+        "validation commands."
     )
 
 

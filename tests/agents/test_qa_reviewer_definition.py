@@ -158,10 +158,21 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     assert "focused commands" in instructions
     assert "worker-safety hook blocks a validation command" in instructions
     assert "never retry that blocked command" in instructions
+    assert "Run validation commands in the foreground" in instructions
+    assert "Do NOT use shell backgrounding" in instructions
+    assert "Monitor, TaskOutput, or tmux polling" in instructions
+    assert "do not launch" in instructions
+    assert "duplicate validation commands" in instructions
     assert "Do not run full pytest, Vitest, or Jest suites" in status_message
     assert "focused validation" in status_message
     assert "worker-safety hook blocks a command" in status_message
     assert "never retry that\nblocked command" in status_message
+    assert "Run validation commands in the foreground" in status_message
+    assert "Do not use shell backgrounding" in status_message
+    assert "Monitor, TaskOutput, or tmux polling" in status_message
+    assert "do not launch duplicate validation commands" in status_message
+    assert "Monitor" not in review_step["allowed_tools"]
+    assert "TaskOutput" not in review_step["allowed_tools"]
 
 
 def test_leaf_review_is_ordered_by_spec_then_quality() -> None:

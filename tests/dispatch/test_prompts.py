@@ -58,6 +58,10 @@ def test_qa_reviewer_prompt_builder_registered() -> None:
     assert "focused validation" in prompt
     assert "worker-safety hook blocks a command" in prompt
     assert "never retry that blocked command" in prompt
+    assert "Run validation commands in the foreground" in prompt
+    assert "Do not use shell backgrounding" in prompt
+    assert "Monitor, TaskOutput, or tmux polling" in prompt
+    assert "do not launch duplicate validation commands" in prompt
 
 
 def test_prompt_builder_uses_seq_ref_when_loaded_task_has_no_ref() -> None:
