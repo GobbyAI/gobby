@@ -604,7 +604,8 @@ def _closed_descendant_commits(
 def _linked_commits(task: Task) -> tuple[str, ...]:
     commits: list[str] = []
     seen: set[str] = set()
-    for raw in (*(task.commits or ()), task.closed_commit_sha):
+    task_commits = (task.closed_commit_sha,) if task.closed_commit_sha else (task.commits or ())
+    for raw in task_commits:
         if not raw:
             continue
         commit_sha = str(raw)
