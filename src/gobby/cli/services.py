@@ -1,5 +1,5 @@
 """
-Service lifecycle utilities for Qdrant, Neo4j, and embedding providers.
+Service lifecycle utilities for Qdrant, FalkorDB, Neo4j, and embedding providers.
 
 Provides status checks for Docker-based services plus local embedding
 readiness helpers for managed local dependencies such as LM Studio.
@@ -8,7 +8,9 @@ readiness helpers for managed local dependencies such as LM Studio.
 import asyncio
 import ipaddress
 import logging
+import os
 import shutil
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -90,6 +92,69 @@ async def get_qdrant_status(
         "healthy": healthy,
         "url": qdrant_url,
     }
+
+
+# ---------------------------------------------------------------------------
+# FalkorDB
+# ---------------------------------------------------------------------------
+
+
+def is_falkordb_installed(*, gobby_home: Path | None = None) -> bool:
+    """Check if FalkorDB services are installed locally."""
+    home = gobby_home or Path(os.environ.get("GOBBY_HOME", "~/.gobby")).expanduser()
+    compose = home / "services" / "docker-compose.yml"
+    return compose.exists()
+
+
+async def is_falkordb_healthy(
+    host: str | None,
+    port: int | None,
+    password: str | None,
+) -> bool:
+    """Check if FalkorDB is reachable via Redis PING."""
+    if not host or not port or not password:
+        return False
+
+    def ping() -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=2) as sock:
+                sock.sendall(_resp_command("AUTH", password))
+                if not sock.recv(512).startswith(b"+OK"):
+                    return False
+                sock.sendall(_resp_command("PING"))
+                return sock.recv(512).startswith(b"+PONG")
+        except OSError:
+            return False
+
+    return await asyncio.to_thread(ping)
+
+
+async def get_falkordb_status(
+    *,
+    gobby_home: Path | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    password: str | None = None,
+) -> dict[str, Any]:
+    """Get comprehensive FalkorDB status."""
+    installed = is_falkordb_installed(gobby_home=gobby_home)
+    healthy = await is_falkordb_healthy(host, port, password) if installed else False
+    url = f"{host}:{port}" if host and port else None
+
+    return {
+        "configured": bool(host and port and password),
+        "installed": installed,
+        "healthy": healthy,
+        "url": url,
+    }
+
+
+def _resp_command(*parts: str) -> bytes:
+    encoded = [part.encode() for part in parts]
+    payload = f"*{len(encoded)}\r\n".encode()
+    for part in encoded:
+        payload += b"$" + str(len(part)).encode() + b"\r\n" + part + b"\r\n"
+    return payload
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,26 @@
 # Managed by daemon start/stop via Docker Compose profiles.
 
 services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: gobby-falkordb
+    ports:
+      - "16379:6379"
+      - "13000:3000"
+    environment:
+      - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD}
+    volumes:
+      - gobby_falkordb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${GOBBY_FALKORDB_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    profiles:
+      - falkordb
+      - all
+
   neo4j:
     image: neo4j:latest
     ports:
@@ -115,6 +135,8 @@ services:
       - all
 
 volumes:
+  gobby_falkordb_data:
+    name: gobby_falkordb_data
   gobby_neo4j_data:
     name: gobby_neo4j_data
   gobby_neo4j_logs:

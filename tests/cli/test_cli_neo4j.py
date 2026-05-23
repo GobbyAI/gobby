@@ -87,6 +87,25 @@ class TestInstallNeo4jFlag:
         assert "neo4j_flag" in param_names
 
 
+class TestInstallFalkorDBFlag:
+    """Tests for FalkorDB-related params in install/uninstall commands."""
+
+    def test_install_command_has_falkordb_options(self) -> None:
+        """install command has FalkorDB options used by the setup wizard."""
+        from gobby.cli.install import install
+
+        param_names = [p.name for p in install.params]
+        assert "falkordb_flag" in param_names
+        assert "falkordb_password" in param_names
+
+    def test_uninstall_command_has_falkordb_option(self) -> None:
+        """uninstall command has --falkordb option used by setup cleanup."""
+        from gobby.cli.install import uninstall
+
+        param_names = [p.name for p in uninstall.params]
+        assert "falkordb_flag" in param_names
+
+
 # ---------------------------------------------------------------------------
 # daemon.py — --docker flag (consolidated from --neo4j)
 # ---------------------------------------------------------------------------
@@ -183,14 +202,14 @@ class TestDaemonDockerFlag:
 
 
 # ---------------------------------------------------------------------------
-# status display — Neo4j knowledge graph
+# status display — knowledge graph
 # ---------------------------------------------------------------------------
 
 
-class TestStatusNeo4jDisplay:
-    """Tests for Neo4j status in format_status_message."""
+class TestStatusLegacyNeo4jDisplay:
+    """Tests for legacy Neo4j status in format_status_message."""
 
-    def test_status_shows_neo4j_installed_healthy(self) -> None:
+    def test_status_omits_legacy_neo4j_installed_healthy(self) -> None:
         msg = format_status_message(
             running=True,
             pid=123,
@@ -205,11 +224,9 @@ class TestStatusNeo4jDisplay:
                 }
             },
         )
-        assert "Neo4j" in msg
-        assert "healthy" in msg
-        assert "localhost:8474" in msg
+        assert "Neo4j" not in msg
 
-    def test_status_shows_neo4j_installed_unhealthy(self) -> None:
+    def test_status_omits_legacy_neo4j_installed_unhealthy(self) -> None:
         msg = format_status_message(
             running=True,
             pid=123,
@@ -224,10 +241,9 @@ class TestStatusNeo4jDisplay:
                 }
             },
         )
-        assert "Neo4j" in msg
-        assert "not responding" in msg
+        assert "Neo4j" not in msg
 
-    def test_status_shows_neo4j_not_installed(self) -> None:
+    def test_status_omits_legacy_neo4j_not_installed(self) -> None:
         msg = format_status_message(
             running=True,
             pid=123,
@@ -241,9 +257,70 @@ class TestStatusNeo4jDisplay:
                 }
             },
         )
-        assert "Neo4j" in msg
-        assert "not installed" in msg
+        assert "Neo4j" not in msg
 
     def test_status_omits_neo4j_when_no_data(self) -> None:
         msg = format_status_message(running=True, pid=123)
         assert "Neo4j" not in msg
+
+
+class TestStatusFalkorDBDisplay:
+    """Tests for FalkorDB status in format_status_message."""
+
+    def test_status_shows_falkordb_installed_healthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=123,
+            api_data={
+                "memory": {
+                    "falkordb": {
+                        "configured": True,
+                        "installed": True,
+                        "healthy": True,
+                        "url": "redis://127.0.0.1:16379",
+                    }
+                }
+            },
+        )
+        assert "FalkorDB" in msg
+        assert "healthy" in msg
+        assert "127.0.0.1:16379" in msg
+
+    def test_status_shows_falkordb_installed_unhealthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=123,
+            api_data={
+                "memory": {
+                    "falkordb": {
+                        "configured": True,
+                        "installed": True,
+                        "healthy": False,
+                        "url": "redis://127.0.0.1:16379",
+                    }
+                }
+            },
+        )
+        assert "FalkorDB" in msg
+        assert "not responding" in msg
+
+    def test_status_shows_falkordb_not_installed(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=123,
+            api_data={
+                "memory": {
+                    "falkordb": {
+                        "configured": True,
+                        "installed": False,
+                        "healthy": False,
+                    }
+                }
+            },
+        )
+        assert "FalkorDB" in msg
+        assert "not installed" in msg
+
+    def test_status_omits_falkordb_when_no_data(self) -> None:
+        msg = format_status_message(running=True, pid=123)
+        assert "FalkorDB" not in msg
