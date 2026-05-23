@@ -182,8 +182,10 @@ def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
         "claim_task unless the active step prompt explicitly says the current "
         "step is CLAIM. Load the required QA skills before review, then use "
         "get_task, get_task_diff, and exactly one review verdict tool. Do not "
-        "call get_workflow_status. Do not run the full pytest suite; run only "
-        "focused validation relevant to the task diff."
+        "call get_workflow_status. Do not run full pytest, Vitest, or Jest "
+        "suites; run only focused validation relevant to the task diff. If a "
+        "worker-safety hook blocks a command, read the block reason, switch to "
+        "a focused file/filter command, and never retry that blocked command."
     )
 
 

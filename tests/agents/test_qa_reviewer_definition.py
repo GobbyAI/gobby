@@ -142,21 +142,26 @@ def test_auto_claimed_reviewers_do_not_reclaim() -> None:
     assert "do not call" in instructions
     assert "claim_task again" in instructions
     assert "Do NOT call claim_task after spawn-time auto-claim" in instructions
-    assert "Do not call claim_task or get_workflow_status in REVIEW" in review_step[
-        "status_message"
-    ]
+    assert (
+        "Do not call claim_task or get_workflow_status in REVIEW" in review_step["status_message"]
+    )
 
 
-def test_reviewer_avoids_workflow_status_and_full_pytest() -> None:
+def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     agent = _agent()
     instructions = agent["instructions"]
     review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    status_message = review_step["status_message"]
 
     assert "Do NOT call get_workflow_status" in instructions
-    assert "Do NOT run the full pytest suite" in instructions
+    assert "Do NOT run full pytest, Vitest, or Jest suites" in instructions
     assert "focused commands" in instructions
-    assert "Do not run the full pytest suite" in review_step["status_message"]
-    assert "focused validation commands only" in review_step["status_message"]
+    assert "worker-safety hook blocks a validation command" in instructions
+    assert "never retry that blocked command" in instructions
+    assert "Do not run full pytest, Vitest, or Jest suites" in status_message
+    assert "focused validation" in status_message
+    assert "worker-safety hook blocks a command" in status_message
+    assert "never retry that\nblocked command" in status_message
 
 
 def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
