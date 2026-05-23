@@ -21,6 +21,14 @@ def _write_test(root: Path, source: str) -> Path:
     return path
 
 
+def _write_ts_test(root: Path, source: str) -> Path:
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    path = tests_dir / "state.test.ts"
+    path.write_text(source, encoding="utf-8")
+    return path
+
+
 def test_audit_text_output() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem() as cwd:
@@ -133,3 +141,59 @@ def test_no_assertion():
     assert result.exit_code == 1
     assert "NO_ASSERTION" in result.output
     assert "Failing new issues >= high: 1" in result.output
+
+
+def test_audit_counts_vitest_tests_with_expect_assertions() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_ts_test(
+            root,
+            """
+import { describe, expect, it } from "vitest";
+
+describe("setup state migration", () => {
+  it("rewrites legacy neo4j keys", () => {
+    const loaded = loadState();
+
+    expect(loaded).toMatchObject({ falkordb_installed: false });
+    expect(loaded).not.toHaveProperty("neo4j_installed");
+  });
+});
+""",
+        )
+
+        result = runner.invoke(quality_command, ["audit", "tests/state.test.ts"])
+
+    assert result.exit_code == 0
+    assert "Files scanned: 1" in result.output
+    assert "Tests scanned: 1" in result.output
+    assert "Issues: 0" in result.output
+
+
+def test_audit_counts_vitest_each_tests_with_expect_assertions() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_ts_test(
+            root,
+            """
+import { expect, it } from "vitest";
+
+it.each(["has space", "control char"])(
+  "rejects invalid password %s",
+  (password) => {
+    submit(password);
+
+    expect(runGobby).not.toHaveBeenCalled();
+  },
+);
+""",
+        )
+
+        result = runner.invoke(quality_command, ["audit", "tests/state.test.ts"])
+
+    assert result.exit_code == 0
+    assert "Files scanned: 1" in result.output
+    assert "Tests scanned: 1" in result.output
+    assert "Issues: 0" in result.output
