@@ -127,6 +127,7 @@ steps:
       - "gobby-agents:kill_agent"
     allowed_mcp_tools:
       - "gobby-agents:end_agent_run"
+      - "gobby-agents:send_message"
       - "gobby-skills:get_skill"
     on_mcp_success:
       - server: gobby-agents
