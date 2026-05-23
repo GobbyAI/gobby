@@ -1,11 +1,11 @@
 mod commands;
 mod config;
 mod db;
+mod falkor;
 mod freshness;
 mod git;
 mod index;
 mod models;
-mod falkor;
 mod neo4j;
 mod output;
 mod progress;

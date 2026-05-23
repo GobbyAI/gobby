@@ -704,12 +704,11 @@ mod tests {
             ("databases.falkordb.requirepass", "stored-pass"),
         ]);
 
-        let config = resolve_falkordb_config_from_values(
-            config_value_for(&values),
-            true,
-            |value| Ok(value.to_string()),
-        )
-        .expect("falkordb config");
+        let config =
+            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
+                Ok(value.to_string())
+            })
+            .expect("falkordb config");
 
         assert_eq!(config.host, "falkor.local");
         assert_eq!(config.port, 16380);
@@ -726,12 +725,11 @@ mod tests {
         unsafe { std::env::set_var("GOBBY_FALKORDB_PASSWORD", "env-pass") };
 
         let values = std::collections::HashMap::new();
-        let config = resolve_falkordb_config_from_values(
-            config_value_for(&values),
-            true,
-            |value| Ok(value.to_string()),
-        )
-        .expect("falkordb config");
+        let config =
+            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
+                Ok(value.to_string())
+            })
+            .expect("falkordb config");
 
         assert_eq!(config.host, "env-falkor.local");
         assert_eq!(config.port, 16381);
@@ -749,12 +747,11 @@ mod tests {
             ("databases.falkordb.port", "16382"),
         ]);
 
-        let config = resolve_falkordb_config_from_values(
-            config_value_for(&values),
-            true,
-            |value| Ok(value.to_string()),
-        )
-        .expect("falkordb config");
+        let config =
+            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
+                Ok(value.to_string())
+            })
+            .expect("falkordb config");
 
         assert_eq!(config.host, "env-host.local");
         assert_eq!(config.port, 16382);
@@ -770,15 +767,12 @@ mod tests {
             ("databases.falkordb.requirepass", "$secret:requirepass"),
         ]);
 
-        let config = resolve_falkordb_config_from_values(
-            config_value_for(&values),
-            true,
-            |value| {
+        let config =
+            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
                 assert_eq!(value, "$secret:requirepass");
                 Ok("resolved-pass".to_string())
-            },
-        )
-        .expect("falkordb config");
+            })
+            .expect("falkordb config");
 
         assert_eq!(config.password.as_deref(), Some("resolved-pass"));
     }
@@ -792,11 +786,10 @@ mod tests {
             ("databases.falkordb.requirepass", "stored-pass"),
         ]);
 
-        let config = resolve_falkordb_config_from_values(
-            config_value_for(&values),
-            true,
-            |value| Ok(value.to_string()),
-        );
+        let config =
+            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
+                Ok(value.to_string())
+            });
 
         assert!(config.is_none());
     }

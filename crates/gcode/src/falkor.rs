@@ -467,23 +467,26 @@ mod tests {
 
         assert!(query.contains("SKIP 17 LIMIT 1"), "{query}");
         assert_no_numeric_or_list_placeholders(&query);
-        assert_eq!(params.get("project").map(String::as_str), Some("'project-1'"));
+        assert_eq!(
+            params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
         assert_eq!(params.get("id").map(String::as_str), Some("'symbol-1'"));
     }
 
     #[test]
     fn batch_query_uses_one_interpolated_in_list() {
-        let (query, params) = find_callers_batch_query(
-            "project-1",
-            &["a".to_string(), "b'\\c".to_string()],
-            250,
-        );
+        let (query, params) =
+            find_callers_batch_query("project-1", &["a".to_string(), "b'\\c".to_string()], 250);
 
         assert_eq!(query.matches(" IN [").count(), 1, "{query}");
         assert!(query.contains("target.id IN ['a', 'b\\'\\\\c']"), "{query}");
         assert!(query.contains("LIMIT 100"), "{query}");
         assert_no_numeric_or_list_placeholders(&query);
-        assert_eq!(params.get("project").map(String::as_str), Some("'project-1'"));
+        assert_eq!(
+            params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
     }
 
     #[test]
