@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -17,6 +18,7 @@ from gobby.runner_init.helpers import (
 )
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -27,6 +29,56 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
+
+_NEO4J_CONFIG_PREFIX = "databases.neo4j."
+_FALKORDB_CONFIG_PREFIX = "databases.falkordb."
+_NEO4J_TUNABLE_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
+
+
+def _check_stale_neo4j_config(db: HubDatabase) -> None:
+    """Detect and clear stale Neo4j config rows after migration-time cleanup."""
+    stale_rows = db.fetchall(
+        "SELECT key FROM config_store WHERE key LIKE ? ORDER BY key",
+        (f"{_NEO4J_CONFIG_PREFIX}%",),
+    )
+    if not stale_rows:
+        return
+
+    keys = ", ".join(str(row["key"]) for row in stale_rows)
+    logger.warning(
+        "Detected stale Neo4j config keys (%s) - these are no longer used. "
+        "Run `gobby install --falkordb` to set up FalkorDB. Cleaning them up now.",
+        keys,
+    )
+
+    stale_secret_ref = json.dumps("$secret:auth")
+    with db.transaction():
+        for key in _NEO4J_TUNABLE_KEYS:
+            stale_key = f"{_NEO4J_CONFIG_PREFIX}{key}"
+            falkordb_key = f"{_FALKORDB_CONFIG_PREFIX}{key}"
+            db.execute(
+                """
+                INSERT INTO config_store (key, value, source, is_secret, updated_at)
+                SELECT ?, value, source, is_secret, updated_at
+                  FROM config_store
+                 WHERE key = ?
+                   AND NOT EXISTS (SELECT 1 FROM config_store WHERE key = ?)
+                """,
+                (falkordb_key, stale_key, falkordb_key),
+            )
+
+        db.execute(
+            "DELETE FROM config_store WHERE key LIKE ?",
+            (f"{_NEO4J_CONFIG_PREFIX}%",),
+        )
+        db.execute(
+            """
+            DELETE FROM secrets
+             WHERE name = 'auth'
+               AND NOT EXISTS (SELECT 1 FROM config_store WHERE value = ?)
+            """,
+            (stale_secret_ref,),
+        )
 
 
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
@@ -86,6 +138,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database)
+    _check_stale_neo4j_config(runner.database)
     runner.config = load_config(
         config_file=runner._config_file,
         secret_resolver=runner.secret_store.get,
