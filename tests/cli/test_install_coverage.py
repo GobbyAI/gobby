@@ -116,15 +116,15 @@ class TestInstallCommand:
     def _mock_docker_services(self) -> Any:
         """Mock Docker service and local embeddings installers — tests here focus on CLI-specific hooks."""
         qdrant_result = {"success": True, "qdrant_url": "http://localhost:6333"}
-        neo4j_result = {
+        falkordb_result = {
             "success": True,
-            "neo4j_url": "http://localhost:7474",
-            "bolt_url": "bolt://localhost:7687",
-            "compose_file": "/path/to/compose.yml",
+            "browser_url": "http://localhost:13000",
+            "password_source": "reused",
+            "password": None,
         }
         with (
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
-            patch("gobby.cli.install.install_neo4j", return_value=neo4j_result),
+            patch("gobby.cli.install.install_falkordb", return_value=falkordb_result),
         ):
             yield
 
@@ -241,7 +241,7 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_claude", return_value=claude_result),
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             result = runner.invoke(install, ["--claude"], catch_exceptions=False)
 
@@ -249,7 +249,7 @@ class TestInstallCommand:
         assert "Embedding Provider" not in result.output
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
-        mock_neo4j.assert_not_called()
+        mock_falkordb.assert_not_called()
 
     def test_install_default_runs_embedding_and_services(
         self,
@@ -274,18 +274,22 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
             ) as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             result = runner.invoke(install, [], catch_exceptions=False)
 
         assert result.exit_code == 0
+        assert "Gobby Hooks Installation" in result.output
+        assert "Components to configure: claude, git-hooks" in result.output
+        mock_hooks.assert_called_once()
         mock_embedding.assert_called_once()
         mock_qdrant.assert_called_once()
-        mock_neo4j.assert_called_once()
+        mock_falkordb.assert_called_once()
 
     def test_install_all_no_ext_services_runs_embedding_only(
         self,
@@ -310,11 +314,12 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
             ) as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             result = runner.invoke(
                 install,
@@ -323,29 +328,32 @@ class TestInstallCommand:
             )
 
         assert result.exit_code == 0
+        assert "Gobby Hooks Installation" in result.output
+        assert "Components to configure: claude, git-hooks" in result.output
+        mock_hooks.assert_called_once()
         mock_embedding.assert_called_once()
         mock_qdrant.assert_not_called()
-        mock_neo4j.assert_not_called()
+        mock_falkordb.assert_not_called()
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(
         "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
     )
     @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.install_neo4j")
+    @patch("gobby.cli.install.install_falkordb")
     @patch("gobby.cli.install.install_qdrant")
     @patch("gobby.cli.install.install_claude")
     def test_install_no_ext_services(
         self,
         mock_claude: MagicMock,
         mock_qdrant: MagicMock,
-        mock_neo4j: MagicMock,
+        mock_falkordb: MagicMock,
         _install_dir: MagicMock,
         _config: MagicMock,
         _setup: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """--no-ext-services skips both Qdrant and Neo4j."""
+        """--no-ext-services skips both Qdrant and FalkorDB."""
         mock_claude.return_value = {
             "success": True,
             "hooks_installed": ["PreToolUse"],
@@ -356,9 +364,9 @@ class TestInstallCommand:
         mock_qdrant.assert_not_called()
         assert mock_qdrant.call_count == 0
         assert not mock_qdrant.called
-        mock_neo4j.assert_not_called()
-        assert mock_neo4j.call_count == 0
-        assert not mock_neo4j.called
+        mock_falkordb.assert_not_called()
+        assert mock_falkordb.call_count == 0
+        assert not mock_falkordb.called
 
     def test_install_all_no_clis_detected(
         self,
@@ -461,16 +469,19 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Codex" in result.output
 
-    @patch("gobby.cli.install.uninstall_neo4j")
-    def test_uninstall_neo4j(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
+    @patch("gobby.cli.install.uninstall_falkordb")
+    def test_uninstall_falkordb(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
         mock_uninstall.return_value = {
             "success": True,
-            "already_uninstalled": False,
-            "volumes_removed": True,
+            "data_removed": True,
         }
-        result = runner.invoke(uninstall, ["--neo4j", "--volumes", "--yes"], catch_exceptions=False)
+        result = runner.invoke(
+            uninstall,
+            ["--falkordb", "--volumes", "--yes"],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0
-        assert "Neo4j" in result.output
+        assert "FalkorDB" in result.output
 
     def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """When --all is used but no CLI hooks are detected."""

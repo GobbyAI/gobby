@@ -10,16 +10,22 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
+FALKOR_RESTART_HINT_FRAGMENT = "FalkorDB password"
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +62,51 @@ def server(temp_db, real_config, task_manager):
 @pytest.fixture
 def client(server) -> TestClient:
     return TestClient(server.app)
+
+
+@pytest.fixture
+def sqlite_db(tmp_path):
+    db_path = tmp_path / "phase4-config-routes.db"
+    db = LocalDatabase(db_path)
+    run_migrations(db)
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def sqlite_task_manager(sqlite_db):
+    return LocalTaskManager(sqlite_db)
+
+
+@pytest.fixture
+def sqlite_server(sqlite_db, real_config, sqlite_task_manager):
+    return create_http_server(
+        config=real_config,
+        database=sqlite_db,
+        task_manager=sqlite_task_manager,
+    )
+
+
+@pytest.fixture
+def sqlite_client(sqlite_server) -> TestClient:
+    return TestClient(sqlite_server.app)
+
+
+def _config_store_row(db, key: str) -> dict[str, object] | None:
+    row = db.fetchone(
+        "SELECT key, value, source, is_secret, updated_at FROM config_store WHERE key = ?",
+        (key,),
+    )
+    return dict(row) if row is not None else None
+
+
+def _secret_row(db, name: str = "requirepass") -> dict[str, object] | None:
+    row = db.fetchone(
+        "SELECT id, name, encrypted_value, category, description, created_at, updated_at "
+        "FROM secrets WHERE name = ?",
+        (name,),
+    )
+    return dict(row) if row is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +241,54 @@ class TestSaveConfigValues:
         assert response.status_code == 400
         assert "detail" in response.json()
 
+    def test_save_falkordb_requirepass_encrypts_and_masks(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        response = sqlite_client.put(
+            "/api/config/values",
+            json={"values": {"databases": {"falkordb": {"requirepass": "Valid-123"}}}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+
+        store = ConfigStore(sqlite_db)
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert FALKOR_REQUIREPASS_KEY in store.get_secret_keys()
+        assert SecretStore(sqlite_db).get("requirepass") == "Valid-123"
+
+        get_response = sqlite_client.get("/api/config/values")
+        payload = get_response.json()
+        assert payload["values"]["databases"]["falkordb"]["requirepass"] == "********"
+        assert FALKOR_REQUIREPASS_KEY in payload["secret_keys"]
+
+    def test_save_falkordb_requirepass_invalid_returns_422_without_partial_write(
+        self, sqlite_client: TestClient, sqlite_db
+    ) -> None:
+        response = sqlite_client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "daemon_port": 9999,
+                    "databases": {"falkordb": {"requirepass": "contains space"}},
+                }
+            },
+        )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body == {
+            "detail": "FalkorDB password must not contain whitespace",
+            "key": FALKOR_REQUIREPASS_KEY,
+        }
+
+        store = ConfigStore(sqlite_db)
+        assert store.get("daemon_port") is None
+        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+
 
 # ---------------------------------------------------------------------------
 # POST /api/config/values/validate
@@ -276,6 +375,21 @@ class TestGetTemplate:
         response = client.get("/api/config/template")
         assert response.status_code == 200
         assert "9999" in response.json()["content"]
+
+    def test_masks_falkordb_requirepass_secret(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        store = ConfigStore(sqlite_db)
+        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(sqlite_db))
+
+        response = sqlite_client.get("/api/config/template")
+
+        assert response.status_code == 200
+        content = response.json()["content"]
+        parsed = yaml.safe_load(content)
+        assert parsed["databases"]["falkordb"]["requirepass"] == "********"
+        assert "$secret:requirepass" not in content
+        assert "Valid-123" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +512,82 @@ class TestGlobalToolApprovalRules:
         # Only daemon_port should be stored (bind_host is default)
         assert "daemon_port" in keys
         assert "bind_host" not in keys
+
+    def test_save_template_falkordb_requirepass_encrypts(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        content = yaml.safe_dump(
+            {
+                "databases": {
+                    "falkordb": {
+                        "requirepass": "Valid-123",
+                        "rrf_k": 77,
+                    }
+                }
+            },
+            sort_keys=False,
+        )
+
+        response = sqlite_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+
+        store = ConfigStore(sqlite_db)
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get("databases.falkordb.rrf_k") == 77
+        assert SecretStore(sqlite_db).get("requirepass") == "Valid-123"
+
+    def test_save_template_invalid_falkordb_requirepass_returns_422_without_writes(
+        self, sqlite_client: TestClient, sqlite_db
+    ) -> None:
+        content = yaml.safe_dump(
+            {
+                "daemon_port": 9999,
+                "databases": {"falkordb": {"requirepass": "contains space"}},
+            },
+            sort_keys=False,
+        )
+
+        response = sqlite_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": "FalkorDB password must not contain whitespace",
+            "key": FALKOR_REQUIREPASS_KEY,
+        }
+        store = ConfigStore(sqlite_db)
+        assert store.get("daemon_port") is None
+        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+
+    def test_save_template_masked_falkordb_requirepass_is_noop(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        store = ConfigStore(sqlite_db)
+        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(sqlite_db))
+        before_config = _config_store_row(sqlite_db, FALKOR_REQUIREPASS_KEY)
+        before_secret = _secret_row(sqlite_db)
+        content = yaml.safe_dump(
+            {"databases": {"falkordb": {"requirepass": "********"}}},
+            sort_keys=False,
+        )
+
+        with patch(
+            "gobby.servers.routes.configuration.validate_falkordb_password",
+            side_effect=AssertionError("masked sentinel must not be validated"),
+            create=True,
+        ) as validator:
+            response = sqlite_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 200
+        assert response.json()["requires_restart"] is False
+        validator.assert_not_called()
+        assert _config_store_row(sqlite_db, FALKOR_REQUIREPASS_KEY) == before_config
+        assert _secret_row(sqlite_db) == before_secret
+        assert SecretStore(sqlite_db).get("requirepass") == "Valid-123"
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +926,121 @@ class TestExportImport:
         assert "config restored" in data["summary"]
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is True
+
+    def test_import_config_store_falkordb_requirepass_encrypts(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        response = sqlite_client.post(
+            "/api/config/import",
+            json={
+                "config_store": {
+                    FALKOR_REQUIREPASS_KEY: "Valid-123",
+                    "databases.falkordb.rrf_k": 77,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+
+        store = ConfigStore(sqlite_db)
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get("databases.falkordb.rrf_k") == 77
+        assert SecretStore(sqlite_db).get("requirepass") == "Valid-123"
+
+    def test_import_legacy_config_falkordb_requirepass_encrypts(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        response = sqlite_client.post(
+            "/api/config/import",
+            json={
+                "config": {
+                    "databases": {
+                        "falkordb": {
+                            "requirepass": "Valid-123",
+                            "rrf_k": 77,
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+
+        store = ConfigStore(sqlite_db)
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get("databases.falkordb.rrf_k") == 77
+        assert SecretStore(sqlite_db).get("requirepass") == "Valid-123"
+
+    def test_import_falkordb_secret_reference_preserves_secret_row(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        store = ConfigStore(sqlite_db)
+        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(sqlite_db))
+        before_secret = _secret_row(sqlite_db)
+
+        with patch(
+            "gobby.servers.routes.configuration.validate_falkordb_password",
+            side_effect=AssertionError("secret references must not be validated"),
+            create=True,
+        ) as validator:
+            response = sqlite_client.post(
+                "/api/config/import",
+                json={
+                    "config_store": {
+                        FALKOR_REQUIREPASS_KEY: "$secret:requirepass",
+                        "daemon_port": 9999,
+                    },
+                    "config_secret_keys": [FALKOR_REQUIREPASS_KEY],
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+        validator.assert_not_called()
+        assert _secret_row(sqlite_db) == before_secret
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert FALKOR_REQUIREPASS_KEY in store.get_secret_keys()
+        assert store.get("daemon_port") == 9999
+
+    def test_export_then_import_preserves_requirepass_secret_row(
+        self, sqlite_client: TestClient, sqlite_db, mock_machine_id
+    ) -> None:
+        store = ConfigStore(sqlite_db)
+        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(sqlite_db))
+        before_secret = _secret_row(sqlite_db)
+
+        export_response = sqlite_client.post("/api/config/export")
+        assert export_response.status_code == 200
+        bundle = export_response.json()
+
+        with patch(
+            "gobby.servers.routes.configuration.validate_falkordb_password",
+            side_effect=AssertionError("exported secret refs must not be validated"),
+            create=True,
+        ) as validator:
+            import_response = sqlite_client.post(
+                "/api/config/import",
+                json={
+                    "config_store": bundle["config_store"],
+                    "config_secret_keys": bundle["config_secret_keys"],
+                },
+            )
+
+        assert import_response.status_code == 200
+        validator.assert_not_called()
+        assert _secret_row(sqlite_db) == before_secret
+        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
 
 
 # ---------------------------------------------------------------------------

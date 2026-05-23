@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -348,7 +349,7 @@ class TestGobbyRunnerShutdown:
         mock_config.message_tracking.enabled = True
         mock_config.message_tracking.poll_interval = 5.0
         mock_config.databases.qdrant.url = ""
-        mock_config.databases.neo4j.url = ""
+        mock_config.databases.falkordb.requirepass = None
         mock_config.embeddings.api_base = ""
         mock_config.ui.enabled = False
 
@@ -405,7 +406,7 @@ class TestGobbyRunnerShutdown:
     async def test_run_runs_startup_metrics_cleanup(self, mock_config):
         """Test that run performs startup metrics cleanup."""
         mock_config.databases.qdrant.url = ""
-        mock_config.databases.neo4j.url = ""
+        mock_config.databases.falkordb.requirepass = None
         mock_config.embeddings.api_base = ""
         mock_config.ui.enabled = False
 
@@ -754,4 +755,39 @@ class TestGobbyRunnerShutdownExtended:
                     await runner.run()
 
             assert events == ["telemetry", "database"]
+            assert runner.database.close.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_run_closes_code_graph_before_database(self, mock_config):
+        """CodeIndexContext closes its FalkorDB graph client before hub DB shutdown."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            runner._shutdown_requested = True
+            events: list[str] = []
+            runner.code_indexer = SimpleNamespace(
+                close_graph_client=AsyncMock(side_effect=lambda: events.append("code_graph"))
+            )
+            runner.database.close.side_effect = lambda: events.append("database")
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = AsyncMock()
+                mock_server.serve = AsyncMock()
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    await runner.run()
+
+            assert events.index("code_graph") < events.index("database")
+            runner.code_indexer.close_graph_client.assert_awaited_once()
             assert runner.database.close.call_count == 1

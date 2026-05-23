@@ -156,6 +156,39 @@ fi
 }
 
 
+def _resolve_git_hooks_dir(project_path: Path) -> Path | None:
+    """Resolve hooks dir for normal repos and linked git worktrees."""
+    git_entry = project_path / ".git"
+    if git_entry.is_dir():
+        return git_entry / "hooks"
+    if not git_entry.is_file():
+        return None
+
+    try:
+        content = git_entry.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+    if not content.startswith("gitdir:"):
+        return None
+
+    git_dir = Path(content.split(":", 1)[1].strip())
+    if not git_dir.is_absolute():
+        git_dir = (project_path / git_dir).resolve()
+
+    common_dir_file = git_dir / "commondir"
+    if common_dir_file.exists():
+        try:
+            common_dir = Path(common_dir_file.read_text(encoding="utf-8").strip())
+        except OSError:
+            common_dir = git_dir
+        if not common_dir.is_absolute():
+            common_dir = (git_dir / common_dir).resolve()
+        return common_dir / "hooks"
+
+    return git_dir / "hooks"
+
+
 def _backup_hook(hook_path: Path, hooks_dir: Path) -> str | None:
     """Create a timestamped backup of an existing hook.
 
@@ -334,12 +367,11 @@ def install_git_hooks(
         "error": None,
     }
 
-    git_dir = project_path / ".git"
-    if not git_dir.exists():
+    hooks_dir = _resolve_git_hooks_dir(project_path)
+    if hooks_dir is None:
         result["error"] = "Not a git repository (no .git directory found)"
         return result
 
-    hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     _cleanup_legacy_import_hooks(hooks_dir, result)
@@ -435,12 +467,11 @@ def uninstall_git_hooks(project_path: Path) -> dict[str, Any]:
         "error": None,
     }
 
-    git_dir = project_path / ".git"
-    if not git_dir.exists():
+    hooks_dir = _resolve_git_hooks_dir(project_path)
+    if hooks_dir is None:
         result["error"] = "Not a git repository"
         return result
 
-    hooks_dir = git_dir / "hooks"
     if not hooks_dir.exists():
         result["success"] = True
         return result
