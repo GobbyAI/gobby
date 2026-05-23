@@ -1,4 +1,4 @@
-import type { AdminStatus } from '../../hooks/useDashboard'
+import type { AdminStatus, DashboardMemoryServiceStatus } from '../../hooks/useDashboard'
 import { Badge } from '../chat/ui/Badge'
 import { DashboardCard } from './DashboardCard'
 import {
@@ -27,9 +27,37 @@ interface Props {
   data: AdminStatus
 }
 
+interface ServiceHealthItem {
+  id: string
+  label: string
+  status: string
+}
+
+function memoryServiceState(service: DashboardMemoryServiceStatus) {
+  if (service.healthy) return { label: 'connected', status: 'healthy' }
+  if (service.configured) return { label: 'disconnected', status: 'unhealthy' }
+  return { label: 'not configured', status: 'unknown' }
+}
+
+function memoryServiceHealth(
+  id: string,
+  displayName: string,
+  service?: DashboardMemoryServiceStatus,
+): ServiceHealthItem | null {
+  if (!service) return null
+
+  const state = memoryServiceState(service)
+
+  return {
+    id,
+    label: `${displayName} ${state.label}`,
+    status: state.status,
+  }
+}
+
 export function SystemHealthCard({ data }: Props) {
   const { server, process, background_tasks, status, memory, mcp_servers } = data
-  const neo4j = memory?.neo4j
+  const falkordb = memory?.falkordb
   const qdrant = memory?.qdrant
 
   // External MCP servers summary
@@ -73,23 +101,15 @@ export function SystemHealthCard({ data }: Props) {
 
       <div className={dashboardServicesClass}>
         {[
-          qdrant && {
-            id: 'qdrant',
-            label: `Qdrant ${qdrant.healthy ? 'connected' : qdrant.configured ? 'disconnected' : 'not configured'}`,
-            status: qdrant.healthy ? 'healthy' : qdrant.configured ? 'unhealthy' : 'unknown',
-          },
-          neo4j && {
-            id: 'neo4j',
-            label: `Neo4j ${neo4j.healthy ? 'connected' : neo4j.configured ? 'disconnected' : 'not configured'}`,
-            status: neo4j.healthy ? 'healthy' : neo4j.configured ? 'unhealthy' : 'unknown',
-          },
+          memoryServiceHealth('qdrant', 'Qdrant', qdrant),
+          memoryServiceHealth('falkordb', 'FalkorDB', falkordb),
           externalTotal > 0 && {
             id: 'external-mcps',
             label: `External MCPs ${externalHealthy}/${externalTotal} connected`,
             status: externalHealthy === externalTotal ? 'healthy' : externalHealthy > 0 ? 'degraded' : 'unhealthy',
           },
         ]
-          .filter((s): s is { id: string; label: string; status: string } => !!s)
+          .filter((s): s is ServiceHealthItem => !!s)
           .sort((a, b) => a.label.localeCompare(b.label))
           .map(s => (
             <div key={s.id} className={dashboardServiceRowClass}>
