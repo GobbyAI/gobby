@@ -6,7 +6,7 @@ rules:
     event: turn_start
     enabled: true
     priority: 9
-    when: "len((event.data.get('prompt') or '').strip()) >= 1 and not (event.data.get('prompt') or '').strip().startswith('/')"
+    when: "len((event.data.get('prompt') or '').strip()) >= 1"
     effects:
       - type: mcp_call
         server: gobby-memory

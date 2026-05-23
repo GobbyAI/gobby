@@ -169,6 +169,22 @@ class TestBuildHeuristicTitle:
     def test_allows_two_character_titles(self) -> None:
         assert _build_heuristic_title("PR") == "PR"
 
+    def test_strips_gobby_namespace_and_subcommand(self) -> None:
+        title = _build_heuristic_title(
+            "/gobby plan why aren't tmux titles updating in claude sessions"
+        )
+        assert title == "Why aren't tmux titles updating in claude"
+
+    def test_strips_non_gobby_slash_command(self) -> None:
+        assert _build_heuristic_title("/loop check the deploy") == "Check the deploy"
+
+    def test_strips_single_slash_command_with_no_args(self) -> None:
+        assert _build_heuristic_title("/help") is None
+        assert _build_heuristic_title("/schedule") is None
+
+    def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
+        assert _build_heuristic_title("hello world") == "Hello world"
+
 
 class TestShouldUpdateDigestTitle:
     """Tests for digest title ownership policy."""

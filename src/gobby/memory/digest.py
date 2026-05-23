@@ -34,6 +34,7 @@ _TITLE_LEADING_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 _TITLE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|[:;]\s+|\s+[/-]\s+")
+_TITLE_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]{0,15}$")
 _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
     re.IGNORECASE,
@@ -362,6 +363,32 @@ def _extract_markdown_h1_title(text: str) -> str | None:
     return None
 
 
+def _strip_slash_command_prefix(candidate: str) -> str:
+    """Strip leading slash-command tokens from a title candidate.
+
+    Slash-prefixed first prompts (``/gobby plan ...``, ``/loop check ...``)
+    would otherwise yield empty or garbage titles. Strip the command token so
+    the user's actual intent surfaces. ``/gobby`` is the namespace prefix used
+    by every Gobby slash command, so when it leads, the next short lowercase
+    token is the subcommand and also gets stripped — leaving the args (if any)
+    as the title source. A bare ``/gobby plan`` therefore strips to empty,
+    falling back to the digest path later.
+    """
+    parts = candidate.split()
+    if not parts or not parts[0].startswith("/"):
+        return candidate
+    leading = parts.pop(0)
+    if (
+        leading.lower() == "/gobby"
+        and parts
+        and _TITLE_SUBCOMMAND_RE.match(parts[0])
+    ):
+        parts.pop(0)
+    while parts and parts[0].startswith("/"):
+        parts.pop(0)
+    return " ".join(parts)
+
+
 def _build_heuristic_title(prompt_text: Any) -> str | None:
     """Derive a cheap bootstrap title from the first meaningful user prompt."""
     raw_text = _coerce_prompt_text(prompt_text)
@@ -387,8 +414,12 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
         return None
 
     candidate = re.sub(r"\s+", " ", lines[0]).strip()
-    if not candidate or candidate.startswith("/"):
+    if not candidate:
         return None
+    if candidate.startswith("/"):
+        candidate = _strip_slash_command_prefix(candidate)
+        if not candidate:
+            return None
 
     candidate = _TITLE_LEADING_PHRASE_RE.sub("", candidate)
     candidate = _TITLE_BREAK_RE.split(candidate, maxsplit=1)[0]
