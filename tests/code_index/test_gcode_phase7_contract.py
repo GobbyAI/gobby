@@ -57,17 +57,32 @@ def _assert_field(body: str, declaration: str) -> None:
     assert declaration in body, f"missing field declaration: {declaration}"
 
 
-def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
-    """FalkorDB config is required; Neo4j config is transitional until 7.4."""
-    config = _read("crates/gcode/src/config.rs")
+def _assert_fields(body: str, declarations: tuple[str, ...]) -> None:
+    for declaration in declarations:
+        _assert_field(body, declaration)
 
+
+def _assert_contains_all(source: str, fragments: tuple[str, ...]) -> None:
+    for fragment in fragments:
+        assert fragment in source
+
+
+def _assert_matches(source: str, patterns: tuple[str, ...]) -> None:
+    for pattern in patterns:
+        assert re.search(pattern, source, re.S), f"missing pattern: {pattern}"
+
+
+def _assert_falkordb_config(config: str, context: str) -> None:
     falkor = _struct_body(config, "FalkorConfig")
-    _assert_field(falkor, "pub host: String")
-    _assert_field(falkor, "pub port: u16")
-    _assert_field(falkor, "pub password: Option<String>")
-    _assert_field(falkor, "pub graph_name: String")
-
-    context = _struct_body(config, "Context")
+    _assert_fields(
+        falkor,
+        (
+            "pub host: String",
+            "pub port: u16",
+            "pub password: Option<String>",
+            "pub graph_name: String",
+        ),
+    )
     _assert_field(context, "pub falkordb: Option<FalkorConfig>")
 
     assert re.search(r"let\s+falkordb\s*=\s*resolve_falkordb_config\(", config)
@@ -76,23 +91,44 @@ def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
         r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config
     )
     assert graph_name_literal or graph_name_const
-    assert "databases.falkordb.host" in config
-    assert "databases.falkordb.port" in config
-    assert "databases.falkordb.requirepass" in config
-    assert "GOBBY_FALKORDB_HOST" in config
-    assert "GOBBY_FALKORDB_PORT" in config
-    assert "GOBBY_FALKORDB_PASSWORD" in config
+    _assert_contains_all(
+        config,
+        (
+            "databases.falkordb.host",
+            "databases.falkordb.port",
+            "databases.falkordb.requirepass",
+            "GOBBY_FALKORDB_HOST",
+            "GOBBY_FALKORDB_PORT",
+            "GOBBY_FALKORDB_PASSWORD",
+        ),
+    )
 
+
+def _assert_neo4j_transition_state(config: str, context: str) -> None:
     if re.search(r"pub\s+struct\s+Neo4jConfig\s*\{", config):
         neo4j = _struct_body(config, "Neo4jConfig")
-        _assert_field(neo4j, "pub url: String")
-        _assert_field(neo4j, "pub auth: Option<String>")
-        _assert_field(neo4j, "pub database: String")
+        _assert_fields(
+            neo4j,
+            (
+                "pub url: String",
+                "pub auth: Option<String>",
+                "pub database: String",
+            ),
+        )
         _assert_field(context, "pub neo4j: Option<Neo4jConfig>")
         assert re.search(r"let\s+neo4j\s*=\s*resolve_neo4j_config\(", config)
     else:
         assert "pub neo4j: Option<Neo4jConfig>" not in context
         assert "resolve_neo4j_config" not in config
+
+
+def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
+    """FalkorDB config is required; Neo4j config is transitional until 7.4."""
+    config = _read("crates/gcode/src/config.rs")
+    context = _struct_body(config, "Context")
+
+    _assert_falkordb_config(config, context)
+    _assert_neo4j_transition_state(config, context)
 
 
 def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
@@ -102,34 +138,36 @@ def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
     client = _struct_body(falkor, "FalkorClient")
     _assert_field(client, "graph: SyncGraph")
 
-    assert "use falkordb::" in falkor
-    assert "FalkorClientBuilder" in falkor
-    assert "FalkorConnectionInfo" in falkor
-    assert "FalkorValue" in falkor
-    assert "SyncGraph" in falkor
-    assert re.search(r"pub\s+type\s+Row\s*=\s*HashMap<String,\s*Value>", falkor)
-    assert re.search(r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig\)", falkor)
-    assert "urlencoding::encode(password)" in falkor
-    assert "falkor://:{}@{}:{}" in falkor
-    assert ".with_connection_info(conn_info)" in falkor
-    assert re.search(
-        r"pub\s+fn\s+query\(\s*&mut\s+self,\s*cypher:\s*&str,\s*"
-        r"params:\s*Option<HashMap<String,\s*String>>",
+    _assert_contains_all(
         falkor,
-        re.S,
+        (
+            "use falkordb::",
+            "FalkorClientBuilder",
+            "FalkorConnectionInfo",
+            "FalkorValue",
+            "SyncGraph",
+            "urlencoding::encode(password)",
+            "falkor://:{}@{}:{}",
+            ".with_connection_info(conn_info)",
+            ".with_params(&",
+            "result.header",
+            "FalkorValue::None",
+            "let mut client =",
+            "ctx.falkordb",
+        ),
     )
-    assert ".with_params(&" in falkor
-    assert re.search(r"fn\s+parse_falkor_result\(", falkor)
-    assert "result.header" in falkor
-    assert "FalkorValue::None" in falkor
-    assert re.search(
-        r"pub\s+fn\s+with_falkor<T>\(\s*ctx:\s*&Context,\s*default:\s*T,\s*"
-        r"f:\s*impl\s+FnOnce\(&mut\s+FalkorClient\)",
+    _assert_matches(
         falkor,
-        re.S,
+        (
+            r"pub\s+type\s+Row\s*=\s*HashMap<String,\s*Value>",
+            r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig\)",
+            r"pub\s+fn\s+query\(\s*&mut\s+self,\s*cypher:\s*&str,\s*"
+            r"params:\s*Option<HashMap<String,\s*String>>",
+            r"fn\s+parse_falkor_result\(",
+            r"pub\s+fn\s+with_falkor<T>\(\s*ctx:\s*&Context,\s*default:\s*T,\s*"
+            r"f:\s*impl\s+FnOnce\(&mut\s+FalkorClient\)",
+        ),
     )
-    assert re.search(r"let\s+mut\s+client\s*=", falkor)
-    assert "ctx.falkordb" in falkor
 
 
 def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
@@ -158,7 +196,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
     falkor = _read("crates/gcode/src/falkor.rs")
     production = _without_rust_unit_tests(falkor)
 
-    for function in (
+    read_helpers = (
         "count_callers",
         "count_usages",
         "find_callers",
@@ -167,25 +205,33 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         "find_callees_batch",
         "get_imports",
         "blast_radius",
-    ):
+    )
+    for function in read_helpers:
         assert re.search(
             rf"pub\s+fn\s+{function}\(\s*ctx:\s*&Context\b",
             production,
         ), f"missing public read helper {function}(ctx: &Context, ...)"
 
-    assert "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol" in production
-    assert re.search(r"fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String", production)
-    assert re.search(r"fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String", production)
-    assert re.search(
-        r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)",
+    _assert_contains_all(
         production,
+        (
+            "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
+            "depth.clamp(1, 5)",
+            "limit.clamp(1, MAX_GRAPH_LIMIT)",
+            "SKIP {offset} LIMIT {limit}",
+            "target.id IN [{ids}]",
+            "src.id IN [{ids}]",
+            "LIMIT {limit}",
+        ),
     )
-    assert "depth.clamp(1, 5)" in production
-    assert "limit.clamp(1, MAX_GRAPH_LIMIT)" in production
-    assert "SKIP {offset} LIMIT {limit}" in production
-    assert "target.id IN [{ids}]" in production
-    assert "src.id IN [{ids}]" in production
-    assert "LIMIT {limit}" in production
+    _assert_matches(
+        production,
+        (
+            r"fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String",
+            r"fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String",
+            r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)",
+        ),
+    )
     assert "$offset" not in production
     assert "$limit" not in production
     assert "$ids" not in production
