@@ -268,6 +268,8 @@ class HookEventBroadcaster:
                     if not behavior:
                         if response.decision in ("deny", "block"):
                             behavior = "deny"
+                        elif response.decision == "allow":
+                            behavior = "allow"
                         elif response.modified_input or response.updated_permissions:
                             behavior = "allow"
                     if behavior:
