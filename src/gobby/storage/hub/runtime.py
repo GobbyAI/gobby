@@ -20,7 +20,7 @@ def open_runtime_hub_database(
     apply_migrations: bool = True,
 ) -> HubDatabase:
     """Open the configured PostgreSQL runtime hub database."""
-    config = load_config(config_file)
+    config = load_config(config_file, resolve_database_url=True)
     if config.hub_backend != "postgres":
         raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
     if not config.database_url:

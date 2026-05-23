@@ -67,7 +67,7 @@ def _configured_postgres_database_url() -> str | None:
     try:
         from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
-        return load_bootstrap().database_url
+        return load_bootstrap(resolve_database_url=True).database_url
     except BootstrapConfigError as exc:
         logger.warning("Failed to load bootstrap PostgreSQL DSN for tests: %s", exc)
         return None

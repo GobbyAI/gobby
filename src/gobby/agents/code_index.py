@@ -17,7 +17,7 @@ from pathlib import Path
 from gobby.config.bootstrap import (
     DEFAULT_DAEMON_BIND_HOST,
     DEFAULT_DAEMON_PORT,
-    POSTGRES_DATABASE_URL_REF,
+    POSTGRES_DATABASE_URL_DAEMON_REF,
 )
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
 from gobby.config.local_cli_token import ensure_local_cli_token
@@ -140,7 +140,7 @@ def _prepare_gcode_runtime(
         runtime_home / "bootstrap.yaml",
         {
             "hub_backend": "postgres",
-            "database_url_ref": POSTGRES_DATABASE_URL_REF,
+            "database_url_ref": POSTGRES_DATABASE_URL_DAEMON_REF,
             "daemon_port": daemon_port or DEFAULT_DAEMON_PORT,
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
             "postgres_install_mode": "external",

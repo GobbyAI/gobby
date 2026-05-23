@@ -37,6 +37,9 @@ POSTGRES_DATABASE_URL_KEYRING_USERNAME = "postgres_database_url"
 POSTGRES_DATABASE_URL_REF = (
     f"keyring:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
 )
+POSTGRES_DATABASE_URL_DAEMON_REF = (
+    f"daemon:{POSTGRES_DATABASE_URL_KEYRING_SERVICE}:{POSTGRES_DATABASE_URL_KEYRING_USERNAME}"
+)
 PostgresDatabaseUrlCacheKey = tuple[str, str, str]
 _POSTGRES_DATABASE_URL_CACHE: dict[PostgresDatabaseUrlCacheKey, str] = {}
 _POSTGRES_DATABASE_URL_CACHE_LOCK = threading.RLock()
@@ -101,12 +104,16 @@ class BootstrapConfig:
         return data
 
 
-def load_bootstrap(path: str | None = None) -> BootstrapConfig:
+def load_bootstrap(
+    path: str | None = None, *, resolve_database_url: bool = False
+) -> BootstrapConfig:
     """Load bootstrap config from YAML, falling back to defaults if missing.
 
     Args:
         path: Path to bootstrap.yaml. Defaults to ~/.gobby/bootstrap.yaml.
               Also accepts a path to the legacy config.yaml (ignored — defaults used).
+        resolve_database_url: Resolve database_url_ref through the OS keyring. Keep false for
+              callers that only need pre-DB fields such as ports and daemon URL.
 
     Returns:
         BootstrapConfig with values from file or defaults.
@@ -138,7 +145,7 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
         hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
         database_url_ref = _parse_optional_str(data.get("database_url_ref"), "database_url_ref")
-        if database_url:
+        if database_url and resolve_database_url:
             data.pop("database_url", None)
             data["database_url_ref"] = store_postgres_database_url(database_url)
             try:
@@ -148,9 +155,11 @@ def load_bootstrap(path: str | None = None) -> BootstrapConfig:
                     "failed to rewrite bootstrap.yaml with database_url_ref"
                 ) from exc
         elif database_url_ref:
-            database_url = resolve_postgres_database_url_ref(database_url_ref)
+            _parse_supported_database_url_ref(database_url_ref)
+            if resolve_database_url:
+                database_url = resolve_postgres_database_url_ref(database_url_ref)
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
-        if explicit_hub_backend and not database_url:
+        if explicit_hub_backend and resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
         return BootstrapConfig(
@@ -241,6 +250,11 @@ def store_postgres_database_url(database_url: str) -> str:
 
 def resolve_postgres_database_url_ref(database_url_ref: str) -> str:
     """Resolve the bootstrap PostgreSQL DSN from the OS keyring."""
+    if database_url_ref == POSTGRES_DATABASE_URL_DAEMON_REF:
+        raise BootstrapConfigError(
+            f"database_url_ref {POSTGRES_DATABASE_URL_DAEMON_REF} is broker-only and "
+            "cannot be resolved from the OS keyring"
+        )
     service, username = _parse_postgres_database_url_ref(database_url_ref)
     keyring_backend = _keyring()
     cache_key = _postgres_database_url_cache_key(keyring_backend, service, username)
@@ -353,6 +367,15 @@ def _parse_postgres_database_url_ref(database_url_ref: str) -> tuple[str, str]:
     ):
         raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_REF}")
     return service, username
+
+
+def _parse_supported_database_url_ref(database_url_ref: str) -> None:
+    if database_url_ref in {POSTGRES_DATABASE_URL_REF, POSTGRES_DATABASE_URL_DAEMON_REF}:
+        return
+    raise BootstrapConfigError(
+        "database_url_ref must be "
+        f"{POSTGRES_DATABASE_URL_REF} or {POSTGRES_DATABASE_URL_DAEMON_REF}"
+    )
 
 
 def _keyring_backend_name(keyring_backend: Any) -> str:

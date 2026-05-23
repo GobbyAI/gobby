@@ -8,6 +8,17 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Route generated isolated `gcode` runtimes through the daemon-only PostgreSQL
+  DSN broker ref and raise the managed `gcode` pin to `0.8.4`, preventing
+  short-lived `gcode` helpers from opening the OS Keychain directly.
+- Let bootstrap readers parse pre-database fields without resolving
+  `database_url_ref`; daemon/runtime database startup paths opt into DSN
+  resolution explicitly.
+
 ## [0.4.6]
 
 A patch release focused on a tri-state activity-panel layout, a redesigned
