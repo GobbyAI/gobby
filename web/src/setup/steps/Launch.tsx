@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
 import { execSync } from "child_process";
@@ -14,9 +14,11 @@ import type { StepProps } from "../types.js";
 export function Launch({ state, setState, onNext: _onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<"starting" | "waiting" | "done">("starting");
   const [healthy, setHealthy] = useState(false);
+  const launchStateRef = useRef(state);
 
   useEffect(() => {
     let cancelled = false;
+    const launchState = launchStateRef.current;
 
     const run = async (): Promise<void> => {
       // Start daemon
@@ -25,12 +27,12 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
       setPhase("waiting");
 
       // Wait for health
-      const ok = await checkHealth(state.ports.http, 30000);
+      const ok = await checkHealth(launchState.ports.http, 30000);
       if (cancelled) return;
       setHealthy(ok);
 
       // Write INITIAL_SETUP.md
-      writeInitialSetupMd(state);
+      writeInitialSetupMd(launchState);
 
       // Mark complete
       setState((prev) => {
@@ -44,7 +46,7 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
       });
 
       // Open browser
-      const url = `http://localhost:${state.ports.ui}/?first_run=true`;
+      const url = `http://localhost:${launchState.ports.ui}/?first_run=true`;
       try {
         if (process.platform === "darwin") {
           execSync(`open "${url}"`, { timeout: 5000 });
@@ -64,7 +66,7 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
     return () => {
       cancelled = true;
     };
-  }, [setState, state]);
+  }, [setState]);
 
   if (phase === "starting") {
     return (
