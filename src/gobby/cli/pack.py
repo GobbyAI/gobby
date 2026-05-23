@@ -50,7 +50,7 @@ PACK_FILES = [
 
 # Docker volumes to export
 DOCKER_VOLUMES = [
-    "gobby_neo4j_data",
+    "gobby_falkordb_data",
     "gobby_qdrant_data",
 ]
 
@@ -154,15 +154,11 @@ def _daemon_is_running() -> bool:
 
 
 def _stop_services() -> bool:
-    """Stop Docker services (Qdrant, Neo4j) for consistent snapshots."""
+    """Stop Docker services (Qdrant, FalkorDB) for consistent snapshots."""
     services_dir = get_gobby_home() / "services"
     compose_file = services_dir / "docker-compose.yml"
-
-    # Fall back to legacy Neo4j compose
     if not compose_file.exists():
-        compose_file = services_dir / "neo4j" / "docker-compose.yml"
-        if not compose_file.exists():
-            return False
+        return False
 
     try:
         result = subprocess.run(
@@ -192,7 +188,7 @@ def _start_services() -> None:
     _services_start(get_gobby_home())
 
 
-# Aliases — _stop_services/_start_services handle all Docker services (Qdrant, Neo4j)
+# Aliases: _stop_services/_start_services handle all Docker services (Qdrant, FalkorDB).
 _stop_docker_services = _stop_services
 _start_docker_services = _start_services
 
@@ -253,14 +249,14 @@ def _archive_would_overwrite(members: list[tarfile.TarInfo]) -> bool:
 
 @click.command("pack")
 @click.argument("output", required=False, type=click.Path())
-@click.option("--no-docker", is_flag=True, help="Skip Docker volume export (Neo4j + Qdrant)")
+@click.option("--no-docker", is_flag=True, help="Skip Docker volume export (FalkorDB + Qdrant)")
 @click.option("--no-transcripts", is_flag=True, help="Skip session transcript archives")
 @click.option("--dry-run", is_flag=True, help="Show what would be packed without creating archive")
 def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: bool) -> None:
     """Pack all Gobby data into a portable archive for machine migration.
 
     Creates a tarball containing local configs, session transcripts, vector
-    store data, Docker volume data (Neo4j + Qdrant), and a logical PostgreSQL
+    store data, Docker volume data (FalkorDB + Qdrant), and a logical PostgreSQL
     dump when configured.
 
     \b
@@ -432,7 +428,7 @@ def _do_pack(
 
 @click.command("unpack")
 @click.argument("archive", type=click.Path(exists=True))
-@click.option("--no-docker", is_flag=True, help="Skip Docker volume import (Neo4j + Qdrant)")
+@click.option("--no-docker", is_flag=True, help="Skip Docker volume import (FalkorDB + Qdrant)")
 @click.option("--no-postgres", is_flag=True, help="Skip PostgreSQL logical dump restore")
 @click.option("--dry-run", is_flag=True, help="Show what would be unpacked without extracting")
 @click.option(
@@ -450,7 +446,7 @@ def unpack(
     """Unpack a Gobby archive to restore data on a new machine.
 
     Restores local configs, session transcripts, vector store data, Docker
-    volume data (Neo4j + Qdrant), and PostgreSQL logical dump data when present.
+    volume data (FalkorDB + Qdrant), and PostgreSQL logical dump data when present.
 
     \b
     Usage:

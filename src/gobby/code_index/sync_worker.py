@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.graph import CodeGraph
     from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
@@ -37,7 +38,7 @@ async def _run_db(
 async def sync_worker_loop(
     storage: CodeIndexStorage,
     vector_store: Any | None,
-    graph: CodeGraph | None,
+    context: CodeIndexContext,
     config: CodeIndexConfig,
     embeddings_config: EmbeddingsConfig,
     shutdown_flag: asyncio.Event,
@@ -78,6 +79,7 @@ async def sync_worker_loop(
             logger.warning(f"Sync worker: embedding unavailable: {e}")
 
     while not shutdown_flag.is_set():
+        graph = context.graph
         try:
             await _sync_pass(
                 storage=storage,

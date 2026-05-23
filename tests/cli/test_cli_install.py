@@ -30,7 +30,7 @@ def _mock_ext_services_and_prompts():
     """Prevent real Docker service installers and interactive API-key prompts."""
     with (
         patch("gobby.cli.install._run_qdrant_install"),
-        patch("gobby.cli.install._run_neo4j_install"),
+        patch("gobby.cli.install._run_falkordb_install"),
         patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch(
@@ -510,7 +510,7 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             with runner.isolated_filesystem(temp_dir=str(temp_dir)):
                 result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
@@ -521,7 +521,7 @@ class TestInstallCommand:
         mock_codex.assert_called_once()
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
-        mock_neo4j.assert_not_called()
+        mock_falkordb.assert_not_called()
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_git_hooks")

@@ -1,5 +1,5 @@
 """
-Service lifecycle utilities for Qdrant, Neo4j, FalkorDB, and embedding providers.
+Service lifecycle utilities for Qdrant, FalkorDB, and embedding providers.
 
 Provides status checks for Docker-based services plus local embedding
 readiness helpers for managed local dependencies such as LM Studio.
@@ -94,67 +94,6 @@ async def get_qdrant_status(
 
 
 # ---------------------------------------------------------------------------
-# Neo4j
-# ---------------------------------------------------------------------------
-
-
-def is_neo4j_installed(*, gobby_home: Path | None = None) -> bool:
-    """Check if Neo4j services are installed locally.
-
-    Checks for the presence of ~/.gobby/services/neo4j/ directory.
-    """
-    home = gobby_home or Path("~/.gobby").expanduser()
-    return (home / "services" / "neo4j").exists()
-
-
-async def is_neo4j_healthy(url: str | None) -> bool:
-    """Check if a Neo4j instance is reachable and healthy.
-
-    Sends a GET request to the Neo4j HTTP endpoint with a short timeout.
-    Returns False if URL is None, unreachable, or returns 5xx.
-    """
-    if not url:
-        return False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=5)
-            if resp.status_code >= 500:
-                logger.debug("Neo4j health check failed: %s returned %s", url, resp.status_code)
-                return False
-            return True
-    except httpx.HTTPError as e:
-        logger.debug(
-            "Neo4j health check failed: %s unreachable: %s: %s",
-            url,
-            type(e).__name__,
-            e,
-        )
-        return False
-
-
-async def get_neo4j_status(
-    *,
-    gobby_home: Path | None = None,
-    neo4j_url: str | None = None,
-) -> dict[str, Any]:
-    """Get comprehensive Neo4j status.
-
-    Returns dict with:
-        installed: bool - service directory exists
-        healthy: bool - API is reachable
-        url: str | None - configured URL
-    """
-    installed = is_neo4j_installed(gobby_home=gobby_home)
-    healthy = await is_neo4j_healthy(neo4j_url) if installed else False
-
-    return {
-        "installed": installed,
-        "healthy": healthy,
-        "url": neo4j_url,
-    }
-
-
-# ---------------------------------------------------------------------------
 # FalkorDB
 # ---------------------------------------------------------------------------
 
@@ -167,17 +106,12 @@ def is_falkordb_installed(
     """Check whether FalkorDB connection keys were recorded in config_store."""
     owned_db: Any | None = None
     if db is None:
+        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
         from gobby.cli.utils import get_gobby_home
-        from gobby.config.bootstrap import load_bootstrap
         from gobby.storage.database import LocalDatabase
 
         home = gobby_home if gobby_home is not None else get_gobby_home()
-        bootstrap_file = home / "bootstrap.yaml"
-        if bootstrap_file.exists():
-            db_path = Path(load_bootstrap(str(bootstrap_file)).database_path).expanduser()
-        else:
-            db_path = home / "gobby-hub.db"
-        db = LocalDatabase(db_path)
+        db = LocalDatabase(_resolve_falkordb_db_path(home))
         owned_db = db
 
     from gobby.storage.config_store import ConfigStore

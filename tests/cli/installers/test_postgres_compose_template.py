@@ -37,7 +37,7 @@ def test_compose_defines_postgres_alongside_existing_services(
 ) -> None:
     services = compose_data["services"]
 
-    assert "neo4j" in services
+    assert "falkordb" in services
     assert "qdrant" in services
     assert "postgres" in services
 

@@ -663,6 +663,41 @@ class TestLoadConfig:
         assert config.memory.kg.provider == "codex"
         assert config.memory.kg.model == "gpt-5-mini"
 
+    def test_load_config_drops_stale_neo4j_db_keys(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Legacy databases.neo4j.* config_store keys do not block FalkorDB config."""
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "databases.neo4j.url": "http://localhost:8474",
+                    "databases.neo4j.password": "$secret:password",
+                    "databases.falkordb.requirepass": "falkor-secret",
+                }
+
+            def delete(self, key: str) -> bool:
+                self.deleted.append(key)
+                return True
+
+        store = DummyConfigStore()
+        caplog.set_level("WARNING", logger="gobby.config.app")
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert config.databases.falkordb.requirepass == "falkor-secret"
+        assert store.deleted == ["databases.neo4j.password", "databases.neo4j.url"]
+        assert any(
+            "Ignoring stale Neo4j config_store keys after FalkorDB migration" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_load_config_drops_removed_dead_sections(self, temp_dir: Path) -> None:
         """Removed review/task_description/enrichment sections are ignored from DB config."""
 
@@ -762,6 +797,17 @@ class TestBootstrapConfig:
         assert bootstrap.bind_host == "0.0.0.0"
         assert bootstrap.websocket_port == 9998
         assert bootstrap.ui_port == 9997
+
+    def test_load_bootstrap_accepts_legacy_neo4j_password(self, temp_dir: Path) -> None:
+        """Legacy bootstrap neo4j_password is a read-only FalkorDB password fallback."""
+        from gobby.config.bootstrap import load_bootstrap
+
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(bootstrap_file, "neo4j_password: old-secret\n")
+
+        bootstrap = load_bootstrap(str(bootstrap_file))
+
+        assert bootstrap.falkordb_password == "old-secret"
 
     def test_to_config_dict(self) -> None:
         """Test bootstrap converts to DaemonConfig-compatible dict."""
