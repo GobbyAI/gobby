@@ -270,7 +270,7 @@ describe('useFalkorStatus', () => {
     }
 
     mockFetch.mockJsonResponse('/api/admin/status', {
-      memory: { falkordb: { configured: true, url: 'bolt://localhost:6379' } },
+      memory: { falkordb: { configured: true, url: 'redis://localhost:6379' } },
     })
 
     const { result } = renderHook(() => useFalkorStatus())
@@ -278,7 +278,7 @@ describe('useFalkorStatus', () => {
     await waitFor(() => expect(result.current).toBeTruthy())
 
     expect(result.current?.configured).toBe(true)
-    expect(result.current?.url).toBe('bolt://localhost:6379')
+    expect(result.current?.url).toBe('redis://localhost:6379')
   })
 
   it('returns null when falkordb not configured', async () => {
