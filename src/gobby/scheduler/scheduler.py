@@ -250,9 +250,7 @@ class CronScheduler:
         return delays[idx]
 
     def _planned_restart_source(self) -> str | None:
-        record = read_active_shutdown_intent(
-            max_age_seconds=PLANNED_RESTART_MARKER_MAX_AGE_SECONDS
-        )
+        record = read_active_shutdown_intent(max_age_seconds=PLANNED_RESTART_MARKER_MAX_AGE_SECONDS)
         if record is None or record.stale or record.error:
             return None
         if record.intent is not ShutdownIntent.RESTART:
