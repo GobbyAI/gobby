@@ -61,6 +61,20 @@ def test_migration_moves_backend_agnostic_tunables_and_drops_neo4j_keys(
     assert temp_db.fetchone("SELECT 1 FROM secrets WHERE name = ?", ("auth",)) is None
 
 
+def test_migration_does_not_clobber_existing_falkordb_tunables(
+    temp_db: LocalDatabase,
+) -> None:
+    from gobby.storage.migrations import migrate_neo4j_config_to_falkordb
+
+    _seed_neo4j_config(temp_db)
+    store = ConfigStore(temp_db)
+    store.set("databases.falkordb.rrf_k", 60, source="existing")
+
+    migrate_neo4j_config_to_falkordb(temp_db)
+
+    assert store.get("databases.falkordb.rrf_k") == 60
+
+
 def test_migration_preserves_auth_secret_when_other_config_reference_survives(
     temp_db: LocalDatabase,
 ) -> None:

@@ -50,7 +50,7 @@ _MIN_MIGRATION_VERSION = 260
 # Runtime migrations are file-based PostgreSQL migrations only.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
 
-_NEO4J_TUNABLE_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
+_NEO4J_BACKEND_NEUTRAL_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
 
 
 def migrate_neo4j_config_to_falkordb(db: LocalDatabase) -> None:
@@ -60,33 +60,34 @@ def migrate_neo4j_config_to_falkordb(db: LocalDatabase) -> None:
     ``gobby.storage.migrations``. This SQLite-compatible helper preserves the
     same behavior for legacy import and migration regression tests.
     """
-    for key in _NEO4J_TUNABLE_KEYS:
+    with db.transaction():
+        for key in _NEO4J_BACKEND_NEUTRAL_KEYS:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO config_store (key, value, source, is_secret, updated_at)
+                SELECT REPLACE(key, 'databases.neo4j.', 'databases.falkordb.'),
+                       value,
+                       source,
+                       is_secret,
+                       updated_at
+                  FROM config_store
+                 WHERE key = ?
+                """,
+                (f"databases.neo4j.{key}",),
+            )
+
+        db.execute("DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'")
         db.execute(
             """
-            INSERT OR IGNORE INTO config_store (key, value, source, is_secret, updated_at)
-            SELECT REPLACE(key, 'databases.neo4j.', 'databases.falkordb.'),
-                   value,
-                   source,
-                   is_secret,
-                   updated_at
-              FROM config_store
-             WHERE key = ?
-            """,
-            (f"databases.neo4j.{key}",),
+            DELETE FROM secrets
+             WHERE name = 'auth'
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM config_store
+                    WHERE value = json_quote('$secret:auth')
+               )
+            """
         )
-
-    db.execute("DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'")
-    db.execute(
-        """
-        DELETE FROM secrets
-         WHERE name = 'auth'
-           AND NOT EXISTS (
-               SELECT 1
-                 FROM config_store
-                WHERE value = json_quote('$secret:auth')
-           )
-        """
-    )
 
 
 def _describe_legacy_migration_entry(entry: object) -> str:
@@ -420,50 +421,6 @@ def _transaction(db: Any) -> Iterator[_TransactionLike]:
 def _version_set(txn: _TransactionLike, table: str) -> set[int]:
     rows = txn.execute(f"SELECT version FROM {table}").fetchall()
     return {int(_row_value(row, "version")) for row in rows}
-
-
-def migrate_neo4j_config_to_falkordb(db: LocalDatabase) -> None:
-    """Move backend-neutral Neo4j config to FalkorDB keys and drop legacy connection state."""
-    tunable_keys = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
-    legacy_auth_secret: str | None = None
-    store = db.fetchone(
-        "SELECT value FROM config_store WHERE key = ?",
-        ("databases.neo4j.auth",),
-    )
-    if store is not None:
-        import json
-
-        value = json.loads(store["value"])
-        if isinstance(value, str) and value.startswith("$secret:"):
-            legacy_auth_secret = value.removeprefix("$secret:")
-
-    with db.transaction():
-        for suffix in tunable_keys:
-            row = db.fetchone(
-                "SELECT value, source FROM config_store WHERE key = ?",
-                (f"databases.neo4j.{suffix}",),
-            )
-            if row is None:
-                continue
-            db.execute(
-                """INSERT INTO config_store (key, value, source, updated_at)
-                   VALUES (?, ?, ?, datetime('now'))
-                   ON CONFLICT(key) DO UPDATE SET
-                       value = excluded.value,
-                       source = excluded.source,
-                       updated_at = excluded.updated_at""",
-                (f"databases.falkordb.{suffix}", row["value"], row["source"]),
-            )
-
-        db.execute("DELETE FROM config_store WHERE key LIKE ?", ("databases.neo4j.%",))
-
-        if legacy_auth_secret is not None:
-            refs = db.fetchall(
-                "SELECT 1 FROM config_store WHERE value = ? LIMIT 1",
-                (f'"$secret:{legacy_auth_secret}"',),
-            )
-            if not refs:
-                db.execute("DELETE FROM secrets WHERE name = ?", (legacy_auth_secret,))
 
 
 def get_current_version(db: LocalDatabase) -> int:
