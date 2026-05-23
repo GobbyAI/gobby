@@ -9,11 +9,15 @@ services:
       - "${GOBBY_FALKORDB_PORT:-16379}:6379"
       - "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000"
     environment:
+      # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
+      # FALKORDB_ARGS is reserved for module options; do not put auth there.
       - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
+      # Pass-through so the healthcheck below can read the same value.
       - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
     volumes:
       - gobby_falkordb_data:/data
     healthcheck:
+      # Quote the shell-expanded password so future relaxed password rules do not word-split.
       test:
         - CMD-SHELL
         - 'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG'
@@ -21,9 +25,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    profiles:
-      - falkordb
-      - all
+    profiles: [falkordb, all]
 
   qdrant:
     image: qdrant/qdrant:latest

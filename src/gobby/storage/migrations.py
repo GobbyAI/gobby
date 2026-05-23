@@ -30,6 +30,7 @@ __all__ = [
     "_split_statements_respecting_dollar_quotes",
     "get_current_version",
     "latest_known_version",
+    "migrate_neo4j_config_to_falkordb",
     "migrations_needed",
     "run_migrations",
 ]
@@ -48,6 +49,45 @@ _MIN_MIGRATION_VERSION = 260
 
 # Runtime migrations are file-based PostgreSQL migrations only.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+
+_NEO4J_BACKEND_NEUTRAL_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
+
+
+def migrate_neo4j_config_to_falkordb(db: LocalDatabase) -> None:
+    """Migrate legacy Neo4j config-store rows to FalkorDB-compatible rows.
+
+    The runtime PostgreSQL path uses the matching file-based migration under
+    ``gobby.storage.migrations``. This SQLite-compatible helper preserves the
+    same behavior for legacy import and migration regression tests.
+    """
+    with db.transaction():
+        for key in _NEO4J_BACKEND_NEUTRAL_KEYS:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO config_store (key, value, source, is_secret, updated_at)
+                SELECT REPLACE(key, 'databases.neo4j.', 'databases.falkordb.'),
+                       value,
+                       source,
+                       is_secret,
+                       updated_at
+                  FROM config_store
+                 WHERE key = ?
+                """,
+                (f"databases.neo4j.{key}",),
+            )
+
+        db.execute("DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'")
+        db.execute(
+            """
+            DELETE FROM secrets
+             WHERE name = 'auth'
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM config_store
+                    WHERE value = json_quote('$secret:auth')
+               )
+            """
+        )
 
 
 def _describe_legacy_migration_entry(entry: object) -> str:

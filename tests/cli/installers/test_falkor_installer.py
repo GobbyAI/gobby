@@ -81,6 +81,21 @@ class TestInstallFalkorDB:
         assert result["success"] is False
         assert "Docker" in result["error"]
 
+    def test_install_falkordb_invalid_password_raises_usage_value_error(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.cli.installers.falkor import install_falkordb
+
+        with (
+            patch.object(shutil, "which", return_value="/usr/bin/docker"),
+            patch(
+                "gobby.cli.installers.falkor._resolve_falkordb_password",
+                side_effect=ValueError("FalkorDB password must not contain whitespace"),
+            ),
+        ):
+            with pytest.raises(ValueError, match="password must not contain whitespace"):
+                install_falkordb(gobby_home=tmp_path, password="has space")
+
     def test_install_falkordb_copies_compose_file(self, tmp_path: Path) -> None:
         from gobby.cli.installers.falkor import ResolvedFalkorPassword, install_falkordb
 

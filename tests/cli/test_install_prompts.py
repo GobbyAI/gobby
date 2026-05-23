@@ -11,6 +11,7 @@ import pytest
 from gobby.cli._install_prompts import (
     _echo_install_summary,
     _prompt_hub_api_keys,
+    _run_falkordb_install,
     _run_voice_install,
 )
 from gobby.cli.install import install as install_command
@@ -204,8 +205,14 @@ class TestPromptHubApiKeys:
         config.skills = SkillsConfig(hubs={})
         patched_deps["load"].return_value = config
 
-        _prompt_hub_api_keys(no_interactive=False)
+        result = _prompt_hub_api_keys(no_interactive=False)
 
+        assert result == {
+            "stored": 0,
+            "skipped": 0,
+            "already_configured": 0,
+            "unresolved": [],
+        }
         patched_deps["db_cls"].assert_called_once_with(apply_migrations=False)
 
     def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
@@ -302,6 +309,42 @@ class TestVoiceInstall:
         assert results["voice"]["success"] is True
 
 
+class TestFalkorDBInstallPrompt:
+    @pytest.mark.parametrize(
+        ("password_source", "password", "expected"),
+        [
+            ("generated", "generated-pw", "Generated FalkorDB password: generated-pw"),
+            ("provided", None, "Using provided FalkorDB password (not displayed)"),
+            ("reused", None, "Reusing existing FalkorDB password from config_store"),
+        ],
+    )
+    def test_discloses_password_by_source(
+        self,
+        password_source: str,
+        password: str | None,
+        expected: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "password_source": password_source,
+                "password": password,
+                "url": "redis://localhost:16379",
+                "browser_url": "http://localhost:13000",
+            }
+        )
+
+        _run_falkordb_install(installer, "input-pw", results)
+
+        output = capsys.readouterr().out
+        installer.assert_called_once_with(password="input-pw")
+        assert expected in output
+        assert "Browser: http://localhost:13000" in output
+        assert results["falkordb"]["password_source"] == password_source
+
+
 class TestInstallCommandSharedStores:
     def test_embedding_provider_requires_embedding_url(self, tmp_path: Path) -> None:
         with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
@@ -314,6 +357,7 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 no_ext_services_flag=True,
+                falkordb_flag=False,
                 falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,
@@ -366,6 +410,7 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 no_ext_services_flag=True,
+                falkordb_flag=False,
                 falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,
@@ -433,6 +478,7 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=True,
                 no_ext_services_flag=True,
+                falkordb_flag=False,
                 falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,

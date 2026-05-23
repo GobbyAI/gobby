@@ -32,7 +32,7 @@ def compose_data(repo_root: Path) -> dict[str, object]:
     return data
 
 
-def test_compose_defines_postgres_alongside_existing_services(
+def test_compose_defines_postgres_alongside_shared_services(
     compose_data: dict[str, object],
 ) -> None:
     services = compose_data["services"]
@@ -40,6 +40,7 @@ def test_compose_defines_postgres_alongside_existing_services(
     assert "falkordb" in services
     assert "qdrant" in services
     assert "postgres" in services
+    assert "neo4j" not in services
 
 
 def test_postgres_service_uses_local_build_context_and_tag(

@@ -5,6 +5,7 @@ Provides CRUD, list, stage-transition, and dependency endpoints for the task sys
 """
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -31,6 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _enum_schema(values: Iterable[str]) -> Any:
+    return {"enum": list(values)}
+
+
 # =============================================================================
 # Request/Response models
 # =============================================================================
@@ -47,7 +53,7 @@ class TaskCreateRequest(BaseModel):
     task_type: str = Field(
         default="task",
         description="Task type",
-        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+        json_schema_extra=_enum_schema(TASK_TYPE_CHOICES),
     )
     parent_task_id: str | None = Field(default=None, description="Parent task ID")
     labels: list[str] | None = Field(default=None, description="Labels for categorization")
@@ -82,7 +88,7 @@ class TaskUpdateRequest(BaseModel):
     task_type: str | None = Field(
         default=None,
         description="New task type",
-        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+        json_schema_extra=_enum_schema(TASK_TYPE_CHOICES),
     )
     assignee: str | None = Field(
         default=None,

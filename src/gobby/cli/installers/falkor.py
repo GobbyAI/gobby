@@ -145,13 +145,12 @@ def install_falkordb(
 ) -> dict[str, Any]:
     """Install FalkorDB via Docker Compose."""
     home = _normalize_home(gobby_home)
+    if password is not None:
+        validate_falkordb_password(password)
     if not shutil.which("docker"):
         return {"success": False, "error": "Docker not found. Install Docker to use FalkorDB."}
 
-    try:
-        resolved = _resolve_falkordb_password(password, gobby_home=home)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+    resolved = _resolve_falkordb_password(password, gobby_home=home)
 
     services_dir = home / "services"
     compose_file = _refresh_unified_compose(services_dir)

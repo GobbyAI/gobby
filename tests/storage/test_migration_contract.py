@@ -76,7 +76,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     assert sorted(path.name for path in migrations_dir.glob("*.sql")) == [
-        "261_implementation_domain.sql"
+        "261_implementation_domain.sql",
+        "262_neo4j_config_to_falkordb.sql",
     ]
 
 
@@ -91,6 +92,22 @@ def test_implementation_domain_migration_adds_column_and_backfills_open_code_tas
     assert "assigned_agent = 'frontend-developer'" in migration
     assert "assigned_agent = 'fullstack-developer'" in migration
     assert "ELSE 'backend'" in migration
+
+
+def test_neo4j_config_migration_preserves_tunables_and_uses_json_secret_guard() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "262_neo4j_config_to_falkordb.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "databases.neo4j.graph_search" in migration
+    assert "databases.neo4j.graph_min_score" in migration
+    assert "databases.neo4j.rrf_k" in migration
+    assert "databases.neo4j.graph_name" in migration
+    assert "databases.falkordb." in migration
+    assert "ON CONFLICT (key) DO NOTHING" in migration
+    assert "DELETE FROM config_store" in migration
+    assert "WHERE key LIKE 'databases.neo4j.%'" in migration
+    assert "to_json('$secret:auth'::text)::text" in migration
 
 
 def test_legacy_migrations_guard_rejects_callable_and_string_entries(monkeypatch) -> None:

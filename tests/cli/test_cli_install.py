@@ -231,7 +231,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.install.load_full_config_from_db")
     def test_install_no_clis_detected_no_git(
         self,
         mock_load_config: MagicMock,
@@ -675,7 +675,10 @@ class TestInstallCommand:
             "skipped": [],
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        with (
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+            patch("gobby.cli.install.run_daemon_setup"),
+        ):
             # Create .git directory to trigger git hooks install
             Path(".git").mkdir()
             result = runner.invoke(cli, ["install", "--all"])

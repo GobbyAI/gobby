@@ -46,6 +46,31 @@ class TestDockerComposeServices:
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         assert "falkordb" in data["services"]
+        assert "neo4j" not in data["services"]
+
+    def test_falkordb_service_contract(self) -> None:
+        """FalkorDB service uses the expected image, ports, auth, and healthcheck."""
+        from gobby.cli.installers.qdrant import _COMPOSE_SRC
+
+        data = yaml.safe_load(_COMPOSE_SRC.read_text())
+        falkordb = data["services"]["falkordb"]
+
+        assert falkordb["image"] == "falkordb/falkordb:latest"
+        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
+        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
+        assert (
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
+            in falkordb["environment"]
+        )
+        assert (
+            "GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
+            in falkordb["environment"]
+        )
+        assert falkordb["volumes"] == ["gobby_falkordb_data:/data"]
+        assert falkordb["healthcheck"]["test"] == [
+            "CMD-SHELL",
+            'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG',
+        ]
 
     def test_qdrant_ports(self) -> None:
         """Qdrant service exposes HTTP and gRPC ports."""
@@ -105,6 +130,8 @@ class TestDockerComposeServices:
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         assert "gobby_falkordb_data" in data.get("volumes", {})
         assert data["volumes"]["gobby_falkordb_data"]["name"] == "gobby_falkordb_data"
+        assert "gobby_neo4j_data" not in data.get("volumes", {})
+        assert "gobby_neo4j_logs" not in data.get("volumes", {})
 
     def test_compose_has_qdrant_volume(self) -> None:
         """Compose file defines gobby_qdrant_data volume with explicit name."""
@@ -300,6 +327,8 @@ class TestConfigModels:
         assert config.qdrant.port == 6333
         assert config.falkordb.host == "127.0.0.1"
         assert config.falkordb.port == 16379
+        assert config.falkordb.requirepass is None
+        assert config.falkordb.graph_name == "gobby_kg"
 
     def test_embeddings_config_defaults(self) -> None:
         """EmbeddingsConfig has sensible defaults."""

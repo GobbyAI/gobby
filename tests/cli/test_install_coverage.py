@@ -118,9 +118,9 @@ class TestInstallCommand:
         qdrant_result = {"success": True, "qdrant_url": "http://localhost:6333"}
         falkordb_result = {
             "success": True,
-            "falkordb_url": "http://localhost:7474",
-            "bolt_url": "bolt://localhost:7687",
-            "compose_file": "/path/to/compose.yml",
+            "browser_url": "http://localhost:13000",
+            "password_source": "reused",
+            "password": None,
         }
         with (
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
@@ -274,6 +274,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
             ) as mock_embedding,
@@ -283,6 +284,9 @@ class TestInstallCommand:
             result = runner.invoke(install, [], catch_exceptions=False)
 
         assert result.exit_code == 0
+        assert "Gobby Hooks Installation" in result.output
+        assert "Components to configure: claude, git-hooks" in result.output
+        mock_hooks.assert_called_once()
         mock_embedding.assert_called_once()
         mock_qdrant.assert_called_once()
         mock_falkordb.assert_called_once()
@@ -310,6 +314,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
             ) as mock_embedding,
@@ -323,6 +328,9 @@ class TestInstallCommand:
             )
 
         assert result.exit_code == 0
+        assert "Gobby Hooks Installation" in result.output
+        assert "Components to configure: claude, git-hooks" in result.output
+        mock_hooks.assert_called_once()
         mock_embedding.assert_called_once()
         mock_qdrant.assert_not_called()
         mock_falkordb.assert_not_called()
@@ -465,10 +473,13 @@ class TestUninstallCommand:
     def test_uninstall_falkordb(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
         mock_uninstall.return_value = {
             "success": True,
-            "already_uninstalled": False,
-            "volumes_removed": True,
+            "data_removed": True,
         }
-        result = runner.invoke(uninstall, ["--falkordb", "--volumes", "--yes"], catch_exceptions=False)
+        result = runner.invoke(
+            uninstall,
+            ["--falkordb", "--volumes", "--yes"],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0
         assert "FalkorDB" in result.output
 
