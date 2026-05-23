@@ -197,9 +197,10 @@ def compose_session_response(
     # Agent tree, external ID, and claimed tasks removed to reduce token waste.
     # Full metadata (external_id, machine_id, project_id, terminal) is injected
     # by the enricher on first hook via _first_hook_for_session flag.
-    if session_ref != session_id:
+    system_message = None
+    if session_ref and session_ref != session_id:
         system_message = f"\nGobby Session ID: {session_ref} ({session_id})"
-    else:
+    elif session_ref:
         system_message = f"\nGobby Session ID: {session_ref}"
 
     # Build metadata

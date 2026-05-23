@@ -838,6 +838,20 @@ class TestComposeSessionResponse:
         )
         assert "sess-uuid-1" in result.system_message
 
+    def test_no_session_id_omits_banner(self) -> None:
+        handler = _TestHandler()
+
+        result = handler._compose_session_response(
+            session=None,
+            session_id=None,
+            external_id="ext-1",
+            parent_session_id=None,
+            machine_id="m-1",
+        )
+
+        assert result.system_message is None
+        assert result.metadata["session_id"] is None
+
     def test_claimed_tasks_not_in_system_message(self) -> None:
         """Claimed tasks are in additional_context, not system_message."""
         handler = _TestHandler()
