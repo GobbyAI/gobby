@@ -83,7 +83,7 @@ def _select_embedding_provider(
     if ollama_ok:
         options.append(("ollama", "Ollama (localhost:11434) - local"))
     options.append(("openai", "OpenAI (cloud, requires API key)"))
-    options.append(("none", "None (disables semantic search, skips Qdrant/Neo4j)"))
+    options.append(("none", "None (disables semantic search, skips Qdrant/FalkorDB)"))
 
     default_idx = 1
     if not lmstudio_ok and not ollama_ok:

@@ -272,18 +272,18 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         limit: int = Query(500, description="Maximum entities to fetch"),
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Get Neo4j knowledge graph entities and relationships."""
+        """Get FalkorDB knowledge graph entities and relationships."""
         if server.memory_manager is None or not getattr(
             server.memory_manager, "_falkor_client", None
         ):
-            raise HTTPException(status_code=404, detail="Neo4j not configured")
+            raise HTTPException(status_code=404, detail="FalkorDB not configured")
         try:
             result: dict[str, Any] | None = await server.memory_manager.get_entity_graph(
                 limit=limit,
                 project_id=project_id,
             )
             if result is None:
-                raise HTTPException(status_code=502, detail="Neo4j unreachable")
+                raise HTTPException(status_code=502, detail="FalkorDB unreachable")
             return result
         except HTTPException:
             raise
@@ -296,18 +296,18 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         entity_key: str,
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Get neighbors for a single Neo4j entity."""
+        """Get neighbors for a single FalkorDB entity."""
         if server.memory_manager is None or not getattr(
             server.memory_manager, "_falkor_client", None
         ):
-            raise HTTPException(status_code=404, detail="Neo4j not configured")
+            raise HTTPException(status_code=404, detail="FalkorDB not configured")
         try:
             result: dict[str, Any] | None = await server.memory_manager.get_entity_neighbors(
                 entity_key,
                 project_id=project_id,
             )
             if result is None:
-                raise HTTPException(status_code=502, detail="Neo4j unreachable")
+                raise HTTPException(status_code=502, detail="FalkorDB unreachable")
             return result
         except HTTPException:
             raise
@@ -366,7 +366,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     async def clear_knowledge_graph(
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Clear only the Neo4j knowledge-graph projection."""
+        """Clear only the FalkorDB knowledge-graph projection."""
         try:
             result = await server.memory_manager.clear_knowledge_graph(project_id=project_id)
             if not result.get("success", False):
@@ -429,7 +429,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     async def reconcile_memory_stores(
         dry_run: bool = Query(False, description="Report orphans without deleting"),
     ) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with the hub database source of truth."""
+        """Reconcile Qdrant and FalkorDB with the hub database source of truth."""
         try:
             return cast(
                 dict[str, Any], await server.memory_manager.reconcile_stores(dry_run=dry_run)
@@ -458,7 +458,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Clear all secondary memory indices and start background rebuild.
 
-        Clears Qdrant vectors, Neo4j graph, and crossrefs immediately.
+        Clears Qdrant vectors, FalkorDB graph, and crossrefs immediately.
         Rebuild runs in the background — the response returns as soon as
         indices are cleared.
         """

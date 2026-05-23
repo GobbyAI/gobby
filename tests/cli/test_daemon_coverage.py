@@ -47,14 +47,14 @@ class TestServicesStart:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         """No compose file → early return, no error."""
         _services_start(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
     def test_compose_exists_success(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
@@ -77,7 +77,7 @@ class TestServicesStart:
     def test_compose_exists_failure(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
@@ -99,7 +99,7 @@ class TestServicesStart:
     def test_compose_timeout(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
@@ -116,7 +116,7 @@ class TestServicesStart:
 
     @patch("gobby.config.app.load_config")
     def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
@@ -132,11 +132,11 @@ class TestServicesStart:
 class TestServicesStop:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         _services_stop(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.return_value = MagicMock(returncode=0)
@@ -147,7 +147,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
@@ -157,7 +157,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_exception(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")

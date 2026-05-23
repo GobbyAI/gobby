@@ -441,8 +441,8 @@ class TestReindexEmbeddings:
 class TestEntityGraph:
     """Test GET /memories/graph/entities endpoint."""
 
-    def test_entity_graph_no_neo4j(self, client, mock_server) -> None:
-        """GET /memories/graph/entities returns 404 when no Neo4j."""
+    def test_entity_graph_no_falkordb(self, client, mock_server) -> None:
+        """GET /memories/graph/entities returns 404 when no FalkorDB."""
         mock_server.memory_manager._falkor_client = None
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 404
@@ -458,7 +458,7 @@ class TestEntityGraph:
         assert "entities" in response.json()
 
     def test_entity_graph_unreachable(self, client, mock_server) -> None:
-        """GET /memories/graph/entities returns 502 when Neo4j unreachable."""
+        """GET /memories/graph/entities returns 502 when FalkorDB unreachable."""
         mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(return_value=None)
         response = client.get("/api/memories/graph/entities")
@@ -468,7 +468,7 @@ class TestEntityGraph:
         """GET /memories/graph/entities returns 500 on error."""
         mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(
-            side_effect=RuntimeError("Neo4j error")
+            side_effect=RuntimeError("FalkorDB error")
         )
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 500
@@ -488,8 +488,8 @@ class TestEntityGraph:
 class TestEntityNeighbors:
     """Test GET /memories/graph/entities/{entity_key}/neighbors endpoint."""
 
-    def test_neighbors_no_neo4j(self, client, mock_server) -> None:
-        """GET /memories/graph/entities/{entity_key}/neighbors returns 404 when no Neo4j."""
+    def test_neighbors_no_falkordb(self, client, mock_server) -> None:
+        """GET /memories/graph/entities/{entity_key}/neighbors returns 404 when no FalkorDB."""
         mock_server.memory_manager._falkor_client = None
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 404
@@ -515,7 +515,7 @@ class TestEntityNeighbors:
         """GET /memories/graph/entities/{entity_key}/neighbors returns 500 on error."""
         mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(
-            side_effect=RuntimeError("Neo4j error")
+            side_effect=RuntimeError("FalkorDB error")
         )
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 500
@@ -532,7 +532,7 @@ class TestRebuildKnowledgeGraph:
     def test_rebuild_returns_error_payload(self, client, mock_server) -> None:
         """POST /memories/graph/rebuild returns 400 when manager reports failure."""
         mock_server.memory_manager.rebuild_knowledge_graph = AsyncMock(
-            return_value={"success": False, "error": "Neo4j not configured"}
+            return_value={"success": False, "error": "FalkorDB not configured"}
         )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 400
