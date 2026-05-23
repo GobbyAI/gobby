@@ -29,7 +29,7 @@ Hidden advantage: Blue Team knew the game rules before Red Team. Red Team design
 
 ## Pre-Game: The Assassination Attempt
 
-Before the game even started, Red Team tried to use `send_command` to force Blue Team to run `kill_agent` on itself. The ancestry validation blocked it — peer sessions can't command each other, only message. Red Team then searched for workarounds outside the MCP/CLI tools. The security model held.
+Before the game even started, Red Team tried to force Blue Team to run `kill_agent` on itself through the agent coordination surface. The platform blocked it — peer sessions can message each other, but they do not get a remote-command channel. Red Team then searched for workarounds outside the MCP/CLI tools. The security model held.
 
 ---
 

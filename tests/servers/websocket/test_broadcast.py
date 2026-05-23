@@ -292,19 +292,6 @@ class TestBroadcastEventMethods:
         assert msg["content"] == "hi"
 
     @pytest.mark.asyncio
-    async def test_broadcast_agent_command(self) -> None:
-        b = FakeBroadcaster()
-        ws = _make_ws(subscriptions={"agent_command"})
-        b.clients[ws] = {}
-
-        await b.broadcast_agent_command("command_sent", "from-1", "to-2")
-        msg = _sent_message(ws)
-        assert msg["type"] == "agent_command"
-        assert msg["event"] == "command_sent"
-        assert msg["from_session"] == "from-1"
-        assert msg["to_session"] == "to-2"
-
-    @pytest.mark.asyncio
     async def test_broadcast_trace_event(self) -> None:
         b = FakeBroadcaster()
         ws = _make_ws(subscriptions={"trace_event"})

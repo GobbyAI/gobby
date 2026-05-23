@@ -31,18 +31,7 @@ export interface AgentRunRecord {
   git_branch?: string | null;
 }
 
-export interface AgentRunDetail extends AgentRunRecord {
-  commands?: Array<{
-    id: string;
-    from_session: string;
-    command_text: string;
-    allowed_tools: string | null;
-    allowed_mcp_tools: string | null;
-    exit_condition: string | null;
-    status: string;
-    created_at: string;
-  }>;
-}
+export type AgentRunDetail = AgentRunRecord;
 
 interface Filters {
   status?: string;
