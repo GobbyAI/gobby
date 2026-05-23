@@ -9,24 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+No unreleased changes.
 
-#### gcode
-
-- **FalkorDB graph backend transition** - `gcode` now reads graph service
-  settings from the Gobby 0.4.x FalkorDB config path (`databases.falkordb.*`)
-  and uses FalkorDB for graph reads such as `callers`, `usages`, `imports`,
-  `blast-radius`, and graph-boosted search. `gcode 0.7.0+` requires
-  `gobby 0.4.0+`; running new `gcode` against an older daemon that still writes
-  Neo4j config-store keys silently degrades to "graph unavailable". Upgrade the
-  daemon and CLI together. This compatibility boundary is covered by the
-  Neo4j-to-FalkorDB Phase 8.3 validation matrix.
 
 ## [0.8.4] — gcode
 
 ### Changed
 
 #### gcode
+
+- **FalkorDB graph backend transition** — `gcode` now reads graph service
+  settings from the Gobby 0.4.x FalkorDB config path (`databases.falkordb.*`)
+  and uses FalkorDB for graph reads such as `callers`, `usages`, `imports`,
+  `blast-radius`, and graph-boosted search. `gcode 0.8.4+` requires
+  `gobby 0.4.0+`; running new `gcode` against an older daemon without
+  `databases.falkordb.*` config silently degrades to "graph unavailable".
+  Upgrade the daemon and CLI together.
 
 - **Broker-only PostgreSQL DSN refs** — `database_url_ref:
   keyring:gobby:postgres_database_url` and broker-only generated refs now resolve
@@ -198,7 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gcode
 
 - **FTS fallback query sanitization** — Escaped `%`, `_`, and `\` correctly in the LIKE-based fallback search path so literal user queries stay literal. Prevents malformed matches and closes a SQL-injection footgun in symbol resolution and name search.
-- **Neo4j correctness cutover** — Completed import-aware call-target classification for Python, JavaScript, and TypeScript. `gcode index` now distinguishes local symbols, unresolved callees, and external modules when writing call data, which reduces bogus graph edges and improves `callers`, `usages`, `blast-radius`, and graph-boosted search relevance. (#137)
+- **FalkorDB correctness cutover** — Completed import-aware call-target classification for Python, JavaScript, and TypeScript. `gcode index` now distinguishes local symbols, unresolved callees, and external modules when writing call data, which reduces bogus graph edges and improves `callers`, `usages`, `blast-radius`, and graph-boosted search relevance. (#137)
 
 ## [0.6.0] — gcode
 
@@ -372,8 +370,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- **Symbol name resolution for graph commands** — `callers`, `usages`, and `blast-radius` now resolve fuzzy input before querying Neo4j. Resolution tries exact match → LIKE substring match → FTS5 search (names, signatures, docstrings). When multiple matches are found, the best is used and alternatives are shown. When no match is found, a clear "No symbol matching" message is printed (#80)
-- **`line_start` on Neo4j CodeSymbol nodes** — `write_defines` now stores `line_start` on CodeSymbol nodes. `blast-radius` Cypher returns `affected.line_start AS line` for non-zero line numbers in output (requires re-index to populate) (#80)
+- **Symbol name resolution for graph commands** — `callers`, `usages`, and `blast-radius` now resolve fuzzy input before querying FalkorDB. Resolution tries exact match → LIKE substring match → FTS5 search (names, signatures, docstrings). When multiple matches are found, the best is used and alternatives are shown. When no match is found, a clear "No symbol matching" message is printed (#80)
+- **`line_start` on FalkorDB CodeSymbol nodes** — `write_defines` now stores `line_start` on CodeSymbol nodes. `blast-radius` Cypher returns `affected.line_start AS line` for non-zero line numbers in output (requires re-index to populate) (#80)
 
 ### Changed
 
@@ -387,17 +385,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- **Defer external writes to daemon** — when the Gobby daemon is available (`daemon_url` resolved and `graph_synced` column detected), `gcode index` now performs SQLite writes only and skips all Neo4j/Qdrant operations. Sync flags (`graph_synced`, `vectors_synced`) stay at `0` for the daemon's background worker to process. FTS search works immediately; graph/semantic search follows once the daemon syncs. Standalone mode is unchanged (#78)
+- **Defer external writes to daemon** — when the Gobby daemon is available (`daemon_url` resolved and `graph_synced` column detected), `gcode index` now performs SQLite writes only and skips all FalkorDB/Qdrant operations. Sync flags (`graph_synced`, `vectors_synced`) stay at `0` for the daemon's background worker to process. FTS search works immediately; graph/semantic search follows once the daemon syncs. Standalone mode is unchanged (#78)
 - `GraphSyncPending` files are skipped during incremental indexing when daemon is available — the daemon worker handles retries instead of gcode (#78)
-- Orphan file cleanup defers Neo4j/Qdrant deletion to the daemon's `reconcile_stores` when daemon is available (#78)
+- Orphan file cleanup defers FalkorDB/Qdrant deletion to the daemon's `reconcile_stores` when daemon is available (#78)
 - Qdrant collection creation skipped when daemon handles external sync (#78)
 
 ### Added
 
 #### gcode
 
-- **Import/call relation SQLite storage** — `gcode index` now writes parsed import relations (`code_imports` table) and call relations (`code_calls` table) to SQLite when the tables exist (daemon migration v183). Enables the daemon to rebuild Neo4j graph edges without re-parsing files. Table detection via PRAGMA means no deployment ordering required (#78)
-- `vectors_synced` column support — detected at runtime alongside `graph_synced`, set to `0` on file upsert. Allows independent tracking of Qdrant vector sync status vs Neo4j graph sync (#78)
+- **Import/call relation SQLite storage** — `gcode index` now writes parsed import relations (`code_imports` table) and call relations (`code_calls` table) to SQLite when the tables exist (daemon migration v183). Enables the daemon to rebuild FalkorDB graph edges without re-parsing files. Table detection via PRAGMA means no deployment ordering required (#78)
+- `vectors_synced` column support — detected at runtime alongside `graph_synced`, set to `0` on file upsert. Allows independent tracking of Qdrant vector sync status vs FalkorDB graph sync (#78)
 - `gcode kinds` command — lists all distinct symbol kinds in the current project index (#76)
 - Context-aware CLI help — graph commands (`callers`, `usages`, `imports`, `blast-radius`) marked `[requires Gobby]` in help text. `search` describes optional semantic/graph sources. `index` notes SQLite-only behavior when daemon is running. Commands grouped by mode requirements (#77)
 - Generic `has_column()` and `has_table()` helpers replacing the single-purpose `has_graph_synced_column()` (#78)
@@ -460,8 +458,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- Two-pass graph expansion for hybrid search — after FTS+semantic return results, top symbol names are used to batch-query Neo4j for callers and callees, feeding a 4th RRF source (`graph_expand`) that surfaces structurally related symbols (#62)
-- `find_callers_batch` and `find_callees_batch` Neo4j functions with `IN $names` Cypher for efficient batch graph queries (#62)
+- Two-pass graph expansion for hybrid search — after FTS+semantic return results, top symbol names are used to batch-query FalkorDB for callers and callees, feeding a 4th RRF source (`graph_expand`) that surfaces structurally related symbols (#62)
+- `find_callers_batch` and `find_callees_batch` FalkorDB functions with `IN $names` Cypher for efficient batch graph queries (#62)
 - Body snippet enrichment for symbol embeddings — `symbol_embed_text_with_source` appends first 300 chars of function body to embedding text, improving semantic search for conceptual queries (#64)
 - Source bytes carried through `ParseResult`, eliminating double file read during indexing (#64)
 
@@ -479,7 +477,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gcode
 
 - Per-file SQLite transactions for crash-safe indexing — prevents half-indexed files if the process is killed mid-index (#57)
-- `graph_synced` column support — detects column in `gobby-hub.db` at runtime, sets to `0` on file upsert, flips to `1` after successful Neo4j/Qdrant writes. Incremental index auto-detects unsynced files and retries external writes only (#57)
+- `graph_synced` column support — detects column in `gobby-hub.db` at runtime, sets to `0` on file upsert, flips to `1` after successful FalkorDB/Qdrant writes. Incremental index auto-detects unsynced files and retries external writes only (#57)
 - `StaleReason` enum (`ContentChanged` / `GraphSyncPending`) for smarter incremental detection (#57)
 
 #### gsqz
@@ -495,15 +493,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove `summary` from `upsert_symbols` SQL (#58)
 - Remove `verbose` parameter from `search` command (only controlled summary display) (#58)
 - Move `repo_outline` from `commands/summary.rs` to `commands/status.rs` (#58)
-- Neo4j write functions (`write_defines`, `write_calls`, `write_imports`, `delete_file_graph`) now return `Result<()>` instead of silently discarding errors (#56)
-- Neo4j writes in `index_file` are invoked independently instead of short-circuiting — all three are attempted even if one fails (#60)
+- FalkorDB write functions (`write_defines`, `write_calls`, `write_imports`, `delete_file_graph`) now return `Result<()>` instead of silently discarding errors (#56)
+- FalkorDB writes in `index_file` are invoked independently instead of short-circuiting — all three are attempted even if one fails (#60)
 
 ### Fixed
 
 #### gcode
 
 - Fix `gcode invalidate` returning 404 from daemon — notify daemon before clearing SQLite so it can still read project stats (#52)
-- Fix Neo4j short-circuit write chain preventing `write_calls`/`write_imports` from running after `write_defines` failure (#60)
+- Fix FalkorDB short-circuit write chain preventing `write_calls`/`write_imports` from running after `write_defines` failure (#60)
 
 ## [0.3.3]
 
@@ -511,7 +509,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- Fix `gcode invalidate` returning 404 from daemon — notify daemon to clean Neo4j/Qdrant **before** deleting from SQLite, so the daemon can still read project stats from the shared `gobby-hub.db` (#52)
+- Fix `gcode invalidate` returning 404 from daemon — notify daemon to clean FalkorDB/Qdrant **before** deleting from SQLite, so the daemon can still read project stats from the shared `gobby-hub.db` (#52)
 
 ## [0.3.2]
 
@@ -524,8 +522,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PagedResponse` envelope on all paginated JSON commands: `{ project_id, total, offset, limit, results, hint }` (#43, #45)
 - Text mode pagination footer: `-- 10 of 47 results (use --offset 10 for more)` (#43)
 - Accurate `total` counts via FTS5 COUNT queries for `search-text` and `search-content` (#44)
-- Neo4j server-side COUNT queries (`count_callers`, `count_usages`) for accurate graph pagination totals (#45)
-- Neo4j server-side SKIP/LIMIT for `find_callers` and `find_usages` — no more over-fetch and skip in Rust (#48)
+- FalkorDB server-side COUNT queries (`count_callers`, `count_usages`) for accurate graph pagination totals (#45)
+- FalkorDB server-side SKIP/LIMIT for `find_callers` and `find_usages` — no more over-fetch and skip in Rust (#48)
 - Empty-offset messaging across all search and graph commands (#48)
 
 #### Documentation
@@ -541,7 +539,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `search` JSON output drops `summary` by default — include via `--verbose` (#43)
 - `project_id` hoisted to response envelope instead of repeating on every result (#43)
 - Graph commands (`callers`, `usages`, `imports`, `blast-radius`) all use `PagedResponse` consistently — removed ad-hoc JSON hint wrapper (#45)
-- `:CodeSymbol` label added to `find_usages` and `count_usages` target node for consistent Neo4j query planning (#48)
+- `:CodeSymbol` label added to `find_usages` and `count_usages` target node for consistent FalkorDB query planning (#48)
 
 ## [0.3.1]
 
@@ -549,7 +547,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- Fix stale Qdrant vectors causing "failed to look up symbol" warnings during search — `delete_file_data` now cleans up Qdrant vectors alongside SQLite and Neo4j when re-indexing files (#38)
+- Fix stale Qdrant vectors causing "failed to look up symbol" warnings during search — `delete_file_data` now cleans up Qdrant vectors alongside SQLite and FalkorDB when re-indexing files (#38)
 - Suppress noisy stderr warnings for stale external index entries — silently skipped instead (#38)
 
 ## [0.3.0]
@@ -590,7 +588,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- `gcode prune` command to detect and remove stale project entries (dead paths, relative paths, sentinel UUIDs) with daemon Neo4j/Qdrant cleanup notification (#25)
+- `gcode prune` command to detect and remove stale project entries (dead paths, relative paths, sentinel UUIDs) with daemon FalkorDB/Qdrant cleanup notification (#25)
 
 ### Improved
 
@@ -638,9 +636,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- `gcode invalidate` now notifies the Gobby daemon to clean Neo4j graph nodes and Qdrant vectors via `POST /api/code-index/invalidate` (#11)
+- `gcode invalidate` now notifies the Gobby daemon to clean FalkorDB graph nodes and Qdrant vectors via `POST /api/code-index/invalidate` (#11)
 - Daemon URL resolved from `~/.gobby/bootstrap.yaml` (`daemon_port` + `bind_host`) instead of hardcoded default (#12)
-- Migrate config_store keys from `memory.*` to `databases.neo4j.*` and `databases.qdrant.*` namespace (#15)
+- Migrate config_store keys from `memory.*` to `databases.falkordb.*` and `databases.qdrant.*` namespace (#15)
 
 ## [0.2.3]
 
@@ -680,7 +678,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Rename misleading `iso_now` to `epoch_secs_str` in chunker and indexer (#6)
 - Add `#[serial_test::serial]` to config tests that read environment variables (#6, #7)
-- Fix `test_config_defaults` to actually test `resolve_neo4j_config` defaults (#6)
+- Fix `test_config_defaults` to actually test `resolve_falkordb_config` defaults (#6)
 - Set `rust-version = "1.85"` in both crate manifests (#6)
 
 #### Documentation
@@ -734,13 +732,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite FTS5 full-text search on symbols and file content
 - Semantic vector search via Qdrant with GGUF embeddings (macOS Metal GPU)
 - Reciprocal Rank Fusion to merge FTS5 + semantic + graph results
-- Neo4j dependency graph: callers, usages, imports, blast-radius analysis
+- FalkorDB dependency graph: callers, usages, imports, blast-radius analysis
 - Standalone mode with self-initializing schema and `.gobby/gcode.json` identity
 - Gobby mode with `project.json` detection and shared `gobby-hub.db`
 - Incremental indexing with SHA-256 content hashing
 - `gcode init` with progress bar, auto-indexing, and AI CLI skill installation (#16, #18, #19)
 - Confirmation prompt on `gcode invalidate` (#20)
-- Graceful degradation when Neo4j/Qdrant/GGUF model unavailable
+- Graceful degradation when FalkorDB/Qdrant/GGUF model unavailable
 - Cross-project queries by name or path
 - JSON and text output formats
 
