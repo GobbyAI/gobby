@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.config.persistence import DatabasesConfig
 from gobby.servers.routes.admin import create_admin_router
 from gobby.shutdown_intent import ShutdownIntent
 
@@ -76,6 +77,19 @@ class TestAdminRoutes:
 
         server._background_tasks = set()
         server._runner = RunnerShutdownStub()
+        server.services = SimpleNamespace(
+            config=SimpleNamespace(
+                databases=DatabasesConfig(),
+                hub_backend="sqlite",
+                postgres_install_mode=None,
+            ),
+            database=MagicMock(),
+            db_executor_stats=lambda: None,
+            dev_mode=False,
+            project_id=None,
+            provider_model_catalog=None,
+        )
+        server.config = server.services.config
 
         # Shutdown support
         server._process_shutdown = AsyncMock()
@@ -155,16 +169,14 @@ class TestAdminRoutes:
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
         mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
-    @patch("gobby.cli.services.is_neo4j_installed", return_value=False)
-    @patch("gobby.cli.services.is_neo4j_healthy", new_callable=AsyncMock)
+    @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_reports_falkordb_not_neo4j(
         self,
         mock_to_thread,
         mock_psutil,
-        mock_is_neo4j_healthy,
-        _mock_is_neo4j_installed,
+        mock_get_falkordb_status,
         client,
         mock_server,
     ) -> None:
@@ -175,13 +187,18 @@ class TestAdminRoutes:
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
         mock_to_thread.return_value = 0.5
-        mock_is_neo4j_healthy.return_value = False
-
-        falkor_client = SimpleNamespace(
-            base_url="redis://127.0.0.1:16379",
-            ping=AsyncMock(return_value=True),
+        mock_get_falkordb_status.return_value = {
+            "installed": True,
+            "healthy": False,
+            "url": "redis://127.0.0.1:16379",
+        }
+        mock_server.services.config.databases = DatabasesConfig(
+            falkordb={"requirepass": "Valid-123"}
         )
-        mock_server.memory_manager._falkor_client = falkor_client
+        mock_server.config = mock_server.services.config
+        mock_server.memory_manager._falkor_client = None
+        mock_server.memory_manager._kg_service = None
+        del mock_server.db
 
         response = client.get("/api/admin/status")
 
@@ -190,10 +207,16 @@ class TestAdminRoutes:
         assert "neo4j" not in memory
         assert memory["falkordb"] == {
             "configured": True,
-            "healthy": True,
+            "installed": True,
+            "healthy": False,
             "url": "redis://127.0.0.1:16379",
         }
-        falkor_client.ping.assert_awaited_once_with()
+        mock_get_falkordb_status.assert_awaited_once_with(
+            db=mock_server.services.database,
+            host="127.0.0.1",
+            port=16379,
+            password="Valid-123",
+        )
 
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")

@@ -1,11 +1,12 @@
 """
-Service lifecycle utilities for Qdrant, Neo4j, and embedding providers.
+Service lifecycle utilities for Qdrant, Neo4j, FalkorDB, and embedding providers.
 
 Provides status checks for Docker-based services plus local embedding
 readiness helpers for managed local dependencies such as LM Studio.
 """
 
 import asyncio
+import inspect
 import ipaddress
 import logging
 import shutil
@@ -150,6 +151,99 @@ async def get_neo4j_status(
         "installed": installed,
         "healthy": healthy,
         "url": neo4j_url,
+    }
+
+
+# ---------------------------------------------------------------------------
+# FalkorDB
+# ---------------------------------------------------------------------------
+
+
+def is_falkordb_installed(
+    *,
+    db: Any | None = None,
+    gobby_home: Path | None = None,
+) -> bool:
+    """Check whether FalkorDB connection keys were recorded in config_store."""
+    owned_db: Any | None = None
+    if db is None:
+        from gobby.cli.utils import get_gobby_home
+        from gobby.config.bootstrap import load_bootstrap
+        from gobby.storage.database import LocalDatabase
+
+        home = gobby_home if gobby_home is not None else get_gobby_home()
+        bootstrap_file = home / "bootstrap.yaml"
+        if bootstrap_file.exists():
+            db_path = Path(load_bootstrap(str(bootstrap_file)).database_path).expanduser()
+        else:
+            db_path = home / "gobby-hub.db"
+        db = LocalDatabase(db_path)
+        owned_db = db
+
+    from gobby.storage.config_store import ConfigStore
+
+    try:
+        store = ConfigStore(db)
+        return (
+            store.get("databases.falkordb.host") is not None
+            and store.get("databases.falkordb.port") is not None
+        )
+    finally:
+        if owned_db is not None:
+            owned_db.close()
+
+
+async def is_falkordb_healthy(
+    host: str | None,
+    port: int | None,
+    password: str | None,
+) -> bool:
+    """Check if FalkorDB responds to Redis PING."""
+    if not host or not port:
+        return False
+
+    import redis.asyncio as redis
+
+    client: Any | None = None
+    try:
+        client = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
+        result = client.ping()
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
+    except Exception as exc:
+        logger.debug(
+            "FalkorDB health check failed: %s:%s unreachable: %s: %s",
+            host,
+            port,
+            type(exc).__name__,
+            exc,
+        )
+        return False
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+
+async def get_falkordb_status(
+    *,
+    db: Any | None = None,
+    gobby_home: Path | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    password: str | None = None,
+) -> dict[str, Any]:
+    """Get FalkorDB install and runtime health status."""
+    installed = is_falkordb_installed(db=db, gobby_home=gobby_home)
+    healthy = await is_falkordb_healthy(host, port, password) if installed else False
+
+    return {
+        "installed": installed,
+        "healthy": healthy,
+        "url": f"redis://{host}:{port}" if host and port else None,
     }
 
 
