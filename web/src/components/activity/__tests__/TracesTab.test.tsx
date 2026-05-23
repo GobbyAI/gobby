@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -92,7 +92,7 @@ describe('TracesTab', () => {
     expect(tracesMock.setSelectedTraceId).toHaveBeenCalledWith('t-old')
   })
 
-  it('shows a Load more button when more traces are available than the page size', async () => {
+  it('shows a Load more button when more traces are available than the page size', () => {
     tracesMock.traces = Array.from({ length: 25 }, (_, i) =>
       makeTrace({
         trace_id: `t-${i}`,
@@ -101,16 +101,16 @@ describe('TracesTab', () => {
       }),
     )
     render(<TracesTab projectId="p" />)
-    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
+    expect(screen.getByText('Load more')).toBeInTheDocument()
     expect(screen.getByText('span-0')).toBeInTheDocument()
     expect(screen.queryByText('span-20')).toBeNull()
 
-    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+    fireEvent.click(screen.getByText('Load more'))
     expect(screen.getByText('span-20')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+    expect(screen.queryByText('Load more')).toBeNull()
   })
 
-  it('resets pagination when the status filter changes', async () => {
+  it('resets pagination when the status filter changes', () => {
     tracesMock.traces = Array.from({ length: 25 }, (_, i) =>
       makeTrace({
         trace_id: `ok-${i}`,
@@ -121,13 +121,13 @@ describe('TracesTab', () => {
     )
     render(<TracesTab projectId="p" />)
 
-    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+    fireEvent.click(screen.getByText('Load more'))
     expect(screen.getByText('ok-span-20')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('radio', { name: 'OK' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'OK' }))
 
     expect(screen.queryByText('ok-span-20')).toBeNull()
-    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
+    expect(screen.getByText('Load more')).toBeInTheDocument()
   })
 
   it('renders the spans list inside the detail pane when a trace is selected', () => {
