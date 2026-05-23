@@ -218,6 +218,41 @@ class TestAdminRoutes:
             password="Valid-123",
         )
 
+    @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_always_includes_falkordb_payload(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_falkordb_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_get_falkordb_status.return_value = {
+            "installed": False,
+            "healthy": False,
+            "url": None,
+        }
+        mock_server.memory_manager = None
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["memory"]["falkordb"] == {
+            "configured": False,
+            "installed": False,
+            "healthy": False,
+            "url": None,
+        }
+
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
