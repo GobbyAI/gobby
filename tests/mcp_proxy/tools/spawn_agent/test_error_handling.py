@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +15,67 @@ pytestmark = pytest.mark.unit
 
 class TestSpawnAgentImplErrorBranches:
     """Tests for spawn_agent_impl error paths not covered by factory tests."""
+
+    @pytest.mark.asyncio
+    async def test_code_index_timeout_preflight_logs_below_warning(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._code_index import prepare_isolation_code_index
+
+        caplog.set_level(
+            logging.INFO,
+            logger="gobby.mcp_proxy.tools.spawn_agent._code_index",
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+            new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
+        ):
+            warning, env = await prepare_isolation_code_index(str(tmp_path), None)
+
+        assert warning == {
+            "preflight": "code_index",
+            "cwd": str(tmp_path),
+            "message": "gcode_index_timeout:120s",
+        }
+        assert env == {}
+        assert "Continuing isolated spawn after code index preflight failed" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unexpected_code_index_preflight_failure_still_warns(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._code_index import prepare_isolation_code_index
+
+        caplog.set_level(
+            logging.WARNING,
+            logger="gobby.mcp_proxy.tools.spawn_agent._code_index",
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+            new=AsyncMock(side_effect=RuntimeError("unexpected failure")),
+        ):
+            warning, env = await prepare_isolation_code_index(str(tmp_path), None)
+
+        assert warning == {
+            "preflight": "code_index",
+            "cwd": str(tmp_path),
+            "message": "unexpected failure",
+        }
+        assert env == {}
+        warning_messages = [
+            record.message for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert any(
+            "Continuing isolated spawn after code index preflight failed" in message
+            for message in warning_messages
+        )
 
     @pytest.mark.asyncio
     async def test_no_project_context_returns_error(self) -> None:
