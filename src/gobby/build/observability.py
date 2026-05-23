@@ -204,6 +204,8 @@ def _build_summary(
 
 
 def _root_build_state(task_manager: LocalTaskManager, root: Task) -> str:
+    if root.closed_at is not None:
+        return "completed"
     if root.allow_automation:
         return "running"
     if task_manager.lifecycle_events.has_build_event(root.id):

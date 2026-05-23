@@ -116,6 +116,30 @@ def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:
     assert by_id[escalated.id]["escalated"] is True
 
 
+def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
+    from gobby.build.observability import get_build_status
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, "observability-completed-root")
+    manager = LocalTaskManager(temp_db)
+    root = _automated_task(temp_db, project_id, "Completed Root")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="development",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    manager.close_task(root.id, force=True)
+
+    status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+
+    assert status["summary"]["state"] == "completed"
+    assert status["summary"]["open_tasks"] == 0
+    assert status["summary"]["closed_tasks"] == 1
+
+
 def test_list_build_history_resolves_task_refs(temp_db) -> None:
     from gobby.build.observability import list_build_history
     from gobby.storage.build_history import BuildHistoryStorage
