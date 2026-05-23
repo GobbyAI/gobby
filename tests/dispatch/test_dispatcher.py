@@ -1645,3 +1645,80 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], startup=True)
 
     assert storage.get_mutex(task.id) is None
+
+
+async def test_heartbeat_recovers_orphan_no_run_mutex_before_full_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    old_acquired_at = datetime.now(UTC) - timedelta(
+        seconds=dispatcher.ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS + 5
+    )
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=old_acquired_at,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: SpawnAgentAction(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            agent_slug="backend-developer",
+            prompt="resume work",
+        ),
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-recovered",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert spawned == [task.id]
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-recovered"
+
+
+async def test_heartbeat_preserves_fresh_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=datetime.now(UTC),
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-too-soon",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert spawned == []
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None

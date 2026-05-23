@@ -10,6 +10,7 @@ import sqlite3
 import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from gobby.dispatch import rules as dispatch_rules
@@ -69,6 +70,7 @@ logger = logging.getLogger(__name__)
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
 DISPATCH_TTL_SECONDS = 600
+ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS = 30
 _PIPELINE_ATTACH_DATABASE_ERRORS = (
     sqlite3.IntegrityError,
     sqlite3.OperationalError,
@@ -136,6 +138,13 @@ async def run_heartbeat(
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         sweep_expired_leases(mutex_storage)
+    orphan_mutexes = sweep_orphan_no_run_dispatch_mutexes(
+        mutex_storage,
+        resolved_db,
+        project_id=project_id,
+    )
+    if orphan_mutexes:
+        logger.info("Dispatcher cleared %d orphan no-run mutex(es)", orphan_mutexes)
     reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
     if reclaimed:
         logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
@@ -268,6 +277,81 @@ def _candidate_matches_mutex_snapshot(
 def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> HeartbeatResult:
     mutex.release()
     return _skipped(result)
+
+
+def sweep_orphan_no_run_dispatch_mutexes(
+    mutex_storage: TaskDispatchMutexManager,
+    db: DatabaseProtocol,
+    *,
+    project_id: str | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Release dispatcher leases that never attached a run and aged past the grace window."""
+    resolved_now = now or datetime.now(UTC)
+    project_join = ""
+    project_filter = ""
+    params: list[object] = [DISPATCH_HOLDER]
+    if project_id is not None:
+        project_join = "JOIN tasks t ON t.id = mutex.task_id"
+        project_filter = "AND t.project_id = ?"
+        params.append(project_id)
+    rows = db.fetchall(
+        f"""
+        SELECT mutex.task_id, mutex.updated_at
+          FROM task_dispatch_mutex mutex
+          {project_join}
+         WHERE mutex.lease_holder = ?
+           AND mutex.run_id IS NULL
+           {project_filter}
+        """,  # nosec B608 # project join/filter are fixed SQL fragments selected above.
+        tuple(params),
+    )
+    cleared = 0
+    for row in rows:
+        updated_at = _parse_mutex_timestamp(row["updated_at"])
+        if updated_at is None:
+            continue
+        if resolved_now - updated_at < timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS):
+            continue
+        if _release_orphan_no_run_mutex(
+            mutex_storage,
+            task_id=str(row["task_id"]),
+            updated_at=str(row["updated_at"]),
+        ):
+            cleared += 1
+    return cleared
+
+
+def _release_orphan_no_run_mutex(
+    mutex_storage: TaskDispatchMutexManager,
+    *,
+    task_id: str,
+    updated_at: str,
+) -> bool:
+    with mutex_storage.db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM task_dispatch_mutex
+             WHERE task_id = ?
+               AND lease_holder = ?
+               AND run_id IS NULL
+               AND updated_at = ?
+            """,
+            (task_id, DISPATCH_HOLDER, updated_at),
+        )
+        return cursor.rowcount > 0
+
+
+def _parse_mutex_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _rules() -> list[Any]:
