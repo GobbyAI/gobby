@@ -394,6 +394,29 @@ decomposition, and a transitive postcss security bump.
 
 This section summarizes the non-merge changes since `v0.3.8`.
 
+### Upgrade Notes
+
+- `gobby install --neo4j-password <value>` and `gobby uninstall --neo4j` were
+  removed in `0.4.0` as part of the knowledge graph backend move from Neo4j to
+  FalkorDB. Passing either flag now hard-fails with the migration message
+  instead of acting as a compatibility alias.
+- Use `gobby install [--falkordb-password <pw>]` for the normal install path,
+  `gobby install --falkordb` for service-only setup, and
+  `gobby uninstall --falkordb` when removing the graph service.
+- The legacy aliases are intentionally absent because accepting both old and new
+  flags would obscure the backend cutover and leave users with two visible
+  command surfaces for one running service. See the FalkorDB migration notes
+  below for the service-level upgrade context.
+
+### FalkorDB Migration Notes
+
+- The knowledge graph backend changed from Neo4j to FalkorDB in `0.4.0`; graph
+  features now read `databases.falkordb.requirepass` and the FalkorDB connection
+  settings instead of the retired Neo4j configuration surface.
+- Existing Neo4j service installs should be replaced through the FalkorDB
+  installer commands listed in the upgrade notes above. The removed Neo4j flags
+  fail fast so operators see the migration path before any service action runs.
+
 ### Added
 
 - Add Factory Droid as a first-class CLI source across hooks, sessions, storage,
