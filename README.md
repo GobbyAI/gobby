@@ -357,9 +357,9 @@ team surfaces.
 - **PostgreSQL hub hardening** (`#12761`) — keep the local PostgreSQL runtime
   hub, `psycopg` v3, `pg_search`, and deprecated `migrate-from-sqlite` import
   path solid as the daemon moves toward the Rust hot-path port.
-- **FalkorDB graph migration** (`#12746`) — swap Neo4j for FalkorDB across
-  daemon writes, Rust read clients, web UI, admin payloads, and the setup
-  wizard.
+- **FalkorDB graph migration** (`#12746`) — standardize graph storage on
+  FalkorDB across daemon writes, Rust read clients, web UI, admin payloads, and
+  the setup wizard.
 - **Memory recall helper** (`#12898`) — bounded background helper agent that
   searches memory per turn and injects fresh results once into the parent
   session.

@@ -457,7 +457,7 @@ call_tool("gobby-sessions", "get_handoff_context", {})
 ## Memory (`gobby-memory`)
 
 20 tools for persistent knowledge across sessions, including embeddings
-and the optional Neo4j knowledge graph.
+and the optional FalkorDB knowledge graph.
 
 ### Core
 
@@ -483,7 +483,7 @@ and the optional Neo4j knowledge graph.
 
 | Tool | Description |
 | :--- | :--- |
-| `search_knowledge_graph` | Search the Neo4j knowledge graph for entities. |
+| `search_knowledge_graph` | Search the FalkorDB knowledge graph for entities. |
 | `rebuild_knowledge_graph` | Extract entities and relationships from all memories. |
 | `rebuild_crossrefs` | Rebuild cross-references via semantic similarity. |
 | `reindex_embeddings` | Regenerate embedding vectors for all memories. |
@@ -1024,4 +1024,4 @@ retry without an extra `get_tool_schema` round-trip.
 - [orchestration.md](./orchestration.md) — Dispatch and automation model
 - [code-index.md](./code-index.md) — `gcode` for code search and retrieval
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_
