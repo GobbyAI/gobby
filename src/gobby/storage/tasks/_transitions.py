@@ -26,6 +26,8 @@ from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.tasks.state_semantics import is_task_closed
 
+_WORK_ATTEMPT_ESCALATION_SUFFIXES = ("_work_failed:max", "_max_work_attempts")
+
 
 def _stage_states(db: HubDatabase) -> StageStatesManager:
     return StageStatesManager(db, TaskLifecycleEventManager(db))
@@ -298,21 +300,75 @@ def de_escalate_task(
         validation_fail_count=0 if reset_validation else UNSET,
     )
     if reset_stage_attempts:
-        _reset_current_stage_work_attempts(db, task_id, reason=reason)
+        _reset_stage_work_attempts_for_de_escalation(
+            db,
+            task_id,
+            reason=reason,
+            escalation_reason=task.escalation_reason,
+        )
     return get_task(db, task_id)
 
 
-def _reset_current_stage_work_attempts(
+def _reset_stage_work_attempts_for_de_escalation(
     db: HubDatabase,
     task_id: str,
     *,
     reason: str,
+    escalation_reason: str | None,
 ) -> None:
-    row = _current_stage_row(db, task_id)
-    if row is None:
+    stage_name = _stage_name_from_work_attempt_escalation(db, task_id, escalation_reason)
+    if stage_name is not None and _reset_stage_work_attempts(db, task_id, stage_name, reason):
         return
 
-    stage_name = row["stage_name"]
+    current = _current_stage_row(db, task_id)
+    if current is None:
+        return
+    _reset_stage_work_attempts(db, task_id, str(current["stage_name"]), reason)
+
+
+def _stage_name_from_work_attempt_escalation(
+    db: HubDatabase,
+    task_id: str,
+    escalation_reason: str | None,
+) -> str | None:
+    if not escalation_reason:
+        return None
+
+    rows = db.fetchall(
+        """
+        SELECT stage_name
+          FROM task_stage_states
+         WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    stage_names = sorted((str(row["stage_name"]) for row in rows), key=len, reverse=True)
+    for stage_name in stage_names:
+        if any(
+            escalation_reason == f"{stage_name}{suffix}"
+            for suffix in _WORK_ATTEMPT_ESCALATION_SUFFIXES
+        ):
+            return stage_name
+    return None
+
+
+def _reset_stage_work_attempts(
+    db: HubDatabase,
+    task_id: str,
+    stage_name: str,
+    reason: str,
+) -> bool:
+    row = db.fetchone(
+        """
+        SELECT *
+          FROM task_stage_states
+         WHERE task_id = ? AND stage_name = ?
+        """,
+        (task_id, stage_name),
+    )
+    if row is None:
+        return False
+
     stage_state = row["state"]
     now = datetime.now(UTC).isoformat()
     with db.transaction() as conn:
@@ -332,6 +388,7 @@ def _reset_current_stage_work_attempts(
         f"reset_stage_work_attempts:{reason}",
         by_actor="system",
     )
+    return True
 
 
 def submit_for_review(
