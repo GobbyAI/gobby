@@ -76,6 +76,35 @@ class TestLinkCommit:
         # Should handle None commits gracefully
         assert result["commits"] == []
 
+    def test_link_commit_uses_project_path_override(self, mock_sync_registry) -> None:
+        """Cross-repo commits should be resolved in the repository that contains them."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.commits = ["abc123"]
+        task_manager.link_commit.return_value = mock_task
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+        )
+
+        link = registry.get_tool("link_commit")
+        result = link(
+            task_id="task-1",
+            commit_sha="abc123",
+            project_path="/external/repo",
+        )
+
+        assert result["commits"] == ["abc123"]
+        task_manager.link_commit.assert_called_once_with(
+            "task-1",
+            "abc123",
+            cwd="/external/repo",
+        )
+
 
 class TestUnlinkCommit:
     """Tests for unlink_commit MCP tool."""
@@ -119,6 +148,35 @@ class TestUnlinkCommit:
 
         assert "error" in result
         assert "Commit not linked" in result["error"]
+
+    def test_unlink_commit_uses_project_path_override(self, mock_sync_registry) -> None:
+        """Cross-repo commit unlinking should resolve in the supplied repository."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.commits = []
+        task_manager.unlink_commit.return_value = mock_task
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+        )
+
+        unlink = registry.get_tool("unlink_commit")
+        result = unlink(
+            task_id="task-1",
+            commit_sha="abc123",
+            project_path="/external/repo",
+        )
+
+        assert result["commits"] == []
+        task_manager.unlink_commit.assert_called_once_with(
+            "task-1",
+            "abc123",
+            cwd="/external/repo",
+        )
 
 
 class TestAutoLinkCommits:
@@ -338,6 +396,35 @@ class TestGetTaskDiff:
         assert result["has_uncommitted_changes"] is True
         call_kwargs = mock_get_task_diff.call_args.kwargs
         assert call_kwargs["include_uncommitted"] is True
+
+    def test_get_task_diff_uses_project_path_override(self, mock_sync_registry) -> None:
+        """Cross-repo task diffs should read commits from the supplied repository."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.project_id = "project-1"
+        task_manager.get_task.return_value = mock_task
+
+        mock_diff_result = MagicMock()
+        mock_diff_result.diff = "external diff"
+        mock_diff_result.commits = ["abc123"]
+        mock_diff_result.has_uncommitted_changes = False
+        mock_diff_result.file_count = 1
+
+        mock_get_task_diff = MagicMock(return_value=mock_diff_result)
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            get_task_diff_fn=mock_get_task_diff,
+        )
+
+        get_diff = registry.get_tool("get_task_diff")
+        result = get_diff(task_id="task-1", project_path="/external/repo")
+
+        assert result["diff"] == "external diff"
+        assert mock_get_task_diff.call_args.kwargs["cwd"] == "/external/repo"
 
 
 class TestGitIntegrationEdgeCases:
