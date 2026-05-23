@@ -33,8 +33,6 @@ __all__ = (
     "_run_falkordb_install",
     "_run_falkordb_uninstall",
     "_run_git_hooks_install",
-    "_run_neo4j_install",
-    "_run_neo4j_uninstall",
     "_run_qdrant_install",
     "_run_standard_cli_install",
     "_run_standard_cli_uninstall",
@@ -567,31 +565,6 @@ def _run_voice_install(
     click.echo("")
 
 
-def _run_neo4j_install(
-    installer: Callable[..., dict[str, Any]],
-    neo4j_password: str | None,
-    results: dict[str, dict[str, Any]],
-) -> None:
-    """Run install + echo for Neo4j."""
-    click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
-    click.echo("-" * 40)
-
-    result = installer(password=neo4j_password)
-    results["neo4j"] = result
-
-    if result["success"]:
-        click.echo("Neo4j installed (local mode)")
-        click.echo(f"  HTTP: {result['neo4j_url']}")
-        click.echo(f"  Bolt: {result.get('bolt_url', 'N/A')}")
-        if result.get("compose_file"):
-            click.echo(f"  Compose: {result['compose_file']}")
-        click.echo("\nRestart the daemon to apply: gobby restart")
-    else:
-        click.echo(f"Failed: {result['error']}", err=True)
-    click.echo("")
-
-
 def _run_falkordb_install(
     installer: Callable[..., dict[str, Any]],
     falkordb_password: str | None,
@@ -609,7 +582,11 @@ def _run_falkordb_install(
         click.echo("FalkorDB installed")
         click.echo(f"  Browser: {result['browser_url']}")
         if result["password_source"] == "generated":
-            click.echo(f"  Password: {result['password']}")
+            click.echo(f"Generated FalkorDB password: {result['password']}")
+        elif result["password_source"] == "provided":
+            click.echo("Using provided FalkorDB password (not displayed)")
+        elif result["password_source"] == "reused":
+            click.echo("Reusing existing FalkorDB password from config_store")
         click.echo("\nRestart the daemon to apply: gobby restart")
     else:
         click.echo(f"Failed: {result['error']}", err=True)
@@ -770,32 +747,6 @@ def _run_codex_uninstall(
             click.echo("Updated: ~/.codex/config.toml (removed `notify = ...`)")
         if not result["files_removed"] and not result.get("config_updated"):
             click.echo("  (no codex integration found to remove)")
-    else:
-        click.echo(f"Failed: {result['error']}", err=True)
-    click.echo("")
-
-
-def _run_neo4j_uninstall(
-    uninstaller: Callable[..., dict[str, Any]],
-    volumes_flag: bool,
-    results: dict[str, dict[str, Any]],
-) -> None:
-    """Run uninstall + echo for Neo4j."""
-    click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
-    click.echo("-" * 40)
-
-    result = uninstaller(remove_volumes=volumes_flag)
-    results["neo4j"] = result
-
-    if result["success"]:
-        if result.get("already_uninstalled"):
-            click.echo("Neo4j was not installed")
-        else:
-            click.echo("Neo4j services removed")
-            if result.get("volumes_removed"):
-                click.echo("  Docker volumes removed (data deleted)")
-        click.echo("\nRestart the daemon to apply: gobby restart")
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")
