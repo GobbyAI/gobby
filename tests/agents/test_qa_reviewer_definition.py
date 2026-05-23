@@ -134,9 +134,29 @@ def test_loads_required_skills_before_review() -> None:
 def test_auto_claimed_reviewers_do_not_reclaim() -> None:
     agent = _agent()
     instructions = agent["instructions"]
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
 
+    assert "Spawn-time auto-claim normally completes this" in instructions
+    assert "Only call claim_task when the active step prompt says" in instructions
     assert "If the active workflow step is already past CLAIM" in instructions
-    assert "do not call claim_task again" in instructions
+    assert "do not call" in instructions
+    assert "claim_task again" in instructions
+    assert "Do NOT call claim_task after spawn-time auto-claim" in instructions
+    assert "Do not call claim_task or get_workflow_status in REVIEW" in review_step[
+        "status_message"
+    ]
+
+
+def test_reviewer_avoids_workflow_status_and_full_pytest() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+
+    assert "Do NOT call get_workflow_status" in instructions
+    assert "Do NOT run the full pytest suite" in instructions
+    assert "focused commands" in instructions
+    assert "Do not run the full pytest suite" in review_step["status_message"]
+    assert "focused validation commands only" in review_step["status_message"]
 
 
 def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
