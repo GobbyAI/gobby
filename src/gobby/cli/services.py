@@ -102,11 +102,13 @@ async def get_qdrant_status(
 
 
 def _open_falkordb_config_db(gobby_home: Path | None) -> Any:
-    from gobby.cli.installers.falkor import _resolve_falkordb_db_path
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
     home = gobby_home if gobby_home is not None else get_gobby_home()
-    return LocalDatabase(_resolve_falkordb_db_path(home))
+    return open_runtime_hub_database(
+        str(home / "bootstrap.yaml"),
+        apply_migrations=False,
+    )
 
 
 def _coerce_falkordb_port(value: Any | None) -> int | None:

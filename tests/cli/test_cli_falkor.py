@@ -133,6 +133,7 @@ class TestDaemonDockerFlag:
         with (
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
             patch("shutil.which", return_value="/usr/bin/docker"),
+            patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()),
             patch("gobby.config.app.load_config") as mock_config,
         ):
             mock_config.return_value = MagicMock(
@@ -153,6 +154,22 @@ class TestDaemonDockerFlag:
         with patch("shutil.which", return_value=None):
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
                 _services_start(tmp_path)
+
+        mock_run.assert_not_called()
+
+    def test_services_start_skips_when_config_unavailable(self, tmp_path: Path) -> None:
+        from gobby.cli.daemon import _services_start
+
+        svc_dir = tmp_path / "services"
+        svc_dir.mkdir(parents=True)
+        (svc_dir / "docker-compose.yml").write_text("services: {}", encoding="utf-8")
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/docker"),
+            patch("gobby.cli.daemon._open_services_config_db", side_effect=RuntimeError("db")),
+            patch("gobby.cli.daemon.subprocess.run") as mock_run,
+        ):
+            _services_start(tmp_path)
 
         mock_run.assert_not_called()
 

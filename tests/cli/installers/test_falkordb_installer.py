@@ -35,6 +35,14 @@ def _new_config_db(path: Path) -> LocalDatabase:
     return db
 
 
+def _patch_config_db(path: Path):
+    def open_db(_home: Path, *, apply_migrations: bool = True) -> LocalDatabase:
+        _ = apply_migrations
+        return _new_config_db(path)
+
+    return patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db)
+
+
 def _successful_run(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
@@ -83,6 +91,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
         ):
             mock_run.side_effect = _docker_run_side_effect
 
@@ -136,6 +145,7 @@ class TestInstallFalkorDB:
             patch(
                 "gobby.cli.installers.falkor._generate_falkordb_password", return_value="generated"
             ),
+            _patch_config_db(tmp_path / "gobby-hub.db"),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password=None)
@@ -153,6 +163,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password="provided")
@@ -179,6 +190,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password=None)
@@ -190,10 +202,11 @@ class TestInstallFalkorDB:
 
     def test_generated_passwords_validate(self, tmp_path: Path) -> None:
         module = _falkor_module()
-        for _ in range(100):
-            resolved = module._resolve_falkordb_password(None, gobby_home=tmp_path)
-            assert resolved.source == "generated"
-            assert module.validate_falkordb_password(resolved.value) == resolved.value
+        with _patch_config_db(tmp_path / "gobby-hub.db"):
+            for _ in range(100):
+                resolved = module._resolve_falkordb_password(None, gobby_home=tmp_path)
+                assert resolved.source == "generated"
+                assert module.validate_falkordb_password(resolved.value) == resolved.value
 
     def test_installer_writes_password_to_bootstrap_and_config_store(self, tmp_path: Path) -> None:
         module = _falkor_module()
@@ -201,6 +214,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password="secret")
@@ -238,6 +252,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
             patch(
                 "gobby.cli.installers.falkor._update_config",
                 side_effect=RuntimeError("disk full"),
@@ -257,6 +272,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
             patch("gobby.cli.installers.falkor._write_bootstrap_password", return_value=False),
         ):
             mock_run.side_effect = _docker_run_side_effect
@@ -267,28 +283,19 @@ class TestInstallFalkorDB:
         assert "bootstrap.yaml write failed" in result["error"]
         assert "gobby uninstall --falkordb" in result["error"]
 
-    def test_install_uses_bootstrap_database_path_when_bootstrap_exists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_config_db_opener_uses_home_bootstrap_path(self, tmp_path: Path) -> None:
         module = _falkor_module()
-        configured_db = tmp_path / "custom-hub.db"
-        db = _new_config_db(configured_db)
-        db.close()
-        bootstrap_path = tmp_path / "bootstrap.yaml"
-        bootstrap_path.write_text(f"database_path: {configured_db}\n", encoding="utf-8")
-        bootstrap_path.chmod(0o600)
 
-        with (
-            patch.object(shutil, "which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
-        ):
-            mock_run.side_effect = _docker_run_side_effect
-            module.install_falkordb(gobby_home=tmp_path, password="secret")
+        with patch(
+            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            return_value=object(),
+        ) as open_db:
+            assert module._open_config_db(tmp_path, apply_migrations=False) is open_db.return_value
 
-        assert ConfigStore(LocalDatabase(configured_db)).get("databases.falkordb.host") == (
-            "127.0.0.1"
+        open_db.assert_called_once_with(
+            str(tmp_path / "bootstrap.yaml"),
+            apply_migrations=False,
         )
-        assert not (tmp_path / "gobby-hub.db").exists()
 
     def test_install_none_home_normalizes_before_helpers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -299,7 +306,6 @@ class TestInstallFalkorDB:
         monkeypatch.setattr("gobby.cli.utils.get_gobby_home", lambda: tmp_path)
 
         original_resolve_password = module._resolve_falkordb_password
-        original_resolve_db_path = module._resolve_falkordb_db_path
         original_update_config = module._update_config
 
         def track_password(
@@ -308,9 +314,10 @@ class TestInstallFalkorDB:
             received_homes.append(gobby_home)
             return original_resolve_password(password, gobby_home=gobby_home)
 
-        def track_db_path(home: Path) -> Path:
+        def track_open_config_db(home: Path, *, apply_migrations: bool = True) -> LocalDatabase:
+            _ = apply_migrations
             received_homes.append(home)
-            return original_resolve_db_path(home)
+            return _new_config_db(tmp_path / "gobby-hub.db")
 
         def track_update_config(
             *args: object, gobby_home: Path | None = None, **kwargs: object
@@ -319,7 +326,7 @@ class TestInstallFalkorDB:
             original_update_config(*args, gobby_home=gobby_home, **kwargs)
 
         monkeypatch.setattr(module, "_resolve_falkordb_password", track_password)
-        monkeypatch.setattr(module, "_resolve_falkordb_db_path", track_db_path)
+        monkeypatch.setattr(module, "_open_config_db", track_open_config_db)
         monkeypatch.setattr(module, "_update_config", track_update_config)
 
         with (
@@ -358,8 +365,9 @@ class TestUninstallFalkorDB:
             db.close()
 
         with patch("gobby.cli.installers.falkor.subprocess.run") as mock_run:
-            mock_run.return_value = _successful_run()
-            result = module.uninstall_falkordb(gobby_home=tmp_path, purge=True)
+            with _patch_config_db(db_path):
+                mock_run.return_value = _successful_run()
+                result = module.uninstall_falkordb(gobby_home=tmp_path, purge=True)
 
         assert result == {"success": True, "data_removed": True}
         assert mock_run.call_args_list[0].args[0] == [
@@ -412,7 +420,10 @@ class TestUninstallFalkorDB:
 
         monkeypatch.setattr(module, "_clear_config", track_clear_config)
 
-        with patch("gobby.cli.installers.falkor.subprocess.run") as mock_run:
+        with (
+            patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            _patch_config_db(tmp_path / "gobby-hub.db"),
+        ):
             mock_run.return_value = _successful_run()
             result = module.uninstall_falkordb(gobby_home=None)
 

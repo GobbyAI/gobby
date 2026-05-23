@@ -50,22 +50,14 @@ def _normalize_home(gobby_home: Path | None = None) -> Path:
     return get_gobby_home()
 
 
-def _resolve_falkordb_db_path(gobby_home: Path) -> Path:
-    """Resolve the local config DB path for a Gobby home."""
-    bootstrap_file = gobby_home / "bootstrap.yaml"
-    if bootstrap_file.exists():
-        from gobby.config.bootstrap import load_bootstrap
+def _open_config_db(gobby_home: Path, *, apply_migrations: bool = True) -> Any:
+    """Open the active PostgreSQL hub database for a Gobby home."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
-        return Path(load_bootstrap(str(bootstrap_file)).database_path).expanduser()
-    return gobby_home / "gobby-hub.db"
-
-
-def _open_local_config_db(gobby_home: Path) -> Any:
-    from gobby.storage.database import LocalDatabase
-
-    db = LocalDatabase(_resolve_falkordb_db_path(gobby_home))
-    db.apply_migrations()
-    return db
+    return open_runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=apply_migrations,
+    )
 
 
 def _generate_falkordb_password() -> str:
@@ -87,7 +79,7 @@ def _resolve_falkordb_password(
             expose_value=False,
         )
 
-    db = _open_local_config_db(home)
+    db = _open_config_db(home)
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
@@ -150,7 +142,10 @@ def install_falkordb(
     if not shutil.which("docker"):
         return {"success": False, "error": "Docker not found. Install Docker to use FalkorDB."}
 
-    resolved = _resolve_falkordb_password(password, gobby_home=home)
+    try:
+        resolved = _resolve_falkordb_password(password, gobby_home=home)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"success": False, "error": f"Failed to read FalkorDB config: {exc}"}
 
     services_dir = home / "services"
     compose_file = _refresh_unified_compose(services_dir)
@@ -334,7 +329,7 @@ async def _wait_for_health_async(
 
 
 def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> None:
-    db = _open_local_config_db(gobby_home)
+    db = _open_config_db(gobby_home)
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
@@ -356,7 +351,7 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
 
 
 def _clear_config(*, gobby_home: Path) -> None:
-    db = _open_local_config_db(gobby_home)
+    db = _open_config_db(gobby_home)
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore

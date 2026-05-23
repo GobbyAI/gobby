@@ -64,14 +64,19 @@ def test_services_start_uses_falkordb_config_store_password(
     (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     _seed_falkordb_config(tmp_path, "config-secret")
+    db = LocalDatabase(tmp_path / "gobby-hub.db")
 
-    with (
-        patch("shutil.which", return_value="/usr/bin/docker"),
-        patch("gobby.config.app.load_config", side_effect=load_config),
-        patch("gobby.cli.daemon.subprocess.run") as mock_run,
-    ):
-        mock_run.return_value = MagicMock(returncode=0)
-        _services_start(tmp_path)
+    try:
+        with (
+            patch("shutil.which", return_value="/usr/bin/docker"),
+            patch("gobby.cli.daemon._open_services_config_db", return_value=db),
+            patch("gobby.config.app.load_config", side_effect=load_config),
+            patch("gobby.cli.daemon.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            _services_start(tmp_path)
+    finally:
+        db.close()
 
     cmd = mock_run.call_args.args[0]
     assert "--profile" in cmd

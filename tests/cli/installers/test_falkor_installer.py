@@ -182,6 +182,11 @@ class TestInstallFalkorDB:
         from gobby.storage.migrations import run_migrations
 
         db_path = tmp_path / "gobby-hub.db"
+
+        def open_db(_home: Path, *, apply_migrations: bool = True) -> LocalDatabase:
+            _ = apply_migrations
+            return LocalDatabase(db_path)
+
         db = LocalDatabase(db_path)
         try:
             run_migrations(db)
@@ -191,7 +196,13 @@ class TestInstallFalkorDB:
         finally:
             db.close()
 
-        _update_config(host="127.0.0.1", port=16379, password="password123", gobby_home=tmp_path)
+        with patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db):
+            _update_config(
+                host="127.0.0.1",
+                port=16379,
+                password="password123",
+                gobby_home=tmp_path,
+            )
 
         db = LocalDatabase(db_path)
         try:

@@ -142,7 +142,7 @@ class ConfigStore:
     ) -> None:
         """Encrypt a config value via SecretStore and store a reference.
 
-        Stores ``$secret:<natural_name>`` in config_store with ``is_secret=1``.
+        Stores ``$secret:<natural_name>`` in config_store with ``is_secret=true``.
         The actual value is encrypted in the ``secrets`` table.
         Both writes happen in a single transaction for consistency.
         """
@@ -158,18 +158,21 @@ class ConfigStore:
             )
             self.db.execute(
                 """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                   VALUES (?, ?, ?, 1, ?)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        source = excluded.source,
-                       is_secret = 1,
+                       is_secret = excluded.is_secret,
                        updated_at = excluded.updated_at""",
-                (key, json.dumps(ref), source, now),
+                (key, json.dumps(ref), source, True, now),
             )
 
     def get_secret_keys(self) -> list[str]:
         """Return all config keys flagged as secrets."""
-        rows = self.db.fetchall("SELECT key FROM config_store WHERE is_secret = 1 ORDER BY key")
+        rows = self.db.fetchall(
+            "SELECT key FROM config_store WHERE is_secret = ? ORDER BY key",
+            (True,),
+        )
         return [row["key"] for row in rows]
 
     def clear_secret(self, key: str, secret_store: SecretStore) -> None:

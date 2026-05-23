@@ -45,6 +45,16 @@ logger = logging.getLogger(__name__)
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
+def _open_services_config_db(gobby_home: Path) -> Any:
+    """Open the runtime hub DB using the bootstrap file for a Gobby home."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=False,
+    )
+
+
 def _services_start(gobby_home: Path) -> None:
     """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
@@ -66,19 +76,17 @@ def _services_start(gobby_home: Path) -> None:
     profiles: list[str] = []
     db = None
     try:
-        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
         from gobby.config.app import load_config
         from gobby.config.persistence import is_falkordb_enabled
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
         from gobby.storage.secrets import SecretStore
 
-        db = LocalDatabase(_resolve_falkordb_db_path(gobby_home))
+        db = _open_services_config_db(gobby_home)
         config_store = ConfigStore(db)
         secret_store = SecretStore(db)
         bootstrap_file = gobby_home / "bootstrap.yaml"
         config = load_config(
-            str(bootstrap_file) if bootstrap_file.exists() else None,
+            str(bootstrap_file),
             config_store=config_store,
             secret_resolver=secret_store.get,
         )
@@ -90,9 +98,8 @@ def _services_start(gobby_home: Path) -> None:
         if config.databases.qdrant.url:
             profiles.append("qdrant")
     except Exception as e:
-        logger.warning(f"Could not resolve config for services: {e}")
-        # Default: try starting all profiles
-        profiles = ["all"]
+        logger.warning(f"Could not resolve config for services; skipping Docker startup: {e}")
+        profiles = []
     finally:
         if db is not None:
             db.close()
