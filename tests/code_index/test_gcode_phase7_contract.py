@@ -57,8 +57,8 @@ def _assert_field(body: str, declaration: str) -> None:
     assert declaration in body, f"missing field declaration: {declaration}"
 
 
-def test_phase7_config_adds_falkordb_alongside_legacy_neo4j_until_section_7_4() -> None:
-    """Phase 7.1 is additive: FalkorDB config joins, then Neo4j is removed in 7.4."""
+def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
+    """FalkorDB config is required; Neo4j config is transitional until 7.4."""
     config = _read("crates/gcode/src/config.rs")
 
     falkor = _struct_body(config, "FalkorConfig")
@@ -67,24 +67,32 @@ def test_phase7_config_adds_falkordb_alongside_legacy_neo4j_until_section_7_4() 
     _assert_field(falkor, "pub password: Option<String>")
     _assert_field(falkor, "pub graph_name: String")
 
-    neo4j = _struct_body(config, "Neo4jConfig")
-    _assert_field(neo4j, "pub url: String")
-    _assert_field(neo4j, "pub auth: Option<String>")
-    _assert_field(neo4j, "pub database: String")
-
     context = _struct_body(config, "Context")
     _assert_field(context, "pub falkordb: Option<FalkorConfig>")
-    _assert_field(context, "pub neo4j: Option<Neo4jConfig>")
 
     assert re.search(r"let\s+falkordb\s*=\s*resolve_falkordb_config\(", config)
-    assert re.search(r"let\s+neo4j\s*=\s*resolve_neo4j_config\(", config)
-    assert re.search(r"graph_name:\s*\"gobby_code\"\.to_string\(\)", config)
+    graph_name_literal = re.search(r"graph_name:\s*\"gobby_code\"\.to_string\(\)", config)
+    graph_name_const = 'const FALKORDB_GRAPH_NAME: &str = "gobby_code";' in config and re.search(
+        r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config
+    )
+    assert graph_name_literal or graph_name_const
     assert "databases.falkordb.host" in config
     assert "databases.falkordb.port" in config
     assert "databases.falkordb.requirepass" in config
     assert "GOBBY_FALKORDB_HOST" in config
     assert "GOBBY_FALKORDB_PORT" in config
     assert "GOBBY_FALKORDB_PASSWORD" in config
+
+    if re.search(r"pub\s+struct\s+Neo4jConfig\s*\{", config):
+        neo4j = _struct_body(config, "Neo4jConfig")
+        _assert_field(neo4j, "pub url: String")
+        _assert_field(neo4j, "pub auth: Option<String>")
+        _assert_field(neo4j, "pub database: String")
+        _assert_field(context, "pub neo4j: Option<Neo4jConfig>")
+        assert re.search(r"let\s+neo4j\s*=\s*resolve_neo4j_config\(", config)
+    else:
+        assert "pub neo4j: Option<Neo4jConfig>" not in context
+        assert "resolve_neo4j_config" not in config
 
 
 def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
