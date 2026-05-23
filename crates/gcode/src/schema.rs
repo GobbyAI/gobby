@@ -12,8 +12,7 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
-const MIGRATION_HINT: &str =
-    "Finish `gobby postgres migrate-from-sqlite` and cut over to the migrated PostgreSQL hub.";
+const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
 ///

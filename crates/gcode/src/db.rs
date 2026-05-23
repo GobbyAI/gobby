@@ -47,7 +47,7 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
     let path = bootstrap_path()?;
     let contents = std::fs::read_to_string(&path).with_context(|| {
         format!(
-            "missing Gobby bootstrap at {}. Run `gobby postgres migrate-from-sqlite` and cut over to the PostgreSQL hub first.",
+            "missing Gobby bootstrap at {}. Configure the Gobby PostgreSQL hub before running gcode.",
             path.display()
         )
     })?;
@@ -74,7 +74,8 @@ fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase>
     };
 
     Ok(BootstrapDatabase {
-        hub_backend: get_string("hub_backend")?.unwrap_or_else(|| "sqlite".to_string()),
+        hub_backend: get_string("hub_backend")?
+            .context("bootstrap.yaml must include `hub_backend: postgres`")?,
         database_url: get_string("database_url")?,
         database_url_ref: get_string("database_url_ref")?,
     })
@@ -86,7 +87,7 @@ fn resolve_database_url_from_bootstrap(
 ) -> anyhow::Result<String> {
     if bootstrap.hub_backend != "postgres" {
         bail!(
-            "gcode requires `hub_backend: postgres` in bootstrap.yaml. Current hub_backend is `{}`. Run `gobby postgres migrate-from-sqlite` and cut over first.",
+            "gcode requires `hub_backend: postgres` in bootstrap.yaml. Current hub_backend is `{}`. Configure the Gobby PostgreSQL hub before running gcode.",
             bootstrap.hub_backend
         );
     }
@@ -337,11 +338,22 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_bootstrap_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(&bootstrap("sqlite", None, None), || {
-            unreachable!("broker should not be used")
-        })
-        .expect_err("sqlite backend must fail");
+    fn non_postgres_bootstrap_fails_clearly() {
+        let err =
+            resolve_database_url_from_bootstrap(&bootstrap("legacy-local", None, None), || {
+                unreachable!("broker should not be used")
+            })
+            .expect_err("non-postgres backend must fail");
+
+        let message = err.to_string();
+        assert!(message.contains("hub_backend: postgres"));
+        assert!(message.contains("legacy-local"));
+    }
+
+    #[test]
+    fn missing_hub_backend_fails_clearly() {
+        let err = parse_bootstrap_database("database_url: postgresql://inline/db\n")
+            .expect_err("missing hub_backend must fail");
 
         assert!(err.to_string().contains("hub_backend: postgres"));
     }
