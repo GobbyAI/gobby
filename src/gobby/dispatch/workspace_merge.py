@@ -17,6 +17,7 @@ from typing import Literal, cast
 from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
@@ -121,7 +122,9 @@ def _execute_merge_workspace_sync(
                 _abort_merge(paths.target_path)
                 detail_files = remaining or conflicted
                 detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
-                _fail_merge_stage(db, action.task_id, f"merge_conflict:{detail or 'unknown'}")
+                reason = f"merge_conflict:{detail or 'unknown'}"
+                _mark_workspace_merge_conflict_for_recovery(db, action.task_id, reason)
+                _fail_merge_stage(db, action.task_id, reason, needs_human=False)
                 return None
 
             merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
@@ -524,13 +527,32 @@ def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -
         )
 
 
-def _fail_merge_stage(db: DatabaseProtocol, task_id: str, reason: str) -> None:
+def _fail_merge_stage(
+    db: DatabaseProtocol,
+    task_id: str,
+    reason: str,
+    *,
+    needs_human: bool = True,
+) -> None:
     StageStatesManager(db, TaskLifecycleEventManager(db)).fail_stage(
         task_id,
         "merge",
         reason=reason,
-        needs_human=True,
+        needs_human=needs_human,
         by_session_id="dispatcher",
+    )
+
+
+def _mark_workspace_merge_conflict_for_recovery(
+    db: DatabaseProtocol,
+    task_id: str,
+    reason: str,
+) -> None:
+    LocalTaskManager(db).add_label(task_id, WORKSPACE_MERGE_CONFLICT_LABEL)
+    _append_merge_failure_audit(
+        db,
+        task_id,
+        f"{reason}\n\nMarked for automated merge-orchestrator recovery.",
     )
 
 

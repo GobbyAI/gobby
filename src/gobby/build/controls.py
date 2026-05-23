@@ -270,6 +270,11 @@ def cleanup_successful_merge_artifacts(
 
     active_agents = _active_agents(db, [task.id for task in tasks])
     artifacts_to_delete = _defer_active_agent_artifacts(artifacts, active_agents)
+    artifacts_to_delete = _defer_dirty_descendant_worktree_artifacts(
+        artifacts_to_delete,
+        root_task_id=root.id,
+        project_path=_project_path(db, cleanup_project_id),
+    )
 
     _delete_artifacts(
         db,
@@ -467,6 +472,36 @@ def _defer_active_agent_artifacts(
             artifact.deferred = True
             continue
         if artifact.family == "clone" and artifact.artifact_id in active_clone_ids:
+            artifact.deferred = True
+            continue
+        artifacts_to_delete.append(artifact)
+
+    return artifacts_to_delete
+
+
+def _defer_dirty_descendant_worktree_artifacts(
+    artifacts: list[BuildArtifactSummary],
+    *,
+    root_task_id: str,
+    project_path: Path,
+) -> list[BuildArtifactSummary]:
+    worktree_git = WorktreeGitManager(project_path)
+    artifacts_to_delete: list[BuildArtifactSummary] = []
+
+    for artifact in artifacts:
+        if (
+            artifact.family != "worktree"
+            or artifact.task_id in {None, root_task_id}
+            or artifact.deferred
+        ):
+            artifacts_to_delete.append(artifact)
+            continue
+        status = worktree_git.get_worktree_status(artifact.path)
+        if status is not None and (
+            status.has_uncommitted_changes
+            or status.has_staged_changes
+            or status.has_untracked_files
+        ):
             artifact.deferred = True
             continue
         artifacts_to_delete.append(artifact)

@@ -17,6 +17,7 @@ from gobby.dispatch.actions import (
     StartStageAction,
 )
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
 
@@ -319,6 +320,8 @@ def merge_rule(task: object, context: object) -> Action | None:
 def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceAction | None:
     stage = _matching_current_stage(task, context, "merge", "in_progress")
     if stage is None or not _has_workspace_merge_source(task, context):
+        return None
+    if _task_has_label(task, WORKSPACE_MERGE_CONFLICT_LABEL):
         return None
     artifacts = _artifacts(task, context)
     target_branch = _field(artifacts, "target_branch")
@@ -769,6 +772,10 @@ def _is_closed(task: object) -> bool:
 
 def _isolation(task: object) -> str:
     return str(_field(task, "isolation", "worktree"))
+
+
+def _task_has_label(task: object, label: str) -> bool:
+    return label in set(_field(task, "labels", ()) or ())
 
 
 def _has_isolation_pair(artifacts: object, isolation: str) -> bool:
