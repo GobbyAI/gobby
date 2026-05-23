@@ -99,6 +99,12 @@ function submit(value: string): void {
   fireEvent.keyDown(input, { key: "Enter" });
 }
 
+function hasRenderedText(text: string): boolean {
+  return (
+    screen.queryAllByText((_, element) => element?.textContent?.includes(text) ?? false).length > 0
+  );
+}
+
 describe("Services FalkorDB setup", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -126,6 +132,38 @@ describe("Services FalkorDB setup", () => {
       expect(view.setState).not.toHaveBeenCalled();
       expect(view.onNext).not.toHaveBeenCalled();
       expect(screen.getByText(/Enter FalkorDB password/i)).toBeTruthy();
+      expect(screen.getByText(/FalkorDB password must/i)).toBeTruthy();
+    },
+  );
+
+  it("clears the password rejection when the operator edits the value", () => {
+    renderServices();
+
+    submit("p");
+    submit("has space");
+    expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("wizard input"), { target: { value: "Valid123!" } });
+
+    expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(false);
+  });
+
+  it.each([
+    ["has space", "FalkorDB password must not contain whitespace"],
+    ["control\u0007char", "FalkorDB password must not contain ASCII control characters"],
+    [
+      "nonascii-é",
+      "FalkorDB password must use printable ASCII only (Docker round-trip constraint)",
+    ],
+  ])(
+    "surfaces the validator message for invalid FalkorDB password %s",
+    (password, message) => {
+      renderServices();
+
+      submit("p");
+      submit(password);
+
+      expect(hasRenderedText(message)).toBe(true);
     },
   );
 
@@ -150,8 +188,11 @@ describe("Services FalkorDB setup", () => {
     expect(view.state).not.toHaveProperty("neo4j_password_set");
   });
 
-  it("returns to password entry when the FalkorDB CLI install rejects the password", async () => {
-    mocks.runGobby.mockReturnValue({ success: false, output: "password rejected" });
+  it("returns to password entry when the FalkorDB CLI install rejects the password", () => {
+    mocks.runGobby.mockReturnValue({
+      success: false,
+      output: "ValueError: FalkorDB password must not contain whitespace",
+    });
     const view = renderServices();
 
     submit("p");
@@ -161,5 +202,6 @@ describe("Services FalkorDB setup", () => {
     expect(view.setState).not.toHaveBeenCalled();
     expect(view.onNext).not.toHaveBeenCalled();
     expect(screen.getByText(/Enter FalkorDB password/i)).toBeTruthy();
+    expect(hasRenderedText("FalkorDB password must not contain whitespace")).toBe(true);
   });
 });
