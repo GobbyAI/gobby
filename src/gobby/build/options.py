@@ -36,6 +36,7 @@ class BuildOptions:
     max_retries: int | None = None
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = 0
+    dry_run: bool = False
 
     @property
     def workspace_backend(self) -> WorkspaceBackend:

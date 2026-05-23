@@ -38,6 +38,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         applied_stages_skipped=["pr"],
         tick_dispatched=0,
         dispatcher_tick=DispatcherTickSummary(ticks=0, scanned=0, executed=0, skipped=0),
+        dry_run=True,
     )
 
     with patch(
@@ -59,6 +60,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "max_retries": 0,
                 "planning_seed_state": "needs_review",
                 "completed_plan_review_rounds": 2,
+                "dry_run": True,
             },
         )
 
@@ -79,6 +81,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         },
         "manifest": None,
         "warnings": [],
+        "dry_run": True,
     }
     call = build.call_args
     assert call.args[0] == "plan.md"
@@ -99,6 +102,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.max_retries == 0
     assert opts.planning_seed_state == "needs_review"
     assert opts.completed_plan_review_rounds == 2
+    assert opts.dry_run is True
     assert call.kwargs["project_id"] == "project-1"
     assert call.kwargs["services"] is not None
 

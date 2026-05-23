@@ -43,6 +43,9 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--max-retries" in result.output
     assert "--planning-seed-state" in result.output
     assert "--completed-plan-review-rounds" in result.output
+    assert "--dry-run" in result.output
+    assert "Preview build, clean, or restart without" in result.output
+    assert "persisting changes." in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -96,6 +99,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "approved",
                 "--completed-plan-review-rounds",
                 "2",
+                "--dry-run",
             ],
         )
 
@@ -129,6 +133,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.max_retries == 0
     assert opts.planning_seed_state == "approved"
     assert opts.completed_plan_review_rounds == 2
+    assert opts.dry_run is True
     assert call.kwargs == {
         "db": open_db.return_value,
         "project_id": "project-1",
@@ -259,6 +264,16 @@ def test_build_payload_includes_max_retries_zero() -> None:
     assert payload["max_retries"] == 0
     assert payload["planning_seed_state"] == "drafted"
     assert payload["completed_plan_review_rounds"] == 0
+    assert payload["dry_run"] is False
+
+
+def test_build_payload_includes_dry_run() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(BuildOptions(dry_run=True), "plan.md")
+
+    assert payload["dry_run"] is True
 
 
 def test_daemon_profile_error_detection_prefers_structured_type() -> None:

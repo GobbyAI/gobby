@@ -157,6 +157,7 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "max_retries": opts.max_retries,
         "planning_seed_state": opts.planning_seed_state,
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
+        "dry_run": opts.dry_run,
     }
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
@@ -180,6 +181,7 @@ def _result_from_payload(payload: dict[str, object]) -> BuildResult:
         dispatcher_tick=dispatcher_tick,
         manifest=manifest if isinstance(manifest, list) else None,
         warnings=_payload_string_list(payload.get("warnings")),
+        dry_run=bool(payload.get("dry_run")),
     )
 
 
@@ -480,7 +482,12 @@ def _open_database() -> HubDatabase:
     show_default=True,
     help="Review rounds already completed before plan-file build handoff.",
 )
-@click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview build, clean, or restart without persisting changes.",
+)
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
@@ -555,6 +562,7 @@ def build_command(
         max_retries=max_retries,
         planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
         completed_plan_review_rounds=completed_plan_review_rounds,
+        dry_run=dry_run,
     )
     project_id = resolve_project_id()
     result = _try_daemon_build(input_ref, opts)

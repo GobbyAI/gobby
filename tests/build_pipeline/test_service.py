@@ -56,6 +56,13 @@ def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", no_tick)
 
 
+def _table_counts(temp_db: LocalDatabase, *tables: str) -> dict[str, int]:
+    return {
+        table: int(temp_db.fetchone(f"SELECT COUNT(*) AS count FROM {table}")["count"])
+        for table in tables
+    }
+
+
 def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
@@ -346,6 +353,65 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
         "holistic_qa",
         "merge",
     ]
+
+
+@pytest.mark.asyncio
+async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    tables = (
+        "tasks",
+        "task_stage_states",
+        "task_lifecycle_events",
+        "build_runs",
+        "build_history_events",
+        "task_dispatch_mutex",
+    )
+    before = _table_counts(temp_db, *tables)
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            dry_run=True,
+            isolation="none",
+            stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+    second = await _build(
+        str(plan_file),
+        _options(
+            dry_run=True,
+            isolation="none",
+            stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert _table_counts(temp_db, *tables) == before
+    assert result.dry_run is True
+    assert result.created is True
+    assert result.task_id == "dry-run:plan-file"
+    assert result.dispatcher_tick.reason == "dry_run"
+    assert result.tick_dispatched == 0
+    assert result.manifest is not None
+    assert result.manifest == second.manifest
+    assert [row["stage_name"] for row in result.manifest] == ["planning"]
+    assert result.manifest[0]["max_work_attempts"] == 4
 
 
 @pytest.mark.asyncio
@@ -748,6 +814,71 @@ async def test_build_existing_lifecycle_stage_caps_update_rows(
     rows = task_manager.stage_states.list_for_task(leaf.id)
     assert [row.stage_name for row in rows] == ["development", "pr", "merge"]
     assert rows[0].max_review_rounds == 4
+
+
+@pytest.mark.asyncio
+async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Existing lifecycle preview",
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(task.id, stage_names=["development", "pr"])
+    tables = (
+        "tasks",
+        "task_stage_states",
+        "task_lifecycle_events",
+        "build_runs",
+        "build_history_events",
+        "task_dispatch_mutex",
+    )
+    before_counts = _table_counts(temp_db, *tables)
+    before_task = task_manager.get_task(task.id)
+    before_rows = task_manager.stage_states.list_for_task(task.id)
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        f"#{task.seq_num}",
+        _options(
+            dry_run=True,
+            isolation="none",
+            assigned_agent="backend-developer",
+            stage_caps=[StageCapOverride("development", max_work_attempts=7)],
+            max_retries=1,
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    after_task = task_manager.get_task(task.id)
+    after_rows = task_manager.stage_states.list_for_task(task.id)
+
+    assert _table_counts(temp_db, *tables) == before_counts
+    assert result.dry_run is True
+    assert result.created is False
+    assert result.task_id == task.id
+    assert result.dispatcher_tick.reason == "dry_run"
+    assert result.manifest is not None
+    manifest_by_stage = {row["stage_name"]: row for row in result.manifest}
+    assert manifest_by_stage["development"]["max_work_attempts"] == 7
+    assert manifest_by_stage["pr"]["max_work_attempts"] == 2
+    assert after_task.allow_automation == before_task.allow_automation
+    assert after_task.assigned_agent == before_task.assigned_agent
+    assert [
+        (row.stage_name, row.max_work_attempts, row.max_review_rounds) for row in after_rows
+    ] == [(row.stage_name, row.max_work_attempts, row.max_review_rounds) for row in before_rows]
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,9 @@ from typing import Literal
 
 from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.dispatch_tick import (
+    DispatcherTickSummary,
+)
+from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
 from gobby.build.options import BuildOptions, retry_attempt_cap
@@ -66,6 +69,12 @@ _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_review_rounds": "max_review_rounds = ?",
 }
 
+_DRY_RUN_PLAN_TASK_ID = "dry-run:plan-file"
+
+
+class _DryRunRollback(Exception):
+    """Internal sentinel used to roll back dry-run preview writes."""
+
 
 async def build(
     input_ref: str,
@@ -76,6 +85,15 @@ async def build(
     services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
+    if opts.dry_run:
+        return await _build_dry_run(
+            input_ref,
+            opts,
+            db=db,
+            project_id=project_id,
+            services=services,
+        )
+
     run = best_effort_start_run(
         db,
         project_id=project_id,
@@ -128,6 +146,33 @@ async def build(
         payload=asdict(result),
     )
     return result
+
+
+async def _build_dry_run(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    services: object | None = None,
+) -> BuildResult:
+    result: BuildResult | None = None
+    try:
+        with db.transaction_immediate():
+            result = await _build_impl(
+                input_ref,
+                opts,
+                db=db,
+                project_id=project_id,
+                services=services,
+            )
+            raise _DryRunRollback
+    except _DryRunRollback:
+        if result is None:
+            raise RuntimeError("dry-run build did not produce a result") from None
+        if result.created:
+            result = replace(result, task_id=_DRY_RUN_PLAN_TASK_ID)
+        return replace(result, dry_run=True)
 
 
 async def _build_impl(
@@ -246,13 +291,12 @@ async def _build_plan_file(
     _seed_plan_file_stage_state(task_manager, task.id, opts)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    tick = await _build_dispatcher_tick(
         task_manager.db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -265,6 +309,7 @@ async def _build_plan_file(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -331,13 +376,12 @@ async def _build_leaf(
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -350,6 +394,7 @@ async def _build_leaf(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -374,15 +419,16 @@ async def _build_epic(
     if opts.isolation in {"worktree", "clone"}:
         if target_branch is None:
             raise ValueError("target_branch is required for epic integration workspaces")
-        await asyncio.to_thread(
-            ensure_epic_integration_workspaces,
-            task_manager=task_manager,
-            root_task=task,
-            backend=opts.workspace_backend,
-            target_branch=target_branch,
-            project_id=project_id,
-            services=services,
-        )
+        if not opts.dry_run:
+            await asyncio.to_thread(
+                ensure_epic_integration_workspaces,
+                task_manager=task_manager,
+                root_task=task,
+                backend=opts.workspace_backend,
+                target_branch=target_branch,
+                project_id=project_id,
+                services=services,
+            )
     manifest_input_kind: InputKind = (
         "expanded_epic" if _has_existing_expansion_output(task_manager, task) else "epic"
     )
@@ -417,13 +463,12 @@ async def _build_epic(
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -436,6 +481,7 @@ async def _build_epic(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -516,16 +562,17 @@ async def _resume_existing_lifecycle(
         if resume_opts.isolation in {"worktree", "clone"}:
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
-            await asyncio.to_thread(
-                ensure_epic_integration_workspaces,
-                task_manager=task_manager,
-                root_task=task,
-                backend=resume_opts.workspace_backend,
-                target_branch=integration_target,
-                project_id=project_id,
-                services=services,
-            )
-    elif resume_opts.isolation in {"worktree", "clone"}:
+            if not resume_opts.dry_run:
+                await asyncio.to_thread(
+                    ensure_epic_integration_workspaces,
+                    task_manager=task_manager,
+                    root_task=task,
+                    backend=resume_opts.workspace_backend,
+                    target_branch=integration_target,
+                    project_id=project_id,
+                    services=services,
+                )
+    elif resume_opts.isolation in {"worktree", "clone"} and not resume_opts.dry_run:
         await asyncio.to_thread(
             ensure_task_parent_integration_workspace,
             task_manager=task_manager,
@@ -538,13 +585,12 @@ async def _resume_existing_lifecycle(
     specs = stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=resume_opts.isolation)
@@ -557,6 +603,7 @@ async def _resume_existing_lifecycle(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -691,6 +738,26 @@ def _apply_stage_caps_to_existing_lifecycle(
 
 def _quick_tick_limit(opts: BuildOptions) -> int | None:
     return 2 if opts.quick else None
+
+
+async def _build_dispatcher_tick(
+    db: DatabaseProtocol,
+    project_id: str,
+    opts: BuildOptions,
+    *,
+    dispatcher_enabled: bool,
+    services: object | None,
+) -> DispatcherTickSummary:
+    if opts.dry_run:
+        return DispatcherTickSummary(reason="dry_run")
+    return await _kick_dispatcher_tick(
+        db,
+        project_id,
+        dispatcher_enabled=dispatcher_enabled,
+        services=services,
+        max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
+    )
 
 
 def _set_automation_for_task_tree(
