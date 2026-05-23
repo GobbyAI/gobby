@@ -30,6 +30,10 @@ _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 logger = logging.getLogger(__name__)
 
 
+class ClaudeSDKProviderFailure(RuntimeError):
+    """Typed failure for known Claude SDK/provider degradation paths."""
+
+
 class ClaudeLLMProvider(LLMProvider):
     """Claude implementation of LLMProvider using the Claude Agent SDK."""
 
@@ -133,6 +137,8 @@ class ClaudeLLMProvider(LLMProvider):
         Permanent errors (auth failures, invalid requests) are not retried.
         Transient errors (timeouts, rate limits, server errors) are retried.
         """
+        if ClaudeLLMProvider._is_error_result_success(e):
+            return False
         msg = str(e).lower()
         # Permanent error patterns — fail fast
         permanent_patterns = [
@@ -151,6 +157,11 @@ class ClaudeLLMProvider(LLMProvider):
             if pattern in msg:
                 return False
         return True
+
+    @staticmethod
+    def _is_error_result_success(e: BaseException) -> bool:
+        """Return whether the SDK surfaced its known error-result-success shape."""
+        return "claude code returned an error result: success" in str(e).lower()
 
     @staticmethod
     def _extract_exit_code(e: BaseException) -> int | None:
@@ -261,6 +272,18 @@ class ClaudeLLMProvider(LLMProvider):
             # Let ExceptionGroup propagate for callers that handle it
             raise
         except Exception as e:
+            if self._is_error_result_success(e):
+                exit_code = self._extract_exit_code(e)
+                stderr_text = "\n".join(stderr_lines)
+                message = (
+                    f"{operation} provider degraded: Claude SDK returned "
+                    "error-result-success"
+                    + (f" [exit_code={exit_code}]" if exit_code else "")
+                    + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
+                )
+                self.logger.warning(message)
+                raise ClaudeSDKProviderFailure(message) from e
+
             # Give stderr handler task time to drain before logging
             await asyncio.sleep(0.2)
             exit_code = self._extract_exit_code(e)

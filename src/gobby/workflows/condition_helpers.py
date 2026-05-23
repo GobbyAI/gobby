@@ -167,7 +167,11 @@ def _python_module_invokes_validation(tokens: list[str]) -> bool:
         return True
     if module in {"coverage"}:
         return len(tokens) > 2 and tokens[2] == "run"
-    return module == "ruff" and len(tokens) > 2 and tokens[2] == "check"
+    return (
+        module == "ruff"
+        and len(tokens) > 2
+        and (tokens[2] == "check" or (tokens[2] == "format" and "--check" in tokens[3:]))
+    )
 
 
 def _package_manager_invokes_validation(tokens: list[str]) -> bool:

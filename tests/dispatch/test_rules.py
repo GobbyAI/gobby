@@ -452,6 +452,24 @@ def test_non_root_leaf_merge_uses_workspace_merge_action() -> None:
     assert action.target_branch == "integration/root"
 
 
+def test_workspace_merge_conflict_label_routes_to_merge_orchestrator() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+    from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
+
+    action = _evaluate(
+        _task_at(
+            "merge",
+            "in_progress",
+            parent_task_id="epic-1",
+            labels=[WORKSPACE_MERGE_CONFLICT_LABEL],
+        ),
+        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="integration/root")),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "merge-orchestrator"
+
+
 def test_root_merge_still_routes_to_merge_orchestrator() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 

@@ -14,11 +14,16 @@ Exposes functionality for:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.config_store import flatten_config, unflatten_config
+from gobby.storage.config_store import (
+    config_key_to_secret_name,
+    flatten_config,
+    is_secret_key_name,
+    unflatten_config,
+)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -28,6 +33,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["create_config_registry"]
+
+_MASKED_SECRET = "********"
+_FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
+_FALKOR_RESTART_HINT = (
+    "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
+)
+
+
+def _mask_secret_value(key: str, value: Any) -> Any:
+    if is_secret_key_name(key) and value not in (None, ""):
+        return _MASKED_SECRET
+    return value
+
+
+def _validate_falkordb_secret(key: str, value: Any) -> None:
+    if key != _FALKOR_REQUIREPASS_KEY:
+        return
+    from gobby.config.persistence import validate_falkordb_password
+
+    validate_falkordb_password(str(value))
+
+
+def _add_restart_metadata(result: dict[str, Any], touched_keys: Iterable[str]) -> None:
+    if _FALKOR_REQUIREPASS_KEY in set(touched_keys):
+        result["requires_restart"] = True
+        result["restart_hint"] = _FALKOR_RESTART_HINT
 
 
 def create_config_registry(
@@ -74,7 +105,7 @@ def create_config_registry(
         """Get a single config value by dotted key."""
         flat = _flat_config()
         if key in flat:
-            return {"success": True, "key": key, "value": flat[key]}
+            return {"success": True, "key": key, "value": _mask_secret_value(key, flat[key])}
         return {"success": False, "error": f"Key '{key}' not found in config"}
 
     @registry.tool(
@@ -87,11 +118,17 @@ def create_config_registry(
         # Filter keys matching the prefix (exact prefix + '.' boundary)
         section_prefix = prefix + "."
         filtered = {
-            k[len(section_prefix) :]: v for k, v in flat.items() if k.startswith(section_prefix)
+            k[len(section_prefix) :]: _mask_secret_value(k, v)
+            for k, v in flat.items()
+            if k.startswith(section_prefix)
         }
         # Also include exact match
         if prefix in flat:
-            return {"success": True, "prefix": prefix, "value": flat[prefix]}
+            return {
+                "success": True,
+                "prefix": prefix,
+                "value": _mask_secret_value(prefix, flat[prefix]),
+            }
         if not filtered:
             return {"success": False, "error": f"No keys found under prefix '{prefix}'"}
         nested = unflatten_config(filtered)
@@ -118,10 +155,18 @@ def create_config_registry(
         from gobby.config.app import deep_merge
 
         try:
-            # For secret values, validate with the $secret: ref placeholder
-            if is_secret:
-                from gobby.storage.config_store import config_key_to_secret_name
+            effective_is_secret = is_secret or is_secret_key_name(key)
+            if effective_is_secret and db is None:
+                return {
+                    "success": False,
+                    "error": f"Cannot store '{key}' as secret — database not available. "
+                    "Secrets require database for encryption.",
+                }
+            if effective_is_secret:
+                _validate_falkordb_secret(key, value)
 
+            # For secret values, validate with the $secret: ref placeholder.
+            if effective_is_secret:
                 ref = f"$secret:{config_key_to_secret_name(key)}"
                 validation_value = ref
             else:
@@ -137,37 +182,33 @@ def create_config_registry(
             # Validate by constructing a new DaemonConfig
             new_config = DaemonConfigCls(**current_dict)
 
-            # Persist to DB
-            if is_secret and db is not None:
-                from gobby.storage.secrets import SecretStore as SecretStoreCls
-
-                secret_store = SecretStoreCls(db)
-                config_store.set_secret(key, str(value), secret_store, source="mcp")
-            elif is_secret:
-                return {
-                    "success": False,
-                    "error": f"Cannot store '{key}' as secret — database not available. "
-                    "Secrets require database for encryption.",
-                }
-            else:
-                config_store.set(key, value, source="mcp")
-
-            # For secrets, rebuild config with actual value (not the $secret: ref)
-            if is_secret:
+            if effective_is_secret:
                 actual_nested = unflatten_config({key: value})
                 actual_dict = _current_config().model_dump(mode="json")
                 deep_merge(actual_dict, actual_nested)
                 new_config = DaemonConfigCls(**actual_dict)
 
+            # Persist to DB
+            if effective_is_secret and db is not None:
+                from gobby.storage.secrets import SecretStore as SecretStoreCls
+
+                secret_store = SecretStoreCls(db)
+                config_store.set_secret(key, str(value), secret_store, source="mcp")
+            else:
+                config_store.set(key, value, source="mcp")
+
             _state["config"] = new_config
             config_setter(new_config)
 
             result: dict[str, Any] = {"success": True, "key": key}
-            if is_secret:
+            if effective_is_secret:
                 result["stored_as"] = "encrypted_secret"
             else:
                 result["value"] = value
+            _add_restart_metadata(result, [key])
             return result
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.exception(f"Failed to set config key '{key}'")
             return {"success": False, "error": str(e)}
@@ -197,6 +238,7 @@ def create_config_registry(
         try:
             # Collect and validate entry shapes
             flat_updates: dict[str, Any] = {}
+            explicit_secret_keys: set[str] = set()
             for entry in entries:
                 key = entry.get("key")
                 value = entry.get("value")
@@ -209,27 +251,68 @@ def create_config_registry(
                         "Use dotted keys for nested values.",
                     }
                 flat_updates[key] = value
+                if bool(entry.get("is_secret", False)):
+                    explicit_secret_keys.add(key)
+
+            secret_keys = {
+                key
+                for key in flat_updates
+                if key in explicit_secret_keys or is_secret_key_name(key)
+            }
+            plain_updates = {
+                key: value for key, value in flat_updates.items() if key not in secret_keys
+            }
+            secret_updates = {key: flat_updates[key] for key in secret_keys}
+            if secret_updates and db is None:
+                return {
+                    "success": False,
+                    "error": "Cannot store secret config keys — database not available. "
+                    "Secrets require database for encryption.",
+                }
+            for key, value in secret_updates.items():
+                _validate_falkordb_secret(key, value)
 
             # Unflatten all keys → nested dict, merge into current config
-            update_nested = unflatten_config(flat_updates)
+            validation_updates = dict(flat_updates)
+            for key in secret_keys:
+                validation_updates[key] = f"$secret:{config_key_to_secret_name(key)}"
+            update_nested = unflatten_config(validation_updates)
             current_dict = _current_config().model_dump(mode="json")
             deep_merge(current_dict, update_nested)
 
             # Validate by constructing a new DaemonConfig
-            new_config = DaemonConfigCls(**current_dict)
+            DaemonConfigCls(**current_dict)
+
+            actual_dict = _current_config().model_dump(mode="json")
+            deep_merge(actual_dict, unflatten_config(flat_updates))
+            new_config = DaemonConfigCls(**actual_dict)
 
             # Persist all keys atomically
-            config_store.set_many(flat_updates, source="mcp")
+            if secret_updates and db is not None:
+                from gobby.storage.secrets import SecretStore as SecretStoreCls
+
+                secret_store = SecretStoreCls(db)
+                with db.transaction():
+                    for key, value in secret_updates.items():
+                        config_store.set_secret(key, str(value), secret_store, source="mcp")
+                    if plain_updates:
+                        config_store.set_many(plain_updates, source="mcp")
+            else:
+                config_store.set_many(plain_updates, source="mcp")
 
             # Update in-memory config
             _state["config"] = new_config
             config_setter(new_config)
 
-            return {
+            result: dict[str, Any] = {
                 "success": True,
                 "keys_set": sorted(flat_updates.keys()),
                 "count": len(flat_updates),
             }
+            _add_restart_metadata(result, secret_keys)
+            return result
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.exception("Failed to set config batch")
             return {"success": False, "error": str(e)}

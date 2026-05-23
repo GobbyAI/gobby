@@ -111,20 +111,36 @@ class TestProviderModelCatalog:
             patch.object(catalog, "_discover_provider_models", side_effect=discover),
             patch.object(
                 catalog,
+                "_discover_grok_models_with_source",
+                new=AsyncMock(return_value=([{"value": "grok-build"}], "static")),
+            ),
+            patch.object(
+                catalog,
                 "_get_cli_version",
-                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0", "0.106.0"]),
+                new=AsyncMock(
+                    side_effect=[
+                        "1.0.12",
+                        "0.118.0",
+                        "0.106.0",
+                        "0.37.1",
+                        "0.1.216",
+                        "0.14.3",
+                        "1.0.0",
+                    ]
+                ),
             ),
         ):
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "live"
         assert status["gemini"]["source"] == "live"
+        assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "cache"
         assert status["codex"]["model_count"] == 1
         assert status["codex"]["error"] == "codex probe failed"
 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        assert payload["version"] == 3
+        assert payload["version"] == 4
         assert payload["providers"]["codex"]["source"] == "cache"
         assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
 
@@ -288,12 +304,18 @@ class TestProviderModelCatalog:
                 "_discover_provider_models",
                 new=AsyncMock(side_effect=FileNotFoundError("gemini CLI not found in PATH")),
             ),
+            patch.object(
+                catalog,
+                "_discover_grok_models_with_source",
+                new=AsyncMock(return_value=([{"value": "grok-build"}], "static")),
+            ),
             patch.object(catalog, "_get_cli_version", new=AsyncMock(return_value=None)),
         ):
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "failed"
         assert status["gemini"]["source"] == "failed"
+        assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
 
     @pytest.mark.asyncio
@@ -592,6 +614,83 @@ class TestProviderModelCatalog:
         assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
+
+    @pytest.mark.asyncio
+    async def test_discover_grok_models_uses_cache_before_static_fallback(
+        self, temp_dir: Path
+    ) -> None:
+        """Grok discovery should fall back to ~/.grok/models_cache.json, then static catalog."""
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        grok_home = temp_dir / ".grok"
+        grok_home.mkdir()
+        (grok_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "modelId": "grok-cache",
+                            "name": "Grok Cache",
+                            "_meta": {"totalContextTokens": 123456},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value=None),
+            patch.object(Path, "home", return_value=temp_dir),
+        ):
+            source_models, source = await catalog._discover_grok_models_with_source()
+            models = await catalog._discover_grok_models()
+
+        assert source == "cache"
+        assert source_models == models
+        assert models == [
+            {
+                "value": "grok-cache",
+                "label": "Grok Cache",
+                "context_length": 123456,
+            }
+        ]
+
+        (grok_home / "models_cache.json").unlink()
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value=None),
+            patch.object(Path, "home", return_value=temp_dir),
+        ):
+            source_models, source = await catalog._discover_grok_models_with_source()
+            static_models = await catalog._discover_grok_models()
+
+        assert source == "static"
+        assert source_models == static_models
+        assert static_models[0]["value"] == "grok-build"
+        assert static_models[0]["context_length"] == 512_000
+
+    @pytest.mark.asyncio
+    async def test_refresh_marks_agy_unsupported(self, temp_dir: Path) -> None:
+        """AGY should be visible but unsupported for model discovery."""
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        with (
+            patch.object(catalog, "_discover_provider_models", new=AsyncMock(return_value=[])),
+            patch.object(
+                catalog,
+                "_discover_grok_models_with_source",
+                new=AsyncMock(return_value=([{"value": "grok-build"}], "static")),
+            ),
+            patch.object(catalog, "_get_cli_version", new=AsyncMock(return_value=None)),
+        ):
+            status = await catalog.refresh()
+
+        assert status["agy"]["source"] == "unsupported"
+        assert status["agy"]["model_count"] == 0
+        assert "machine transport" in (status["agy"]["error"] or "")
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
         """Qwen settings should merge global providers with project overrides."""

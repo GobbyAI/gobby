@@ -50,7 +50,7 @@ def reindex_embeddings(ctx: click.Context) -> None:
 @click.option("--dry-run", is_flag=True, help="Report orphans without deleting")
 @click.pass_context
 def reconcile(ctx: click.Context, dry_run: bool) -> None:
-    """Reconcile Qdrant and Neo4j with the PostgreSQL hub source of truth.
+    """Reconcile Qdrant and FalkorDB with the PostgreSQL hub source of truth.
 
     Finds orphaned vectors and graph nodes whose memory IDs no longer
     exist in the PostgreSQL hub, and optionally deletes them.
@@ -78,7 +78,7 @@ def reconcile(ctx: click.Context, dry_run: bool) -> None:
         raise SystemExit(1) from e
 
     qdrant = result.get("qdrant", {})
-    neo4j = result.get("neo4j", {})
+    falkordb = result.get("falkordb", {})
     storage_count = result.get("storage_count", result.get("sqlite_count", "?"))
     click.echo(f"Hub memories: {storage_count}")
     click.echo(
@@ -86,9 +86,9 @@ def reconcile(ctx: click.Context, dry_run: bool) -> None:
         f"{qdrant.get('orphans_deleted', 0)} deleted"
     )
     click.echo(
-        f"Neo4j: {neo4j.get('orphan_memories_found', 0)} orphan memories, "
-        f"{neo4j.get('orphan_memories_deleted', 0)} deleted; "
-        f"{neo4j.get('orphan_entities_deleted', 0)} orphan entities cleaned"
+        f"FalkorDB: {falkordb.get('orphan_memories_found', 0)} orphan memories, "
+        f"{falkordb.get('orphan_memories_deleted', 0)} deleted; "
+        f"{falkordb.get('orphan_entities_deleted', 0)} orphan entities cleaned"
     )
     if dry_run:
         click.echo("(dry run — no changes made)")

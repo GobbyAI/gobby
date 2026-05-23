@@ -10,7 +10,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookResponse
-from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, serialize_task_state
+from gobby.tasks.state_semantics import (
+    ACTIVE_STAGE_STATES,
+    is_task_actively_claimed,
+    serialize_task_state,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -73,15 +77,15 @@ def get_claimed_task_info(
                 project_id=project_id,
             )
             if db_tasks:
-                reconciled = {}
+                db_reconciled: dict[str, str] = {}
                 db_result: list[tuple[str, str, str]] = []
                 for task in db_tasks:
                     ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-                    reconciled[task.id] = ref
+                    db_reconciled[task.id] = ref
                     db_result.append((ref, _task_state_label(task), task.title))
                 # Reconcile session variables with DB state
                 sv_mgr.set_variable(session_id, "task_claimed", True)
-                sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
+                sv_mgr.set_variable(session_id, "claimed_tasks", db_reconciled)
                 return db_result or None
         except Exception as e:
             _logger.debug(f"Failed to reconcile claimed tasks from DB: {e}")
@@ -91,15 +95,26 @@ def get_claimed_task_info(
     if not claimed_tasks:
         return None
 
+    reconciled: dict[str, str] = {}
     result: list[tuple[str, str, str]] = []
     for task_uuid in list(claimed_tasks):
         try:
             task = handler._task_manager.get_task(task_uuid, project_id=project_id)
+            if not is_task_actively_claimed(task, session_id):
+                _logger.info(
+                    "Pruning stale claimed task %s from session %s; live owner differs",
+                    task_uuid[:8],
+                    session_id,
+                )
+                continue
             ref = f"#{task.seq_num}" if task.seq_num else task_uuid[:8]
+            reconciled[task_uuid] = ref
             result.append((ref, _task_state_label(task), task.title))
         except Exception as e:
             _logger.debug(f"Failed to fetch task {task_uuid[:8]}: {e}")
-            result.append((task_uuid[:8], "unknown", "(deleted)"))
+    if reconciled != claimed_tasks:
+        sv_mgr.set_variable(session_id, "task_claimed", bool(reconciled))
+        sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
     return result or None
 
 
@@ -182,9 +197,10 @@ def compose_session_response(
     # Agent tree, external ID, and claimed tasks removed to reduce token waste.
     # Full metadata (external_id, machine_id, project_id, terminal) is injected
     # by the enricher on first hook via _first_hook_for_session flag.
-    if session_ref != session_id:
+    system_message = None
+    if session_ref and session_ref != session_id:
         system_message = f"\nGobby Session ID: {session_ref} ({session_id})"
-    else:
+    elif session_ref:
         system_message = f"\nGobby Session ID: {session_ref}"
 
     # Build metadata

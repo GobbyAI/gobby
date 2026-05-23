@@ -12,6 +12,23 @@ from typing import Any, cast
 logger = logging.getLogger(__name__)
 
 
+class ReusedWorktreeRebaseConflict(RuntimeError):
+    """Raised when a clean reused worktree cannot be rebased without conflicts."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        worktree_path: str,
+        base_ref: str,
+        base_commit_sha: str,
+    ) -> None:
+        super().__init__(message)
+        self.worktree_path = worktree_path
+        self.base_ref = base_ref
+        self.base_commit_sha = base_commit_sha
+
+
 @dataclass(frozen=True)
 class ReusedWorktreeSyncResult:
     """Summary of a reused worktree base sync."""
@@ -60,9 +77,15 @@ def _sync_reused_worktree_to_base_sync(
     if result.returncode != 0:
         abort_detail = _abort_rebase(git_manager, path)
         detail = _detail(result)
-        raise RuntimeError(
-            f"Failed to rebase reused worktree onto {base_ref}: {detail}{abort_detail}"
-        )
+        message = f"Failed to rebase reused worktree onto {base_ref}: {detail}{abort_detail}"
+        if _looks_like_rebase_conflict(detail):
+            raise ReusedWorktreeRebaseConflict(
+                message,
+                worktree_path=worktree_path,
+                base_ref=base_ref,
+                base_commit_sha=base_sha,
+            )
+        raise RuntimeError(message)
 
     logger.info("Rebased reused worktree %s onto %s", worktree_path, base_ref)
     return ReusedWorktreeSyncResult("rebased", base_ref, base_sha)
@@ -102,6 +125,19 @@ def _abort_rebase(git_manager: Any, path: Path) -> str:
     if abort.returncode == 0:
         return "; rebase aborted"
     return f"; rebase abort failed: {_detail(abort)}"
+
+
+def _looks_like_rebase_conflict(detail: str) -> bool:
+    normalized = detail.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "conflict",
+            "could not apply",
+            "fix conflicts and then run",
+            "resolve all conflicts manually",
+        )
+    )
 
 
 def _run_git(

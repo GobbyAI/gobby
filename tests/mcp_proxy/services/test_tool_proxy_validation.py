@@ -1096,7 +1096,9 @@ class TestDirectMcpAfterToolWorkflow:
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
-        events = [call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list]
+        events = [
+            call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list
+        ]
         assert [event.event_type for event in events] == [
             HookEventType.BEFORE_TOOL,
             HookEventType.AFTER_TOOL,
@@ -1127,7 +1129,9 @@ class TestDirectMcpAfterToolWorkflow:
 
         assert result["success"] is False
         assert result["error"] == "boom"
-        events = [call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list]
+        events = [
+            call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list
+        ]
         assert [event.event_type for event in events] == [
             HookEventType.BEFORE_TOOL,
             HookEventType.AFTER_TOOL,

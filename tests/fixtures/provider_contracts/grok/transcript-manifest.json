@@ -1,0 +1,58 @@
+{
+  "provider": "grok",
+  "capture_type": "transcript_manifest",
+  "cli_version": "0.1.216",
+  "captured_at": "2026-05-22T22:24:00Z",
+  "session_root_template": "~/.grok/sessions/<url-encoded-cwd>/<session-id>/",
+  "observed_sessions": [
+    {
+      "session_id": "019e51c7-cd61-7911-a888-72b979e4804b",
+      "cwd": "/private/tmp/gobby-contract-probe-15038",
+      "encoded_cwd": "%2Fprivate%2Ftmp%2Fgobby-contract-probe-15038",
+      "files": [
+        "summary.json",
+        "updates.jsonl",
+        "chat_history.jsonl"
+      ],
+      "raw_chat_history_committed": false
+    },
+    {
+      "session_id": "019e51c7-eecf-7170-9101-2e82946f2557",
+      "cwd": "/private/tmp/gobby-contract-probe-15038",
+      "encoded_cwd": "%2Fprivate%2Ftmp%2Fgobby-contract-probe-15038",
+      "files": [
+        "summary.json",
+        "updates.jsonl",
+        "chat_history.jsonl",
+        "terminal/call-c53a2ff0-432a-495c-a1fb-2318f8b5e918-0.log"
+      ],
+      "raw_chat_history_committed": false
+    }
+  ],
+  "summary_json_keys": [
+    "agent_name",
+    "chat_format_version",
+    "created_at",
+    "current_model_id",
+    "generated_title",
+    "grok_home",
+    "info",
+    "last_active_at",
+    "next_trace_turn",
+    "num_chat_messages",
+    "num_messages",
+    "request_id",
+    "session_summary",
+    "updated_at"
+  ],
+  "updates_jsonl_shapes": [
+    "session/update available_commands_update",
+    "_x.ai/session/update hook_execution",
+    "session/update user_message_chunk",
+    "session/update agent_thought_chunk",
+    "session/update tool_call",
+    "session/update tool_call_update",
+    "session/update agent_message_chunk"
+  ],
+  "notes": "chat_history.jsonl contains full system and user prompt context; use updates.jsonl for UI replay and scrub before committing samples."
+}

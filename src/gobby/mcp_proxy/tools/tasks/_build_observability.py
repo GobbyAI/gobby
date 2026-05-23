@@ -29,7 +29,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
         return get_build_status(
             input_ref,
             db=ctx.task_manager.db,
-            project_id=_project_id(ctx, project_id),
+            project_id=_project_id(ctx, project_id, "get_build_status"),
             history_limit=history_limit,
         )
 
@@ -41,7 +41,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
         return explain_dispatch(
             task_id,
             db=ctx.task_manager.db,
-            project_id=_project_id(ctx, project_id),
+            project_id=_project_id(ctx, project_id, "explain_dispatch"),
             max_active_agents=max_active_agents,
         )
 
@@ -53,7 +53,7 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
         return list_build_history(
             input_ref,
             db=ctx.task_manager.db,
-            project_id=_project_id(ctx, project_id),
+            project_id=_project_id(ctx, project_id, "list_build_history"),
             limit=limit,
         )
 
@@ -103,10 +103,10 @@ def create_build_observability_registry(ctx: RegistryContext) -> InternalToolReg
     return registry
 
 
-def _project_id(ctx: RegistryContext, explicit: str | None) -> str:
+def _project_id(ctx: RegistryContext, explicit: str | None, tool_name: str) -> str:
     resolved = explicit or ctx.get_current_project_id()
     if resolved is None:
-        raise ValueError("Could not determine project_id for build observability")
+        raise ValueError(f"Could not determine project_id for {tool_name}")
     return resolved
 
 

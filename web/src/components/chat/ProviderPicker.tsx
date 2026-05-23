@@ -12,6 +12,7 @@ import {
   getOrderedProviders,
   getModelsForProvider,
   getProviderDisplayName,
+  getProviderDisplayNameFromEntry,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
 
@@ -75,8 +76,16 @@ export function ProviderPicker({
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
+  const catalogByProvider = new Map(
+    catalog.map((entry) => [entry.provider.toLowerCase(), entry]),
+  );
   const visibleProviders = getOrderedProviders(
-    availableProviders.length > 0 ? availableProviders : [effectiveProvider],
+    Array.from(
+      new Set([
+        ...(availableProviders.length > 0 ? availableProviders : [effectiveProvider]),
+        ...catalog.map((entry) => entry.provider),
+      ]),
+    ),
   );
 
   const handleSelect = useCallback(
@@ -195,28 +204,53 @@ export function ProviderPicker({
             </div>
             <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
               {visibleProviders.map((provider) => {
+                const entry = catalogByProvider.get(provider.toLowerCase());
                 const models = getVisibleModelsForProvider(
                   catalog,
                   provider,
                   currentModel,
                 );
+                const unavailableReason =
+                  entry?.supports_web_chat === false
+                    ? entry.unavailable_reason || "Unavailable for web chat"
+                    : null;
+                const isDisabled = Boolean(unavailableReason);
                 const isActive =
                   provider === effectiveProvider ||
                   (!currentProvider && provider === "claude");
+                const displayName = getProviderDisplayNameFromEntry(
+                  entry,
+                  provider,
+                );
 
                 return (
                   <div key={provider} className="mb-1">
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                       <SourceIcon source={provider} size={14} />
                       <span className="font-medium text-foreground">
-                        {getProviderDisplayName(provider)}
+                        {displayName}
                       </span>
+                      {entry?.deprecated && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                          deprecated
+                        </span>
+                      )}
+                      {unavailableReason && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                          unavailable
+                        </span>
+                      )}
                       {isActive && (
                         <span className="text-[10px] px-1 py-0.5 rounded bg-accent/20 text-accent">
                           active
                         </span>
                       )}
                     </div>
+                    {unavailableReason && (
+                      <div className="px-3 pb-1 text-[10px] text-muted-foreground">
+                        {unavailableReason}
+                      </div>
+                    )}
                     {models.map((model) => {
                       const isSelected =
                         isActive && currentModel === model.value;
@@ -230,8 +264,10 @@ export function ProviderPicker({
                             isSelected
                               ? "bg-accent/10 text-accent font-medium"
                               : "text-muted-foreground",
+                            isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                           )}
                           style={{ width: "calc(100% - 8px)" }}
+                          disabled={isDisabled}
                           onClick={() => handleSelect(provider, model.value)}
                         >
                           {model.label}

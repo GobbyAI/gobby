@@ -23,9 +23,7 @@ pytestmark = pytest.mark.unit
         (False, True, "paused"),
     ],
 )
-def test_derive_build_state(
-    allow_automation: bool, has_build_event: bool, expected: str
-) -> None:
+def test_derive_build_state(allow_automation: bool, has_build_event: bool, expected: str) -> None:
     assert (
         derive_build_state(
             allow_automation=allow_automation,
@@ -38,6 +36,4 @@ def test_derive_build_state(
 def test_running_takes_precedence_over_stale_history() -> None:
     """A resumed build re-enables allow_automation; even with prior build
     history present it must read as running, never paused."""
-    assert (
-        derive_build_state(allow_automation=True, has_build_event=True) == "running"
-    )
+    assert derive_build_state(allow_automation=True, has_build_event=True) == "running"

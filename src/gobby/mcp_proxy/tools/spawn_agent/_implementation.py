@@ -22,7 +22,6 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
-from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
@@ -36,6 +35,9 @@ from ._code_index import (
     without_code_index_skill,
 )
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
+from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -107,38 +109,6 @@ def _active_task_spawn_blocker(
             continue
         return active_run
     return None
-
-
-_MODEL_PROVIDER_PREFIXES = {
-    "anthropic": "claude",
-    "claude": "claude",
-    "google": "gemini",
-    "gemini": "gemini",
-    "openai": "codex",
-    "codex": "codex",
-    "qwen": "qwen",
-    "droid": "droid",
-}
-
-
-def _provider_prefixed_model(value: str | None) -> tuple[str, str] | None:
-    """Return provider/model from values like ``claude/sonnet-4-6``."""
-    if not value or "/" not in value:
-        return None
-    prefix, model = value.split("/", 1)
-    provider = _MODEL_PROVIDER_PREFIXES.get(prefix.strip().lower())
-    model = model.strip()
-    if not provider or not model:
-        return None
-    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-")):
-        model = f"claude-{model}"
-    return provider, model
-
-
-def _defaulted_provider(value: str | None) -> str:
-    if value is None or value == "inherit":
-        return "claude"
-    return value
 
 
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
@@ -357,13 +327,13 @@ async def spawn_agent_impl(
     )
 
     provider_was_overridden = provider is not None
-    model_from_prefix = _provider_prefixed_model(_normalize_optional_model(model))
+    model_from_prefix = provider_prefixed_model(_normalize_optional_model(model))
     _raw_provider: str | None = provider
     if _raw_provider is None and model_from_prefix is not None:
         _raw_provider = model_from_prefix[0]
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
-    effective_provider = _defaulted_provider(_raw_provider)
+    effective_provider = defaulted_provider(_raw_provider)
 
     if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
         return {
@@ -377,7 +347,7 @@ async def spawn_agent_impl(
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
-        provider_differs_from_agent = effective_provider != _defaulted_provider(agent_body.provider)
+        provider_differs_from_agent = effective_provider != defaulted_provider(agent_body.provider)
 
     effective_model = (
         model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)
@@ -506,22 +476,23 @@ async def spawn_agent_impl(
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     task_owned_by_child = False
+    resolved_task: Any | None = None
 
     if task_id and task_manager:
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id, project_id)
-            task = task_manager.get_task(resolved_task_id)
-            if task:
-                task_title = task.title
-                task_seq_num = task.seq_num
-                task_category = getattr(task, "category", None)
-                if task.additional_skills is not None:
-                    task_additional_skills = _normalize_string_list(task.additional_skills)
-                claimed_session_id = get_claimed_session_id(task)
+            resolved_task = task_manager.get_task(resolved_task_id)
+            if resolved_task:
+                task_title = resolved_task.title
+                task_seq_num = resolved_task.seq_num
+                task_category = getattr(resolved_task, "category", None)
+                if resolved_task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
+                claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
-    # 4b. Dedup check — idempotent: return success if agent already running
+    # 4b. Dedup check: return success if an agent already owns the task.
     if resolved_task_id and runner.run_storage:
         active_run = _active_task_spawn_blocker(
             runner.run_storage,
@@ -530,14 +501,28 @@ async def spawn_agent_impl(
             parent_session_id=parent_session_id,
         )
         if active_run is not None:
-            return {
-                "success": True,
-                "skipped": True,
-                "run_id": active_run.id if active_run else None,
-                "message": f"Agent already running for task {task_id}",
-            }
+            return active_task_spawn_response(active_run, task_id)
 
-    # 5. Handle worktree_id/clone_id reuse: skip isolation creation when existing resource provided
+    if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
+        return non_actionable_task_spawn_response(
+            resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
+        )
+    # 5. Build spawn config and handle worktree_id/clone_id reuse.
+    spawn_config = SpawnConfig(
+        prompt=prompt,
+        task_id=resolved_task_id,
+        task_title=task_title,
+        task_seq_num=task_seq_num,
+        branch_name=branch_name,
+        branch_prefix=None,
+        base_branch=effective_base_branch,
+        project_id=project_id,
+        project_path=resolved_project_path,
+        provider=effective_provider,
+        parent_session_id=parent_session_id,
+    )
+
+    # Explicit reuse skips isolation creation when the existing resource can be prepared.
     isolation_ctx = None
     if worktree_id and worktree_storage:
         existing_worktree = worktree_storage.get(worktree_id)
@@ -556,30 +541,18 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            await sync_reused_worktree_to_base(
+            isolation_ctx, handler = await prepare_reused_worktree(
+                existing_worktree=existing_worktree,
                 git_manager=git_manager,
-                worktree_path=existing_worktree.worktree_path,
-                base_branch=effective_base_branch,
-            )
-            await repair_isolation_environment(
+                worktree_storage=worktree_storage,
+                clone_manager=clone_manager,
+                clone_storage=clone_storage,
+                spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
-                isolated_path=existing_worktree.worktree_path,
-                provider=effective_provider,
             )
+            effective_isolation = "worktree"
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
-
-        from gobby.agents.isolation import IsolationContext
-
-        isolation_ctx = IsolationContext(
-            cwd=existing_worktree.worktree_path,
-            branch_name=existing_worktree.branch_name,
-            worktree_id=existing_worktree.id,
-            isolation_type="worktree",
-            extra={"main_repo_path": resolved_project_path, "reused_worktree": True},
-        )
-        effective_isolation = "worktree"
-        handler = get_isolation_handler("none")
     elif clone_id and clone_storage:
         existing_clone = clone_storage.get(clone_id)
         if not existing_clone:
@@ -622,21 +595,6 @@ async def spawn_agent_impl(
             clone_manager=clone_manager,
             clone_storage=clone_storage,
         )
-
-    # 6. Build spawn config
-    spawn_config = SpawnConfig(
-        prompt=prompt,
-        task_id=resolved_task_id,
-        task_title=task_title,
-        task_seq_num=task_seq_num,
-        branch_name=branch_name,
-        branch_prefix=None,
-        base_branch=effective_base_branch,
-        project_id=project_id,
-        project_path=resolved_project_path,
-        provider=effective_provider,
-        parent_session_id=parent_session_id,
-    )
 
     # 7. Prepare environment (worktree/clone creation) — skipped if clone_id was reused
     if isolation_ctx is None:

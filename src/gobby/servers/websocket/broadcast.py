@@ -46,7 +46,6 @@ class BroadcastMixin:
             "token_event",
             "agent_event",
             "agent_message",
-            "agent_command",
             "worktree_event",
             "autonomous_event",
             "pipeline_event",
@@ -375,24 +374,6 @@ class BroadcastMixin:
         """Broadcast inter-agent message event (message_sent)."""
         message = {
             "type": "agent_message",
-            "event": event,
-            "from_session": from_session,
-            "to_session": to_session,
-            "timestamp": datetime.now(UTC).isoformat(),
-            **kwargs,
-        }
-        await self.broadcast(message)
-
-    async def broadcast_agent_command(
-        self,
-        event: str,
-        from_session: str,
-        to_session: str,
-        **kwargs: Any,
-    ) -> None:
-        """Broadcast inter-agent command event (command_sent, command_completed)."""
-        message = {
-            "type": "agent_command",
             "event": event,
             "from_session": from_session,
             "to_session": to_session,

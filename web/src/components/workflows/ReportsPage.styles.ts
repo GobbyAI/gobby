@@ -162,19 +162,6 @@ export const BTN_REJECT_CLS = "bg-[var(--color-error)] text-[var(--text-on-error
 export const DETAIL_ERROR_CLS =
   "rounded-md border border-[color-mix(in_srgb,var(--color-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)] p-3 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--color-error)]";
 
-export const DETAIL_COMMANDS_CLS = "flex flex-col gap-1";
-
-export const DETAIL_COMMAND_CLS =
-  "flex items-center gap-2 rounded bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)]";
-
-export const DETAIL_COMMAND_TYPE_CLS = "font-medium text-[var(--text-primary)]";
-
-export const DETAIL_COMMAND_TIME_CLS =
-  "text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]";
-
-export const DETAIL_COMMAND_PAYLOAD_CLS =
-  "max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]";
-
 export const GROUP_TOGGLE_CLS = "flex items-center gap-1.5";
 
 export const GROUP_LABEL_CLS =

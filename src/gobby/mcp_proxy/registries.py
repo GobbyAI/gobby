@@ -275,15 +275,11 @@ def setup_internal_registries(
             and db is not None
         ):
             from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
-            from gobby.storage.agent_commands import AgentCommandManager
-            from gobby.workflows.state_manager import SessionVariableManager
 
             add_messaging_tools(
                 registry=agents_registry,
                 message_manager=inter_session_message_manager,
                 session_manager=session_manager,
-                command_manager=AgentCommandManager(db),
-                session_var_manager=SessionVariableManager(db),
                 db=db,
                 wake_dispatcher=wake_dispatcher,
             )

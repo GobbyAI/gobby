@@ -212,19 +212,19 @@ async def memory_reconcile_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 24 * 60 * 60,
 ) -> None:
-    """Background loop for periodic Qdrant/Neo4j orphan reconciliation (every 24 hours)."""
+    """Background loop for periodic Qdrant/FalkorDB orphan reconciliation."""
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
             report = await memory_manager.reconcile_stores(dry_run=False)
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
-            neo4j_orphans = report.get("neo4j", {}).get("orphan_memories_deleted", 0)
-            neo4j_entities = report.get("neo4j", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or neo4j_orphans or neo4j_entities:
+            falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
+            falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
+            if qdrant_orphans or falkordb_orphans or falkordb_entities:
                 logger.info(
                     f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{neo4j_orphans} Neo4j memory orphans, "
-                    f"{neo4j_entities} Neo4j entity orphans cleaned"
+                    f"{falkordb_orphans} FalkorDB memory orphans, "
+                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
                 )
         except asyncio.CancelledError:
             break
@@ -694,9 +694,12 @@ def setup_signal_handlers(
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
+    recorded_intent: ShutdownIntent | None = None
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:
         def handle_shutdown() -> None:
+            nonlocal recorded_intent
+
             import traceback
 
             from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
@@ -709,10 +712,17 @@ def setup_signal_handlers(
             shutdown_record = read_shutdown_intent(home=get_gobby_home())
             logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
             if shutdown_intent_callback is not None:
-                try:
-                    shutdown_intent_callback(shutdown_record.intent)
-                except Exception:
-                    logger.exception("Shutdown intent callback failed")
+                if (
+                    recorded_intent is ShutdownIntent.RESTART
+                    and shutdown_record.intent is ShutdownIntent.STOP
+                ):
+                    logger.debug("Ignoring stop shutdown intent after restart intent was recorded")
+                else:
+                    try:
+                        shutdown_intent_callback(shutdown_record.intent)
+                        recorded_intent = shutdown_record.intent
+                    except Exception:
+                        logger.exception("Shutdown intent callback failed")
             shutdown_callback()
 
         return handle_shutdown

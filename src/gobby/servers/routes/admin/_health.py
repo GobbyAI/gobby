@@ -94,6 +94,48 @@ async def _get_postgres_dashboard_status(
         }
 
 
+def _unavailable_falkordb_memory_status() -> dict[str, Any]:
+    return {
+        "configured": False,
+        "installed": False,
+        "healthy": False,
+        "url": None,
+    }
+
+
+async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
+    """Collect the FalkorDB status payload for the admin memory section."""
+    try:
+        from gobby.cli.services import get_falkordb_status
+        from gobby.config.persistence import is_falkordb_enabled
+
+        services = getattr(server, "services", None)
+        daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
+        if daemon_config is None or services is None:
+            raise RuntimeError("server config unavailable")
+
+        falkor_cfg = daemon_config.databases.falkordb
+        status = await get_falkordb_status(
+            db=getattr(services, "database", None),
+            host=falkor_cfg.host,
+            port=falkor_cfg.port,
+            password=falkor_cfg.requirepass,
+        )
+        return {
+            "configured": is_falkordb_enabled(daemon_config.databases),
+            "installed": status["installed"],
+            "healthy": status["healthy"],
+            "url": status["url"],
+        }
+    except Exception as e:
+        logger.warning(
+            "Failed to check FalkorDB status: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return _unavailable_falkordb_memory_status()
+
+
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
     async def health_check() -> dict[str, str]:
@@ -315,27 +357,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
-            # Neo4j knowledge graph status
-            try:
-                from gobby.cli.services import is_neo4j_healthy, is_neo4j_installed
-
-                neo4j_client = getattr(server.memory_manager, "_neo4j_client", None)
-                neo4j_url = neo4j_client.base_url if neo4j_client else None
-                installed = is_neo4j_installed()
-                healthy = await is_neo4j_healthy(neo4j_url) if neo4j_url else False
-                memory_stats["neo4j"] = {
-                    "configured": neo4j_client is not None,
-                    "installed": installed,
-                    "healthy": healthy,
-                    "url": neo4j_url,
-                }
-            except Exception as e:
-                logger.warning(
-                    "Failed to check Neo4j status: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                memory_stats["neo4j"] = {"configured": False, "installed": False, "healthy": False}
+        memory_stats["falkordb"] = await _get_falkordb_memory_status(server)
 
         # Get pipeline execution statistics
         pipeline_stats: dict[str, Any] = {

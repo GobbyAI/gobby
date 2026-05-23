@@ -17,7 +17,14 @@ export interface ProviderModelEntry {
   provider: string;
   available: boolean;
   models: ProviderModelOption[];
-  source: "static" | "live" | "cache" | "failed";
+  source: "static" | "live" | "cache" | "failed" | "unsupported";
+  display_name?: string;
+  installed?: boolean;
+  deprecated?: boolean;
+  deprecation_message?: string | null;
+  supports_web_chat?: boolean;
+  supports_agent_spawn?: boolean;
+  unavailable_reason?: string | null;
 }
 
 export interface ReasoningOption {
@@ -43,6 +50,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   codex: "Codex",
   droid: "Droid",
   gemini: "Gemini",
+  grok: "Grok",
+  agy: "AGY",
   qwen: "Qwen",
   openai: "OpenAI",
 };
@@ -94,6 +103,15 @@ export function getProviderDisplayName(
     return "";
   }
   return PROVIDER_LABELS[normalized] ?? titleCase(normalized);
+}
+
+export function getProviderDisplayNameFromEntry(
+  entry: ProviderModelEntry | null | undefined,
+  fallbackProvider?: string | null,
+): string {
+  const displayName = entry?.display_name?.trim();
+  if (displayName) return displayName;
+  return getProviderDisplayName(entry?.provider ?? fallbackProvider);
 }
 
 export function buildReasoningPreferenceKey(

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.sessions.transcripts.grok import GrokTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     TranscriptParser = (
         ClaudeTranscriptParser
         | GeminiTranscriptParser
+        | GrokTranscriptParser
         | QwenTranscriptParser
         | CodexTranscriptParser
         | DroidTranscriptParser
@@ -64,6 +66,8 @@ def _detect_source_from_path(path: str | None) -> str | None:
         return "codex"
     if ".qwen" in parts:
         return "qwen"
+    if ".grok" in parts and "sessions" in parts:
+        return "grok"
     if ".factory" in parts and "sessions" in parts:
         return "droid"
     if ".gemini" in parts or lowered.endswith(".json"):
@@ -115,6 +119,12 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a decoded transcript record."""
     if "sessionId" in data or isinstance(data.get("messages"), list):
         return "qwen" if _looks_like_qwen(data) else "gemini"
+
+    params = data.get("params")
+    if isinstance(params, dict):
+        update = params.get("update")
+        if isinstance(update, dict) and "sessionUpdate" in update:
+            return "grok"
 
     line_type = data.get("type")
     payload = data.get("payload")
@@ -269,6 +279,15 @@ def _find_transcript_on_disk(
                 matches = sorted(chats_dir.glob(f"*{external_id}*.jsonl"), reverse=True)
                 if matches:
                     return str(matches[0])
+    elif source == "grok":
+        grok_sessions = Path.home() / ".grok" / "sessions"
+        if grok_sessions.exists():
+            matches = sorted(
+                grok_sessions.glob(f"*/{external_id}/updates.jsonl"),
+                reverse=True,
+            )
+            if matches:
+                return str(matches[0])
     elif source == "droid":
         droid_sessions = Path.home() / ".factory" / "sessions"
         if droid_sessions.exists():
@@ -313,10 +332,13 @@ def _get_parser(
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.sessions.transcripts.grok import GrokTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     if source == "gemini":
         return GeminiTranscriptParser(session_id=session_id)
+    elif source == "grok":
+        return GrokTranscriptParser(session_id=session_id)
     elif source == "qwen":
         return QwenTranscriptParser(session_id=session_id)
     elif source == "codex":

@@ -814,7 +814,7 @@ def _build_safe_update(
         set_clauses.append(f"{column} = ${index}")
         update_params.append(value)
 
-    final_where = _shift_dollar_placeholders(where, len(update_params))
+    final_where = _shift_dollar_placeholders(where, len(update_params), len(where_params))
     sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {final_where}"  # nosec B608
     return sql, (*update_params, *where_params)
 
@@ -824,8 +824,18 @@ def _validate_identifier(identifier: str) -> None:
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
 
 
-def _shift_dollar_placeholders(sql: str, offset: int) -> str:
-    return re.sub(r"\$(\d+)", lambda match: f"${int(match.group(1)) + offset}", sql)
+def _shift_dollar_placeholders(sql: str, offset: int, param_count: int) -> str:
+    marker = "__GOBBY_SHIFTED_DOLLAR_PLACEHOLDER__"
+    shifted_sql, indexes = scan_dollar_placeholder_indexes(sql, param_count, marker)
+    parts = shifted_sql.split(marker)
+    if len(parts) == 1:
+        return shifted_sql
+
+    output: list[str] = [parts[0]]
+    for index, part in zip(indexes, parts[1:], strict=True):
+        output.append(f"${index + 1 + offset}")
+        output.append(part)
+    return "".join(output)
 
 
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:

@@ -262,7 +262,7 @@ async def _stop_started_services(
         try:
             await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
         except TimeoutError:
-            logger.warning("Cron scheduler shutdown timed out")
+            _log_shutdown_timeout("Cron scheduler", shutdown_intent=shutdown_intent)
 
     if runner.message_processor:
         try:
@@ -277,6 +277,16 @@ async def _stop_started_services(
             logger.warning("CommunicationsManager shutdown timed out")
 
 
+def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent) -> None:
+    if shutdown_intent is ShutdownIntent.RESTART:
+        logger.info(
+            "%s shutdown exceeded timeout during daemon restart; continuing with restart",
+            service_name,
+        )
+    else:
+        logger.warning("%s shutdown timed out", service_name)
+
+
 def _stop_ui_dev_server_if_needed(runner: GobbyRunner) -> None:
     if runner.config.ui.enabled and runner.config.ui.mode == "dev":
         from gobby.cli.utils import stop_ui_server
@@ -288,7 +298,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
     hook_manager = getattr(runner.http_server, "_hook_manager", None)
     if hook_manager:
         try:
-            hook_manager.shutdown()
+            await hook_manager.shutdown_async()
         except Exception as e:
             logger.warning(f"HookManager shutdown failed: {e}")
 
@@ -355,7 +365,7 @@ async def shutdown_daemon_services(
     try:
         await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
     except TimeoutError:
-        logger.warning("Lifecycle manager shutdown timed out")
+        _log_shutdown_timeout("Lifecycle manager", shutdown_intent=shutdown_intent)
 
     try:
         logger.debug("Waiting for HTTP server lifespan shutdown")

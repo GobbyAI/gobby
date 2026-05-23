@@ -95,6 +95,29 @@ class TestTranscriptPathDerivation:
         result = event_handlers._derive_transcript_path("gemini", {}, "ext-123")
         assert result is None
 
+    def test_derive_grok_transcript_path_uses_encoded_cwd(
+        self, event_handlers: EventHandlers, tmp_path, monkeypatch
+    ) -> None:
+        """Grok updates.jsonl path should match the native session layout."""
+        import gobby.hooks.event_handlers._session_start as session_mod
+
+        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+
+        result = event_handlers._derive_transcript_path(
+            "grok",
+            {"cwd": "/repo/my project", "sessionId": "grok-session"},
+            "external-id",
+        )
+
+        assert result == str(
+            tmp_path
+            / ".grok"
+            / "sessions"
+            / "%2Frepo%2Fmy%20project"
+            / "grok-session"
+            / "updates.jsonl"
+        )
+
     def test_session_start_derives_gemini_transcript(self, mock_dependencies: dict) -> None:
         """SESSION_START should derive transcript_path for Gemini when not provided natively."""
         handlers = EventHandlers(**mock_dependencies)

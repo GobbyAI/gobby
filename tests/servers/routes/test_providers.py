@@ -34,11 +34,11 @@ class TestProviderRoutes:
         data = response.json()
         assert "providers" in data
         names = [p["name"] for p in data["providers"]]
-        assert names == ["claude", "gemini", "qwen", "codex", "droid"]
+        assert names == ["claude", "codex", "droid", "gemini", "grok", "qwen", "agy"]
 
     def test_provider_available_when_binary_found(self, client: TestClient) -> None:
         """Provider is marked available when shutil.which finds the binary."""
-        with patch("gobby.servers.routes.providers.shutil.which") as mock_which:
+        with patch("gobby.providers.registry.shutil.which") as mock_which:
             mock_which.side_effect = lambda b: "/usr/bin/claude" if b == "claude" else None
             response = client.get("/api/providers")
             data = response.json()
@@ -47,16 +47,20 @@ class TestProviderRoutes:
             assert providers["claude"]["path"] == "/usr/bin/claude"
             assert providers["gemini"]["available"] is False
             assert providers["gemini"]["path"] is None
+            assert providers["grok"]["available"] is False
+            assert providers["grok"]["path"] is None
             assert providers["qwen"]["available"] is False
             assert providers["qwen"]["path"] is None
             assert providers["codex"]["available"] is False
             assert providers["codex"]["path"] is None
             assert providers["droid"]["available"] is False
             assert providers["droid"]["path"] is None
+            assert providers["agy"]["available"] is False
+            assert providers["agy"]["supports_web_chat"] is False
 
     def test_all_providers_unavailable(self, client: TestClient) -> None:
         """All providers unavailable when no binaries found."""
-        with patch("gobby.servers.routes.providers.shutil.which", return_value=None):
+        with patch("gobby.providers.registry.shutil.which", return_value=None):
             response = client.get("/api/providers")
             data = response.json()
             for p in data["providers"]:
@@ -68,19 +72,25 @@ class TestProviderRoutes:
         paths = {
             "claude": "/usr/local/bin/claude",
             "gemini": "/usr/local/bin/gemini",
+            "grok": "/usr/local/bin/grok",
             "qwen": "/usr/local/bin/qwen",
             "codex": "/usr/local/bin/codex",
             "droid": "/usr/local/bin/droid",
+            "agy": "/usr/local/bin/agy",
         }
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: paths.get(b),
         ):
             response = client.get("/api/providers")
             data = response.json()
             for p in data["providers"]:
-                assert p["available"] is True
+                assert p["available"] is (p["name"] != "agy")
                 assert p["path"] == paths[p["name"]]
+            providers = {p["name"]: p for p in data["providers"]}
+            assert providers["gemini"]["deprecated"] is True
+            assert providers["grok"]["supports_agent_spawn"] is True
+            assert providers["agy"]["unavailable_reason"]
 
     def test_runtime_health_does_not_disable_lazy_acp_provider(self) -> None:
         app = FastAPI()
@@ -100,7 +110,7 @@ class TestProviderRoutes:
         client = TestClient(app)
 
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers")
@@ -122,7 +132,15 @@ class TestProviderModelsRoute:
         data = response.json()
         assert "providers" in data
         providers = {p["provider"]: p for p in data["providers"]}
-        assert set(providers.keys()) == {"claude", "gemini", "qwen", "codex", "droid"}
+        assert set(providers.keys()) == {
+            "claude",
+            "gemini",
+            "grok",
+            "qwen",
+            "codex",
+            "droid",
+            "agy",
+        }
 
         # Claude should have opus, sonnet, haiku
         claude_values = [m["value"] for m in providers["claude"]["models"]]
@@ -145,6 +163,15 @@ class TestProviderModelsRoute:
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
         assert qwen == []
+
+        grok = providers["grok"]["models"]
+        assert [m["value"] for m in grok] == ["grok-build"]
+        assert grok[0]["context_length"] == 512_000
+
+        assert providers["agy"]["models"] == []
+        assert providers["agy"]["source"] == "unsupported"
+        assert providers["agy"]["supports_web_chat"] is False
+        assert providers["gemini"]["deprecated"] is True
 
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
@@ -186,21 +213,23 @@ class TestProviderModelsRoute:
 
         # Each entry should have source field
         for p in data["providers"]:
-            assert p["source"] == "static"
+            assert p["source"] == ("unsupported" if p["provider"] == "agy" else "static")
 
     def test_availability_reflects_binary_presence(self, client: TestClient) -> None:
         """Provider availability matches shutil.which results."""
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: "/bin/claude" if b == "claude" else None,
         ):
             response = client.get("/api/providers/models")
             providers = {p["provider"]: p for p in response.json()["providers"]}
             assert providers["claude"]["available"] is True
             assert providers["gemini"]["available"] is False
+            assert providers["grok"]["available"] is False
             assert providers["qwen"]["available"] is False
             assert providers["codex"]["available"] is False
             assert providers["droid"]["available"] is False
+            assert providers["agy"]["available"] is False
 
     def test_models_route_uses_runtime_health_for_backend_failures(self) -> None:
         app = FastAPI()
@@ -218,7 +247,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -245,7 +274,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -280,7 +309,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")
@@ -292,6 +321,8 @@ class TestProviderModelsRoute:
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
         assert providers["codex"]["models"][0]["context_length"] == 200_000
         assert providers["droid"]["models"][0]["value"] == "droid-model"
+        assert providers["agy"]["models"] == []
+        assert providers["agy"]["source"] == "unsupported"
         assert providers["codex"]["source"] == "live"
 
     def test_includes_local_claude_model_when_configured(self) -> None:
@@ -433,7 +464,7 @@ class TestProviderModelsRoute:
         client = TestClient(app)
 
         with patch(
-            "gobby.servers.routes.providers.shutil.which",
+            "gobby.providers.registry.shutil.which",
             side_effect=lambda b: f"/usr/local/bin/{b}",
         ):
             response = client.get("/api/providers/models")

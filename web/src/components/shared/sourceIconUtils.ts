@@ -1,1 +1,9 @@
-export type SourceType = 'claude' | 'gemini' | 'qwen' | 'codex' | 'droid' | (string & {})
+export type SourceType =
+  | 'claude'
+  | 'gemini'
+  | 'grok'
+  | 'agy'
+  | 'qwen'
+  | 'codex'
+  | 'droid'
+  | (string & {})

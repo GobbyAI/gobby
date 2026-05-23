@@ -2,7 +2,7 @@
 
 Hosts a single subprocess speaking the Agent Communication Protocol and
 multiplexes session attach/detach/send across managed chat sessions. Per-CLI
-concretes (``GeminiWebChatBackend``, ``QwenWebChatBackend``) override the
+concretes (``GeminiWebChatBackend``, ``GrokWebChatBackend``, ``QwenWebChatBackend``) override the
 class attributes ``provider``, ``display_name``, ``start_timeout_seconds``,
 and ``acp_client_cls``.
 """
@@ -26,7 +26,7 @@ from gobby.servers.websocket.chat.backends.base import (
 )
 
 if TYPE_CHECKING:
-    from gobby.servers.websocket.chat.backends.gemini import GeminiManagedChatSession
+    from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class ACPWebChatBackend:
 
     async def attach_session(
         self,
-        session: GeminiManagedChatSession,
+        session: ACPManagedChatSession,
         *,
         model: str | None = None,
     ) -> None:
@@ -168,12 +168,12 @@ class ACPWebChatBackend:
         session._connected = True
         session.last_activity = datetime.now(UTC)
 
-    async def detach_session(self, session: GeminiManagedChatSession) -> None:
+    async def detach_session(self, session: ACPManagedChatSession) -> None:
         session._connected = False
 
     async def send_message(
         self,
-        session: GeminiManagedChatSession,
+        session: ACPManagedChatSession,
         prompt: str,
     ) -> AsyncIterator[StreamEvent]:
         if not self._health.available:
@@ -191,7 +191,7 @@ class ACPWebChatBackend:
         ):
             yield event
 
-    async def switch_model(self, session: GeminiManagedChatSession, new_model: str) -> None:
+    async def switch_model(self, session: ACPManagedChatSession, new_model: str) -> None:
         session._model = new_model
         session._connected = False
 

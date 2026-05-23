@@ -312,6 +312,10 @@ class TestTmuxSessionManager:
             assert await mgr.kill_session("missing") is False
             assert await mgr.kill_session("missing", missing_ok=True) is True
 
+            mock_run.return_value = (1, "", "no server running on /tmp/tmux-123/gobby")
+            assert await mgr.kill_session("missing-server") is False
+            assert await mgr.kill_session("missing-server", missing_ok=True) is True
+
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
     @pytest.mark.asyncio

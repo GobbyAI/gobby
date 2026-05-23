@@ -39,9 +39,7 @@ def test_build_observability_tools_are_not_registered_on_gobby_tasks_ops(temp_db
     )
     tool_names = {tool["name"] for tool in registry.list_tools()}
 
-    assert {"get_build_status", "explain_dispatch", "list_build_history"}.isdisjoint(
-        tool_names
-    )
+    assert {"get_build_status", "explain_dispatch", "list_build_history"}.isdisjoint(tool_names)
     assert "build_task" in tool_names
 
 
@@ -58,6 +56,17 @@ def test_get_build_status_tool_calls_service(temp_db: Any) -> None:
     assert result == {"ok": True}
     assert service.call_args.kwargs["project_id"] == "project-1"
     assert service.call_args.kwargs["history_limit"] == 2
+
+
+def test_build_observability_missing_project_id_names_tool(temp_db: Any) -> None:
+    registry = _registry(temp_db)
+    tool = registry.get_tool("get_build_status")
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.get_project_context", return_value=None),
+        pytest.raises(ValueError, match="get_build_status"),
+    ):
+        tool(input_ref="#1")
 
 
 def test_explain_dispatch_tool_schema_and_call(temp_db: Any) -> None:

@@ -15,10 +15,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 from ._detectors import (
+    _is_agy_cli_installed,
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_droid_cli_installed,
     _is_gemini_cli_installed,
+    _is_grok_cli_installed,
     _is_qwen_cli_installed,
 )
 from ._install_prompts import (
@@ -30,9 +32,9 @@ from ._install_prompts import (
     _echo_uninstall_summary,
     _prompt_api_keys,
     _run_embedding_install,
+    _run_falkordb_install,
+    _run_falkordb_uninstall,
     _run_git_hooks_install,
-    _run_neo4j_install,
-    _run_neo4j_uninstall,
     _run_qdrant_install,
     _run_standard_cli_install,
     _run_standard_cli_uninstall,
@@ -44,16 +46,18 @@ from .installers import (
     install_codex,
     install_droid,
     install_embedding,
+    install_falkordb,
     install_gemini,
     install_git_hooks,
-    install_neo4j,
+    install_grok,
     install_qdrant,
     install_qwen,
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
+    uninstall_falkordb,
     uninstall_gemini,
-    uninstall_neo4j,
+    uninstall_grok,
     uninstall_qwen,
 )
 from .utils import get_install_dir, load_full_config_from_db
@@ -69,7 +73,9 @@ __all__ = [
     "_is_codex_cli_installed",
     "_is_droid_cli_installed",
     "_is_gemini_cli_installed",
+    "_is_grok_cli_installed",
     "_is_qwen_cli_installed",
+    "_is_agy_cli_installed",
     "_echo_install_details",
     "_echo_uninstall_details",
     "_API_KEY_PROMPTS",
@@ -78,6 +84,18 @@ __all__ = [
     "install",
     "uninstall",
 ]
+
+
+_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password has been removed in 0.4.0.
+
+The knowledge graph backend has been replaced with FalkorDB.
+- Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
+- Uninstall: gobby uninstall --falkordb
+- Migration notes: see CHANGELOG.md for the full upgrade path."""
+
+
+def _raise_graph_backend_removed() -> None:
+    raise click.UsageError(_GRAPH_BACKEND_REMOVED_MESSAGE)
 
 
 @click.command("install")
@@ -91,7 +109,19 @@ __all__ = [
     "--gemini",
     "gemini_flag",
     is_flag=True,
-    help="Install Gemini CLI hooks only",
+    help="Install Gemini CLI hooks only (deprecated provider)",
+)
+@click.option(
+    "--grok",
+    "grok_flag",
+    is_flag=True,
+    help="Install Grok CLI hooks only",
+)
+@click.option(
+    "--agy",
+    "agy_flag",
+    is_flag=True,
+    help="Show AGY CLI status (hooks unavailable)",
 )
 @click.option(
     "--codex",
@@ -129,13 +159,38 @@ __all__ = [
     "--no-ext-services",
     "no_ext_services_flag",
     is_flag=True,
-    help="Skip Docker service installation (Qdrant, Neo4j)",
+    help="Skip Docker service installation (Qdrant, FalkorDB)",
+)
+@click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    default=False,
+    help="Install only the FalkorDB service",
+)
+@click.option(
+    "--falkordb-password",
+    "falkordb_password",
+    default=None,
+    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
 )
 @click.option(
     "--neo4j-password",
-    "neo4j_password",
+    "deprecated_neo4j_password",
     default=None,
-    help="Set a custom Neo4j password (default: auto-generated)",
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed()
+    if value is not None
+    else None,
+)
+@click.option(
+    "--neo4j",
+    "neo4j_flag",
+    is_flag=True,
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--project",
@@ -196,13 +251,16 @@ __all__ = [
 def install(
     claude_flag: bool,
     gemini_flag: bool,
+    grok_flag: bool,
+    agy_flag: bool,
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
     hooks_flag: bool,
     all_flag: bool,
     no_ext_services_flag: bool,
-    neo4j_password: str | None,
+    falkordb_flag: bool,
+    falkordb_password: str | None,
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
@@ -216,11 +274,19 @@ def install(
 
     By default (no flags), installs hooks globally (one-time setup).
     Use --project to install per-project instead (legacy behavior).
-    Use --claude, --gemini, --qwen, --codex, or --droid to install only to specific CLIs.
+    Use --claude, --gemini, --grok, --qwen, --codex, or --droid to install only
+    to specific CLIs. AGY is detected but has no supported hook transport yet.
     Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+
+    if falkordb_flag:
+        service_results: dict[str, dict[str, Any]] = {}
+        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
+        if not _echo_install_summary(service_results, no_interactive_flag):
+            sys.exit(1)
+        return
 
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
@@ -228,10 +294,13 @@ def install(
     if (
         not claude_flag
         and not gemini_flag
+        and not grok_flag
+        and not agy_flag
         and not qwen_flag
         and not codex_flag
         and not droid_flag
         and not hooks_flag
+        and not falkordb_flag
         and not all_flag
     ):
         all_flag = True
@@ -249,8 +318,12 @@ def install(
             clis_to_install.append("claude")
         if _is_gemini_cli_installed():
             clis_to_install.append("gemini")
+        if _is_grok_cli_installed():
+            clis_to_install.append("grok")
         if _is_qwen_cli_installed():
             clis_to_install.append("qwen")
+        if _is_agy_cli_installed():
+            click.echo("AGY detected but skipped: no documented hook transport is available.")
         if _is_codex_cli_installed():
             clis_to_install.append("codex")
         if _is_droid_cli_installed():
@@ -264,13 +337,15 @@ def install(
             click.echo("No supported AI coding CLIs detected.")
             click.echo("\nSupported CLIs:")
             click.echo("  - Claude Code: npm install -g @anthropic-ai/claude-code")
-            click.echo("  - Gemini CLI:  npm install -g @google/gemini-cli")
+            click.echo("  - Gemini CLI:  npm install -g @google/gemini-cli (deprecated)")
+            click.echo("  - Grok CLI:    install the Grok CLI")
             click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
             click.echo("  - Codex CLI:   npm install -g @openai/codex")
             click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
+            click.echo("  - AGY CLI:     detected for status only; hooks unavailable")
             click.echo(
-                "\nYou can still install manually with --claude, --gemini, --qwen, --codex, "
-                "or --droid flags."
+                "\nYou can still install manually with --claude, --gemini, --grok, --qwen, "
+                "--codex, or --droid flags."
             )
             sys.exit(1)
     else:
@@ -278,6 +353,10 @@ def install(
             clis_to_install.append("claude")
         if gemini_flag:
             clis_to_install.append("gemini")
+        if grok_flag:
+            clis_to_install.append("grok")
+        if agy_flag:
+            click.echo("AGY detected/status-only: no documented hook transport is available.")
         if qwen_flag:
             clis_to_install.append("qwen")
         if codex_flag:
@@ -338,6 +417,7 @@ def install(
         _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
             "claude": install_claude,
             "gemini": install_gemini,
+            "grok": install_grok,
             "qwen": install_qwen,
             "codex": install_codex,
             "droid": install_droid,
@@ -373,14 +453,14 @@ def install(
             secret_store=secret_store,
         )
 
-        # Docker services (Qdrant + Neo4j, installed by default if Docker available)
+        # Docker services (Qdrant + FalkorDB, installed by default if Docker available)
         # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
         if is_full_install:
             if not no_ext_services_flag and selected_embedding_provider != "none":
                 _run_qdrant_install(install_qdrant, results)
-                _run_neo4j_install(install_neo4j, neo4j_password, results)
+                _run_falkordb_install(install_falkordb, falkordb_password, results)
             elif selected_embedding_provider == "none":
-                click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
+                click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
                 click.echo("")
 
         # Migration detection
@@ -412,7 +492,13 @@ def install(
     "--gemini",
     "gemini_flag",
     is_flag=True,
-    help="Uninstall Gemini CLI hooks only",
+    help="Uninstall Gemini CLI hooks only (deprecated provider)",
+)
+@click.option(
+    "--grok",
+    "grok_flag",
+    is_flag=True,
+    help="Uninstall Grok CLI hooks only",
 )
 @click.option(
     "--codex",
@@ -440,16 +526,24 @@ def install(
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
 )
 @click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    help="Uninstall FalkorDB knowledge graph backend",
+)
+@click.option(
     "--neo4j",
     "neo4j_flag",
     is_flag=True,
-    help="Uninstall Neo4j knowledge graph backend",
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--volumes",
     "volumes_flag",
     is_flag=True,
-    help="Also remove Docker volumes (data loss, use with --neo4j)",
+    help="Also remove Docker volumes (data loss, use with --falkordb)",
 )
 @click.option(
     "--project",
@@ -469,11 +563,12 @@ def install(
 def uninstall(
     claude_flag: bool,
     gemini_flag: bool,
+    grok_flag: bool,
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
-    neo4j_flag: bool,
+    falkordb_flag: bool,
     volumes_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
@@ -482,7 +577,8 @@ def uninstall(
 
     By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
     Use --project to uninstall per-project hooks from the current directory.
-    Use --claude, --gemini, --qwen, or --codex to uninstall only from specific CLIs.
+    Use --claude, --gemini, --grok, --qwen, or --codex to uninstall only from
+    specific CLIs.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()
 
@@ -490,11 +586,12 @@ def uninstall(
     if (
         not claude_flag
         and not gemini_flag
+        and not grok_flag
         and not qwen_flag
         and not codex_flag
         and not droid_flag
         and not all_flag
-        and not neo4j_flag
+        and not falkordb_flag
     ):
         all_flag = True
 
@@ -505,12 +602,14 @@ def uninstall(
         if project_flag:
             claude_settings = project_path / ".claude" / "settings.json"
             gemini_settings = project_path / ".gemini" / "settings.json"
+            grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
             qwen_settings = project_path / ".qwen" / "settings.json"
             codex_hooks = project_path / ".codex" / "hooks.json"
             droid_hooks = project_path / ".factory" / "hooks" / "hooks.json"
         else:
             claude_settings = Path.home() / ".claude" / "settings.json"
             gemini_settings = Path.home() / ".gemini" / "settings.json"
+            grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
             qwen_settings = Path.home() / ".qwen" / "settings.json"
             codex_hooks = Path.home() / ".codex" / "hooks.json"
             droid_hooks = Path.home() / ".factory" / "hooks" / "hooks.json"
@@ -519,6 +618,8 @@ def uninstall(
             clis_to_uninstall.append("claude")
         if gemini_settings.exists():
             clis_to_uninstall.append("gemini")
+        if grok_hooks.exists():
+            clis_to_uninstall.append("grok")
         if qwen_settings.exists():
             clis_to_uninstall.append("qwen")
         if codex_hooks.exists():
@@ -531,12 +632,14 @@ def uninstall(
             if project_flag:
                 click.echo(f"\nChecked: {project_path / '.claude'}")
                 click.echo(f"         {project_path / '.gemini'}")
+                click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
                 click.echo(f"         {project_path / '.qwen'}")
                 click.echo(f"         {project_path / '.codex'}")
                 click.echo(f"         {project_path / '.factory'}")
             else:
                 click.echo(f"\nChecked: {Path.home() / '.claude'}")
                 click.echo(f"         {Path.home() / '.gemini'}")
+                click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
                 click.echo(f"         {Path.home() / '.qwen'}")
                 click.echo(f"         {Path.home() / '.codex'}")
                 click.echo(f"         {Path.home() / '.factory'}")
@@ -546,6 +649,8 @@ def uninstall(
             clis_to_uninstall.append("claude")
         if gemini_flag:
             clis_to_uninstall.append("gemini")
+        if grok_flag:
+            clis_to_uninstall.append("grok")
         if qwen_flag:
             clis_to_uninstall.append("qwen")
         if codex_flag:
@@ -573,6 +678,7 @@ def uninstall(
     _standard_uninstallers: dict[str, Callable[..., dict[str, Any]]] = {
         "claude": uninstall_claude,
         "gemini": uninstall_gemini,
+        "grok": uninstall_grok,
         "qwen": uninstall_qwen,
         "codex": uninstall_codex,
         "droid": uninstall_droid,
@@ -605,9 +711,9 @@ def uninstall(
         click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
         click.echo("")
 
-    # Neo4j
-    if neo4j_flag:
-        _run_neo4j_uninstall(uninstall_neo4j, volumes_flag, results)
+    # FalkorDB
+    if falkordb_flag:
+        _run_falkordb_uninstall(uninstall_falkordb, volumes_flag, results)
 
     # Summary
     all_success = _echo_uninstall_summary(results)

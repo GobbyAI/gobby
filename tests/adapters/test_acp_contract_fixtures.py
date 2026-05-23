@@ -12,6 +12,7 @@ import pytest
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.gemini_acp_client import GeminiACPClient
+from gobby.adapters.grok_acp_client import GrokACPClient
 from gobby.adapters.qwen_acp_client import QwenACPClient
 
 pytestmark = pytest.mark.unit
@@ -133,6 +134,12 @@ def _assert_initialize_request(request: dict[str, Any]) -> None:
     assert request["params"]["clientCapabilities"] == {}
 
 
+def _assert_authenticate_request(request: dict[str, Any]) -> None:
+    assert request["method"] == "authenticate"
+    assert request["jsonrpc"] == "2.0"
+    assert request["params"] == {"methodId": "cached_token"}
+
+
 def _assert_session_request(
     request: dict[str, Any],
     *,
@@ -239,3 +246,68 @@ def test_normalize_notification_handles_recorded_provider_payloads(
     assert len(thinking_deltas) == 2
     assert all(event.data["content"] for event in content_deltas)
     assert all(event.data["content"] for event in thinking_deltas)
+
+
+async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -> None:
+    process = FakeACPProcess(_fixture_lines("grok-0.1.216-session-new-prompt.stdout.jsonl"))
+
+    with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/grok"):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=process,
+        ) as create_process:
+            client = GrokACPClient()
+            await client.start()
+            events = [event async for event in client.send(PROMPT_TEXT)]
+
+    assert create_process.call_args.args[:5] == (
+        "/usr/bin/grok",
+        "agent",
+        "--no-leader",
+        "--always-approve",
+        "stdio",
+    )
+    requests = _written_requests(process)
+    assert [request.get("method") for request in requests] == [
+        "initialize",
+        "authenticate",
+        "session/new",
+        "session/prompt",
+    ]
+    _assert_initialize_request(requests[0])
+    _assert_authenticate_request(requests[1])
+    _assert_session_request(requests[2], method="session/new", session_id=None)
+    _assert_prompt_request(requests[3], session_id="grok-new-session")
+
+    assert any(event.event_type == "thinking_delta" for event in events)
+    assert any(event.event_type == "content_delta" for event in events)
+    assert events[-1].event_type == "result"
+
+
+async def test_grok_load_fixture_handles_terminal_client_request() -> None:
+    process = FakeACPProcess(_fixture_lines("grok-0.1.216-session-load-tool-prompt.stdout.jsonl"))
+
+    with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/grok"):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=process,
+        ):
+            client = GrokACPClient()
+            await client.start(session_id="grok-existing-session")
+            events = [event async for event in client.send(PROMPT_TEXT)]
+
+    requests = _written_requests(process)
+    request_methods = [request.get("method") for request in requests if request.get("method")]
+    assert request_methods == [
+        "initialize",
+        "authenticate",
+        "session/load",
+        "session/prompt",
+    ]
+    assert any(event.event_type == "tool_call" for event in events)
+    assert any(event.event_type == "tool_result" for event in events)
+    responses = [request for request in requests if request.get("id") == 0 and "result" in request]
+    assert responses
+    assert responses[0]["result"]["exitCode"] == 1

@@ -218,6 +218,10 @@ class TelemetryMetrics:
             "hooks_failed_total",
             "Total number of failed hook executions",
         )
+        self._register_counter(
+            "adapter_degradations_total",
+            "Lossy adapter response translations by provider and hook",
+        )
 
     def _register_counter(self, name: str, description: str) -> None:
         self._counters[name] = self._meter.create_counter(name, unit="1", description=description)
