@@ -20,6 +20,7 @@ from gobby.cli.services import (
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -228,7 +229,9 @@ class TestGetFalkorDBStatus:
         }
 
     @pytest.mark.asyncio
-    async def test_status_installed_but_unconfigured(self, tmp_path: Path) -> None:
+    async def test_status_uses_config_store_endpoint_when_args_omitted(
+        self, tmp_path: Path
+    ) -> None:
         db = _make_config_db(tmp_path / "gobby-hub.db")
         try:
             store = ConfigStore(db)
@@ -240,7 +243,37 @@ class TestGetFalkorDBStatus:
         finally:
             db.close()
 
-        assert status == {"installed": True, "healthy": False, "url": None}
+        assert status == {
+            "installed": True,
+            "healthy": False,
+            "url": "redis://127.0.0.1:16379",
+        }
+
+    @pytest.mark.asyncio
+    async def test_status_resolves_config_store_secret_password(self, tmp_path: Path) -> None:
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+            store.set_secret(
+                "databases.falkordb.requirepass",
+                "secret",
+                SecretStore(db),
+                source="test",
+            )
+
+            with patch("gobby.cli.services.is_falkordb_healthy", return_value=True) as healthy:
+                status = await get_falkordb_status(db=db)
+        finally:
+            db.close()
+
+        healthy.assert_called_once_with("127.0.0.1", 16379, "secret")
+        assert status == {
+            "installed": True,
+            "healthy": True,
+            "url": "redis://127.0.0.1:16379",
+        }
 
 
 class TestEnsureLocalEmbeddingServiceReady:
