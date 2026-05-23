@@ -18,9 +18,9 @@ def _facade() -> ModuleType:
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
-    """Clear only the Neo4j knowledge graph projection (requires running daemon).
+    """Clear only the FalkorDB knowledge graph projection (requires running daemon).
 
-    Deletes the KG projection in Neo4j and marks affected memories pending
+    Deletes the KG projection in FalkorDB and marks affected memories pending
     so they can be extracted again. Does not clear vectors, crossrefs, or FTS.
 
     Examples:
@@ -108,7 +108,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
     """Extract entities from memories into the knowledge graph (requires running daemon).
 
     Processes all memories through LLM entity extraction and stores
-    results in Neo4j. Powers the 3D knowledge graph visualization.
+    results in FalkorDB. Powers the 3D knowledge graph visualization.
 
     Examples:
 
@@ -233,7 +233,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
 def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     """Wipe and rebuild ALL memory indices (embeddings, crossrefs, graph).
 
-    Clears Qdrant vectors, Neo4j graph, and crossrefs for the project,
+    Clears Qdrant vectors, FalkorDB graph, and crossrefs for the project,
     then starts a background rebuild from memory storage. The command
     returns as soon as indices are cleared.
 

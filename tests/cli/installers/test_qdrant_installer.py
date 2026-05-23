@@ -40,12 +40,12 @@ class TestDockerComposeServices:
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         assert "qdrant" in data["services"]
 
-    def test_compose_has_neo4j_service(self) -> None:
-        """Compose file defines a neo4j service."""
+    def test_compose_has_falkordb_service(self) -> None:
+        """Compose file defines a falkordb service."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "neo4j" in data["services"]
+        assert "falkordb" in data["services"]
 
     def test_qdrant_ports(self) -> None:
         """Qdrant service exposes HTTP and gRPC ports."""
@@ -89,30 +89,22 @@ class TestDockerComposeServices:
         assert "qdrant" in profiles
         assert "all" in profiles
 
-    def test_neo4j_has_profiles(self) -> None:
-        """Neo4j service has docker compose profiles."""
+    def test_falkordb_has_profiles(self) -> None:
+        """FalkorDB service has docker compose profiles."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        profiles = data["services"]["neo4j"]["profiles"]
-        assert "neo4j" in profiles
+        profiles = data["services"]["falkordb"]["profiles"]
+        assert "falkordb" in profiles
         assert "all" in profiles
 
-    def test_compose_has_neo4j_volume(self) -> None:
-        """Compose file defines gobby_neo4j_data volume with explicit name."""
+    def test_compose_has_falkordb_volume(self) -> None:
+        """Compose file defines gobby_falkordb_data volume with explicit name."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "gobby_neo4j_data" in data.get("volumes", {})
-        assert data["volumes"]["gobby_neo4j_data"]["name"] == "gobby_neo4j_data"
-
-    def test_compose_has_neo4j_logs_volume(self) -> None:
-        """Compose file defines gobby_neo4j_logs volume to prevent anonymous volumes."""
-        from gobby.cli.installers.qdrant import _COMPOSE_SRC
-
-        data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert "gobby_neo4j_logs" in data.get("volumes", {})
-        assert data["volumes"]["gobby_neo4j_logs"]["name"] == "gobby_neo4j_logs"
+        assert "gobby_falkordb_data" in data.get("volumes", {})
+        assert data["volumes"]["gobby_falkordb_data"]["name"] == "gobby_falkordb_data"
 
     def test_compose_has_qdrant_volume(self) -> None:
         """Compose file defines gobby_qdrant_data volume with explicit name."""
@@ -306,8 +298,8 @@ class TestConfigModels:
         config = DatabasesConfig()
         assert config.qdrant.url == "http://localhost:6333"
         assert config.qdrant.port == 6333
-        assert config.neo4j.url == "http://localhost:8474"
-        assert config.neo4j.database == "neo4j"
+        assert config.falkordb.host == "127.0.0.1"
+        assert config.falkordb.port == 16379
 
     def test_embeddings_config_defaults(self) -> None:
         """EmbeddingsConfig has sensible defaults."""
