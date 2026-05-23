@@ -68,7 +68,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
 
 
 def test_cascade_uses_initialize_manifest() -> None:
-    source = source_text("src/gobby/storage/tasks/_crud.py")
+    source = source_text("src/gobby/storage/tasks/_build_cascade.py")
 
     assert "initialize_manifest(" in source
 
@@ -107,7 +107,7 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
 
 
 def test_cascade_no_legacy_label_writes() -> None:
-    source = source_text("src/gobby/storage/tasks/_crud.py")
+    source = source_text("src/gobby/storage/tasks/_build_cascade.py")
 
     assert "skip_stage_labels" not in source
     assert "_normalize_skip_stage_labels" not in source

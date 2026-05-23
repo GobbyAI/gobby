@@ -142,7 +142,7 @@ def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.Mon
             pass
 
     monkeypatch.setattr(
-        "gobby.storage.tasks._crud.StageStatesManager",
+        "gobby.storage.tasks._build_cascade.StageStatesManager",
         FakeStageStatesManager,
     )
 

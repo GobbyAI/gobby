@@ -8,7 +8,6 @@ from typing import Any
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._crud import _session_exists, get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
@@ -19,11 +18,14 @@ from gobby.storage.tasks._models import (
     TaskAlreadyEscalatedError,
     TaskClosedError,
 )
+from gobby.storage.tasks._ownership import _session_exists
+from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import (
     StageStatesManager,
 )
 from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
+from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
 
 _WORK_ATTEMPT_ESCALATION_SUFFIXES = ("_work_failed:max", "_max_work_attempts")

@@ -20,23 +20,11 @@ from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
-from gobby.storage.tasks._crud import (
+from gobby.storage.tasks._build_cascade import (
     cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
-from gobby.storage.tasks._crud import (
+from gobby.storage.tasks._creation import (
     create_task as _create_task,
-)
-from gobby.storage.tasks._crud import (
-    find_task_by_prefix as _find_task_by_prefix,
-)
-from gobby.storage.tasks._crud import (
-    find_tasks_by_prefix as _find_tasks_by_prefix,
-)
-from gobby.storage.tasks._crud import (
-    get_task as _get_task,
-)
-from gobby.storage.tasks._crud import (
-    update_task_metadata as _update_task_metadata,
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
@@ -91,6 +79,15 @@ from gobby.storage.tasks._queries import (
 from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
+from gobby.storage.tasks._read import (
+    find_task_by_prefix as _find_task_by_prefix,
+)
+from gobby.storage.tasks._read import (
+    find_tasks_by_prefix as _find_tasks_by_prefix,
+)
+from gobby.storage.tasks._read import (
+    get_task as _get_task,
+)
 from gobby.storage.tasks._search import TaskSearchBackend
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
@@ -118,6 +115,9 @@ from gobby.storage.tasks._transitions import (
 )
 from gobby.storage.tasks._transitions import (
     submit_for_review as _submit_for_review,
+)
+from gobby.storage.tasks._updates import (
+    update_task_metadata as _update_task_metadata,
 )
 
 logger = logging.getLogger(__name__)

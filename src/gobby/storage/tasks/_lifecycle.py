@@ -14,11 +14,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
+from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
+from gobby.storage.tasks._updates import update_task
 
 logger = logging.getLogger(__name__)
 

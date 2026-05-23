@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager, _crud
+from gobby.storage.tasks import LocalTaskManager, _crud, _updates
 
 pytestmark = pytest.mark.unit
 
@@ -66,7 +66,7 @@ class _CapturePostgresDb:
 def test_update_task_uses_postgres_column_introspection(monkeypatch: pytest.MonkeyPatch) -> None:
     db = _CapturePostgresDb()
     monkeypatch.setattr(
-        _crud,
+        _updates,
         "get_task",
         lambda db, task_id: SimpleNamespace(closed_at=None, escalated_at=None),
     )

@@ -49,18 +49,18 @@ from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
 )
-from gobby.storage.tasks._crud import (
-    get_task,
+from gobby.storage.tasks._automation import (
     list_automation_candidates,
     sweep_stale_claims,
-    update_task,
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
+from gobby.storage.tasks._updates import update_task
 from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
