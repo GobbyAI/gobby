@@ -6,6 +6,7 @@ readiness helpers for managed local dependencies such as LM Studio.
 """
 
 import asyncio
+import importlib
 import inspect
 import ipaddress
 import logging
@@ -17,6 +18,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+from gobby.cli.utils import get_gobby_home
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,48 @@ async def get_qdrant_status(
 # ---------------------------------------------------------------------------
 
 
+def _open_falkordb_config_db(gobby_home: Path | None) -> Any:
+    from gobby.cli.installers.falkor import _resolve_falkordb_db_path
+    from gobby.storage.database import LocalDatabase
+
+    home = gobby_home if gobby_home is not None else get_gobby_home()
+    return LocalDatabase(_resolve_falkordb_db_path(home))
+
+
+def _coerce_falkordb_port(value: Any | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_falkordb_config_password(db: Any, value: Any | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return str(value)
+    if not value.startswith("$secret:"):
+        return value
+
+    from gobby.storage.secrets import SecretStore
+
+    return SecretStore(db).get(value.removeprefix("$secret:"))
+
+
+def _read_falkordb_connection_config(db: Any) -> tuple[str | None, int | None, str | None]:
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(db)
+    host_value = store.get("databases.falkordb.host")
+    password_value = store.get("databases.falkordb.requirepass")
+    host = str(host_value) if host_value is not None else None
+    port = _coerce_falkordb_port(store.get("databases.falkordb.port"))
+    password = _resolve_falkordb_config_password(db, password_value)
+    return host, port, password
+
+
 def is_falkordb_installed(
     *,
     db: Any | None = None,
@@ -106,12 +151,7 @@ def is_falkordb_installed(
     """Check whether FalkorDB connection keys were recorded in config_store."""
     owned_db: Any | None = None
     if db is None:
-        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
-        from gobby.cli.utils import get_gobby_home
-        from gobby.storage.database import LocalDatabase
-
-        home = gobby_home if gobby_home is not None else get_gobby_home()
-        db = LocalDatabase(_resolve_falkordb_db_path(home))
+        db = _open_falkordb_config_db(gobby_home)
         owned_db = db
 
     from gobby.storage.config_store import ConfigStore
@@ -136,10 +176,9 @@ async def is_falkordb_healthy(
     if not host or not port:
         return False
 
-    import redis.asyncio as redis
-
     client: Any | None = None
     try:
+        redis = importlib.import_module("redis.asyncio")
         client = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
         result = client.ping()
         if inspect.isawaitable(result):
@@ -171,8 +210,25 @@ async def get_falkordb_status(
     password: str | None = None,
 ) -> dict[str, Any]:
     """Get FalkorDB install and runtime health status."""
-    installed = is_falkordb_installed(db=db, gobby_home=gobby_home)
-    healthy = await is_falkordb_healthy(host, port, password) if installed else False
+    owned_db: Any | None = None
+    status_db = db
+    if status_db is None:
+        status_db = _open_falkordb_config_db(gobby_home)
+        owned_db = status_db
+
+    try:
+        installed = is_falkordb_installed(db=status_db)
+        if installed and (host is None or port is None or password is None):
+            configured_host, configured_port, configured_password = (
+                _read_falkordb_connection_config(status_db)
+            )
+            host = host if host is not None else configured_host
+            port = port if port is not None else configured_port
+            password = password if password is not None else configured_password
+        healthy = await is_falkordb_healthy(host, port, password) if installed else False
+    finally:
+        if owned_db is not None:
+            owned_db.close()
 
     return {
         "installed": installed,
