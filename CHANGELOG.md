@@ -443,8 +443,13 @@ This section summarizes the non-merge changes since `v0.3.8`.
 
 ### FalkorDB Verification Matrix
 
-Every row below must pass before final release. If any row fails, fix that
-branch and re-run the full matrix.
+Every row below is a release gate. It must pass before final release and before
+either branch merges to `main`. Documenting the matrix is not pass evidence: the
+release validation run must record the date/time, Python and Rust commit SHAs,
+RC versions, isolated `GOBBY_HOME` or fixture path, exact commands, exit
+statuses, and the relevant Docker output, logs, DB query result, or screenshot
+for each row. If any row fails or cannot run because Docker/cross-repo access is
+unavailable, fix the blocker and re-run the full matrix.
 
 | # | Check | Pass criterion |
 | --- | --- | --- |
