@@ -96,13 +96,12 @@ Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
 `~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
 hub DSN from `database_url_ref` or `database_url`. For
 `database_url_ref: keyring:gobby:postgres_database_url`, gcode asks the local
-Gobby daemon broker for the DSN first and falls back to the native OS keyring
-when the broker is unavailable. The DSN is not written to a plaintext runtime file. The
-Gobby daemon process does not need to be running for normal index/search
-commands when keyring fallback is available.
-If macOS keeps asking for Keychain authorization, check `which -a gcode` and
-remove or de-prioritize stale binaries; older installs bypass daemon-brokered
-DSN resolution.
+Gobby daemon broker for the DSN and fails clearly when the daemon is unavailable.
+gcode never reads the native OS keyring directly. The DSN is not written to a
+plaintext runtime file. For explicit daemonless setups, use inline
+`database_url`.
+If macOS keeps asking for Keychain authorization, check `which -a gcode`; stale
+binaries from before `0.8.4` can still read Keychain directly.
 
 ### With Gobby
 
@@ -199,9 +198,8 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 **Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
 **PostgreSQL DSNs stay out of plaintext files.** Isolated gcode runtimes keep
-`database_url_ref: keyring:gobby:postgres_database_url`; gcode resolves it
-through the daemon broker when available and falls back to the native OS
-keyring.
+`database_url_ref: daemon:gobby:postgres_database_url`; gcode resolves it
+through the daemon broker only.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 

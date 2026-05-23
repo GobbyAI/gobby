@@ -8,6 +8,7 @@ use serde::Deserialize;
 use crate::schema;
 
 const POSTGRES_DATABASE_URL_REF: &str = "keyring:gobby:postgres_database_url";
+const DAEMON_POSTGRES_DATABASE_URL_REF: &str = "daemon:gobby:postgres_database_url";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
 const BROKER_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -39,8 +40,9 @@ pub fn bootstrap_path() -> anyhow::Result<PathBuf> {
 
 /// Resolve the PostgreSQL hub DSN from Gobby bootstrap config.
 ///
-/// gcode intentionally has no local database fallback. The daemon process does not need
-/// to be running, but the migrated PostgreSQL hub must be configured.
+/// gcode intentionally has no local database fallback. Keyring-backed bootstraps resolve
+/// through the long-lived daemon broker so short-lived gcode processes never touch the OS
+/// keyring directly.
 pub fn resolve_database_url() -> anyhow::Result<String> {
     let path = bootstrap_path()?;
     let contents = std::fs::read_to_string(&path).with_context(|| {
@@ -50,11 +52,7 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
         )
     })?;
     let bootstrap = parse_bootstrap_database(&contents)?;
-    resolve_database_url_from_bootstrap(
-        &bootstrap,
-        || resolve_brokered_database_url(&path),
-        resolve_keyring_database_url,
-    )
+    resolve_database_url_from_bootstrap(&bootstrap, || resolve_brokered_database_url(&path))
 }
 
 fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase> {
@@ -85,7 +83,6 @@ fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase>
 fn resolve_database_url_from_bootstrap(
     bootstrap: &BootstrapDatabase,
     broker_resolver: impl Fn() -> anyhow::Result<String>,
-    keyring_resolver: impl Fn(&str) -> anyhow::Result<String>,
 ) -> anyhow::Result<String> {
     if bootstrap.hub_backend != "postgres" {
         bail!(
@@ -96,12 +93,16 @@ fn resolve_database_url_from_bootstrap(
 
     if let Some(database_url_ref) = bootstrap.database_url_ref.as_deref() {
         parse_database_url_ref(database_url_ref)?;
-        if let Ok(database_url) = broker_resolver()
-            && !database_url.trim().is_empty()
-        {
-            return Ok(database_url);
+        let database_url = broker_resolver().with_context(|| {
+            format!(
+                "failed to resolve database_url_ref {database_url_ref} through the local Gobby daemon broker. gcode does not read the OS keyring directly; start the Gobby daemon or use inline database_url in bootstrap.yaml for daemonless/manual setups"
+            )
+        })?;
+        let database_url = database_url.trim().to_string();
+        if database_url.is_empty() {
+            bail!("database_url broker response for {database_url_ref} was empty");
         }
-        return keyring_resolver(database_url_ref);
+        return Ok(database_url);
     }
 
     if let Some(database_url) = bootstrap.database_url.as_deref() {
@@ -109,7 +110,7 @@ fn resolve_database_url_from_bootstrap(
     }
 
     bail!(
-        "hub_backend=postgres requires `database_url_ref: {POSTGRES_DATABASE_URL_REF}` or an inline `database_url`"
+        "hub_backend=postgres requires `database_url_ref: {POSTGRES_DATABASE_URL_REF}`, `database_url_ref: {DAEMON_POSTGRES_DATABASE_URL_REF}`, or an inline `database_url`"
     )
 }
 
@@ -159,59 +160,14 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
     Ok(database_url)
 }
 
-fn resolve_keyring_database_url(database_url_ref: &str) -> anyhow::Result<String> {
-    let (service, username) = parse_database_url_ref(database_url_ref)?;
-    configure_native_keyring_store().context("failed to open OS keyring store")?;
-    let store = keyring_core::get_default_store().context("OS keyring store is not configured")?;
-    let entry = store
-        .build(service, username, None)
-        .with_context(|| format!("failed to open OS keyring entry {database_url_ref}"))?;
-    let database_url = entry.get_password().with_context(|| {
-        format!("failed to read database_url from OS keyring entry {database_url_ref}")
-    })?;
-    if database_url.trim().is_empty() {
-        bail!("database_url_ref keyring entry {database_url_ref} is missing");
-    }
-    Ok(database_url)
-}
-
-fn configure_native_keyring_store() -> anyhow::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let config = std::collections::HashMap::new();
-        let store = apple_native_keyring_store::keychain::Store::new_with_configuration(&config)?;
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let config = std::collections::HashMap::new();
-        let store = linux_keyutils_keyring_store::Store::new_with_configuration(&config)?;
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let config = std::collections::HashMap::new();
-        let store = windows_native_keyring_store::Store::new_with_configuration(&config)?;
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        bail!("OS keyring store is not supported on this platform");
-    }
-}
-
-fn parse_database_url_ref(database_url_ref: &str) -> anyhow::Result<(&str, &str)> {
+fn parse_database_url_ref(database_url_ref: &str) -> anyhow::Result<()> {
     let parts: Vec<&str> = database_url_ref.splitn(3, ':').collect();
-    if parts.as_slice() != ["keyring", "gobby", "postgres_database_url"] {
-        bail!("database_url_ref must be {POSTGRES_DATABASE_URL_REF}");
+    match parts.as_slice() {
+        ["keyring" | "daemon", "gobby", "postgres_database_url"] => Ok(()),
+        _ => bail!(
+            "database_url_ref must be {POSTGRES_DATABASE_URL_REF} or {DAEMON_POSTGRES_DATABASE_URL_REF}"
+        ),
     }
-    Ok((parts[1], parts[2]))
 }
 
 pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
@@ -266,11 +222,10 @@ mod tests {
     }
 
     #[test]
-    fn postgres_bootstrap_resolves_broker_ref_before_keyring() {
+    fn postgres_bootstrap_resolves_keyring_ref_through_broker() {
         let resolved = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
             || Ok("postgresql://broker/db".to_string()),
-            |_| unreachable!("keyring should not be used after broker success"),
         )
         .expect("resolve ref");
 
@@ -278,105 +233,96 @@ mod tests {
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_when_broker_fails() {
+    fn postgres_bootstrap_resolves_daemon_ref_through_broker() {
         let resolved = resolve_database_url_from_bootstrap(
-            &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
-            || bail!("broker unavailable"),
-            |reference| {
-                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
-                Ok("postgresql://gobby:secret@localhost:60891/gobby".to_string())
-            },
+            &bootstrap("postgres", None, Some(DAEMON_POSTGRES_DATABASE_URL_REF)),
+            || Ok("postgresql://broker/db".to_string()),
         )
         .expect("resolve ref");
 
-        assert_eq!(resolved, "postgresql://gobby:secret@localhost:60891/gobby");
+        assert_eq!(resolved, "postgresql://broker/db");
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_when_broker_token_is_missing() {
+    fn postgres_bootstrap_ref_fails_clearly_when_broker_fails() {
+        let err = resolve_database_url_from_bootstrap(
+            &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
+            || bail!("broker unavailable"),
+        )
+        .expect_err("broker failure must fail");
+
+        let message = err.to_string();
+        assert!(message.contains("local Gobby daemon broker"));
+        assert!(message.contains("does not read the OS keyring directly"));
+    }
+
+    #[test]
+    fn postgres_bootstrap_fails_when_broker_token_is_missing() {
         let home = tempfile::tempdir().expect("temp home");
         let bootstrap_path = write_bootstrap(home.path(), 60887);
 
-        let resolved = resolve_database_url_from_bootstrap(
+        let err = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
             || resolve_brokered_database_url_at(home.path(), &bootstrap_path),
-            |reference| {
-                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
-                Ok("postgresql://keyring/db".to_string())
-            },
         )
-        .expect("missing broker token falls back to keyring");
+        .expect_err("missing broker token must fail");
 
-        assert_eq!(resolved, "postgresql://keyring/db");
+        assert!(err.to_string().contains("local Gobby daemon broker"));
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_when_broker_is_unreachable() {
+    fn postgres_bootstrap_fails_when_broker_is_unreachable() {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), "token\n").expect("write token");
         let bootstrap_path = write_bootstrap(home.path(), unused_local_port());
 
-        let resolved = resolve_database_url_from_bootstrap(
+        let err = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
             || resolve_brokered_database_url_at(home.path(), &bootstrap_path),
-            |reference| {
-                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
-                Ok("postgresql://keyring/db".to_string())
-            },
         )
-        .expect("unreachable broker falls back to keyring");
+        .expect_err("unreachable broker must fail");
 
-        assert_eq!(resolved, "postgresql://keyring/db");
+        assert!(err.to_string().contains("local Gobby daemon broker"));
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_after_broker_401() {
-        assert_broker_http_failure_falls_back_to_keyring(
-            "401 Unauthorized",
-            r#"{"error":"bad token"}"#,
-        );
+    fn postgres_bootstrap_fails_after_broker_401() {
+        assert_broker_http_failure_fails("401 Unauthorized", r#"{"error":"bad token"}"#);
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_after_broker_403() {
-        assert_broker_http_failure_falls_back_to_keyring(
-            "403 Forbidden",
-            r#"{"error":"forbidden"}"#,
-        );
+    fn postgres_bootstrap_fails_after_broker_403() {
+        assert_broker_http_failure_fails("403 Forbidden", r#"{"error":"forbidden"}"#);
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_after_broker_non_2xx() {
-        assert_broker_http_failure_falls_back_to_keyring(
-            "503 Service Unavailable",
-            r#"{"error":"unavailable"}"#,
-        );
+    fn postgres_bootstrap_fails_after_broker_non_2xx() {
+        assert_broker_http_failure_fails("503 Service Unavailable", r#"{"error":"unavailable"}"#);
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_after_broker_invalid_json() {
-        assert_broker_http_failure_falls_back_to_keyring("200 OK", "not json");
+    fn postgres_bootstrap_fails_after_broker_invalid_json() {
+        assert_broker_http_failure_fails("200 OK", "not json");
     }
 
     #[test]
-    fn postgres_bootstrap_falls_back_to_keyring_after_broker_empty_database_url() {
-        assert_broker_http_failure_falls_back_to_keyring("200 OK", r#"{"database_url":"  "}"#);
+    fn postgres_bootstrap_fails_after_broker_empty_database_url() {
+        assert_broker_http_failure_fails("200 OK", r#"{"database_url":"  "}"#);
     }
 
     #[test]
-    fn postgres_bootstrap_prefers_keyring_ref_over_inline_url() {
+    fn postgres_bootstrap_prefers_ref_over_inline_url() {
         let resolved = resolve_database_url_from_bootstrap(
             &bootstrap(
                 "postgres",
                 Some("postgresql://inline/db"),
                 Some(POSTGRES_DATABASE_URL_REF),
             ),
-            || bail!("broker unavailable"),
-            |_| Ok("postgresql://keyring/db".to_string()),
+            || Ok("postgresql://broker/db".to_string()),
         )
         .expect("resolve ref");
 
-        assert_eq!(resolved, "postgresql://keyring/db");
+        assert_eq!(resolved, "postgresql://broker/db");
     }
 
     #[test]
@@ -384,7 +330,6 @@ mod tests {
         let resolved = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", Some("postgresql://inline/db"), None),
             || unreachable!("broker should not be used"),
-            |_| unreachable!("keyring should not be used"),
         )
         .expect("resolve inline url");
 
@@ -393,11 +338,9 @@ mod tests {
 
     #[test]
     fn sqlite_bootstrap_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(
-            &bootstrap("sqlite", None, None),
-            || unreachable!("broker should not be used"),
-            |_| unreachable!("keyring should not be used"),
-        )
+        let err = resolve_database_url_from_bootstrap(&bootstrap("sqlite", None, None), || {
+            unreachable!("broker should not be used")
+        })
         .expect_err("sqlite backend must fail");
 
         assert!(err.to_string().contains("hub_backend: postgres"));
@@ -405,11 +348,9 @@ mod tests {
 
     #[test]
     fn missing_postgres_dsn_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(
-            &bootstrap("postgres", None, None),
-            || unreachable!("broker should not be used"),
-            |_| unreachable!("keyring should not be used"),
-        )
+        let err = resolve_database_url_from_bootstrap(&bootstrap("postgres", None, None), || {
+            unreachable!("broker should not be used")
+        })
         .expect_err("missing dsn must fail");
 
         assert!(err.to_string().contains("database_url_ref"));
@@ -424,7 +365,6 @@ mod tests {
                 Some("keyring:other:postgres_database_url"),
             ),
             || unreachable!("broker should not be used for unsupported refs"),
-            resolve_keyring_database_url,
         )
         .expect_err("unsupported ref must fail");
 
@@ -435,14 +375,14 @@ mod tests {
     fn parse_bootstrap_database_reads_postgres_fields() {
         let parsed = parse_bootstrap_database(
             "hub_backend: postgres\n\
-             database_url_ref: keyring:gobby:postgres_database_url\n",
+             database_url_ref: daemon:gobby:postgres_database_url\n",
         )
         .expect("parse bootstrap");
 
         assert_eq!(parsed.hub_backend, "postgres");
         assert_eq!(
             parsed.database_url_ref.as_deref(),
-            Some(POSTGRES_DATABASE_URL_REF)
+            Some(DAEMON_POSTGRES_DATABASE_URL_REF)
         );
     }
 
@@ -619,21 +559,17 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
-    fn assert_broker_http_failure_falls_back_to_keyring(status: &str, body: &str) {
+    fn assert_broker_http_failure_fails(status: &str, body: &str) {
         let (daemon_url, request) = spawn_http_response(http_response(status, body));
 
-        let resolved = resolve_database_url_from_bootstrap(
+        let err = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
             || request_broker_database_url(&daemon_url, "token"),
-            |reference| {
-                assert_eq!(reference, POSTGRES_DATABASE_URL_REF);
-                Ok("postgresql://keyring/db".to_string())
-            },
         )
-        .expect("broker failure falls back to keyring");
+        .expect_err("broker failure must fail");
         let _ = request.join().expect("read request");
 
-        assert_eq!(resolved, "postgresql://keyring/db");
+        assert!(err.to_string().contains("local Gobby daemon broker"));
     }
 
     fn unused_local_port() -> u16 {

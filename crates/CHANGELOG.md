@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon and CLI together. This compatibility boundary is covered by the
   Neo4j-to-FalkorDB Phase 8.3 validation matrix.
 
+## [0.8.4] — gcode
+
+### Changed
+
+#### gcode
+
+- **Broker-only PostgreSQL DSN refs** — `database_url_ref:
+  keyring:gobby:postgres_database_url` and broker-only generated refs now resolve
+  only through the local Gobby daemon broker. `gcode` no longer falls back to
+  native OS Keychain/credential-store reads from short-lived processes; broker
+  failures return a clear daemon connectivity/auth error. Inline `database_url`
+  remains supported for explicit daemonless setups.
+
+### Removed
+
+#### gcode
+
+- **Native keyring runtime path** — removed direct `keyring-core` and
+  platform-keyring-store dependencies from `gobby-code`.
+
 ## [0.8.3] — gcode
 
 ### Changed

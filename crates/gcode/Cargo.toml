@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.8.3"
+version = "0.8.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -30,7 +30,6 @@ serde_yaml = "0.9"
 
 # Database
 postgres = "0.19"
-keyring-core = "1"
 
 # Graph backends
 falkordb = "0.2"
@@ -85,12 +84,3 @@ tempfile = "3"
 
 [dev-dependencies]
 serial_test = "3"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-apple-native-keyring-store = { version = "1", features = ["keychain"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-linux-keyutils-keyring-store = "1"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-native-keyring-store = "1"
