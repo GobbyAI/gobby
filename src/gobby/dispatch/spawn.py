@@ -218,6 +218,7 @@ def _prepare_spawn_artifacts(
         target_branch=artifacts.target_branch,
         project_id=project_id,
         services=services,
+        merge_closed_descendant_commits=True,
     )
     return TaskArtifactManager(db).get_artifacts(action.task_id)
 

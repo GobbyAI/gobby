@@ -32,6 +32,7 @@ def ensure_epic_integration_workspaces(
     target_branch: str,
     project_id: str,
     services: object | None,
+    merge_closed_descendant_commits: bool = False,
 ) -> None:
     """Create/reuse integration workspaces for open epics in a build subtree."""
     repo_path = _project_repo_path(task_manager.db, project_id)
@@ -90,6 +91,14 @@ def ensure_epic_integration_workspaces(
                 artifact_fields["clone_path"] = None
                 artifact_fields["base_commit_sha"] = None
         task_manager.artifacts.set_artifacts_atomic(task.id, **artifact_fields)
+        if merge_closed_descendant_commits:
+            _merge_closed_descendant_commits(
+                tasks=tasks,
+                parent_by_id=parent_by_id,
+                epic_id=task.id,
+                workspace=integration,
+                source_repo_path=repo_path,
+            )
         integration_by_epic[task.id] = integration_branch
 
     _cascade_nearest_integration_branch(
@@ -546,6 +555,163 @@ def _nearest_ancestor_integration_branch(
 def _task_by_id(db: DatabaseProtocol, task_id: str) -> Task | None:
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     return Task.from_row(row) if row is not None else None
+
+
+def _merge_closed_descendant_commits(
+    *,
+    tasks: list[Task],
+    parent_by_id: dict[str, str | None],
+    epic_id: str,
+    workspace: Worktree | Clone,
+    source_repo_path: Path,
+) -> None:
+    commits = _closed_descendant_commits(
+        tasks=tasks,
+        parent_by_id=parent_by_id,
+        epic_id=epic_id,
+    )
+    if not commits:
+        return
+    _merge_required_commits(
+        _workspace_record_path(workspace),
+        commits=commits,
+        source_repo_path=source_repo_path,
+    )
+
+
+def _closed_descendant_commits(
+    *,
+    tasks: list[Task],
+    parent_by_id: dict[str, str | None],
+    epic_id: str,
+) -> list[tuple[str, str]]:
+    commits: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for task in tasks:
+        if task.id == epic_id or task.closed_at is None:
+            continue
+        if not _is_descendant(task.id, epic_id, parent_by_id):
+            continue
+        for commit_sha in _linked_commits(task):
+            item = (_task_ref(task), commit_sha)
+            if item in seen:
+                continue
+            seen.add(item)
+            commits.append(item)
+    return commits
+
+
+def _linked_commits(task: Task) -> tuple[str, ...]:
+    commits: list[str] = []
+    seen: set[str] = set()
+    for raw in (*(task.commits or ()), task.closed_commit_sha):
+        if not raw:
+            continue
+        commit_sha = str(raw)
+        if commit_sha in seen:
+            continue
+        seen.add(commit_sha)
+        commits.append(commit_sha)
+    return tuple(commits)
+
+
+def _is_descendant(
+    task_id: str,
+    ancestor_id: str,
+    parent_by_id: dict[str, str | None],
+) -> bool:
+    current = parent_by_id.get(task_id)
+    while current:
+        if current == ancestor_id:
+            return True
+        current = parent_by_id.get(current)
+    return False
+
+
+def _workspace_record_path(workspace: Worktree | Clone) -> Path:
+    raw_path = getattr(workspace, "worktree_path", None) or getattr(workspace, "clone_path", None)
+    if not raw_path:
+        raise BuildWorkspaceError("integration workspace path is missing; clean/restart")
+    return Path(str(raw_path))
+
+
+def _merge_required_commits(
+    workspace: Path,
+    *,
+    commits: list[tuple[str, str]],
+    source_repo_path: Path,
+) -> None:
+    _ensure_clean_git_dir(workspace)
+    for task_ref, commit_sha in commits:
+        resolved_sha = _ensure_commit_available(workspace, commit_sha, source_repo_path)
+        if _is_ancestor(workspace, resolved_sha, "HEAD"):
+            continue
+        try:
+            result = _git(
+                workspace,
+                ["merge", "--no-ff", "--no-edit", resolved_sha],
+                timeout=120,
+                env={"GOBBY_MERGE": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            _abort_merge_safely(workspace)
+            raise BuildWorkspaceError(
+                f"failed to merge closed child commit {commit_sha} from {task_ref}: "
+                f"git merge timed out after {exc.timeout}s"
+            ) from exc
+        if result.returncode != 0:
+            _abort_merge_safely(workspace)
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise BuildWorkspaceError(
+                f"failed to merge closed child commit {commit_sha} from {task_ref}: {detail}"
+            )
+        _ensure_clean_git_dir(workspace)
+
+
+def _ensure_commit_available(
+    workspace: Path,
+    commit_sha: str,
+    source_repo_path: Path,
+) -> str:
+    resolved = _resolve_commit(workspace, commit_sha)
+    if resolved:
+        return resolved
+
+    direct_fetch = _git(workspace, ["fetch", str(source_repo_path), commit_sha], timeout=60)
+    resolved = _resolve_commit(workspace, commit_sha)
+    if resolved:
+        return resolved
+
+    branch_fetch = _git(
+        workspace,
+        ["fetch", str(source_repo_path), "+refs/heads/*:refs/remotes/gobby-source/*"],
+        timeout=120,
+    )
+    resolved = _resolve_commit(workspace, commit_sha)
+    if resolved:
+        return resolved
+
+    detail = (
+        direct_fetch.stderr.strip()
+        or branch_fetch.stderr.strip()
+        or direct_fetch.stdout.strip()
+        or branch_fetch.stdout.strip()
+        or "commit not found"
+    )
+    raise BuildWorkspaceError(f"closed child commit {commit_sha} is unavailable: {detail}")
+
+
+def _resolve_commit(workspace: Path, commit_sha: str) -> str | None:
+    result = _git(workspace, ["rev-parse", "--verify", f"{commit_sha}^{{commit}}"], timeout=10)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _task_ref(task: Task) -> str:
+    if task.seq_num:
+        return f"#{task.seq_num}"
+    return task.id[:8]
 
 
 def _integration_branch(task: Task) -> str:
