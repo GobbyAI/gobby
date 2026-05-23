@@ -790,6 +790,14 @@ class MemoryManager:
         pending = await self.run_db(self.storage.mark_pending_graphs, project_id)
         return {"success": True, "memories_marked_pending": pending, **cleared}
 
+    async def get_knowledge_graph_counts(self, project_id: str | None = None) -> dict[str, Any]:
+        """Return actual FalkorDB knowledge-graph counts."""
+        if self._kg_service:
+            return await self._kg_service.get_graph_counts(project_id=project_id)
+        if self._falkor_client:
+            return await self._falkor_client.get_graph_counts(project_id=project_id)
+        return {"success": False, "error": "FalkorDB not configured"}
+
     async def rebuild_knowledge_graph(
         self,
         project_id: str | None = None,
@@ -804,6 +812,11 @@ class MemoryManager:
             all_memories = (await self._fetch_all_project_memories(project_id))[:limit]
         else:
             all_memories = await self.run_db(self.list_memories, None, None, limit)
+
+        memories_marked_pending = 0
+        for memory in all_memories:
+            await self.run_db(self.storage.mark_pending_graph, memory.id)
+            memories_marked_pending += 1
 
         status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
         errors = 0
@@ -823,6 +836,7 @@ class MemoryManager:
                 "memories_total": len(all_memories),
                 "memories_completed": kg_done,
                 "memories_marked_processed": processed,
+                "memories_marked_pending": memories_marked_pending,
                 "status_counts": dict(status_counts),
                 "errors": errors,
                 "failed_memories": list(failed_memories),
@@ -899,6 +913,7 @@ class MemoryManager:
         return {
             "success": True,
             "memories_processed": len(all_memories),
+            "memories_marked_pending": memories_marked_pending,
             "memories_marked_processed": processed,
             "status_counts": status_counts,
             "memories_extracted": status_counts[KnowledgeGraphStatus.SUCCESS.value],

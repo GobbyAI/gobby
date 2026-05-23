@@ -4,7 +4,7 @@ import click
 
 from .crud import create, delete, list_memories, memory_stats, recall, show_memory, update_memory
 from .export import backup_memories, export_memories, restore_memories
-from .graph import clear_graph, invalidate, rebuild_graph
+from .graph import clear_graph, graph_counts, invalidate, rebuild_graph
 from .indices import rebuild_crossrefs, reconcile, reindex_embeddings
 from .maintenance import dedupe_memories, fix_null_project
 
@@ -31,5 +31,6 @@ memory.add_command(reindex_embeddings)
 memory.add_command(reconcile)
 memory.add_command(rebuild_crossrefs)
 memory.add_command(clear_graph)
+memory.add_command(graph_counts)
 memory.add_command(rebuild_graph)
 memory.add_command(invalidate)

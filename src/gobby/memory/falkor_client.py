@@ -539,17 +539,78 @@ class FalkorClient:
         props.setdefault("entity_key", entity_key)
         props.setdefault("name", name)
         props.setdefault("project_id", project_id)
+        extra_labels: list[str] = []
         if labels:
             for label in labels:
                 _validate_cypher_identifier(label, "label")
-        label_clause = ":" + ":".join(labels) if labels else ""
-        cypher = (
-            f"MERGE (n{label_clause} {{entity_key: $entity_key}}) "
-            "ON CREATE SET n += $props, n.created_at = timestamp(), n.updated_at = timestamp() "
-            "ON MATCH SET n += $props, n.updated_at = timestamp() "
-            "RETURN n.entity_key AS entity_key, n.name AS name"
-        )
+                if label != "_Entity" and label not in extra_labels:
+                    extra_labels.append(label)
+        clauses = [
+            "MERGE (n:_Entity {entity_key: $entity_key})",
+            "ON CREATE SET n += $props, n.created_at = timestamp(), n.updated_at = timestamp()",
+            "ON MATCH SET n += $props, n.updated_at = timestamp()",
+        ]
+        if extra_labels:
+            clauses.append(f"SET n:{':'.join(extra_labels)}")
+        clauses.append("RETURN n.entity_key AS entity_key, n.name AS name")
+        cypher = " ".join(clauses)
         return await self.query(cypher, {"entity_key": entity_key, "props": props})
+
+    async def get_graph_counts(self, project_id: str | None = None) -> dict[str, Any]:
+        """Return actual FalkorDB knowledge-graph counts."""
+        if project_id is None:
+            params: dict[str, Any] = {}
+            node_filter = ""
+            rel_filter = ""
+            entity_rel_filter = ""
+            mentioned_filter = ""
+            code_filter = ""
+            code_rel_filter = ""
+        else:
+            params = {"project_id": project_id}
+            node_filter = "WHERE n.project_id = $project_id OR n.project = $project_id "
+            rel_filter = (
+                "WHERE a.project_id = $project_id OR b.project_id = $project_id "
+                "OR a.project = $project_id OR b.project = $project_id "
+            )
+            entity_rel_filter = "WHERE a.project_id = $project_id AND b.project_id = $project_id "
+            mentioned_filter = "WHERE e.project_id = $project_id AND m.project_id = $project_id "
+            code_filter = "WHERE n.project = $project_id "
+            code_rel_filter = (
+                "WHERE e.project_id = $project_id OR c.project_id = $project_id "
+                "OR c.project = $project_id "
+            )
+
+        async def _count(cypher: str) -> int:
+            rows = await self.query(cypher, params)
+            return int(rows[0]["total"]) if rows else 0
+
+        return {
+            "graph": self._graph_name,
+            "project_id": project_id,
+            "total_nodes": await _count(f"MATCH (n) {node_filter}RETURN count(n) AS total"),
+            "memory_nodes": await _count(f"MATCH (n:Memory) {node_filter}RETURN count(n) AS total"),
+            "entity_nodes": await _count(
+                f"MATCH (n:_Entity) {node_filter}RETURN count(n) AS total"
+            ),
+            "code_symbol_nodes": await _count(
+                f"MATCH (n:CodeSymbol) {code_filter}RETURN count(n) AS total"
+            ),
+            "relationships": await _count(
+                f"MATCH (a)-[r]->(b) {rel_filter}RETURN count(r) AS total"
+            ),
+            "entity_relationships": await _count(
+                f"MATCH (a:_Entity)-[r]->(b:_Entity) {entity_rel_filter}RETURN count(r) AS total"
+            ),
+            "mentioned_in_relationships": await _count(
+                "MATCH (e:_Entity)-[r:MENTIONED_IN]->(m:Memory) "
+                f"{mentioned_filter}RETURN count(r) AS total"
+            ),
+            "relates_to_code_relationships": await _count(
+                "MATCH (e:_Entity)-[r:RELATES_TO_CODE]->(c:CodeSymbol) "
+                f"{code_rel_filter}RETURN count(r) AS total"
+            ),
+        }
 
     async def merge_relationship(
         self,

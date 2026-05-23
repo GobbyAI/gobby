@@ -2,11 +2,12 @@
 
 Covers: get_memory_manager, create, recall tag parsing, list tag parsing,
         export, dedupe, fix-null-project, backup, rebuild-crossrefs,
-        clear-graph, and rebuild-graph.
+        clear-graph, graph-counts, and rebuild-graph.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -322,6 +323,77 @@ class TestRebuildCrossrefs:
 # =============================================================================
 # rebuild-graph
 # =============================================================================
+
+
+class TestGraphCounts:
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_graph_counts_json(
+        self, mock_client_fn: MagicMock, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "graph": "gobby_kg",
+            "project_id": None,
+            "memory_nodes": 3,
+            "entity_nodes": 7,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["graph-counts", "--json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {
+            "entity_nodes": 7,
+            "graph": "gobby_kg",
+            "memory_nodes": 3,
+            "project_id": None,
+        }
+        client.call_http_api.assert_called_once_with(
+            "/api/memories/graph/counts",
+            method="GET",
+            timeout=30.0,
+        )
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value="proj-1")
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_graph_counts_project_human_output(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "graph": "gobby_kg",
+            "project_id": "proj-1",
+            "total_nodes": 10,
+            "memory_nodes": 3,
+            "entity_nodes": 7,
+            "code_symbol_nodes": 0,
+            "relationships": 8,
+            "entity_relationships": 5,
+            "mentioned_in_relationships": 3,
+            "relates_to_code_relationships": 0,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["graph-counts", "--project", "myproj"])
+
+        assert result.exit_code == 0
+        call_args = client.call_http_api.call_args
+        assert "project_id=proj-1" in call_args[0][0]
+        assert "Knowledge graph counts for project proj-1:" in result.output
+        assert "Memory: 3" in result.output
+        assert "Entity: 7" in result.output
 
 
 class TestRebuildGraph:

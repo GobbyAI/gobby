@@ -1,4 +1,4 @@
-"""Tests for KnowledgeGraphService graph search, _Entity labels, and MENTIONED_IN links."""
+"""Tests for KnowledgeGraphService graph search, type labels, and MENTIONED_IN links."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def service(
 
 
 class TestEntityLabelAndMemoryLinkage:
-    """Tests for _Entity label addition and MENTIONED_IN linkage."""
+    """Tests for entity type labels and MENTIONED_IN linkage."""
 
     async def test_add_to_graph_sets_entity_label(
         self,
@@ -69,7 +69,7 @@ class TestEntityLabelAndMemoryLinkage:
         mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
-        """add_to_graph applies the _Entity label during merge_node."""
+        """add_to_graph passes type labels while _Entity identity is client-owned."""
         mock_llm.generate_json = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
@@ -82,7 +82,7 @@ class TestEntityLabelAndMemoryLinkage:
 
         merge_call = mock_falkor.merge_node.call_args
         assert merge_call is not None
-        assert "_Entity" in merge_call.kwargs["labels"]
+        assert merge_call.kwargs["labels"] == ["Person"]
 
     async def test_add_to_graph_creates_mentioned_in_links(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import time
 import urllib.parse
 from types import ModuleType
@@ -87,6 +88,56 @@ def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
         "Use `gobby memory rebuild-graph` to repopulate immediately, or let the "
         "background worker refill it over time."
     )
+
+
+@click.command("graph-counts")
+@click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option("--json", "json_output", is_flag=True, help="Print raw JSON response")
+@click.pass_context
+def graph_counts(ctx: click.Context, project_ref: str | None, json_output: bool) -> None:
+    """Show actual FalkorDB knowledge graph counts."""
+    memory_module = _facade()
+    client = memory_module._get_daemon_client(ctx)
+    is_healthy, err = client.check_health()
+    if not is_healthy:
+        raise click.ClickException(f"Daemon not running: {err}")
+
+    project_id = (
+        memory_module.resolve_project_ref(project_ref, exit_on_not_found=True)
+        if project_ref
+        else None
+    )
+    params = f"?{urllib.parse.urlencode({'project_id': project_id})}" if project_id else ""
+    try:
+        response = client.call_http_api(
+            f"/api/memories/graph/counts{params}", method="GET", timeout=30.0
+        )
+    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+        click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+        raise SystemExit(1) from e
+
+    if not response.is_success:
+        raise click.ClickException(f"Count failed (HTTP {response.status_code}): {response.text}")
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise click.ClickException(f"Invalid response from daemon: {e}") from e
+
+    if json_output:
+        click.echo(json.dumps(data, sort_keys=True))
+        return
+
+    scope = f"project {project_id}" if project_id else "all projects"
+    click.echo(f"Knowledge graph counts for {scope}:")
+    click.echo(f"  Graph: {data.get('graph', 'gobby_kg')}")
+    click.echo(f"  Nodes: {data.get('total_nodes', 0)} total")
+    click.echo(f"    Memory: {data.get('memory_nodes', 0)}")
+    click.echo(f"    Entity: {data.get('entity_nodes', 0)}")
+    click.echo(f"    CodeSymbol: {data.get('code_symbol_nodes', 0)}")
+    click.echo(f"  Relationships: {data.get('relationships', 0)} total")
+    click.echo(f"    Entity: {data.get('entity_relationships', 0)}")
+    click.echo(f"    MENTIONED_IN: {data.get('mentioned_in_relationships', 0)}")
+    click.echo(f"    RELATES_TO_CODE: {data.get('relates_to_code_relationships', 0)}")
 
 
 @click.command("rebuild-graph")

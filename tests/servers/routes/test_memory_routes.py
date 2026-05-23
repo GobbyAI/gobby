@@ -525,6 +525,42 @@ class TestEntityNeighbors:
         assert response.status_code == 500
 
 
+class TestGraphCounts:
+    """Test GET /memories/graph/counts endpoint."""
+
+    def test_counts_success(self, client, mock_server) -> None:
+        """GET /memories/graph/counts returns actual FalkorDB counts."""
+        mock_server.memory_manager._falkor_client = MagicMock()
+        mock_server.memory_manager.get_knowledge_graph_counts = AsyncMock(
+            return_value={
+                "graph": "gobby_kg",
+                "project_id": "proj-1",
+                "memory_nodes": 3,
+                "entity_nodes": 7,
+                "relationships": 9,
+            }
+        )
+
+        response = client.get("/api/memories/graph/counts", params={"project_id": "proj-1"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["graph"] == "gobby_kg"
+        assert data["memory_nodes"] == 3
+        mock_server.memory_manager.get_knowledge_graph_counts.assert_awaited_once_with(
+            project_id="proj-1"
+        )
+
+    def test_counts_requires_falkordb(self, client, mock_server) -> None:
+        """GET /memories/graph/counts returns 404 when FalkorDB is not configured."""
+        mock_server.memory_manager._falkor_client = None
+
+        response = client.get("/api/memories/graph/counts")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "FalkorDB not configured"
+
+
 # =============================================================================
 # POST /memories/graph/rebuild - knowledge graph rebuild
 # =============================================================================

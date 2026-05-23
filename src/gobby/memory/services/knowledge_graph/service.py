@@ -115,7 +115,7 @@ class KnowledgeGraphService:
         3. Fetch existing relationships for overlap detection
         4. Delete outdated relationships via LLM decision
         5. Merge nodes and relationships into FalkorDB
-        6. Add _Entity label for vector index compatibility
+        6. Add type labels while preserving _Entity identity
         7. Set embedding vectors on nodes
         8. Link entities to source memory via MENTIONED_IN
         9. Cross-link entities to code symbols via RELATES_TO_CODE
@@ -465,6 +465,10 @@ class KnowledgeGraphService:
     async def clear_graph(self, project_id: str | None = None) -> dict[str, int]:
         """Delete all KG projection nodes for a project or all scopes."""
         return await self._maintenance.clear_graph(project_id=project_id)
+
+    async def get_graph_counts(self, project_id: str | None = None) -> dict[str, Any]:
+        """Return actual FalkorDB knowledge-graph counts."""
+        return await self._falkor.get_graph_counts(project_id=project_id)
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes for a project, then clean orphaned entities."""

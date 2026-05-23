@@ -60,7 +60,7 @@ class KnowledgeGraphWriter:
             entity_key=entity.entity_key,
             name=entity.name,
             project_id=entity.project_id,
-            labels=[entity.entity_type.capitalize(), "_Entity"],
+            labels=[entity.entity_type.capitalize()],
             properties={
                 "entity_type": entity.entity_type,
                 "project_id": entity.project_id,

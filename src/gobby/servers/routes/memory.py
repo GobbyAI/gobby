@@ -316,6 +316,25 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Failed to get entity neighbors: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.get("/graph/counts")
+    async def graph_counts(
+        project_id: str | None = Query(None, description="Filter by project ID"),
+    ) -> dict[str, Any]:
+        """Get actual FalkorDB knowledge-graph counts."""
+        memory_manager = _require_falkordb_memory_manager(server)
+        try:
+            result: dict[str, Any] = await memory_manager.get_knowledge_graph_counts(
+                project_id=project_id,
+            )
+            if not result.get("success", True):
+                raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get knowledge graph counts: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
     @router.get("/graph")
     def memory_graph(
         project_id: str | None = Query(None, description="Filter by project ID"),

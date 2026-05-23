@@ -40,7 +40,7 @@ class TestMergeNode:
     async def test_merge_node_generates_falkordb_cypher(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """merge_node uses MERGE and FalkorDB timestamp values."""
+        """merge_node uses stable _Entity identity and FalkorDB timestamp values."""
         client = _client(monkeypatch)
         client.query = AsyncMock(return_value=[])
 
@@ -53,7 +53,9 @@ class TestMergeNode:
 
         client.query.assert_called_once()
         cypher, params = client.query.call_args.args
-        assert "MERGE (n:Person {entity_key: $entity_key})" in cypher
+        assert "MERGE (n:_Entity {entity_key: $entity_key})" in cypher
+        assert "MERGE (n:Person" not in cypher
+        assert "SET n:Person" in cypher
         assert "ON CREATE SET" in cypher
         assert "ON MATCH SET" in cypher
         assert "timestamp()" in cypher
@@ -74,7 +76,39 @@ class TestMergeNode:
         )
 
         cypher = client.query.call_args.args[0]
-        assert "MERGE (n:Tool:Language {entity_key: $entity_key})" in cypher
+        assert "MERGE (n:_Entity {entity_key: $entity_key})" in cypher
+        assert "SET n:Tool:Language" in cypher
+
+    async def test_merge_node_keeps_entity_identity_across_type_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same entity_key with different type labels still merges through _Entity only."""
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[])
+
+        await client.merge_node(entity_key="gobby", name="Gobby", labels=["Project"])
+        await client.merge_node(entity_key="gobby", name="Gobby", labels=["Tool"])
+
+        cyphers = [call.args[0] for call in client.query.call_args_list]
+        assert all("MERGE (n:_Entity {entity_key: $entity_key})" in cypher for cypher in cyphers)
+        assert all("MERGE (n:Project" not in cypher for cypher in cyphers)
+        assert all("MERGE (n:Tool" not in cypher for cypher in cyphers)
+        assert "SET n:Project" in cyphers[0]
+        assert "SET n:Tool" in cyphers[1]
+
+    async def test_merge_node_ignores_entity_label_in_extra_labels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_Entity is the identity label, not a dynamic classification label."""
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[])
+
+        await client.merge_node(entity_key="josh", name="Josh", labels=["Person", "_Entity"])
+
+        cypher = client.query.call_args.args[0]
+        assert "MERGE (n:_Entity {entity_key: $entity_key})" in cypher
+        assert "SET n:Person" in cypher
+        assert "SET n:_Entity" not in cypher
 
     async def test_merge_node_rejects_invalid_label(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Interpolated labels must remain Cypher identifiers."""
@@ -126,6 +160,46 @@ class TestMergeRelationship:
 
         cypher = client.query.call_args.args[0]
         assert "MERGE (a)-[r:_9_works_on]->(b)" in cypher
+
+
+class TestGraphCounts:
+    """Tests for FalkorClient.get_graph_counts()."""
+
+    async def test_get_graph_counts_reads_actual_falkordb_counts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        client.query = AsyncMock(
+            side_effect=[
+                [{"total": 10}],
+                [{"total": 3}],
+                [{"total": 7}],
+                [{"total": 0}],
+                [{"total": 8}],
+                [{"total": 5}],
+                [{"total": 3}],
+                [{"total": 0}],
+            ]
+        )
+
+        result = await client.get_graph_counts(project_id="proj-1")
+
+        assert result == {
+            "graph": "gobby_kg",
+            "project_id": "proj-1",
+            "total_nodes": 10,
+            "memory_nodes": 3,
+            "entity_nodes": 7,
+            "code_symbol_nodes": 0,
+            "relationships": 8,
+            "entity_relationships": 5,
+            "mentioned_in_relationships": 3,
+            "relates_to_code_relationships": 0,
+        }
+        first_cypher, first_params = client.query.call_args_list[0].args
+        assert "MATCH (n)" in first_cypher
+        assert "n.project_id = $project_id" in first_cypher
+        assert first_params == {"project_id": "proj-1"}
 
 
 class TestSetNodeVector:

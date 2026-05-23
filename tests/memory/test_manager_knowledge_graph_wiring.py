@@ -162,6 +162,23 @@ class TestGraphDelegation:
             project_id=None,
         )
 
+    async def test_get_knowledge_graph_counts_delegates_to_kg_service(self) -> None:
+        """get_knowledge_graph_counts returns actual FalkorDB counts."""
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        expected = {"graph": "gobby_kg", "memory_nodes": 3, "entity_nodes": 7}
+        manager._kg_service.get_graph_counts = AsyncMock(return_value=expected)
+
+        result = await manager.get_knowledge_graph_counts(project_id="proj-1")
+
+        assert result == expected
+        manager._kg_service.get_graph_counts.assert_called_once_with(project_id="proj-1")
+
     async def test_get_entity_graph_returns_none_when_no_kg_service(self) -> None:
         """get_entity_graph returns None when KnowledgeGraphService is not available."""
         manager = _make_manager(falkordb_host=None)
@@ -229,14 +246,20 @@ class TestGraphDelegation:
             ]
         )
         manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
 
         result = await manager.rebuild_knowledge_graph(project_id="proj-1")
 
         assert manager._kg_service.add_to_graph.await_count == 3
+        manager.storage.mark_pending_graph.assert_any_call("mem-1")
+        manager.storage.mark_pending_graph.assert_any_call("mem-2")
+        manager.storage.mark_pending_graph.assert_any_call("mem-3")
+        assert manager.storage.mark_pending_graph.call_count == 3
         manager.mark_graph_processed.assert_any_call("mem-1")
         manager.mark_graph_processed.assert_any_call("mem-2")
         assert manager.mark_graph_processed.call_count == 2
         assert result["memories_processed"] == 3
+        assert result["memories_marked_pending"] == 3
         assert result["memories_marked_processed"] == 2
         assert result["memories_extracted"] == 1
         assert result["noop_no_entities"] == 1
@@ -264,6 +287,7 @@ class TestGraphDelegation:
             ]
         )
         manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
 
         progress_updates: list[dict[str, object]] = []
 
@@ -277,6 +301,7 @@ class TestGraphDelegation:
 
         assert progress_updates[0]["memories_total"] == 2
         assert progress_updates[0]["memories_completed"] == 0
+        assert progress_updates[0]["memories_marked_pending"] == 2
         assert progress_updates[-1]["memories_completed"] == 2
         assert progress_updates[-1]["errors"] == 1
         assert result["failed_memories"] == [
