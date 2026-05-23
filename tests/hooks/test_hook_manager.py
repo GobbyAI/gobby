@@ -711,6 +711,73 @@ class TestShutdown:
         assert manager._database.close.call_count == 1
         assert manager._database.close.call_args is not None
 
+    def test_shutdown_async_closes_webhook_dispatcher(
+        self,
+        manager_with_mocks: HookManager,
+    ) -> None:
+        """shutdown_async awaits webhook dispatcher close without warning."""
+        import asyncio
+
+        async def run_shutdown() -> None:
+            manager = manager_with_mocks
+            manager._webhook_dispatcher.close = AsyncMock()
+            manager.logger = MagicMock()
+
+            await manager.shutdown_async()
+
+            manager._webhook_dispatcher.close.assert_awaited_once()
+            manager.logger.warning.assert_not_called()
+
+        asyncio.run(run_shutdown())
+
+    def test_shutdown_on_current_loop_schedules_webhook_close(
+        self,
+        manager_with_mocks: HookManager,
+    ) -> None:
+        """shutdown avoids blocking when called on the captured event loop."""
+        import asyncio
+
+        async def run_shutdown() -> None:
+            manager = manager_with_mocks
+            loop = asyncio.get_event_loop()
+            manager._loop = loop
+            manager._webhook_dispatcher.close = AsyncMock()
+            manager.logger = MagicMock()
+
+            with patch("gobby.hooks.hook_manager.asyncio.get_running_loop", return_value=loop):
+                manager.shutdown()
+            await asyncio.sleep(0)
+
+            manager._webhook_dispatcher.close.assert_awaited_once()
+            manager.logger.warning.assert_not_called()
+
+        asyncio.run(run_shutdown())
+
+    def test_shutdown_logs_webhook_close_error_with_details(
+        self,
+        manager_with_mocks: HookManager,
+    ) -> None:
+        """shutdown logs webhook dispatcher close failures with useful detail."""
+        manager = manager_with_mocks
+
+        async def failing_close() -> None:
+            raise RuntimeError("Close failed")
+
+        manager._webhook_dispatcher.close = failing_close
+        manager._loop = None
+        manager.logger = MagicMock()
+
+        manager.shutdown()
+
+        manager.logger.warning.assert_called_once()
+        warning_call = manager.logger.warning.call_args
+        assert warning_call.args == (
+            "Failed to close webhook dispatcher (%s): %s",
+            "RuntimeError",
+            "Close failed",
+        )
+        assert warning_call.kwargs == {"exc_info": True}
+
 
 class TestRunCoroBlocking:
     """Tests for _run_coro_blocking helper."""

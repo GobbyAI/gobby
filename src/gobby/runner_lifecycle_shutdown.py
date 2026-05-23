@@ -288,7 +288,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
     hook_manager = getattr(runner.http_server, "_hook_manager", None)
     if hook_manager:
         try:
-            hook_manager.shutdown()
+            await hook_manager.shutdown_async()
         except Exception as e:
             logger.warning(f"HookManager shutdown failed: {e}")
 

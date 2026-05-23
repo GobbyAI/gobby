@@ -445,7 +445,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         # Cleanup HookManager
         if hasattr(app.state, "hook_manager"):
-            app.state.hook_manager.shutdown()
+            await app.state.hook_manager.shutdown_async()
             logger.debug("HookManager shutdown complete")
 
         # Process graceful shutdown (tasks, MCP connections)
