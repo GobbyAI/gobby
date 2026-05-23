@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense, Component, type ReactNode } from 'react'
-import { useMemory, useFalkorStatus } from '../../hooks/useMemory'
+import { useFalkorStatus, useMemory } from '../../hooks/useMemory'
 import { useNow } from '../../hooks/useNow'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { MemoryFilters } from './MemoryFilters'
