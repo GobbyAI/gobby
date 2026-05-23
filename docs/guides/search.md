@@ -136,7 +136,7 @@ Memory search combines the available memory stores:
 
 - Qdrant vector search when embeddings and the vector store are configured
 - pg_search BM25 keyword search as local fallback
-- Neo4j graph search when memory graph search is enabled
+- FalkorDB graph search when memory graph search is enabled
 - Reciprocal Rank Fusion when multiple ranked lists are available
 
 MCP search supports tag filters and a score threshold:
@@ -326,4 +326,4 @@ and `ranking_mode`.
 - [code-index.md](./code-index.md) - Source code search
 - [configuration.md](./configuration.md) - Full config reference
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

@@ -394,12 +394,15 @@ decomposition, and a transitive postcss security bump.
 
 This section summarizes the non-merge changes since `v0.3.8`.
 
-### Upgrade Notes
+### Breaking Changes
 
+- The knowledge graph backend moved from Neo4j to FalkorDB. FalkorDB is
+  Docker-only in 0.4.0; a native local-install path is planned for a follow-up
+  release.
 - `gobby install --neo4j-password <value>` and `gobby uninstall --neo4j` were
-  removed in `0.4.0` as part of the knowledge graph backend move from Neo4j to
-  FalkorDB. Passing either flag now hard-fails with the migration message
-  instead of acting as a compatibility alias.
+  removed in `0.4.0` as part of the backend move. Passing either flag now
+  hard-fails with the migration message instead of acting as a compatibility
+  alias.
 - Existing Neo4j Docker services must be stopped manually because the removed
   `gobby uninstall --neo4j` flag no longer performs service actions:
   `docker compose -f ~/.gobby/services/docker-compose.yml --profile neo4j down -v`.

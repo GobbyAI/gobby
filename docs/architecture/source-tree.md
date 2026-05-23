@@ -66,7 +66,7 @@ gobby/                                  # Project root
 │   │       ├── git_hooks.py            # Git hook installer
 │   │       ├── ide_config.py           # IDE configuration
 │   │       ├── mcp_config.py           # MCP configuration
-│   │       ├── neo4j.py                # Neo4j installer
+│   │       ├── falkor.py               # FalkorDB installer
 │   │       └── skill_install.py        # Skill installer
 │   │
 │   ├── adapters/                       # CLI-specific hook adapters (~4 modules)
@@ -270,7 +270,7 @@ gobby/                                  # Project root
 │   ├── memory/                         # Persistent memory system (~11 modules)
 │   │   ├── manager.py                  # MemoryManager
 │   │   ├── vectorstore.py              # Qdrant-based VectorStore
-│   │   ├── neo4j_client.py             # Neo4j knowledge graph client
+│   │   ├── falkor_client.py            # FalkorDB knowledge graph client
 │   │   ├── extractor.py                # LLM-powered fact extraction
 │   │   ├── digest.py                   # Memory digest
 │   │   ├── context.py                  # Memory context
@@ -408,7 +408,7 @@ gobby/                                  # Project root
 │   │       └── variables/              # Default variable definitions
 │   │
 │   └── data/                           # Bundled data files
-│       └── docker-compose.neo4j.yml    # Neo4j Docker setup
+│       └── docker-compose.services.yml # Docker services setup
 │
 ├── tests/                              # Test suite (~533 files)
 │   ├── conftest.py                     # Pytest fixtures
