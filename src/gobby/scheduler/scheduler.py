@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
+from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.utils.project_context import (
@@ -20,6 +21,7 @@ from gobby.utils.project_context import (
 from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
+PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
 
 
 class CronScheduler:
@@ -115,7 +117,16 @@ class CronScheduler:
 
         expired_runs = self.storage.fail_stale_running_runs(self.config.running_timeout_seconds)
         if expired_runs:
-            logger.warning("Marked %s stale cron run(s) failed before dispatch", expired_runs)
+            restart_source = self._planned_restart_source()
+            if restart_source:
+                logger.info(
+                    "Marked %s stale cron run(s) failed during planned restart before dispatch "
+                    "(source=%s)",
+                    expired_runs,
+                    restart_source,
+                )
+            else:
+                logger.warning("Marked %s stale cron run(s) failed before dispatch", expired_runs)
 
         # Respect max concurrent limit
         running_count = self.storage.count_running()
@@ -237,6 +248,16 @@ class CronScheduler:
             return 0
         idx = min(consecutive_failures - 1, len(delays) - 1)
         return delays[idx]
+
+    def _planned_restart_source(self) -> str | None:
+        record = read_active_shutdown_intent(
+            max_age_seconds=PLANNED_RESTART_MARKER_MAX_AGE_SECONDS
+        )
+        if record is None or record.stale or record.error:
+            return None
+        if record.intent is not ShutdownIntent.RESTART:
+            return None
+        return record.source
 
     def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
         if job.is_system:
