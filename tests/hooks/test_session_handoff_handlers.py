@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._session_start.handoff import find_parent_session
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_VARIABLE,
@@ -68,6 +70,36 @@ class TestSessionStartHandoff:
             return True
 
         return _consume
+
+    def test_compact_parent_miss_logs_below_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A no-parent /compact restart is the safe no-handoff path."""
+        handler = MagicMock()
+        handler._session_manager.find_parent.return_value = None
+        handler.logger = logging.getLogger("test.compact_parent_miss")
+        input_data = {"source": "compact"}
+        caplog.set_level(logging.INFO, logger=handler.logger.name)
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.handoff.time.monotonic",
+            side_effect=[10.0, 16.0],
+        ):
+            parent_session_id, session_source = find_parent_session(
+                handler,
+                input_data,
+                "compact",
+                "machine-1",
+                "project-1",
+                "codex",
+            )
+
+        assert parent_session_id is None
+        assert session_source == "startup"
+        assert input_data["source"] == "startup"
+        assert "No handoff_ready parent found for /compact" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_finds_parent(

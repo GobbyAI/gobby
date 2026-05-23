@@ -60,7 +60,7 @@ def find_parent_session(
                     handler.logger.debug(f"Found handoff_ready parent after backoff: {parent.id}")
                     break
             if not parent:
-                handler.logger.warning(f"No handoff_ready parent found for /{session_source}")
+                handler.logger.info(f"No handoff_ready parent found for /{session_source}")
                 input_data["source"] = "startup"
                 return None, "startup"
 
