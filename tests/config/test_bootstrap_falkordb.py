@@ -47,3 +47,26 @@ def test_load_bootstrap_reads_falkordb_password_from_environment(
     bootstrap = load_bootstrap(str(temp_dir / "missing.yaml"))
 
     assert bootstrap.falkordb_password == "env-secret"
+
+
+def test_load_bootstrap_ignores_legacy_neo4j_password_yaml(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "neo4j_password: old-secret\n")
+
+    bootstrap = load_bootstrap(str(bootstrap_file))
+
+    assert bootstrap.falkordb_password == "gobbyfalkor"
+
+
+def test_load_bootstrap_ignores_legacy_neo4j_password_environment(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+
+    monkeypatch.setenv("GOBBY_NEO4J_PASSWORD", "old-env-secret")
+
+    bootstrap = load_bootstrap(str(temp_dir / "missing.yaml"))
+
+    assert bootstrap.falkordb_password == "gobbyfalkor"

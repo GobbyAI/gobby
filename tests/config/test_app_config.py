@@ -798,8 +798,8 @@ class TestBootstrapConfig:
         assert bootstrap.websocket_port == 9998
         assert bootstrap.ui_port == 9997
 
-    def test_load_bootstrap_accepts_legacy_neo4j_password(self, temp_dir: Path) -> None:
-        """Legacy bootstrap neo4j_password is a read-only FalkorDB password fallback."""
+    def test_load_bootstrap_ignores_legacy_neo4j_password(self, temp_dir: Path) -> None:
+        """Legacy bootstrap neo4j_password does not affect FalkorDB credentials."""
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
@@ -807,7 +807,7 @@ class TestBootstrapConfig:
 
         bootstrap = load_bootstrap(str(bootstrap_file))
 
-        assert bootstrap.falkordb_password == "old-secret"
+        assert bootstrap.falkordb_password == "gobbyfalkor"
 
     def test_to_config_dict(self) -> None:
         """Test bootstrap converts to DaemonConfig-compatible dict."""
