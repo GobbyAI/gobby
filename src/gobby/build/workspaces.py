@@ -592,6 +592,8 @@ def _closed_descendant_commits(
             continue
         if not _is_descendant(task.id, epic_id, parent_by_id):
             continue
+        if not _should_merge_closed_descendant_commits(task):
+            continue
         for commit_sha in _linked_commits(task):
             item = (_task_ref(task), commit_sha)
             if item in seen:
@@ -599,6 +601,15 @@ def _closed_descendant_commits(
             seen.add(item)
             commits.append(item)
     return commits
+
+
+def _should_merge_closed_descendant_commits(task: Task) -> bool:
+    if task.allow_automation:
+        return True
+    labels = set(task.labels or ())
+    if task.category == "planning" or any(label.startswith("interactive:") for label in labels):
+        return False
+    return True
 
 
 def _linked_commits(task: Task) -> tuple[str, ...]:
