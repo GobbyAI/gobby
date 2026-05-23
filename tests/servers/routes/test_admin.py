@@ -155,6 +155,46 @@ class TestAdminRoutes:
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
         mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
+    @patch("gobby.cli.services.is_neo4j_installed", return_value=False)
+    @patch("gobby.cli.services.is_neo4j_healthy", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_reports_falkordb_not_neo4j(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_is_neo4j_healthy,
+        _mock_is_neo4j_installed,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_is_neo4j_healthy.return_value = False
+
+        falkor_client = SimpleNamespace(
+            base_url="redis://127.0.0.1:16379",
+            ping=AsyncMock(return_value=True),
+        )
+        mock_server.memory_manager._falkor_client = falkor_client
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        memory = response.json()["memory"]
+        assert "neo4j" not in memory
+        assert memory["falkordb"] == {
+            "configured": True,
+            "healthy": True,
+            "url": "redis://127.0.0.1:16379",
+        }
+        falkor_client.ping.assert_awaited_once_with()
+
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
