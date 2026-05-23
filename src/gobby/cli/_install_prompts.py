@@ -590,6 +590,33 @@ def _run_neo4j_install(
     click.echo("")
 
 
+def _run_falkordb_install(
+    installer: Callable[..., dict[str, Any]],
+    falkordb_password: str | None,
+    results: dict[str, dict[str, Any]],
+) -> None:
+    """Run install + echo for FalkorDB."""
+    click.echo("-" * 40)
+    click.echo("FalkorDB Knowledge Graph")
+    click.echo("-" * 40)
+
+    result = installer(password=falkordb_password)
+    results["falkordb"] = result
+
+    if result["success"]:
+        click.echo("FalkorDB installed (local mode)")
+        click.echo(f"  Redis: {result['host']}:{result['port']}")
+        click.echo(f"  Browser: {result['browser_url']}")
+        if result.get("compose_file"):
+            click.echo(f"  Compose: {result['compose_file']}")
+        if result.get("warning"):
+            click.echo(f"  Warning: {result['warning']}")
+        click.echo("\nRestart the daemon to apply: gobby restart")
+    else:
+        click.echo(f"Failed: {result['error']}", err=True)
+    click.echo("")
+
+
 def _echo_migration_notice(project_path: Path) -> None:
     """Detect and warn about per-project hooks that can be cleaned up."""
     per_project_hooks = []
@@ -767,6 +794,32 @@ def _run_neo4j_uninstall(
             click.echo("Neo4j was not installed")
         else:
             click.echo("Neo4j services removed")
+            if result.get("volumes_removed"):
+                click.echo("  Docker volumes removed (data deleted)")
+        click.echo("\nRestart the daemon to apply: gobby restart")
+    else:
+        click.echo(f"Failed: {result['error']}", err=True)
+    click.echo("")
+
+
+def _run_falkordb_uninstall(
+    uninstaller: Callable[..., dict[str, Any]],
+    volumes_flag: bool,
+    results: dict[str, dict[str, Any]],
+) -> None:
+    """Run uninstall + echo for FalkorDB."""
+    click.echo("-" * 40)
+    click.echo("FalkorDB Knowledge Graph")
+    click.echo("-" * 40)
+
+    result = uninstaller(remove_volumes=volumes_flag)
+    results["falkordb"] = result
+
+    if result["success"]:
+        if result.get("already_uninstalled"):
+            click.echo("FalkorDB was not installed")
+        else:
+            click.echo("FalkorDB services removed")
             if result.get("volumes_removed"):
                 click.echo("  Docker volumes removed (data deleted)")
         click.echo("\nRestart the daemon to apply: gobby restart")
