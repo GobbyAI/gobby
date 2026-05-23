@@ -1,6 +1,6 @@
 """Regression tests for hook ingress platform session metadata."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +20,7 @@ def _post_claude_hook(temp_db: LocalDatabase, payload: dict, headers: dict | Non
         session_manager=session_manager,
     )
     server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
 
     with (
         TestClient(server.app) as client,

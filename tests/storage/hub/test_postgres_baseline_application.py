@@ -117,7 +117,7 @@ class _Resources:
 
     def read_text(self) -> str:
         self.read_count += 1
-        return "CREATE TABLE tasks(id INTEGER);\nCREATE TABLE gobby_migration_state(key TEXT);"
+        return "CREATE TABLE tasks(id INTEGER);"
 
 
 def _new_db(module, pool: _Pool):

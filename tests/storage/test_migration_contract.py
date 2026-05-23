@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any
 
 import pytest
-
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import MigrationUnsupportedError
 
 pytestmark = pytest.mark.unit
 
@@ -54,22 +50,34 @@ def _imports_migration_helpers(path: Path) -> list[int]:
     return lines
 
 
-def test_legacy_migrations_list_is_empty_in_source_and_runtime() -> None:
+def test_legacy_sqlite_migration_api_is_absent_from_source_and_runtime() -> None:
     import gobby.storage.migrations as module
 
     tree = ast.parse(MIGRATIONS_SOURCE.read_text(encoding="utf-8"))
-    assignments = [
-        node
+    names = {
+        node.name
         for node in tree.body
-        if isinstance(node, ast.AnnAssign)
-        and isinstance(node.target, ast.Name)
-        and node.target.id == "MIGRATIONS"
-    ]
+        if isinstance(node, ast.FunctionDef | ast.ClassDef | ast.AsyncFunctionDef)
+    }
+    assignments = {
+        node.target.id
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
 
-    assert module.MIGRATIONS == []
-    assert len(assignments) == 1
-    assert isinstance(assignments[0].value, ast.List)
-    assert assignments[0].value.elts == []
+    for removed in {
+        "MIGRATIONS",
+        "MigrationAction",
+        "get_current_version",
+        "migrations_needed",
+        "run_migrations",
+        "_run_migration_list",
+        "_migrate_bookkeeping_table",
+        "migrate_neo4j_config_to_falkordb",
+    }:
+        assert not hasattr(module, removed)
+        assert removed not in names
+        assert removed not in assignments
 
 
 def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
@@ -78,6 +86,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     assert sorted(path.name for path in migrations_dir.glob("*.sql")) == [
         "261_implementation_domain.sql",
         "262_neo4j_config_to_falkordb.sql",
+        "263_drop_sqlite_import_state.sql",
     ]
 
 
@@ -110,56 +119,15 @@ def test_neo4j_config_migration_preserves_tunables_and_uses_json_secret_guard() 
     assert "to_json('$secret:auth'::text)::text" in migration
 
 
-def test_legacy_migrations_guard_rejects_callable_and_string_entries(monkeypatch) -> None:
-    import gobby.storage.migrations as module
-
-    def legacy_callable(_db: LocalDatabase) -> None:
-        raise AssertionError("legacy callable should not run")
-
-    monkeypatch.setattr(
-        module,
-        "MIGRATIONS",
-        [
-            (261, "python callable", legacy_callable),
-            (262, "sql string", "SELECT 1"),
-        ],
-    )
-
-    with pytest.raises(MigrationUnsupportedError) as exc_info:
-        module.latest_known_version()
-
-    message = str(exc_info.value)
-    assert "file-based migration cutover" in message
-    assert "action=callable" in message
-    assert "action=str" in message
-
-
-def test_postgres_runner_rejects_legacy_migrations_before_opening_transaction(
-    monkeypatch,
-) -> None:
-    import gobby.storage.migrations as module
-
-    def legacy_callable(_db: LocalDatabase) -> None:
-        raise AssertionError("legacy callable should not run")
-
-    class PostgresHub:
-        dialect = "postgres"
-
-        def transaction(self) -> Any:
-            raise AssertionError("legacy MIGRATIONS must fail before Postgres transactions")
-
-    monkeypatch.setattr(module, "MIGRATIONS", [(261, "python callable", legacy_callable)])
-
-    with pytest.raises(MigrationUnsupportedError, match="MIGRATIONS must remain empty"):
-        module.MigrationRunner(PostgresHub()).apply_pending()
-
-
-def test_sqlite_baseline_and_fts_runtime_files_are_removed() -> None:
+def test_sqlite_migration_baseline_and_import_files_are_removed() -> None:
     removed_paths = [
         SRC_ROOT / "storage" / "baseline_schema.sql",
+        SRC_ROOT / "storage" / "migration",
         SRC_ROOT / "storage" / "migration_helpers.py",
         SRC_ROOT / "search" / "fts5.py",
         SRC_ROOT / "memory" / "fts_search.py",
+        REPO_ROOT / "tests" / "fixtures" / "sqlite_test_schema.sql",
+        REPO_ROOT / "tests" / "storage" / "migration",
     ]
 
     assert [path for path in removed_paths if path.exists()] == []

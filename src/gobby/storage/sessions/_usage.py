@@ -86,10 +86,22 @@ class _UsageMixin:
         query = """
         UPDATE sessions
         SET
-            usage_input_tokens = MAX(COALESCE(usage_input_tokens, 0) + ?, 0),
-            usage_output_tokens = MAX(COALESCE(usage_output_tokens, 0) + ?, 0),
-            usage_cache_creation_tokens = MAX(COALESCE(usage_cache_creation_tokens, 0) + ?, 0),
-            usage_cache_read_tokens = MAX(COALESCE(usage_cache_read_tokens, 0) + ?, 0),
+            usage_input_tokens = CASE
+                WHEN COALESCE(usage_input_tokens, 0) + ? < 0 THEN 0
+                ELSE COALESCE(usage_input_tokens, 0) + ?
+            END,
+            usage_output_tokens = CASE
+                WHEN COALESCE(usage_output_tokens, 0) + ? < 0 THEN 0
+                ELSE COALESCE(usage_output_tokens, 0) + ?
+            END,
+            usage_cache_creation_tokens = CASE
+                WHEN COALESCE(usage_cache_creation_tokens, 0) + ? < 0 THEN 0
+                ELSE COALESCE(usage_cache_creation_tokens, 0) + ?
+            END,
+            usage_cache_read_tokens = CASE
+                WHEN COALESCE(usage_cache_read_tokens, 0) + ? < 0 THEN 0
+                ELSE COALESCE(usage_cache_read_tokens, 0) + ?
+            END,
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
             updated_at = CURRENT_TIMESTAMP
@@ -101,8 +113,12 @@ class _UsageMixin:
                     query,
                     (
                         input_tokens,
+                        input_tokens,
+                        output_tokens,
                         output_tokens,
                         cache_creation_tokens,
+                        cache_creation_tokens,
+                        cache_read_tokens,
                         cache_read_tokens,
                         context_window,
                         model,

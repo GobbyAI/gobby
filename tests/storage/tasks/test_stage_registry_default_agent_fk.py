@@ -8,8 +8,8 @@ import pytest
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

@@ -14,9 +14,9 @@ from gobby.mcp_proxy.tools.workflows._agents import (
     toggle_agent_definition,
 )
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

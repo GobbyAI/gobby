@@ -21,7 +21,7 @@ def _set_config_value(db: Any, key: str, value: Any, *, is_secret: bool = False)
     db.execute(
         """
         INSERT INTO config_store (key, value, source, is_secret, updated_at)
-        VALUES (?, ?, 'test', ?, datetime('now'))
+        VALUES (?, ?, 'test', ?, CURRENT_TIMESTAMP)
         """,
         (key, json.dumps(value), int(is_secret)),
     )
@@ -81,7 +81,7 @@ class TestStaleNeo4jConfigStartup:
         temp_db.execute(
             """
             INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-            VALUES ('secret-auth', 'auth', 'encrypted', 'general', 'shared auth', datetime('now'), datetime('now'))
+            VALUES ('secret-auth', 'auth', 'encrypted', 'general', 'shared auth', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
         )
 
@@ -214,59 +214,6 @@ class TestInitHubDatabase:
 
         with pytest.raises(ValueError, match="database_url"):
             helpers.init_hub_database(config)
-
-    def test_open_protected_test_database_respects_apply_migrations(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        """Protected SQLite test helper respects apply_migrations=False."""
-        from gobby.runner_init import helpers
-
-        safe_path = tmp_path / "safe.db"
-        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
-        monkeypatch.setenv("GOBBY_DATABASE_PATH", str(safe_path))
-        config = SimpleNamespace(database_path=str(safe_path))
-        db = MagicMock()
-
-        with (
-            patch("gobby.storage.database.LocalDatabase", return_value=db),
-            patch("gobby.storage.migrations.run_migrations") as run_migrations,
-        ):
-            result = helpers.open_protected_test_database(config, apply_migrations=False)
-
-        assert result is db
-        run_migrations.assert_not_called()
-
-    def test_open_protected_test_database_reraises_unsupported_migrations(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Unsupported protected SQLite migrations are logged and re-raised."""
-        from gobby.runner_init import helpers
-        from gobby.storage.migrations import MigrationUnsupportedError
-
-        safe_path = tmp_path / "safe.db"
-        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
-        monkeypatch.setenv("GOBBY_DATABASE_PATH", str(safe_path))
-        config = SimpleNamespace(database_path=str(safe_path))
-        db = MagicMock()
-        caplog.set_level(logging.DEBUG, logger="gobby.runner_init.helpers")
-
-        with (
-            patch("gobby.storage.database.LocalDatabase", return_value=db),
-            patch(
-                "gobby.storage.migrations.run_migrations",
-                side_effect=MigrationUnsupportedError("unsupported baseline"),
-            ),
-        ):
-            with pytest.raises(MigrationUnsupportedError, match="unsupported baseline"):
-                helpers.open_protected_test_database(config)
-
-        assert "Protected test SQLite migrations unsupported" in caplog.text
-        assert "unsupported baseline" in caplog.text
 
 
 class TestGobbyRunnerInitialization:

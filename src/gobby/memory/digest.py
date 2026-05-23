@@ -378,11 +378,7 @@ def _strip_slash_command_prefix(candidate: str) -> str:
     if not parts or not parts[0].startswith("/"):
         return candidate
     leading = parts.pop(0)
-    if (
-        leading.lower() == "/gobby"
-        and parts
-        and _TITLE_SUBCOMMAND_RE.match(parts[0])
-    ):
+    if leading.lower() == "/gobby" and parts and _TITLE_SUBCOMMAND_RE.match(parts[0]):
         parts.pop(0)
     while parts and parts[0].startswith("/"):
         parts.pop(0)

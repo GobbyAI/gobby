@@ -446,6 +446,8 @@ class TestChildSessionManagerQueryMethods:
         assert [session.id for session in lineage] == ["sess-cycle"]
         assert [session.id for session in lineage_again] == ["sess-cycle"]
         cycle_warnings = [
-            record.message for record in caplog.records if "Lineage cycle detected" in record.message
+            record.message
+            for record in caplog.records
+            if "Lineage cycle detected" in record.message
         ]
         assert cycle_warnings == ["Lineage cycle detected for sess-cycle at sess-cycle"]

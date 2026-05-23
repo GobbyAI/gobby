@@ -11,9 +11,9 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
     update_workflow_definition,
 )
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.loader import WorkflowLoader
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -107,7 +107,7 @@ class TestCreateWorkflow:
     ) -> None:
         db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             ("proj-1", "Test Project"),
         )
 

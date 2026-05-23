@@ -6,8 +6,8 @@ import pytest
 import gobby.storage.expansion_runs as expansion_runs_module
 from gobby.storage.database import LocalDatabase
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

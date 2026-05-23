@@ -31,14 +31,16 @@ SESSION_ID = "sess-test-001"
 def _seed_db(db: LocalDatabase) -> None:
     """Insert project + session rows to satisfy FK constraints."""
     db.execute(
-        """INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
-           VALUES (?, ?, ?, datetime('now'), datetime('now'))""",
+        """INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT DO NOTHING""",
         (PROJECT_ID, "test-project", "/tmp/test"),
     )
     db.execute(
-        """INSERT OR IGNORE INTO sessions
+        """INSERT INTO sessions
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT DO NOTHING""",
         (SESSION_ID, "ext-1", "machine-1", "claude_code", PROJECT_ID, "active"),
     )
 

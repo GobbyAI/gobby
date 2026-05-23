@@ -26,7 +26,6 @@ from gobby.cli.installers.postgres import (
     _docker_database_url,
     _extension_present,
     _external_ownership_status,
-    _migration_complete,
     _preload_libraries,
     _read_bootstrap_database_url,
     get_postgres_status,
@@ -38,10 +37,6 @@ from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
-from gobby.storage.migration.sqlite_to_postgres import (
-    SqliteToPostgresMigrationError,
-    migrate_sqlite_to_postgres,
-)
 
 _NO_ROLLBACK_ACK = "I accept no-rollback risk"
 _CAPTURE_SINK_KINDS = {"pgaudit-file", "wal-archive"}
@@ -49,7 +44,6 @@ _TICKET_CAPTURE_KINDS = {"pgaudit-managed", "pgaudit-file", "wal-archive", "none
 _PGAUDIT_CONTAINER = "gobby-postgres"
 _PGAUDIT_LOG_DIR = "/var/log/pgaudit"
 _WAL_ARCHIVE_SLOT_KEYS = ("slot_name", "slot", "replication_slot")
-# DEPRECATED_SQLITE_IMPORT: retained only for one-way legacy imports. Remove via #14981.
 
 
 @click.group("postgres")
@@ -85,7 +79,7 @@ def install_cmd(mode: str, dsn: str | None) -> None:
     help=("Emit the status payload as JSON on stdout. Default output is human-readable text."),
 )
 def status_cmd(as_json: bool) -> None:
-    """Show PostgreSQL health, extension, migration, and ownership status."""
+    """Show PostgreSQL health, extension, and ownership status."""
     payload = asyncio.run(get_postgres_status())
     if as_json:
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -165,57 +159,6 @@ def uninstall_cmd(remove_data: bool) -> None:
     _render_uninstall_result(result)
 
 
-@postgres_cli.command("migrate-from-sqlite")
-@click.option(
-    "--source",
-    type=click.Path(path_type=Path),
-    default=Path("~/.gobby/gobby-hub.db"),
-    show_default=True,
-    help="Deprecated migration-only SQLite hub database to import.",
-)
-@click.option(
-    "--target",
-    required=True,
-    help="Target PostgreSQL DSN.",
-)
-@click.option(
-    "--batch-size",
-    type=click.IntRange(min=1),
-    default=1000,
-    show_default=True,
-    help="Rows to read from SQLite per table batch.",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Run read-only preflight checks without changing the target.",
-)
-def migrate_from_sqlite(
-    source: Path,
-    target: str,
-    batch_size: int,
-    dry_run: bool,
-) -> None:
-    """DEPRECATED_SQLITE_IMPORT: import the SQLite hub database into PostgreSQL."""
-    if _daemon_running():
-        raise click.ClickException("Stop the daemon first: gobby stop")
-
-    try:
-        result = migrate_sqlite_to_postgres(
-            source=source.expanduser(),
-            target=target,
-            batch_size=batch_size,
-            dry_run=dry_run,
-        )
-    except SqliteToPostgresMigrationError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except (OSError, psycopg.Error) as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    _render_migration_result(result)
-
-
 @postgres_cli.command("activate")
 @click.option(
     "--capture-sink",
@@ -238,11 +181,9 @@ def migrate_from_sqlite(
     ),
 )
 def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> None:
-    """DEPRECATED_SQLITE_IMPORT: finalize an imported SQLite-to-PostgreSQL cutover."""
+    """Activate PostgreSQL runtime after capture validation."""
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
-    if not _postgres_migration_complete():
-        raise click.ClickException("Run `gobby postgres migrate-from-sqlite` first")
 
     mode = _active_install_mode(gobby_home=get_gobby_home())
     if mode == "external":
@@ -315,22 +256,6 @@ def _render_uninstall_result(result: dict[str, Any]) -> None:
     sys.exit(1)
 
 
-def _render_migration_result(result: dict[str, Any]) -> None:
-    rows = int(result.get("rows", 0))
-    tables = int(result.get("tables", 0))
-    if result.get("dry_run"):
-        click.echo(f"dry-run: would import {rows} rows across {tables} tables")
-    else:
-        click.echo(f"imported {rows} rows across {tables} tables")
-
-    log_path = result.get("log_path")
-    if log_path:
-        click.echo(f"Import log: {log_path}")
-    artifact_path = result.get("validation_artifact")
-    if artifact_path:
-        click.echo(f"Validation artifact: {artifact_path}")
-
-
 def _render_backup_result(result: dict[str, Any]) -> None:
     click.echo(f"PostgreSQL backup created: {result.get('backup_dir', '<unknown>')}")
     if dump_path := result.get("dump_path"):
@@ -349,7 +274,6 @@ def _render_backup_result(result: dict[str, Any]) -> None:
 
 def _render_restore_result(result: dict[str, Any]) -> None:
     probes = cast(dict[str, Any], result.get("probes", {}))
-    migration = cast(dict[str, Any], probes.get("migration_marker", {}))
     click.echo("PostgreSQL restore completed.")
     if database_url := result.get("database_url"):
         click.echo(f"  Target:    {database_url}")
@@ -359,7 +283,6 @@ def _render_restore_result(result: dict[str, Any]) -> None:
         click.echo("  Verified: SHA256SUMS")
     click.echo(f"  pg_search: {'yes' if probes.get('pg_search_present') else 'no'}")
     click.echo(f"  pgaudit:   {'yes' if probes.get('pgaudit_present') else 'no'}")
-    click.echo(f"  Migration: {'complete' if migration.get('present') else 'missing'}")
 
 
 def _install_mode(value: str) -> InstallMode:
@@ -417,11 +340,6 @@ def _daemon_running() -> bool:
     except ValueError:
         return False
     return _is_process_alive(pid)
-
-
-def _postgres_migration_complete() -> bool:
-    with _postgres_connection() as conn:
-        return bool(_migration_complete(conn).get("present"))
 
 
 def _require_ownership_sentinel_or_fail() -> None:

@@ -72,7 +72,7 @@ def test_postgres_baseline_seed_rows_use_now_or_column_defaults() -> None:
         assert placeholder_project in sql
 
 
-def test_postgres_baseline_declares_migration_and_cutover_tables() -> None:
+def test_postgres_baseline_declares_schema_migrations_only() -> None:
     sql = _schema_text()
 
     assert "CREATE TABLE schema_version" not in sql
@@ -83,12 +83,7 @@ def test_postgres_baseline_declares_migration_and_cutover_tables() -> None:
         r"applied_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+NOW\(\)",
         "Postgres baseline must use schema_migrations with TIMESTAMPTZ applied_at",
     )
-    _assert_matches(
-        sql,
-        r"CREATE\s+TABLE\s+gobby_migration_state\s*\([^;]*"
-        r"key\s+TEXT\s+PRIMARY\s+KEY[^;]*value\s+TEXT",
-        "Postgres baseline must ship the cutover marker table",
-    )
+    assert "gobby_migration_state" not in sql
 
 
 def test_postgres_baseline_has_flattened_auth_session_token_hashes() -> None:

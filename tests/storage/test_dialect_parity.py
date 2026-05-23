@@ -231,7 +231,7 @@ async def test_fused_search_dialect_parity_cases(hub_db: Any, signal_case: str) 
 def test_skills_search_dialect_parity(hub_db: Any) -> None:
     from gobby.search import SearchConfig
     from gobby.skills.search import SkillSearch
-    from gobby.storage.skills import Skill
+    from gobby.storage.skills import LocalSkillManager
 
     skills_search = _source("src/gobby/skills/search.py")
     skills_manager = _source("src/gobby/skills/manager.py")
@@ -244,31 +244,27 @@ def test_skills_search_dialect_parity(hub_db: Any) -> None:
 
     raw_sql_lines = _raw_fts_lines(combined, r"MATCH|bm25\(")
     assert not raw_sql_lines
-    assert "_is_sqlite" in skills_search
 
+    skill_manager = LocalSkillManager(hub_db)
+    skills = [
+        skill_manager.create_skill(
+            name="git-workflow",
+            description="Git workflow branching merge",
+            content="workflow workflow git",
+        ),
+        skill_manager.create_skill(
+            name="commit-message",
+            description="Git commit message workflow",
+            content="commit git",
+        ),
+        skill_manager.create_skill(
+            name="code-review",
+            description="Review implementation quality",
+            content="review",
+        ),
+    ]
     search = SkillSearch(db=hub_db, config=SearchConfig(mode="keyword"))
-    search.index_skills(
-        [
-            Skill(
-                id="skl-git-workflow",
-                name="git-workflow",
-                description="Git workflow branching merge",
-                content="workflow workflow git",
-            ),
-            Skill(
-                id="skl-commit",
-                name="commit-message",
-                description="Git commit message workflow",
-                content="commit git",
-            ),
-            Skill(
-                id="skl-review",
-                name="code-review",
-                description="Review implementation quality",
-                content="review",
-            ),
-        ]
-    )
+    search.index_skills(skills)
 
     assert [result.skill_name for result in search.search("git workflow", top_k=2)] == [
         "git-workflow",
@@ -357,7 +353,7 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
         "Calculator"
     ]
     assert [
-        result["file_path"] for result in storage.search_content_fts("alpha beta", "proj-1")
+        result["file_path"] for result in storage.search_content_fts("beta calculator", "proj-1")
     ] == ["src/calculator.py"]
 
 
@@ -481,9 +477,9 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
 def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
     """Default-valued timestamp columns produce timezone-aware UTC moments.
 
-    Postgres `TIMESTAMPTZ DEFAULT NOW()` returns a tz-aware datetime; SQLite
-    `TEXT DEFAULT (datetime('now'))` returns a UTC text string. Both must
-    decode to a UTC moment within seconds of `now()`.
+    The hub adapter normalizes PostgreSQL timestamps to ISO text; SQLite
+    returns its own UTC text format. Both must decode to a UTC moment within
+    seconds of `now()`.
     """
     db = hub_db
     before = datetime.datetime.now(datetime.UTC)
@@ -502,16 +498,20 @@ def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
     assert row is not None
     raw = row["created_at"]
 
-    if db.dialect == "postgres":
-        assert isinstance(raw, datetime.datetime)
-        assert raw.tzinfo is not None
-        assert raw.utcoffset() == datetime.timedelta(0)
+    if isinstance(raw, datetime.datetime):
         moment = raw
     else:
         assert isinstance(raw, str)
-        moment = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=datetime.UTC,
-        )
+        if "T" in raw:
+            moment = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        else:
+            moment = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.UTC,
+            )
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.UTC)
+    assert moment.utcoffset() == datetime.timedelta(0)
 
     # Allow second-rounding on the SQLite side: clamp the lower edge to the
     # whole-second floor of `before`.

@@ -94,7 +94,7 @@ def test_stage_registry_upsert_round_trips_review_policy_and_caps(temp_db) -> No
         review_policy="optional",
         dispatch_type="pipeline",
         dispatch_target="operator-review",
-        dispatch_inputs_json='{"task_id": "${{ task_id }}"}',
+        dispatch_inputs_json='{"task_id":"${{ task_id }}"}',
         position_hint=999,
         requires_human=True,
         is_terminal=False,
@@ -112,8 +112,7 @@ def test_stage_registry_upsert_accepts_reviewer_selector(temp_db) -> None:
     StageRegistryEntry, StageRegistryManager = require_stage_registry_types()
     manager = StageRegistryManager(temp_db)
     selector_json = (
-        '{"default": "qa-reviewer", '
-        '"rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}]}'
+        '{"default":"qa-reviewer","rules":[{"category":"docs","reviewer_agent":"doc-reviewer"}]}'
     )
     entry = StageRegistryEntry(
         name="development_docs",

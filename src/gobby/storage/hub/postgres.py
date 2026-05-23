@@ -60,7 +60,6 @@ _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
 _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
     {
         "schema_migrations",
-        "gobby_migration_state",
     }
 )
 _PG_SEARCH_MISSING_MESSAGE = (

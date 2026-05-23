@@ -475,7 +475,6 @@ async def test_get_postgres_status_returns_stable_payload(
     assert isinstance(status["healthy"], bool)
     assert set(status["extensions"]) == {"pg_search", "pgaudit"}
     assert isinstance(status["preload_libraries"], list)
-    assert set(status["migration_complete"]) == {"present", "imported_at"}
     assert set(status["ownership"]) == {"sentinel_present", "installed_at", "gobby_version"}
     assert status["keyring"]["credential_present"] is True
 
@@ -490,7 +489,6 @@ def test_render_postgres_status_includes_keyring_preflight() -> None:
             "dsn_db": "gobby",
             "healthy": True,
             "extensions": {"pg_search": True, "pgaudit": False},
-            "migration_complete": {"present": True, "imported_at": "now"},
             "keyring": {
                 "configured": True,
                 "available": True,
@@ -504,3 +502,4 @@ def test_render_postgres_status_includes_keyring_preflight() -> None:
     )
 
     assert "Keyring:     configured, credential present (FakeKeyring)" in rendered
+    assert "Migration:" not in rendered

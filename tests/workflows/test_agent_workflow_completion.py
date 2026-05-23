@@ -15,13 +15,13 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -35,12 +35,12 @@ def db(tmp_path: Path) -> LocalDatabase:
 
 def _create_session(db: LocalDatabase, session_id: str) -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         ("project-1", "test-project"),
     )
     db.execute(
         "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (session_id, "ext-1", "machine-1", "claude", "project-1"),
     )
 
@@ -492,7 +492,7 @@ class TestAgentWorkflowCompletion:
         self, db: LocalDatabase
     ) -> None:
         db.execute(
-            "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+            "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
             ("project-1", "test-project"),
         )
         sessions = SessionManager(db)

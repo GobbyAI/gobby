@@ -23,7 +23,7 @@ from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, man
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

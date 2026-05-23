@@ -147,8 +147,8 @@ def _reset_schema(
     """Reset the worker schema to its fresh-baseline state.
 
     Algorithm:
-      - Bookkeeping tables (`schema_migrations`, `gobby_migration_state`) are
-        left untouched — both rows and table existence preserved verbatim.
+      - Bookkeeping tables (`schema_migrations`) are left untouched; both rows
+        and table existence are preserved verbatim.
       - All other application tables are TRUNCATE … RESTART IDENTITY CASCADE'd.
       - Every table present in `canonical_seed` is re-INSERTed inside the
         same transaction with all FK constraints deferred, so re-seed order

@@ -9,7 +9,7 @@ import pytest
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

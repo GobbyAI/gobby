@@ -77,7 +77,7 @@ class TestInterSessionMessageDataclass:
         temp_db.execute(
             """INSERT INTO inter_session_messages
                (id, from_session, to_session, content, priority, sent_at)
-               VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
             (msg_id, parent.id, child.id, "Test content", "normal"),
         )
 

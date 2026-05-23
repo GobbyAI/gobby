@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._stage_states import (
     IllegalStageTransitionError,
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.unit
 
 
 def _task_columns(temp_db) -> set[str]:
-    return {row["name"] for row in temp_db.fetchall("PRAGMA table_info(tasks)")}
+    return table_column_names(temp_db, "tasks")
 
 
 def _assert_open_task(updated) -> None:

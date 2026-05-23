@@ -18,8 +18,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from tests.fixtures.migrations import run_migrations
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit

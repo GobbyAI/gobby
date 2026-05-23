@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
+from tests.fixtures.migrations import run_migrations
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

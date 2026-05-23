@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.task_affected_files import TaskAffectedFileManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -27,7 +27,7 @@ def db():
         for tid in ("task-1", "task-2", "task-3"):
             database.execute(
                 "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (tid, f"Task {tid}", "proj-1", "task", 2),
             )
         yield database

@@ -2,7 +2,7 @@ import json
 
 from gobby.storage import chat_messages
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 
 def test_chat_messages_round_trip_content_blocks(tmp_path) -> None:

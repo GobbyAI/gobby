@@ -9,10 +9,10 @@ import pytest
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.agents._selectors import _AgentRunSelectorMixin
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

@@ -4,6 +4,7 @@ import gc
 import sqlite3
 import threading
 import weakref
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -13,6 +14,15 @@ from gobby.storage.database import LocalDatabase
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def temp_db(temp_dir: Path) -> Iterator[LocalDatabase]:
+    """LocalDatabase-specific tests use SQLite without migration bootstrap."""
+    db = LocalDatabase(temp_dir / "local.db")
+    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
+    yield db
+    db.close()
 
 
 class TestLocalDatabase:

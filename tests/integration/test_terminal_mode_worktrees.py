@@ -31,9 +31,9 @@ from gobby.agents.spawn import (
 from gobby.agents.spawners.base import SpawnResult
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 

@@ -229,7 +229,7 @@ class TestUnpackCommand:
 
         assert not (fake_home / "gobby-hub.db").exists()
         assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
-        assert "Skipped DEPRECATED_SQLITE_IMPORT archive member" in result.output
+        assert "Skipped legacy SQLite archive member" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
     def test_unpack_aborts_if_exists(self, mock_home, tmp_path, runner: CliRunner) -> None:

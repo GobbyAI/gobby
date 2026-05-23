@@ -158,7 +158,17 @@ def test_ensure_table_creates_run_id_index(temp_db) -> None:
 
     manager.ensure_table()
 
-    indexes = {row["name"] for row in temp_db.fetchall("PRAGMA index_list('task_dispatch_mutex')")}
+    indexes = {
+        row["name"]
+        for row in temp_db.fetchall(
+            """
+            SELECT indexname AS name
+              FROM pg_indexes
+             WHERE schemaname = current_schema()
+               AND tablename = 'task_dispatch_mutex'
+            """
+        )
+    }
     assert "idx_dispatch_mutex_run_id" in indexes
 
 
@@ -182,28 +192,3 @@ def test_sweep_expired(temp_db, sample_project) -> None:
     assert manager.sweep_expired(now=now + timedelta(seconds=10)) == 1
     assert manager.get_mutex(stale.id) is None
     assert manager.get_mutex(fresh.id) is not None
-
-
-def test_startup_sweep_clears_expired(temp_db, sample_project) -> None:
-    from gobby.storage.migrations import run_migrations
-
-    task = LocalTaskManager(temp_db).create_task(
-        project_id=sample_project["id"],
-        title="Startup sweep",
-    )
-    manager = _manager_class()(temp_db)
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-
-    assert manager.acquire_mutex(
-        task.id,
-        holder="old",
-        kind="field",
-        ttl_seconds=5,
-        now=now,
-        run_id=None,
-    )
-    assert manager.get_mutex(task.id) is not None
-
-    run_migrations(temp_db)
-
-    assert manager.get_mutex(task.id) is None

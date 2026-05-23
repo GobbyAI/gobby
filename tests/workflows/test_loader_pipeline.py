@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def db(tmp_path: Path) -> LocalDatabase:
-    from gobby.storage.migrations import run_migrations
+    from tests.fixtures.migrations import run_migrations
 
     db_path = tmp_path / "test.db"
     database = LocalDatabase(db_path)

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import importlib
 import os
 import queue
 import re
-import sqlite3
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -22,30 +18,6 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 class _CounterLock:
     PRIORITY: ClassVar[int] = 950
     name: str
-
-
-class _EmptyResult:
-    def fetchall(self) -> list[Any]:
-        return []
-
-    def fetchone(self) -> Any | None:
-        return None
-
-
-class _CopyTarget:
-    def __init__(self) -> None:
-        self.statements: list[str] = []
-        self.transaction_entries = 0
-
-    @contextmanager
-    def transaction(self) -> Iterator[_CopyTarget]:
-        self.transaction_entries += 1
-        yield self
-
-    def execute(self, statement: object, params: object = ()) -> _EmptyResult:
-        _ = params
-        self.statements.append(str(statement))
-        return _EmptyResult()
 
 
 def test_post_phase5_audit_report_frontmatter_and_rows(repo_root: Path) -> None:
@@ -68,46 +40,10 @@ def test_post_phase5_audit_report_frontmatter_and_rows(repo_root: Path) -> None:
     assert "Unresolved High/Medium findings: None." in text
     assert "| Callback Site | Risk Level | Read-Modify-Write Risk |" in text
     for required in (
-        "sqlite_to_postgres.migrate_sqlite_to_postgres",
-        "_copy_sqlite_rows_to_postgres",
-        "reseed_identity_sequences",
-        "validate_migration",
         "Postgres after-commit callbacks",
         "transaction_immediate",
     ):
         assert required in text
-
-
-def test_importer_copy_forces_deferred_constraints_before_return(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    migration = importlib.import_module("gobby.storage.migration.sqlite_to_postgres")
-    source = sqlite3.connect(":memory:")
-    target = _CopyTarget()
-
-    monkeypatch.setattr(migration, "_sqlite_application_tables", lambda _source: {"child"})
-    monkeypatch.setattr(
-        migration, "_dependency_ordered_tables", lambda _source, _tables: ("child",)
-    )
-    monkeypatch.setattr(migration, "_copy_columns", lambda *_args: ("id", "parent_id"))
-    monkeypatch.setattr(migration, "_copy_table", lambda *_args: 1)
-    monkeypatch.setattr(migration, "_write_import_log", lambda *_args: None)
-
-    try:
-        result = migration._copy_sqlite_rows_to_postgres(
-            source, target, 100, tmp_path / "import.log"
-        )
-    finally:
-        source.close()
-
-    assert result.rows == 1
-    assert result.tables == 1
-    assert target.transaction_entries == 1
-    assert target.statements == [
-        "SET CONSTRAINTS ALL DEFERRED",
-        "SET CONSTRAINTS ALL IMMEDIATE",
-    ]
 
 
 @pytest.mark.integration

@@ -11,11 +11,11 @@ import pytest
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 

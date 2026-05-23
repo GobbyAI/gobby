@@ -178,6 +178,11 @@ class _SessionCRUDMixin:
                     (project_id,),
                 ).fetchone()
                 next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+                savepoint = (
+                    conn.savepoint("session_register_insert")
+                    if hasattr(conn, "savepoint")
+                    else None
+                )
 
                 try:
                     conn.execute(
@@ -216,6 +221,9 @@ class _SessionCRUDMixin:
                         ),
                     )
                 except Exception as exc:
+                    if savepoint is not None:
+                        savepoint.rollback()
+                        savepoint.release()
                     if not is_session_unique_conflict(exc):
                         raise
                     conflicting = self.find_by_external_id(
@@ -257,6 +265,8 @@ class _SessionCRUDMixin:
                     )
                     change_event = "session_updated"
                 else:
+                    if savepoint is not None:
+                        savepoint.release()
                     get_logger().debug(
                         "Created new session %s for external_id=%s", session_id, external_id
                     )

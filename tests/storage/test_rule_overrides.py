@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

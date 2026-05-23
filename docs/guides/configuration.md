@@ -60,12 +60,11 @@ ui_port: 60889
 falkordb_password: "gobbyfalkor"
 ```
 
-`database_path` is only relevant to `DEPRECATED_SQLITE_IMPORT` tooling and
-operator-managed artifacts outside the current runtime. Use the deprecated
-`gobby postgres migrate-from-sqlite` command to import an old `gobby-hub.db`;
-PostgreSQL remains the only runtime hub after import. Startup fails when the
-PostgreSQL DSN cannot be resolved instead of falling back to SQLite, so do not
-use `database_path` or `gobby postgres uninstall` as a runtime recovery path.
+`database_path` is retained only for legacy compatibility and operator-managed
+artifacts outside the current runtime. PostgreSQL is the only runtime hub.
+Startup fails when the PostgreSQL DSN cannot be resolved instead of falling
+back to SQLite, so do not use `database_path` or `gobby postgres uninstall` as
+a runtime recovery path.
 
 Root bootstrap `database_url_ref` must stay on
 `keyring:gobby:postgres_database_url`. The OS keyring credential belongs to the

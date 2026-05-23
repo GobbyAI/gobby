@@ -35,7 +35,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         """
         INSERT INTO sessions (
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (
             "child-session",

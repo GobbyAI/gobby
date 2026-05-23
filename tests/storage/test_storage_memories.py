@@ -4,7 +4,7 @@ import pytest
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.memories import LocalMemoryManager
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -411,7 +411,7 @@ def test_create_memory_with_all_fields(memory_manager, db) -> None:
     # Insert a valid session to satisfy foreign key constraint
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
-        "VALUES ('sess-123', 'ext-123', 'machine-1', 'claude', 'proj-full', datetime('now'))"
+        "VALUES ('sess-123', 'ext-123', 'machine-1', 'claude', 'proj-full', CURRENT_TIMESTAMP)"
     )
 
     memory = memory_manager.create_memory(

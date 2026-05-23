@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import tempfile
 from collections.abc import Iterator
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,38 +12,25 @@ from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.workflows.loader import WorkflowLoader
 
 
-@pytest.fixture(scope="module")
-def _workflow_tmp_dir() -> Iterator[Path]:
-    """Module-scoped temp directory for the workflow DB."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
-
-
-@pytest.fixture(scope="module")
-def workflow_db(_workflow_tmp_dir: Path) -> Iterator[LocalDatabase]:
+@pytest.fixture
+def workflow_db(hub_db: HubDatabase) -> Iterator[HubDatabase]:
     """Populate a module-scoped DB with bundled workflows and return it.
 
-    Shared across all tests in a module to avoid expensive repeated syncs.
-    Tests using this fixture MUST NOT mutate the database.
+    Uses the PostgreSQL test hub; tests receive a reset schema from the shared
+    postgres fixture stack.
     """
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
     from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
-    db_path = _workflow_tmp_dir / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    sync_bundled_pipelines(db)
-    yield db
-    db.close()
+    sync_bundled_pipelines(hub_db)
+    yield hub_db
 
 
-@pytest.fixture(scope="module")
-def db_loader(workflow_db: LocalDatabase) -> WorkflowLoader:
+@pytest.fixture
+def db_loader(workflow_db: HubDatabase) -> WorkflowLoader:
     """Return a WorkflowLoader backed by a DB with bundled workflows."""
     from gobby.workflows.loader import WorkflowLoader
 

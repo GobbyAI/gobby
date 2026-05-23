@@ -13,10 +13,10 @@ import pytest
 import yaml
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

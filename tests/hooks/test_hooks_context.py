@@ -7,9 +7,9 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import Task
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

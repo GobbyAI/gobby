@@ -10,7 +10,6 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
-from gobby.runner_init.helpers import open_protected_test_database
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -24,9 +23,6 @@ def open_runtime_hub_database(
     if config.hub_backend != "postgres":
         raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
     if not config.database_url:
-        test_db = open_protected_test_database(config, apply_migrations=apply_migrations)
-        if test_db is not None:
-            return test_db
         raise RuntimeError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
     from gobby.storage.hub.postgres import PostgresHubDatabase

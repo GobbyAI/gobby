@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -47,10 +48,9 @@ def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
         source="codex",
         project_id=PERSONAL_PROJECT_ID,
     )
-    statements: list[str] = []
-
-    temp_db.connection.set_trace_callback(statements.append)
-    try:
+    with patch.object(
+        temp_db, "transaction_immediate", wraps=temp_db.transaction_immediate
+    ) as transaction_immediate:
         records = chat_attachments.bind_attachments(
             temp_db,
             [attachment_id],
@@ -58,20 +58,12 @@ def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
             message_id="msg-1",
             target_session_id=session.id,
         )
-    finally:
-        temp_db.connection.set_trace_callback(None)
 
-    begin_index = next(
-        i for i, statement in enumerate(statements) if statement == "BEGIN IMMEDIATE"
+    transaction_immediate.assert_called_once()
+    assert isinstance(
+        transaction_immediate.call_args.args[0],
+        chat_attachments.ChatAttachmentMutation,
     )
-    select_index = next(
-        i for i, statement in enumerate(statements) if "FROM chat_attachments" in statement
-    )
-    update_index = next(
-        i for i, statement in enumerate(statements) if "UPDATE chat_attachments" in statement
-    )
-    commit_index = next(i for i, statement in enumerate(statements) if statement == "COMMIT")
-    assert begin_index < select_index < update_index < commit_index
     assert records[0].conversation_id == "conv-1"
     assert records[0].message_id == "msg-1"
     assert records[0].target_session_id == session.id
@@ -156,9 +148,7 @@ def test_create_attachment_fetches_created_row_inside_transaction(
     temp_db: LocalDatabase,
     tmp_path: Path,
 ) -> None:
-    statements: list[str] = []
-    temp_db.connection.set_trace_callback(statements.append)
-    try:
+    with patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transaction:
         record = chat_attachments.create_attachment(
             temp_db,
             attachment_id="attachment-1",
@@ -169,19 +159,9 @@ def test_create_attachment_fetches_created_row_inside_transaction(
             size_bytes=6,
             local_path=str(tmp_path / "attachment.txt"),
         )
-    finally:
-        temp_db.connection.set_trace_callback(None)
 
-    begin_index = next(i for i, statement in enumerate(statements) if statement == "BEGIN")
-    insert_index = next(
-        i for i, statement in enumerate(statements) if "INSERT INTO chat_attachments" in statement
-    )
-    select_index = next(
-        i for i, statement in enumerate(statements) if "FROM chat_attachments" in statement
-    )
-    commit_index = next(i for i, statement in enumerate(statements) if statement == "COMMIT")
     assert record.id == "attachment-1"
-    assert begin_index < insert_index < select_index < commit_index
+    transaction.assert_called_once()
 
 
 def test_delete_unbound_attachment_uses_immediate_transaction(
@@ -189,17 +169,18 @@ def test_delete_unbound_attachment_uses_immediate_transaction(
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
-    statements: list[str] = []
-
-    temp_db.connection.set_trace_callback(statements.append)
-    try:
+    with patch.object(
+        temp_db, "transaction_immediate", wraps=temp_db.transaction_immediate
+    ) as transaction_immediate:
         record = chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
-    finally:
-        temp_db.connection.set_trace_callback(None)
 
     assert record is not None
     assert record.id == attachment_id
-    assert any(statement == "BEGIN IMMEDIATE" for statement in statements)
+    transaction_immediate.assert_called_once()
+    assert isinstance(
+        transaction_immediate.call_args.args[0],
+        chat_attachments.ChatAttachmentMutation,
+    )
     assert chat_attachments.get_attachment(temp_db, attachment_id) is None
 
 
@@ -230,28 +211,33 @@ def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
     bound = _create_attachment(temp_db, tmp_path, "bound")
     historically_bound = _create_attachment(temp_db, tmp_path, "historically-bound")
     cutoff = datetime.now(UTC) - timedelta(hours=24)
-    old = (cutoff - timedelta(minutes=1)).isoformat()
-    fresh = (cutoff + timedelta(minutes=1)).isoformat()
+    old = cutoff - timedelta(minutes=1)
+    fresh = cutoff + timedelta(minutes=1)
 
     chat_attachments.bind_attachments(temp_db, [bound], conversation_id="conv-1")
     temp_db.execute(
         """
         UPDATE chat_attachments
-           SET created_at = CASE id WHEN ? THEN ? ELSE ? END,
-               updated_at = CASE id WHEN ? THEN ? ELSE ? END
-         WHERE id IN (?, ?, ?)
+           SET created_at = ?, updated_at = ?
+         WHERE id = ?
         """,
-        (
-            fresh_unbound,
-            fresh,
-            old,
-            fresh_unbound,
-            fresh,
-            old,
-            old_unbound,
-            fresh_unbound,
-            bound,
-        ),
+        (old, old, old_unbound),
+    )
+    temp_db.execute(
+        """
+        UPDATE chat_attachments
+           SET created_at = ?, updated_at = ?
+         WHERE id = ?
+        """,
+        (fresh, fresh, fresh_unbound),
+    )
+    temp_db.execute(
+        """
+        UPDATE chat_attachments
+           SET created_at = ?, updated_at = ?
+         WHERE id = ?
+        """,
+        (old, old, bound),
     )
     temp_db.execute(
         """

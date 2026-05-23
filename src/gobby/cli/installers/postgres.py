@@ -230,7 +230,7 @@ async def get_postgres_status(
     readiness_timeout: float = 10.0,
     connect_timeout: int = 5,
 ) -> dict[str, Any]:
-    """Return the stable PostgreSQL status payload used by cutover runbooks."""
+    """Return the stable PostgreSQL status payload used by runbooks."""
     home = gobby_home or Path("~/.gobby").expanduser()
     active_mode = mode or _active_install_mode(gobby_home=home)
     bootstrap_error: str | None = None
@@ -257,7 +257,6 @@ async def get_postgres_status(
         "keyring": keyring_status,
         "extensions": {"pg_search": False, "pgaudit": False},
         "preload_libraries": [],
-        "migration_complete": {"present": False, "imported_at": None},
     }
 
     try:
@@ -267,7 +266,6 @@ async def get_postgres_status(
                 "pgaudit": _extension_present(conn, "pgaudit"),
             }
             payload["preload_libraries"] = _preload_libraries(conn)
-            payload["migration_complete"] = _migration_complete(conn)
             if active_mode == "external":
                 payload["ownership"] = _external_ownership_status(conn)
     except psycopg.Error as exc:
@@ -293,8 +291,6 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
     extensions = cast(dict[str, bool], payload.get("extensions", {}))
     lines.append(f"pg_search:   {'yes' if extensions.get('pg_search') else 'no'}")
     lines.append(f"pgaudit:     {'yes' if extensions.get('pgaudit') else 'no'}")
-    migration = cast(dict[str, Any], payload.get("migration_complete", {}))
-    lines.append(f"Migration:   {'complete' if migration.get('present') else 'not complete'}")
     ownership = payload.get("ownership")
     if isinstance(ownership, dict):
         lines.append(
@@ -610,16 +606,6 @@ def _preload_libraries(conn: Any) -> list[str]:
     if not row or not row[0]:
         return []
     return [item.strip() for item in str(row[0]).split(",") if item.strip()]
-
-
-def _migration_complete(conn: Any) -> dict[str, Any]:
-    try:
-        row = conn.execute(
-            "SELECT value FROM gobby_migration_state WHERE key = 'imported_from_sqlite_at'"
-        ).fetchone()
-    except psycopg.Error:
-        row = None
-    return {"present": bool(row), "imported_at": str(row[0]) if row else None}
 
 
 def _external_ownership_status(conn: Any) -> dict[str, Any]:

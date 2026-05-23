@@ -177,17 +177,13 @@ class TestStatusUtils:
                     "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
                     "healthy": True,
                     "extensions": {"pg_search": True, "pgaudit": True},
-                    "migration_complete": {"present": True, "imported_at": "2026-05-21"},
                     "keyring": {"configured": True, "credential_present": True},
                 }
             },
         )
 
         assert "PostgreSQL:" in msg
-        assert (
-            "healthy (docker; localhost/gobby; extensions ok; migration complete; keyring ok)"
-            in msg
-        )
+        assert "healthy (docker; localhost/gobby; extensions ok; keyring ok)" in msg
         assert "postgresql://" not in msg
         assert "secret" not in msg
 
@@ -201,7 +197,6 @@ class TestStatusUtils:
                     "dsn_db": "gobby",
                     "healthy": False,
                     "extensions": {"pg_search": False, "pgaudit": False},
-                    "migration_complete": {"present": False, "imported_at": None},
                     "keyring": {"configured": True, "error": "backend locked"},
                 }
             },
@@ -209,7 +204,6 @@ class TestStatusUtils:
 
         assert "unhealthy (external; db.example.com/gobby" in msg
         assert "missing pg_search, pgaudit" in msg
-        assert "migration pending" in msg
         assert "keyring unavailable" in msg
         assert "Health Issues:" in msg
         assert "PostgreSQL: unhealthy" in msg

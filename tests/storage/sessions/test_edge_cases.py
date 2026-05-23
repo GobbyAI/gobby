@@ -77,7 +77,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-25 hours') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
             (session.id,),
         )
 
@@ -103,7 +103,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-31 minutes') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = ?",
             (session.id,),
         )
 
@@ -217,7 +217,7 @@ class TestSessionEdgeCases:
 
         # Backdate first session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-1 hour') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = ?",
             (session1.id,),
         )
 

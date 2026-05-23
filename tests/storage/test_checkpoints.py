@@ -23,11 +23,11 @@ def _seed_parents(temp_db: LocalDatabase) -> None:
         )
         conn.execute(
             "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES ('task-1', 'proj-1', 'test task', 'task', 'code', datetime('now'), datetime('now'))"
+            "VALUES ('task-1', 'proj-1', 'test task', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
         conn.execute(
             "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES ('task-2', 'proj-1', 'test task 2', 'task', 'code', datetime('now'), datetime('now'))"
+            "VALUES ('task-2', 'proj-1', 'test task 2', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
         for i in range(5):
             conn.execute(

@@ -3,12 +3,12 @@
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.task_actions import (
     update_task_from_workflow,
 )
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

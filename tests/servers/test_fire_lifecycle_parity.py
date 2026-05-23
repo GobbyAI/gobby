@@ -16,11 +16,11 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

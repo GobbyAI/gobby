@@ -8,7 +8,7 @@ import pytest
 from gobby.storage.auth import AuthStore
 from gobby.storage.config_store import is_secret_key_name
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -95,7 +95,7 @@ class TestAuthStoreLegacyRepair:
             """
             CREATE TABLE auth_sessions (
                 token TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
                 expires_at TEXT NOT NULL,
                 remember_me INTEGER NOT NULL DEFAULT 0
             )
@@ -122,7 +122,7 @@ class TestAuthStoreLegacyRepair:
             """
             CREATE TABLE auth_sessions (
                 token TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
                 expires_at TEXT NOT NULL,
                 remember_me INTEGER NOT NULL DEFAULT 0
             )

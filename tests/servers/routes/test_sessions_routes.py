@@ -584,7 +584,7 @@ class TestCreateWebChatSession:
         assert response.status_code == 400
         assert (
             response.json()["detail"]
-            == "Invalid provider. Must be one of: claude, gemini, qwen, codex, droid"
+            == "Invalid provider. Must be one of: claude, gemini, grok, qwen, codex, droid, agy"
         )
         mock_server.session_manager.create_web_chat_session.assert_not_called()
 

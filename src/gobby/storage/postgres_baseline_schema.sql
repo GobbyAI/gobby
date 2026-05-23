@@ -3,11 +3,6 @@ CREATE TABLE schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE gobby_migration_state (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
 CREATE TABLE projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,

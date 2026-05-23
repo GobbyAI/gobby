@@ -11,10 +11,10 @@ import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

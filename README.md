@@ -246,9 +246,8 @@ The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
 is the git-native sync projection — checked in, diffable in PRs, and reconciled
 with the DB so task-linked commits stay auditable across machines. Linear is
 supported as an optional external sync target for teams that already track work
-there. Legacy SQLite hubs can still be imported with the deprecated
-`gobby postgres migrate-from-sqlite` tool while `DEPRECATED_SQLITE_IMPORT`
-cleanup remains tracked.
+there. Legacy SQLite import tooling has been removed; PostgreSQL is the only
+runtime hub.
 
 The guides set is the source of truth for behavior:
 
@@ -357,8 +356,8 @@ team surfaces.
 ### Post-0.4.x: hardening
 
 - **PostgreSQL hub hardening** (`#12761`) — keep the local PostgreSQL runtime
-  hub, `psycopg` v3, `pg_search`, and deprecated `migrate-from-sqlite` import
-  path solid as the daemon moves toward the Rust hot-path port.
+  hub, `psycopg` v3, and `pg_search` solid as the daemon moves toward the Rust
+  hot-path port.
 - **FalkorDB graph migration** (`#12746`) — standardize graph storage on
   FalkorDB across daemon writes, Rust read clients, web UI, admin payloads, and
   the setup wizard.

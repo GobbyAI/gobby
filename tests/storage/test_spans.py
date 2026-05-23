@@ -86,7 +86,7 @@ def test_delete_old_spans(span_storage, temp_db):
 
     # Manually backdate created_at
     temp_db.execute(
-        "UPDATE spans SET created_at = datetime('now', '-10 days') WHERE span_id = 'old'"
+        "UPDATE spans SET created_at = NOW() - INTERVAL '10 days' WHERE span_id = 'old'"
     )
 
     count = span_storage.delete_old_spans(retention_days=7)

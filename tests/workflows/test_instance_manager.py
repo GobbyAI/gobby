@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +28,7 @@ def db(tmp_path: Path) -> Iterator[LocalDatabase]:
 def _ensure_session(db: LocalDatabase, session_id: str) -> None:
     db.execute(
         "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
     )
 

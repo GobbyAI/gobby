@@ -1031,7 +1031,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-server",
@@ -1053,7 +1053,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-tool",
@@ -1099,7 +1099,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-chrome-server",
@@ -1131,7 +1131,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-server",
@@ -1146,7 +1146,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-search",
@@ -1162,7 +1162,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-server",
@@ -1177,7 +1177,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-resolve",

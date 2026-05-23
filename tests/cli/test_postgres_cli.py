@@ -25,6 +25,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
     assert {"install", "backup", "restore", "uninstall", "status", "activate"} <= set(
         postgres_group.commands
     )
+    assert "migrate-from-sqlite" not in postgres_group.commands
     assert "deactivate" not in postgres_group.commands
 
 
@@ -47,73 +48,6 @@ def test_postgres_cli_help_exposes_phase1_options(args: list[str], expected: lis
     assert result.exit_code == 0
     for text in expected:
         assert text in result.output
-
-
-def test_postgres_cli_exposes_migrate_from_sqlite_command() -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli import cli
-
-    assert callable(getattr(postgres_cli_module, "migrate_from_sqlite", None))
-    assert "migrate-from-sqlite" in postgres_cli_module.postgres_cli.commands
-    assert "migrate-from-sqlite" in cli.commands["postgres"].commands
-
-    result = CliRunner().invoke(cli, ["postgres", "migrate-from-sqlite", "--help"])
-
-    assert result.exit_code == 0
-    assert "--source" in result.output
-    assert "--target" in result.output
-    assert "--batch-size" in result.output
-    assert "--dry-run" in result.output
-    assert "Deprecated migration-only" in result.output
-
-
-def test_migrate_from_sqlite_command_invokes_importer_with_options(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    source = tmp_path / "gobby-hub.db"
-    source.write_bytes(b"sqlite fixture")
-    calls: list[dict[str, Any]] = []
-
-    def _migrate_sqlite_to_postgres(**kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs)
-        return {"rows": 42, "tables": 7, "dry_run": kwargs["dry_run"]}
-
-    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
-    monkeypatch.setattr(
-        postgres_cli_module,
-        "migrate_sqlite_to_postgres",
-        _migrate_sqlite_to_postgres,
-        raising=False,
-    )
-
-    result = CliRunner().invoke(
-        postgres_cli,
-        [
-            "migrate-from-sqlite",
-            "--source",
-            str(source),
-            "--target",
-            "postgresql://gobby:secret@example.com/gobby",
-            "--batch-size",
-            "17",
-            "--dry-run",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert calls == [
-        {
-            "source": source,
-            "target": "postgresql://gobby:secret@example.com/gobby",
-            "batch_size": 17,
-            "dry_run": True,
-        }
-    ]
-    assert "dry-run: would import 42 rows across 7 tables" in result.output
 
 
 def test_postgres_install_command_calls_installer_and_renders_success(
@@ -168,7 +102,6 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
             "healthy": True,
             "extensions": {"pg_search": True, "pgaudit": True},
             "preload_libraries": ["pg_search", "pgaudit"],
-            "migration_complete": {"present": False, "imported_at": None},
         }
 
     monkeypatch.setattr(postgres_cli_module, "get_postgres_status", _status)
@@ -176,7 +109,6 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
     result = CliRunner().invoke(postgres_cli, ["status", "--json"])
 
     assert result.exit_code == 0
-    assert '"migration_complete"' in result.output
     assert '"pg_search": true' in result.output
 
 
@@ -266,7 +198,6 @@ def test_postgres_restore_command_invokes_restore_helper(
             "probes": {
                 "pg_search_present": True,
                 "pgaudit_present": True,
-                "migration_marker": {"present": True},
             },
         }
 
@@ -337,21 +268,6 @@ def test_postgres_activate_refuses_when_daemon_is_running(
 
     assert result.exit_code != 0
     assert "Stop the daemon first: gobby stop" in result.output
-
-
-def test_postgres_activate_refuses_until_migration_completion_marker_exists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
-    monkeypatch.setattr(postgres_cli_module, "_postgres_migration_complete", lambda: False)
-
-    result = CliRunner().invoke(postgres_cli, ["activate"])
-
-    assert result.exit_code != 0
-    assert "Run `gobby postgres migrate-from-sqlite` first" in result.output
 
 
 def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
@@ -661,7 +577,6 @@ def _allow_activation(
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
-    monkeypatch.setattr(postgres_cli_module, "_postgres_migration_complete", lambda: True)
     monkeypatch.setattr(
         postgres_cli_module,
         "_active_install_mode",

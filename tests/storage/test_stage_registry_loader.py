@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -280,7 +280,7 @@ def test_user_added_stage_preserved(tmp_path: Path) -> None:
         INSERT INTO task_stages_registry (
             name, display_label, description, category, position_hint, requires_human,
             is_terminal, bundled_hash, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
         (
             "operator_review",

@@ -36,8 +36,6 @@ class _FakeConnection:
         if "pg_extension" in lowered:
             assert params is not None
             return _Result((1,) if params[0] in {"pg_search", "pgaudit"} else None)
-        if "gobby_migration_state" in lowered:
-            return _Result(("2026-05-21T12:00:00Z",))
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
@@ -90,7 +88,7 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
     assert metadata["source_dsn_redacted"] == "postgresql://gobby:****@localhost:60891/gobby"
     assert metadata["install_mode"] == "docker"
     assert metadata["pg_search_present"] is True
-    assert metadata["migration_marker"]["present"] is True
+    assert "migration_marker" not in metadata
     assert metadata["dump_sha256"] == hashlib.sha256(b"PGDMP").hexdigest()
     assert f"{metadata['dump_sha256']}  {backup.POSTGRES_DUMP_NAME}" in sums_path.read_text()
     assert result["dump_sha256"] == metadata["dump_sha256"]

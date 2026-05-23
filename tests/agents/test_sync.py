@@ -9,9 +9,9 @@ import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.migrations import run_migrations
 
 
 def _setup_db(tmp_path: Path) -> LocalDatabase:

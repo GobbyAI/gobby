@@ -15,7 +15,6 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
@@ -23,6 +22,7 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import WorkflowInstanceManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -65,7 +65,7 @@ def _insert_session(
         """
         INSERT INTO sessions (
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (session_id, external_id, "machine-1", "codex", project_id),
     )

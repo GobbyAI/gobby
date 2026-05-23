@@ -23,6 +23,8 @@ instructions: |
   Load `plan-review` before reviewing. Review the plan artifact qualitatively
   and mechanically. Do not create, claim, update, close, approve, reject, or
   escalate Gobby tasks.
+  Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
+  `after_agent`, and `stop`; do not use them to mutate tasks.
 
   If blocking findings remain, return a structured result to the parent session:
 

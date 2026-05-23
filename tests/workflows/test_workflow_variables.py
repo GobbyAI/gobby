@@ -24,7 +24,7 @@ pytestmark = pytest.mark.unit
 def db(tmp_path):
     """Create a fresh database with migrations applied."""
     from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+    from tests.fixtures.migrations import run_migrations
 
     db_path = tmp_path / "test_wf_vars.db"
     database = LocalDatabase(db_path)

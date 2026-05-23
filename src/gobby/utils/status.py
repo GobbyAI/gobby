@@ -83,13 +83,6 @@ def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
     return "extensions ok"
 
 
-def _format_postgres_migration(payload: dict[str, Any]) -> str | None:
-    migration = payload.get("migration_complete")
-    if not isinstance(migration, dict):
-        return None
-    return "migration complete" if migration.get("present") else "migration pending"
-
-
 def _format_postgres_keyring(payload: dict[str, Any]) -> str | None:
     keyring = payload.get("keyring")
     if not isinstance(keyring, dict):
@@ -122,7 +115,6 @@ def _format_postgres_service_status(payload: Any) -> str | None:
     for part in (
         _format_postgres_host_db(payload),
         _format_postgres_extensions(payload),
-        _format_postgres_migration(payload),
         _format_postgres_keyring(payload),
     ):
         if part:

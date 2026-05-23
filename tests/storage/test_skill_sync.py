@@ -22,7 +22,7 @@ class TestSyncBundledSkills:
         """Create a test database."""
         db_path = tmp_path / "test.db"
         db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         run_migrations(db)
         return db
@@ -260,7 +260,7 @@ class TestSoftDelete:
     def db(self, tmp_path: Path) -> LocalDatabase:
         db_path = tmp_path / "test.db"
         db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         run_migrations(db)
         return db
@@ -321,7 +321,7 @@ def _create_test_project(db: LocalDatabase, project_id: str = "test-proj") -> st
     with db.transaction() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (project_id, f"Test Project {project_id}"),
         )
     return project_id
@@ -334,7 +334,7 @@ class TestSourceTaxonomy:
     def db(self, tmp_path: Path) -> LocalDatabase:
         db_path = tmp_path / "test.db"
         db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         run_migrations(db)
         return db

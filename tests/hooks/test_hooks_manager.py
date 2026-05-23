@@ -12,11 +12,11 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -1029,7 +1029,9 @@ class TestHookManagerSessionLookup:
             assert variables.get_variables(stale_wrapper_id) == {}
             warning_messages = [record.getMessage() for record in caplog.records]
             assert not any("Session not found" in message for message in warning_messages)
-            assert not any("could not resolve session ref" in message for message in warning_messages)
+            assert not any(
+                "could not resolve session ref" in message for message in warning_messages
+            )
         finally:
             reset_seeded_contexts(tokens)
 

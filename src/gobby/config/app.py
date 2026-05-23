@@ -225,8 +225,8 @@ class DaemonConfig(BaseModel):
     database_path: str = Field(
         default="~/.gobby/gobby-hub.db",
         description=(
-            "DEPRECATED_SQLITE_IMPORT path kept for migrate-from-sqlite and test "
-            "compatibility; runtime hub access uses PostgreSQL database_url."
+            "Legacy local database path retained for compatibility; runtime hub access "
+            "uses PostgreSQL database_url."
         ),
     )
     hub_backend: Literal["postgres"] = Field(
@@ -234,7 +234,7 @@ class DaemonConfig(BaseModel):
         description=(
             'hub_backend (Literal["postgres"]) selected by bootstrap.yaml; only "postgres" '
             'is supported. "sqlite" was removed; see docs/guides/configuration.md#bootstrap '
-            "and use `gobby postgres install` or `gobby postgres migrate-from-sqlite`."
+            "and use `gobby postgres install`."
         ),
     )
     database_url: str | None = Field(
@@ -795,8 +795,7 @@ def load_config(
             deep_merge(config_dict, db_dict)
         _restore_bootstrap_backend_selection(config_dict, bootstrap)
     else:
-        # Phase 1: bootstrap.yaml for pre-DB settings (ports, hub connection,
-        # DEPRECATED_SQLITE_IMPORT database_path compatibility)
+        # Phase 1: bootstrap.yaml for pre-DB settings (ports and hub connection).
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)

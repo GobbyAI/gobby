@@ -9,12 +9,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from filelock import FileLock
-
-os.environ.setdefault(
-    "GOBBY_SQLITE_TEST_SCHEMA_PATH",
-    str(Path(__file__).parent / "fixtures" / "sqlite_test_schema.sql"),
-)
 
 # Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
 # postgres_db). Tests that don't use them pay no runtime cost; the session
@@ -140,16 +134,9 @@ def safe_gobby_home_dir() -> Iterator[Path]:
 
 
 @pytest.fixture
-def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
-    """Create a temporary database for testing."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    db_path = temp_dir / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    yield db
-    db.close()
+def temp_db(postgres_db: "HubDatabase") -> Iterator["HubDatabase"]:
+    """Yield the PostgreSQL hub database used by storage tests."""
+    yield postgres_db
 
 
 class NonLocalHubDatabase:
@@ -355,29 +342,6 @@ def protect_production_resources(
     safe_db_path = safe_db_dir / "test-safe.db"
     safe_logs_dir = temp_dir / "logs"
     safe_logs_dir.mkdir(exist_ok=True)
-
-    # Run migrations on safe database - this is CRITICAL!
-    # Code that calls LocalDatabase() without arguments will use this path via GOBBY_DATABASE_PATH.
-    # Without migrations, queries will fail with "file is not a database" errors.
-    # Only run migrations if the database doesn't exist yet (session-scoped, reused across tests).
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import MigrationUnsupportedError, run_migrations
-
-    # Use file lock to prevent TOCTOU race condition during parallel test execution.
-    # Without this, multiple pytest workers can simultaneously check exists() -> False,
-    # then race to create the database, causing "file is not a database" errors.
-    lock_path = safe_db_dir / "test-safe.db.lock"
-    with FileLock(lock_path, timeout=60):
-        if not safe_db_path.exists():
-            safe_db = LocalDatabase(safe_db_path)
-            try:
-                run_migrations(safe_db)
-            except MigrationUnsupportedError:
-                # Postgres-only builds no longer initialize a runtime SQLite hub.
-                # The protection fixture still points accidental LocalDatabase()
-                # calls at an isolated path instead of the user's daemon state.
-                pass
-            safe_db.close()
 
     safe_log_client = safe_logs_dir / "gobby.log"
     safe_log_error = safe_logs_dir / "gobby-error.log"

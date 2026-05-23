@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

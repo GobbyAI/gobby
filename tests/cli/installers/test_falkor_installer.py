@@ -179,7 +179,7 @@ class TestInstallFalkorDB:
         from gobby.cli.installers.falkor import _update_config
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         db_path = tmp_path / "gobby-hub.db"
 

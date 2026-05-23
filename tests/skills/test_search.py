@@ -4,8 +4,8 @@ import pytest
 
 from gobby.skills.search import SearchFilters, SkillSearch, SkillSearchResult
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import Skill
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

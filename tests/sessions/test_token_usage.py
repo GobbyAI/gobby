@@ -7,8 +7,8 @@ import pytest
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

@@ -39,7 +39,7 @@ async def env(tmp_path: Path) -> AsyncGenerator[dict[str, Any]]:
 
     # Initialize migrations manually for this memory DB
     # Using run_migrations to ensure schema is correct
-    from gobby.storage.migrations import run_migrations
+    from tests.fixtures.migrations import run_migrations
 
     run_migrations(db)
 

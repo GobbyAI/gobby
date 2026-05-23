@@ -9,8 +9,8 @@ import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

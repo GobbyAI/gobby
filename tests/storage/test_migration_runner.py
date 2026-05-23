@@ -7,7 +7,6 @@ from types import MethodType
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import Migration, MigrationUnsupportedError
 
 pytestmark = pytest.mark.unit
@@ -26,28 +25,6 @@ def _split(sql: str) -> list[str]:
     ]
 
 
-def _table_exists(db: LocalDatabase, table: str) -> bool:
-    row = db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
-    return row is not None
-
-
-def _create_bookkeeping_table(db: LocalDatabase, table: str, versions: list[int]) -> None:
-    db.execute(
-        f"""
-        CREATE TABLE {table} (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-    for version in versions:
-        db.execute(f"INSERT INTO {table} (version) VALUES (?)", (version,))
-
-
-def _versions(db: LocalDatabase, table: str) -> list[int]:
-    return [row["version"] for row in db.fetchall(f"SELECT version FROM {table} ORDER BY version")]
-
-
 class _Result:
     def __init__(self, rows=()) -> None:
         self._rows = list(rows)
@@ -57,24 +34,6 @@ class _Result:
 
     def fetchall(self):
         return list(self._rows)
-
-
-class _PostgresBookkeepingHub:
-    dialect = "postgres"
-
-    def __init__(self) -> None:
-        self.tables = {"schema_migrations"}
-        self.statements: list[str] = []
-
-    @contextmanager
-    def transaction(self):
-        yield self
-
-    def execute(self, sql: str, params=()):
-        self.statements.append(sql)
-        if "to_regclass" in sql:
-            return _Result([{"table_exists": params[0] in self.tables}])
-        raise AssertionError(f"unexpected query: {sql}")
 
 
 class _PostgresMigrationHub:
@@ -101,9 +60,7 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     migration = Migration(
         version=262,
         name="add_needed_column",
-        shared_path=Path("unused.sql"),
-        sqlite_path=None,
-        postgres_path=None,
+        path=Path("unused.sql"),
     )
 
     def ensure_schema_migrations_table(self) -> None:
@@ -234,64 +191,11 @@ def test_split_statements_respecting_dollar_quotes_handles_checked_in_postgres_d
     )
 
 
-def test_bookkeeping_table_rename_paths(tmp_path) -> None:
-    module = _migration_module()
-
-    old_only = LocalDatabase(tmp_path / "old-only.db")
-    _create_bookkeeping_table(old_only, "schema_version", [240, 241, 242, 244])
-    module._migrate_bookkeeping_table(old_only)
-
-    assert not _table_exists(old_only, "schema_version")
-    assert _table_exists(old_only, "schema_migrations")
-    assert _versions(old_only, "schema_migrations") == [240, 241, 242, 244]
-
-    module._migrate_bookkeeping_table(old_only)
-    assert _versions(old_only, "schema_migrations") == [240, 241, 242, 244]
-    old_only.close()
-
-    identical = LocalDatabase(tmp_path / "identical.db")
-    _create_bookkeeping_table(identical, "schema_version", [244])
-    _create_bookkeeping_table(identical, "schema_migrations", [244])
-    module._migrate_bookkeeping_table(identical)
-
-    assert not _table_exists(identical, "schema_version")
-    assert _table_exists(identical, "schema_migrations")
-    assert _versions(identical, "schema_migrations") == [244]
-    identical.close()
-
-    divergent = LocalDatabase(tmp_path / "divergent.db")
-    _create_bookkeeping_table(divergent, "schema_version", [244])
-    _create_bookkeeping_table(divergent, "schema_migrations", [245])
-
-    with pytest.raises(MigrationUnsupportedError, match="divergent") as exc_info:
-        module._migrate_bookkeeping_table(divergent)
-
-    message = str(exc_info.value)
-    assert "PostgreSQL hub database" in message
-    assert "known-good backup" in message
-    assert "gobby-hub.db" not in message
-
-    divergent.close()
-
-
-def test_bookkeeping_table_is_noop_for_postgres_schema_migrations_only() -> None:
-    module = _migration_module()
-    hub = _PostgresBookkeepingHub()
-
-    module._migrate_bookkeeping_table(hub)
-
-    assert not any("ALTER TABLE" in statement for statement in hub.statements)
-    assert not any("DROP TABLE" in statement for statement in hub.statements)
-
-
-def test_migration_runner_rejects_sqlite_hubs_after_cutover(tmp_path) -> None:
-    from gobby.storage.database import LocalDatabase
+def test_migration_runner_rejects_non_postgres_hubs_after_cutover() -> None:
+    class SqliteHub:
+        dialect = "sqlite"
 
     migration_module = _migration_module()
-    db = LocalDatabase(tmp_path / "brand-new.db")
 
-    try:
-        with pytest.raises(MigrationUnsupportedError, match="SQLite hub migrations were removed"):
-            migration_module.MigrationRunner(db).apply_pending()
-    finally:
-        db.close()
+    with pytest.raises(MigrationUnsupportedError, match="only supports PostgreSQL"):
+        migration_module.MigrationRunner(SqliteHub())

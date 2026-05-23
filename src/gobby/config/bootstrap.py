@@ -2,8 +2,7 @@
 
 These settings are needed before the PostgreSQL hub is available:
 daemon_port, bind_host, websocket_port, ui_port, falkordb_password, hub_backend,
-database_url_ref, postgres_install_mode. database_path remains only for
-DEPRECATED_SQLITE_IMPORT tooling and test compatibility.
+database_url_ref, and postgres_install_mode.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -50,14 +49,12 @@ HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
     'hub_backend must be postgres (hub_backend (Literal["postgres"]) only supports '
     '"postgres"; "sqlite" was removed). Run `gobby postgres install` to write '
-    "PostgreSQL bootstrap settings or `gobby postgres migrate-from-sqlite` to import "
-    f"legacy SQLite data; see {HUB_BACKEND_MIGRATION_DOCS}. "
+    f"PostgreSQL bootstrap settings; see {HUB_BACKEND_MIGRATION_DOCS}. "
     "Enforcement: _parse_hub_backend() raises BootstrapConfigError."
 )
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
     "hub_backend=postgres requires database_url_ref in bootstrap.yaml. Run "
-    "`gobby postgres install` to store the PostgreSQL DSN, or "
-    f"`gobby postgres migrate-from-sqlite` before cutover; see {HUB_BACKEND_MIGRATION_DOCS}. "
+    f"`gobby postgres install` to store the PostgreSQL DSN; see {HUB_BACKEND_MIGRATION_DOCS}. "
     'Config type: hub_backend (Literal["postgres"]); enforcement is kept with '
     "_parse_hub_backend() and BootstrapConfigError."
 )

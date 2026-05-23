@@ -19,11 +19,11 @@ from gobby.mcp_proxy.services.result_handling import (
     build_before_tool_event,
 )
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

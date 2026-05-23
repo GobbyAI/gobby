@@ -17,9 +17,6 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 @pytest.fixture
 def cron_storage(temp_db: Any) -> CronJobStorage:
-    columns = {row["name"] for row in temp_db.fetchall("PRAGMA table_info(cron_jobs)")}
-    if "is_system" not in columns:
-        temp_db.execute("ALTER TABLE cron_jobs ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
     return CronJobStorage(temp_db)
 
 
@@ -147,8 +144,8 @@ def test_bookkeeping_partial_update_preserves_telemetry(cron_storage: CronJobSto
     )
 
     assert updated is not None
-    assert updated.next_run_at == "2026-05-01T00:00:00Z"
-    assert updated.last_run_at == "2026-04-30T00:00:00Z"
+    assert updated.next_run_at == "2026-05-01T00:00:00+00:00"
+    assert updated.last_run_at == "2026-04-30T00:00:00+00:00"
     assert updated.last_status == "completed"
     assert updated.consecutive_failures == 2
 
@@ -167,8 +164,8 @@ def test_bookkeeping_telemetry_update_preserves_next_run_at(
     )
 
     assert updated is not None
-    assert updated.next_run_at == "2026-05-01T00:00:00Z"
-    assert updated.last_run_at == "2026-04-30T00:00:00Z"
+    assert updated.next_run_at == "2026-05-01T00:00:00+00:00"
+    assert updated.last_run_at == "2026-04-30T00:00:00+00:00"
     assert updated.last_status == "completed"
     assert updated.consecutive_failures == 0
 

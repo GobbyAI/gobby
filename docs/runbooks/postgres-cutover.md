@@ -1,10 +1,10 @@
 # PostgreSQL Cutover Runbook
 
-This runbook covers the cold import from legacy SQLite to PostgreSQL, the
-mandatory pre-activation gates, and the validation-window capture needed before
-any operator-managed recovery. Once `gobby postgres activate` succeeds,
-PostgreSQL is the only supported hub runtime. Writes made during the validation
-window are at risk during recovery and must be captured before any restore path.
+This runbook covers PostgreSQL activation gates and validation-window capture
+needed before any operator-managed recovery. Once `gobby postgres activate`
+succeeds, PostgreSQL is the only supported hub runtime. Writes made during the
+validation window are at risk during recovery and must be captured before any
+restore path.
 
 ## Post-Phase-5 Audit Reference
 
@@ -35,56 +35,28 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    gobby stop
    ```
 
-3. For `DEPRECATED_SQLITE_IMPORT` cutovers only, back up the SQLite hub database
-   to a dated path and record the SHA-256 digest in the cutover change ticket:
-
-   ```bash
-   backup_path="$HOME/.gobby/gobby-hub.db.$(date -u +%Y%m%dT%H%M%SZ).bak"
-   cp ~/.gobby/gobby-hub.db "$backup_path"
-   if command -v sha256sum >/dev/null 2>&1; then
-     sha256sum "$backup_path"
-   else
-     shasum -a 256 "$backup_path"
-   fi
-   ```
-
-4. Install PostgreSQL if this environment has not already been installed:
+3. Install PostgreSQL if this environment has not already been installed:
 
    ```bash
    gobby postgres install
    ```
 
-5. Import SQLite into PostgreSQL with the deprecated migration-only command:
+4. Verify PostgreSQL health and extensions:
 
    ```bash
-   gobby postgres migrate-from-sqlite --source ~/.gobby/gobby-hub.db --target "$DATABASE_URL"
+   gobby postgres status --json | jq -e '.healthy == true and .extensions.pg_search == true'
    ```
 
-6. Verify the import command exited 0, then assert the canonical completion
-   marker from structured status output:
-
-   ```bash
-   gobby postgres status --json | jq -e '.migration_complete.present == true'
-   ```
-
-   If this assertion fails, stop. `gobby postgres activate` will refuse the same
-   missing marker, but this check fails earlier and lets the operator inspect the
-   actual `gobby_migration_state` row:
-
-   ```bash
-   gobby postgres status --json | jq '.migration_complete'
-   ```
-
-   For external mode, also assert the ownership sentinel is still present:
+   For external mode, also assert the ownership sentinel is present:
 
    ```bash
    gobby postgres status --json | jq -e '.ownership.sentinel_present == true'
    ```
 
    If this fails, the database was recreated or changed since install. Re-run
-   the external install flow before retrying the import.
+   the external install flow before retrying activation.
 
-7. Complete the pre-activation checklist and record it in the cutover change
+5. Complete the pre-activation checklist and record it in the cutover change
    ticket:
 
    - Confirm the post-Phase-5 audit reference above matches the

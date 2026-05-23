@@ -27,7 +27,7 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
 
-DB_NAME = "gobby-hub.db"  # DEPRECATED_SQLITE_IMPORT: skip legacy pack members.
+DB_NAME = "gobby-hub.db"  # Legacy SQLite pack members are no longer restored.
 
 
 # Directories to include in pack (relative to ~/.gobby/)
@@ -531,8 +531,8 @@ def unpack(
 
             if member.name == f"gobby/{DB_NAME}":
                 click.echo(
-                    "  Skipped DEPRECATED_SQLITE_IMPORT archive member: "
-                    f"{DB_NAME}; use `gobby postgres migrate-from-sqlite` manually."
+                    f"  Skipped legacy SQLite archive member: {DB_NAME}; "
+                    "PostgreSQL backups are restored from gobby/postgres/."
                 )
                 continue
 

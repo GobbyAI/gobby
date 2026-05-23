@@ -62,8 +62,8 @@ def test_expire_stale_sessions_expires_old_untracked_terminal_session(
     session_mgr.db.execute(
         """
         UPDATE sessions
-        SET created_at = datetime('now', '-25 hours'),
-            updated_at = datetime('now')
+        SET created_at = NOW() - INTERVAL '25 hours',
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (session.id,),
@@ -91,8 +91,8 @@ def test_expire_stale_sessions_keeps_tracked_terminal_session_with_recent_activi
     session_mgr.db.execute(
         """
         UPDATE sessions
-        SET created_at = datetime('now', '-25 hours'),
-            updated_at = datetime('now')
+        SET created_at = NOW() - INTERVAL '25 hours',
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (session.id,),
@@ -120,8 +120,8 @@ def test_expire_stale_sessions_keeps_web_chat_session_with_recent_activity(
     session_mgr.db.execute(
         """
         UPDATE sessions
-        SET created_at = datetime('now', '-25 hours'),
-            updated_at = datetime('now')
+        SET created_at = NOW() - INTERVAL '25 hours',
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (session.id,),

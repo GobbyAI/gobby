@@ -14,7 +14,6 @@ if TYPE_CHECKING:
         InterSessionMessageManager as InterSessionMessageManager,
     )
     from gobby.storage.mcp import LocalMCPManager as LocalMCPManager
-    from gobby.storage.migrations import run_migrations as run_migrations
     from gobby.storage.plans import LocalPlanManager as LocalPlanManager
     from gobby.storage.projects import LocalProjectManager as LocalProjectManager
     from gobby.storage.sessions import SessionManager as SessionManager
@@ -33,7 +32,6 @@ __all__ = [
     "LocalTaskManager",
     "TaskDependencyManager",
     "TaskDeliveryStateManager",
-    "run_migrations",
 ]
 
 _EXPORTS = {
@@ -51,7 +49,6 @@ _EXPORTS = {
     "SessionManager": ("gobby.storage.sessions", "SessionManager"),
     "LocalTaskManager": ("gobby.storage.tasks", "LocalTaskManager"),
     "TaskDependencyManager": ("gobby.storage.task_dependencies", "TaskDependencyManager"),
-    "run_migrations": ("gobby.storage.migrations", "run_migrations"),
 }
 
 

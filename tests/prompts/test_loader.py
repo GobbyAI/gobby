@@ -5,8 +5,8 @@ import pytest
 from gobby.prompts import PromptLoader, PromptTemplate
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.prompts import LocalPromptManager, PromptChangeNotifier
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

@@ -580,12 +580,9 @@ Use pytest fixtures for test setup:
 import pytest
 
 @pytest.fixture
-def database():
-    """Create an in-memory database for testing."""
-    db = LocalDatabase(":memory:")
-    run_migrations(db)
-    yield db
-    db.close()
+def database(postgres_db):
+    """Use the migrated PostgreSQL test hub."""
+    yield postgres_db
 
 @pytest.fixture
 def task_manager(database):

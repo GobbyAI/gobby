@@ -3,8 +3,8 @@
 Verifies that the per-test `postgres_db` fixture's reset semantics produce
 a worker schema byte-for-byte equivalent to what `apply_migrations()` writes
 on a fresh schema, even after mutations across seed-bearing tables, the
-shared `_BASELINE_BOOKKEEPING_TABLES` set (owned by
-`gobby.storage.hub.postgres`), and arbitrary application tables.
+    shared `_BASELINE_BOOKKEEPING_TABLES` set (owned by
+    `gobby.storage.hub.postgres`), and arbitrary application tables.
 """
 
 from __future__ import annotations
@@ -41,10 +41,9 @@ def test_seed_rows_survive_reset(
        four canonical placeholders survive.
     4. Mutating a `task_type_default_stages` row is reverted to the
        canonical value on reset.
-    5. A row inserted into `gobby_migration_state` survives both entry and
-       exit resets (bookkeeping table preservation).
-    6. `gobby_migration_state` is verifiably absent from the computed
+    5. `schema_migrations` is verifiably absent from the computed
        `truncate_tables` set inside `_reset_schema`.
+    6. The removed SQLite import marker table is absent from the baseline.
     """
     psycopg = pytest.importorskip("psycopg")
 
@@ -85,11 +84,6 @@ def test_seed_rows_survive_reset(
             "WHERE task_type = %s AND stage_name = %s",
             ("feature", "development"),
         )
-        # (5) Insert into gobby_migration_state (bookkeeping).
-        conn.execute(
-            "INSERT INTO gobby_migration_state (key, value) VALUES (%s, %s)",
-            ("imported_from_sqlite_at", "2026-05-20T11:00:00Z"),
-        )
 
     # Exit-style reset — same snapshot in.
     _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
@@ -121,17 +115,9 @@ def test_seed_rows_survive_reset(
         # Canonical value for feature → development is position 2.
         assert row[0] == 2
 
-        # (5) gobby_migration_state row survived both entry and exit resets.
-        rows = conn.execute(
-            "SELECT value FROM gobby_migration_state WHERE key = %s",
-            ("imported_from_sqlite_at",),
-        ).fetchall()
-        assert len(rows) == 1
-        assert rows[0][0] == "2026-05-20T11:00:00Z"
-
-        # (6) gobby_migration_state and schema_migrations are filtered out
-        # of the computed truncate set inside _reset_schema. Recompute
-        # truncate_tables here against the live schema and assert.
+        # (5) schema_migrations is filtered out of the computed truncate set
+        # inside _reset_schema. Recompute truncate_tables here against the live
+        # schema and assert.
         all_tables = {
             r[0]
             for r in conn.execute(
@@ -139,18 +125,7 @@ def test_seed_rows_survive_reset(
             ).fetchall()
         }
         truncate_tables = all_tables - _BASELINE_BOOKKEEPING_TABLES
-        assert "gobby_migration_state" not in truncate_tables
         assert "schema_migrations" not in truncate_tables
-        assert "gobby_migration_state" in all_tables  # table itself exists
-
-    # Clean up the gobby_migration_state row this test inserted — the
-    # standard fixture intentionally preserves bookkeeping rows across
-    # resets, so the next test in this worker would otherwise inherit it.
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute(
-            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
-        )
-        conn.execute(
-            "DELETE FROM gobby_migration_state WHERE key = %s",
-            ("imported_from_sqlite_at",),
-        )
+        assert "schema_migrations" in all_tables
+        # (6) Removed SQLite import marker table is absent from the baseline.
+        assert "gobby_migration_state" not in all_tables

@@ -15,11 +15,11 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -212,7 +212,7 @@ def _insert_undelivered_message(db: LocalDatabase, to_session: str) -> str:
     db.execute(
         "INSERT INTO inter_session_messages "
         "(id, from_session, to_session, content, priority, sent_at) "
-        "VALUES (?, ?, ?, 'hello', 'normal', datetime('now'))",
+        "VALUES (?, ?, ?, 'hello', 'normal', CURRENT_TIMESTAMP)",
         (msg_id, _SENDER_SESSION, to_session),
     )
     return msg_id
@@ -226,7 +226,7 @@ def _insert_delivered_message(db: LocalDatabase, to_session: str) -> str:
     db.execute(
         "INSERT INTO inter_session_messages "
         "(id, from_session, to_session, content, priority, sent_at, delivered_at) "
-        "VALUES (?, ?, ?, 'hello', 'normal', datetime('now'), datetime('now'))",
+        "VALUES (?, ?, ?, 'hello', 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (msg_id, _SENDER_SESSION, to_session),
     )
     return msg_id

@@ -17,10 +17,10 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

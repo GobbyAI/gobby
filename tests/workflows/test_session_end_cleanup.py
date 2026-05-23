@@ -11,10 +11,10 @@ import pytest
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +34,7 @@ def db(tmp_path) -> LocalDatabase:
 def _ensure_session(db: LocalDatabase, session_id: str) -> None:
     db.execute(
         "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
     )
 

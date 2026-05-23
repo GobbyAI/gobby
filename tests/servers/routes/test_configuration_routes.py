@@ -17,9 +17,9 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.migrations import run_migrations
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit

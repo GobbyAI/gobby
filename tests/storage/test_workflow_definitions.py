@@ -5,10 +5,10 @@ import json
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
 )
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -205,7 +205,7 @@ def test_get_by_name_project_scoped(
     # Create project
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -233,7 +233,7 @@ def test_get_by_name_fallback_to_global(
     """Test get_by_name falls back to global when no project-scoped match."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -388,7 +388,7 @@ def test_list_all_filter_project(
     """Test listing definitions filtered by project_id (includes global)."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -553,7 +553,7 @@ def test_move_to_project(db: LocalDatabase, manager: LocalWorkflowDefinitionMana
     """Test moving an installed definition to project scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -570,7 +570,7 @@ def test_move_to_global(db: LocalDatabase, manager: LocalWorkflowDefinitionManag
     """Test moving a project-scoped definition to global scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from psycopg.errors import UniqueViolation
+
 from gobby.storage.hub.protocol import HubDatabase
 
 DeliveryStatus = Literal["pending", "processing", "processed", "ignored", "duplicate", "error"]
@@ -269,7 +271,7 @@ class GitHubTriageStore:
                 ),
             )
             inserted = True
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, UniqueViolation):
             inserted = False
 
         delivery = self.get_delivery(project_id, delivery_id)

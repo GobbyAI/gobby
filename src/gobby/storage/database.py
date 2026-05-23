@@ -312,28 +312,8 @@ class LocalDatabase:
             cursor.close()
 
     def apply_migrations(self) -> None:
-        """Apply pending SQLite migrations."""
-        from gobby.storage.migrations import run_migrations
-
-        run_migrations(self)
-
-    def schema_version(self) -> int:
-        """Return the current SQLite schema version recorded in schema_version."""
-        from gobby.storage.migrations import get_current_version
-
-        version: int = get_current_version(self)
-        return version
-
-    def migrations_needed(self) -> bool:
-        """Return whether this database needs schema migration work.
-
-        The check only compares stored schema_version with the latest version
-        known to this build. It does not run startup repair routines.
-        """
-        from gobby.storage.migrations import migrations_needed
-
-        needed: bool = migrations_needed(self)
-        return needed
+        """Reject SQLite migration attempts after the PostgreSQL cutover."""
+        raise RuntimeError("SQLite migrations were removed; use the PostgreSQL hub database.")
 
     def safe_update(
         self,

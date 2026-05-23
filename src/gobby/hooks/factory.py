@@ -395,33 +395,11 @@ class HookManagerFactory:
 
     @staticmethod
     def _create_database(config: Any | None) -> HubDatabase:
-        import os
+        database_url = getattr(config, "database_url", None) if config is not None else None
+        if database_url:
+            from gobby.storage.hub.postgres import PostgresHubDatabase
 
-        database_path = getattr(config, "database_path", None) if config is not None else None
-        if os.environ.get("GOBBY_TEST_PROTECT") == "1" and database_path:
-            from gobby.storage.database import LocalDatabase
-            from gobby.storage.migrations import run_migrations
-
-            db = LocalDatabase(database_path)
-            run_migrations(db)
-            return db
-
-        import tempfile
-        from pathlib import Path
-
-        if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-            from gobby.storage.database import LocalDatabase
-            from gobby.storage.migrations import run_migrations
-
-            tempdir = tempfile.TemporaryDirectory(prefix="gobby-hook-manager-")
-            try:
-                db = LocalDatabase(Path(tempdir.name) / "hook-manager-test.db")
-                cast(Any, db)._gobby_tempdir = tempdir
-                run_migrations(db)
-                return db
-            except Exception:
-                tempdir.cleanup()
-                raise
+            return PostgresHubDatabase(database_url)
 
         from gobby.storage.hub.runtime import open_runtime_hub_database
 

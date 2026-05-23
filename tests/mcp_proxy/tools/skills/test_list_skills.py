@@ -14,8 +14,8 @@ from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
 from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
-from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import LocalSkillManager
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = [pytest.mark.integration]
 

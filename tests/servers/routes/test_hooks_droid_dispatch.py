@@ -1,6 +1,6 @@
 """Focused tests for Droid hook dispatch through the unified hooks route."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +24,7 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
         session_manager=session_storage,
     )
     mock_hook_manager = MagicMock()
+    mock_hook_manager.shutdown_async = AsyncMock()
     server.app.state.hook_manager = mock_hook_manager
 
     with (
@@ -62,6 +63,7 @@ def test_execute_hook_unsupported_source_lists_droid(
         session_manager=session_storage,
     )
     server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
 
     with TestClient(server.app) as client:
         response = client.post(

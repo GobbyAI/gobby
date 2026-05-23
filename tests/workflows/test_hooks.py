@@ -629,7 +629,7 @@ class TestVariablePersistence:
     def db(self, tmp_path):
         """Create a real database with migrations."""
         from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         db_path = tmp_path / "test_var_persist.db"
         database = LocalDatabase(db_path)
@@ -1018,7 +1018,7 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.fixture
     def db(self, tmp_path):
         from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         db_path = tmp_path / "test_baseline.db"
         database = LocalDatabase(db_path)
@@ -1326,7 +1326,7 @@ class TestStopFailsClosedOnVariableLoadError:
     @pytest.fixture
     def db(self, tmp_path):
         from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         db_path = tmp_path / "test_var_load.db"
         database = LocalDatabase(db_path)
@@ -1594,7 +1594,7 @@ class TestProjectPathResolution:
     @pytest.fixture
     def db(self, tmp_path):
         from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
+        from tests.fixtures.migrations import run_migrations
 
         db_path = tmp_path / "test_project_path.db"
         database = LocalDatabase(db_path)

@@ -405,9 +405,7 @@ class TestLinearSyncServiceSync:
             {"id": "task-1", "linear_issue_id": "issue-1"}
         ]
         client = MagicMock()
-        client.list_issues = AsyncMock(
-            side_effect=LinearGraphQLError("network unavailable")
-        )
+        client.list_issues = AsyncMock(side_effect=LinearGraphQLError("network unavailable"))
         sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
         sync_service._get_graphql_client = MagicMock(return_value=client)  # type: ignore[method-assign]
         caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")

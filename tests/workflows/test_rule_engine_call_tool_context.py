@@ -9,8 +9,8 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 

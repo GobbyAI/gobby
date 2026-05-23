@@ -18,8 +18,8 @@ from gobby.sessions.compact_continuation import (
     mark_compact_self_continuation_pending,
 )
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.migrations import run_migrations
 
 from ._event_handler_helpers import make_event
 

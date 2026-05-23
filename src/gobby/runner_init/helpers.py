@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
@@ -13,9 +12,6 @@ from gobby.config.bootstrap import (
 )
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
 
 
 class DatabasePathConfig(Protocol):
@@ -91,9 +87,6 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     database_url = getattr(config, "database_url", None)
     if not database_url:
-        test_db = open_protected_test_database(config)
-        if test_db is not None:
-            return test_db
         raise ValueError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -102,37 +95,3 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     postgres_db.apply_migrations()
     logger.info("Database: PostgreSQL hub")
     return postgres_db
-
-
-def open_protected_test_database(
-    config: object,
-    *,
-    apply_migrations: bool = True,
-) -> HubDatabase | None:
-    """Open the isolated SQLite hub allowed only by test protection variables."""
-    safe_path = os.environ.get("GOBBY_DATABASE_PATH")
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1" or not safe_path:
-        return None
-
-    config_path = getattr(config, "database_path", None)
-    if not isinstance(config_path, str):
-        return None
-    if Path(config_path).expanduser().resolve() != Path(safe_path).expanduser().resolve():
-        return None
-
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import MigrationUnsupportedError, run_migrations
-
-    db = LocalDatabase(config_path)
-    if apply_migrations:
-        try:
-            run_migrations(db)
-        except MigrationUnsupportedError as exc:
-            logger.warning(
-                "Protected test SQLite migrations unsupported: %s",
-                exc,
-                exc_info=True,
-            )
-            raise
-    logger.info("Database: protected test SQLite hub")
-    return db

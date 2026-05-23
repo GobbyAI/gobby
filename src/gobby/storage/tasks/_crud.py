@@ -11,6 +11,8 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from psycopg.errors import UniqueViolation
+
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, TaskSubtreeCascade
 from gobby.storage.sql_dialect import table_column_names
@@ -203,10 +205,15 @@ def create_task(
 
             return task_id
 
-        except sqlite3.IntegrityError as e:
+        except (sqlite3.IntegrityError, UniqueViolation) as e:
             error_msg = str(e)
             # Check if it's a primary key violation (ID collision)
-            if "UNIQUE constraint failed: tasks.id" in error_msg or "tasks.id" in error_msg:
+            if (
+                "UNIQUE constraint failed: tasks.id" in error_msg
+                or "tasks.id" in error_msg
+                or "tasks_pkey" in error_msg
+                or "Key (id)=" in error_msg
+            ):
                 if attempt == max_retries:
                     raise TaskIDCollisionError(
                         f"Failed to generate unique task ID after {max_retries} retries"
@@ -214,7 +221,11 @@ def create_task(
                 logger.warning(f"Task ID collision for {task_id}, retrying...")
                 continue
             # Check if it's a seq_num collision (concurrent insert race)
-            if "idx_tasks_seq_num" in error_msg or "tasks.seq_num" in error_msg:
+            if (
+                "idx_tasks_seq_num" in error_msg
+                or "tasks.seq_num" in error_msg
+                or "seq_num" in error_msg
+            ):
                 if attempt == max_retries:
                     raise SeqNumCollisionError(
                         f"Failed to allocate unique seq_num after {max_retries} retries"
