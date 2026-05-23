@@ -119,6 +119,7 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
             labels=None,
             category="research",
             validation_criteria=None,
+            implementation_domain=None,
             created_in_session_id="test-session",
         )
         assert mock_task_manager.create_task_with_decomposition.call_count >= 1
@@ -168,6 +169,7 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
             labels=None,
             category="research",
             validation_criteria=None,
+            implementation_domain=None,
             created_in_session_id="session-abc123",
         )
         assert mock_task_manager.create_task_with_decomposition.call_count >= 1
@@ -282,6 +284,7 @@ def test_link_commit_schema(task_registry) -> None:
     properties = schema["inputSchema"]["properties"]
     assert "task_id" in properties
     assert "commit_sha" in properties
+    assert "project_path" in properties
 
 
 def test_unlink_commit_schema(task_registry) -> None:
@@ -295,6 +298,7 @@ def test_unlink_commit_schema(task_registry) -> None:
     properties = schema["inputSchema"]["properties"]
     assert "task_id" in properties
     assert "commit_sha" in properties
+    assert "project_path" in properties
 
 
 def test_auto_link_commits_schema(task_registry) -> None:
@@ -308,6 +312,7 @@ def test_auto_link_commits_schema(task_registry) -> None:
     properties = schema["inputSchema"]["properties"]
     # Optional parameters
     assert "task_id" in properties or "since" in properties
+    assert "project_path" in properties
 
 
 def test_get_task_diff_schema(task_registry) -> None:
@@ -320,6 +325,7 @@ def test_get_task_diff_schema(task_registry) -> None:
 
     properties = schema["inputSchema"]["properties"]
     assert "task_id" in properties
+    assert "project_path" in properties
 
 
 @pytest.mark.asyncio

@@ -757,11 +757,33 @@ class TestLoadConfig:
         config = load_config(
             config_file=str(bootstrap_file),
             config_store=DummyConfigStore(),
+            resolve_database_url=True,
         )
 
         assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert config.postgres_install_mode == "docker"
+
+    def test_load_config_without_resolution_does_not_migrate_plaintext_dsn(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config readers can inspect bootstrap fields without touching Keychain."""
+
+        fake_keyring = FakeKeyring()
+        install_fake_keyring(monkeypatch, fake_keyring)
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(
+            bootstrap_file,
+            "hub_backend: postgres\n"
+            "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+            "daemon_port: 61234\n",
+        )
+
+        config = load_config(config_file=str(bootstrap_file))
+
+        assert config.daemon_port == 61234
+        assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
+        assert fake_keyring.set_calls == []
 
 
 class TestBootstrapConfig:

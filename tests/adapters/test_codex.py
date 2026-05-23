@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,6 +29,7 @@ from gobby.adapters.codex_impl.types import (
 )
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -2420,6 +2422,54 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="PostToolUse")
 
         assert "hookSpecificOutput" not in result
+
+    def test_additional_context_trims_oversized_response_context_without_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Oversized low-priority context is bounded before the warning safety net."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Session-critical note",
+            context="x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.adapters.codex_impl.hooks_adapter"):
+            result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
+
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert len(ctx) == ADDITIONAL_CONTEXT_LIMIT
+        assert ctx.startswith("Session-critical note\n\n")
+        assert ctx.endswith("\n... [truncated]")
+        assert "additionalContext truncated" not in caplog.text
+
+    def test_session_metadata_precedes_oversized_response_context(self) -> None:
+        """Session metadata remains visible when response.context is over budget."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            context="x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000),
+            metadata={
+                "session_id": "abc-123",
+                "session_ref": "#100",
+                "external_id": "codex-ext-id",
+                "_first_hook_for_session": True,
+                "project_id": "proj-1",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert len(ctx) == ADDITIONAL_CONTEXT_LIMIT
+        assert "Gobby Session ID: #100 (abc-123)" in ctx
+        assert "codex-ext-id" in ctx
+        assert ctx.index("Gobby Session ID") < ctx.index("x")
+        assert ctx.endswith("\n... [truncated]")
 
 
 class TestCodexHooksAdapterHandleNative:

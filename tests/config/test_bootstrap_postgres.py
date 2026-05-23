@@ -50,7 +50,7 @@ def test_bootstrap_migrates_plaintext_postgres_url_to_keyring(
         "database_path: /tmp/sqlite.db\n",
     )
 
-    bootstrap = load_bootstrap(str(bootstrap_file))
+    bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url == database_url
@@ -81,7 +81,7 @@ def test_bootstrap_loads_postgres_url_from_keyring_ref(
         "postgres_install_mode: docker\n",
     )
 
-    bootstrap = load_bootstrap(str(bootstrap_file))
+    bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url == database_url
@@ -89,7 +89,7 @@ def test_bootstrap_loads_postgres_url_from_keyring_ref(
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
     assert "database_url" not in yaml.safe_load(bootstrap_file.read_text())
 
-    second_bootstrap = load_bootstrap(str(bootstrap_file))
+    second_bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
     assert second_bootstrap.database_url == database_url
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
@@ -120,6 +120,49 @@ def test_write_postgres_defaults_stores_database_url_ref(
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
     assert read_bootstrap_database_url(temp_dir) == database_url
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
+
+
+def test_load_bootstrap_without_resolution_does_not_read_keyring_ref(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+
+    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    fake_keyring = FakeKeyring({(KEYRING_SERVICE, DATABASE_URL_KEY): database_url})
+    install_fake_keyring(monkeypatch, fake_keyring)
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "hub_backend: postgres\n"
+        f"database_url_ref: {DATABASE_URL_REF}\n"
+        "postgres_install_mode: docker\n"
+        "daemon_port: 61234\n",
+    )
+
+    bootstrap = load_bootstrap(str(bootstrap_file))
+
+    assert bootstrap.hub_backend == "postgres"
+    assert bootstrap.daemon_port == 61234
+    assert bootstrap.database_url is None
+    assert fake_keyring.get_calls == []
+
+
+def test_load_bootstrap_accepts_daemon_ref_without_keyring_resolution(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import POSTGRES_DATABASE_URL_DAEMON_REF, load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "hub_backend: postgres\n"
+        f"database_url_ref: {POSTGRES_DATABASE_URL_DAEMON_REF}\n"
+        "postgres_install_mode: external\n",
+    )
+
+    bootstrap = load_bootstrap(str(bootstrap_file))
+
+    assert bootstrap.hub_backend == "postgres"
+    assert bootstrap.database_url is None
+    assert bootstrap.postgres_install_mode == "external"
 
 
 def test_write_postgres_defaults_refreshes_cached_database_url(
@@ -298,7 +341,7 @@ def test_postgres_keyring_ref_requires_stored_database_url(
     )
 
     with pytest.raises(BootstrapConfigError, match="keyring.*postgres_database_url"):
-        load_bootstrap(str(bootstrap_file))
+        load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
     assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
 
@@ -310,7 +353,7 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
     _write_bootstrap(bootstrap_file, "hub_backend: postgres\n")
 
     with pytest.raises(BootstrapConfigError, match="database_url"):
-        load_bootstrap(str(bootstrap_file))
+        load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
 
 @pytest.mark.parametrize(

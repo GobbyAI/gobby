@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
+from gobby.mcp_proxy.tools.agent_cancellation import terminalize_cancelled_agent_run
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 
@@ -415,24 +416,15 @@ def create_agents_registry(
         if not result.get("success") and result.get("error") != "No target PID found":
             return result
 
-        transitioned = False
-        if lifecycle_monitor is not None:
-            transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                run_id,
-                terminal_reason="user_cancelled",
-            )
-        else:
-            transitioned = runner.cancel_run(run_id)
-            if transitioned and completion_registry is not None:
-                await completion_registry.notify(
-                    run_id,
-                    {
-                        "status": "cancelled",
-                        "terminal_reason": "user_cancelled",
-                        "run_id": run_id,
-                    },
-                    message=f"Agent {run_id} cancelled",
-                )
+        transitioned = await terminalize_cancelled_agent_run(
+            runner=runner,
+            run_id=run_id,
+            terminal_reason="user_cancelled",
+            lifecycle_monitor=lifecycle_monitor,
+            completion_registry=completion_registry,
+            task_manager=task_manager,
+            message=f"Agent {run_id} cancelled",
+        )
 
         if not transitioned:
             current = runner.get_run(run_id)
@@ -619,23 +611,14 @@ def create_agents_registry(
             return result
 
         if effective_status == "cancelled":
-            transitioned = False
-            if lifecycle_monitor is not None:
-                transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                    run_id,
-                    terminal_reason="user_cancelled",
-                )
-            else:
-                transitioned = runner.cancel_run(run_id)
-                if transitioned and completion_registry is not None:
-                    await completion_registry.notify(
-                        run_id,
-                        {
-                            "status": "cancelled",
-                            "terminal_reason": "user_cancelled",
-                            "run_id": run_id,
-                        },
-                    )
+            transitioned = await terminalize_cancelled_agent_run(
+                runner=runner,
+                run_id=run_id,
+                terminal_reason="user_cancelled",
+                lifecycle_monitor=lifecycle_monitor,
+                completion_registry=completion_registry,
+                task_manager=task_manager,
+            )
             if not transitioned:
                 current = runner.get_run(run_id)
                 logger.debug(
@@ -656,8 +639,15 @@ def create_agents_registry(
                 )
             result["status"] = "error"
         else:
-            fallback_cancelled = runner.cancel_run(run_id)
-            if not fallback_cancelled:
+            transitioned = await terminalize_cancelled_agent_run(
+                runner=runner,
+                run_id=run_id,
+                terminal_reason="user_cancelled",
+                lifecycle_monitor=lifecycle_monitor,
+                completion_registry=completion_registry,
+                task_manager=task_manager,
+            )
+            if not transitioned:
                 current = runner.get_run(run_id)
                 logger.debug(
                     "Fallback cancelled terminalization no-op for run %s; current status=%s",

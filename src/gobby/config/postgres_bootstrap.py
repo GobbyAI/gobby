@@ -63,7 +63,7 @@ def set_bootstrap_field(*, gobby_home: Path, field: str, value: str) -> None:
 
 
 def read_bootstrap_database_url(gobby_home: Path) -> str | None:
-    return load_bootstrap(str(bootstrap_path(gobby_home))).database_url
+    return load_bootstrap(str(bootstrap_path(gobby_home)), resolve_database_url=True).database_url
 
 
 def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:

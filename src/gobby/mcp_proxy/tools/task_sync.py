@@ -69,9 +69,31 @@ def create_commit_registry(
     if task_manager is None:
         raise ValueError("task_manager is required for task ID resolution")
 
+    def _repo_path_for(
+        project_path: str | None = None,
+        *,
+        task_project_id: str | None = None,
+    ) -> str | None:
+        if project_path:
+            return project_path
+        if task_project_id and project_manager:
+            project = project_manager.get(task_project_id)
+            if project:
+                return project.repo_path
+        ctx = get_project_context()
+        if ctx and ctx.get("id") and project_manager:
+            project = project_manager.get(ctx["id"])
+            if project:
+                return project.repo_path
+        return None
+
     # --- link_commit ---
 
-    def link_commit(task_id: str, commit_sha: str) -> dict[str, Any]:
+    def link_commit(
+        task_id: str,
+        commit_sha: str,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
         """Link a git commit to a task."""
         # Resolve task reference
         try:
@@ -79,13 +101,7 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        # Get project repo path for git operations
-        ctx = get_project_context()
-        repo_path = None
-        if ctx and ctx.get("id") and project_manager:
-            project = project_manager.get(ctx["id"])
-            if project:
-                repo_path = project.repo_path
+        repo_path = _repo_path_for(project_path)
 
         try:
             task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -110,6 +126,13 @@ def create_commit_registry(
                     "type": "string",
                     "description": "Git commit SHA (short or full)",
                 },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Repository path that contains the commit. Optional; defaults to the "
+                        "current task project repository."
+                    ),
+                },
             },
             "required": ["task_id", "commit_sha"],
         },
@@ -118,7 +141,11 @@ def create_commit_registry(
 
     # --- unlink_commit ---
 
-    def unlink_commit(task_id: str, commit_sha: str) -> dict[str, Any]:
+    def unlink_commit(
+        task_id: str,
+        commit_sha: str,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
         """Unlink a git commit from a task."""
         # Resolve task reference
         try:
@@ -126,13 +153,7 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        # Get project repo path for git operations
-        ctx = get_project_context()
-        repo_path = None
-        if ctx and ctx.get("id") and project_manager:
-            project = project_manager.get(ctx["id"])
-            if project:
-                repo_path = project.repo_path
+        repo_path = _repo_path_for(project_path)
 
         try:
             task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -157,6 +178,13 @@ def create_commit_registry(
                     "type": "string",
                     "description": "Git commit SHA to unlink",
                 },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Repository path that contains the commit. Optional; defaults to the "
+                        "current task project repository."
+                    ),
+                },
             },
             "required": ["task_id", "commit_sha"],
         },
@@ -168,6 +196,7 @@ def create_commit_registry(
     def auto_link_commits(
         task_id: str | None = None,
         since: str | None = None,
+        project_path: str | None = None,
     ) -> dict[str, Any]:
         """Auto-detect and link commits that mention task IDs."""
         if auto_link_commits_fn is None:
@@ -181,15 +210,10 @@ def create_commit_registry(
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid task_id: {e}"}
 
-        # Get project repo_path
-        ctx = get_project_context()
-        repo_path = None
-        if ctx and ctx.get("id") and project_manager:
-            project = project_manager.get(ctx["id"])
-            if project:
-                repo_path = project.repo_path
+        repo_path = _repo_path_for(project_path)
 
         # Get project_id for resolving #N task references
+        ctx = get_project_context()
         project_id = ctx.get("id") if ctx else None
 
         result = auto_link_commits_fn(
@@ -223,6 +247,14 @@ def create_commit_registry(
                     "description": "Git --since parameter (e.g., '1 week ago', '2024-01-01')",
                     "default": None,
                 },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Repository path to scan. Optional; defaults to the current task "
+                        "project repository."
+                    ),
+                    "default": None,
+                },
             },
         },
         func=auto_link_commits,
@@ -233,6 +265,7 @@ def create_commit_registry(
     def get_task_diff_tool(
         task_id: str,
         include_uncommitted: bool = False,
+        project_path: str | None = None,
     ) -> dict[str, Any]:
         """Get the combined diff for all commits linked to a task."""
         # Resolve task reference
@@ -248,12 +281,7 @@ def create_commit_registry(
         if get_task_diff_fn is None:
             return {"error": "get_task_diff_fn not configured"}
 
-        # Get project repo_path
-        repo_path = None
-        if project_manager and task.project_id:
-            project = project_manager.get(task.project_id)
-            if project:
-                repo_path = project.repo_path
+        repo_path = _repo_path_for(project_path, task_project_id=task.project_id)
 
         result = get_task_diff_fn(
             task_id=resolved_task_id,
@@ -284,6 +312,14 @@ def create_commit_registry(
                     "type": "boolean",
                     "description": "Include uncommitted changes in the diff",
                     "default": False,
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Repository path that contains the linked commits. Optional; defaults "
+                        "to the task project repository."
+                    ),
+                    "default": None,
                 },
             },
             "required": ["task_id"],

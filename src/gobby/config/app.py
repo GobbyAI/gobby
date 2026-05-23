@@ -856,6 +856,7 @@ def load_config(
     cli_overrides: dict[str, Any] | None = None,
     secret_resolver: Callable[[str], str | None] | None = None,
     config_store: Any | None = None,
+    resolve_database_url: bool = False,
 ) -> DaemonConfig:
     """
     Load configuration with hierarchy: CLI > DB > bootstrap > Pydantic defaults.
@@ -868,6 +869,7 @@ def load_config(
         cli_overrides: Dictionary of CLI argument overrides
         secret_resolver: Optional callable for resolving secrets (checked before env vars)
         config_store: Optional ConfigStore instance for DB-first resolution
+        resolve_database_url: Resolve bootstrap database_url_ref for runtime DB startup
 
     Returns:
         Validated DaemonConfig instance
@@ -882,7 +884,7 @@ def load_config(
         from gobby.storage.config_store import unflatten_config
 
         # Layer 1: bootstrap values (ports, db_path, bind_host, hub backend)
-        bootstrap = load_bootstrap(config_file)
+        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
         config_dict: dict[str, Any] = bootstrap.to_config_dict()
 
         # Layer 2: config file values (non-bootstrap settings like test_mode,
@@ -917,7 +919,7 @@ def load_config(
         # DEPRECATED_SQLITE_IMPORT database_path compatibility)
         from gobby.config.bootstrap import load_bootstrap
 
-        bootstrap = load_bootstrap(config_file)
+        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
         config_dict = bootstrap.to_config_dict()
 
     # Apply CLI argument overrides

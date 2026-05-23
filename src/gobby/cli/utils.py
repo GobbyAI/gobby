@@ -46,7 +46,7 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
     from gobby.storage.secrets import SecretStore
 
     try:
-        bootstrap_config = load_config(config_file)
+        bootstrap_config = load_config(config_file, resolve_database_url=True)
     except Exception as exc:
         logger.warning("Failed to load bootstrap config: %s", exc)
         return DaemonConfig()
@@ -62,6 +62,7 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
                 config_file=config_file,
                 config_store=config_store,
                 secret_resolver=secret_store.get,
+                resolve_database_url=True,
             )
     except Exception as exc:
         logger.warning("Failed to load config from PostgreSQL hub: %s", exc)

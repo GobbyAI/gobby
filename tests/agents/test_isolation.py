@@ -26,7 +26,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
-from gobby.config.bootstrap import POSTGRES_DATABASE_URL_REF
+from gobby.config.bootstrap import POSTGRES_DATABASE_URL_DAEMON_REF
 from gobby.config.local_cli_token import LOCAL_CLI_TOKEN_FILENAME
 
 pytestmark = pytest.mark.unit
@@ -140,7 +140,7 @@ class TestEnsureIsolationCodeIndex:
         )
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
         bootstrap_text = bootstrap.read_text()
-        assert f"database_url_ref: {POSTGRES_DATABASE_URL_REF}" in bootstrap_text
+        assert f"database_url_ref: {POSTGRES_DATABASE_URL_DAEMON_REF}" in bootstrap_text
         assert "bind_host: 127.0.0.1" in bootstrap_text
         assert "daemon_port: 61234" in bootstrap_text
         source_token = source_home / LOCAL_CLI_TOKEN_FILENAME

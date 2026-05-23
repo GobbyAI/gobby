@@ -420,6 +420,42 @@ class TestStopAgent:
         )
 
     @pytest.mark.asyncio
+    async def test_successful_stop_passes_task_manager_to_cancellation_helper(self):
+        """Test stop_agent wires task recovery dependencies into fallback cancellation."""
+        runner = _make_runner_with_run_storage()
+        runner.get_run.return_value = _make_mock_agent_run(status="running")
+        task_manager = MagicMock()
+
+        registry = create_agents_registry(runner, task_manager=task_manager)
+        stop_agent = registry._tools["stop_agent"].func
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents.terminalize_cancelled_agent_run",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as terminalize,
+            patch("gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state"),
+        ):
+            result = await stop_agent(run_id="run-123")
+
+        assert result["success"] is True
+        terminalize.assert_awaited_once_with(
+            runner=runner,
+            run_id="run-123",
+            terminal_reason="user_cancelled",
+            lifecycle_monitor=None,
+            completion_registry=None,
+            task_manager=task_manager,
+            message="Agent run-123 cancelled",
+        )
+
+    @pytest.mark.asyncio
     async def test_run_not_found(self):
         """Test error when run not found."""
         runner = MagicMock()

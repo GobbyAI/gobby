@@ -28,11 +28,50 @@ from gobby.adapters.degradation import (
     truncate_context_for_adapter,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)
+
+_CONTEXT_SEPARATOR = "\n\n"
+_TRUNCATION_MARKER = "\n... [truncated]"
+
+
+def _bound_context_parts(
+    context_parts: list[tuple[str, str]],
+) -> tuple[str, dict[str, int], list[tuple[str, int, int]]]:
+    """Join context parts without letting one oversized part erase later context."""
+    bounded_parts: list[tuple[str, str]] = []
+    contributor_sizes: dict[str, int] = {}
+    trimmed_parts: list[tuple[str, int, int]] = []
+    used = 0
+
+    for label, part in context_parts:
+        separator_len = len(_CONTEXT_SEPARATOR) if bounded_parts else 0
+        remaining = ADDITIONAL_CONTEXT_LIMIT - used - separator_len
+        if remaining <= 0:
+            trimmed_parts.append((label, len(part), 0))
+            continue
+
+        bounded_part = part
+        if len(part) > remaining:
+            if remaining > len(_TRUNCATION_MARKER):
+                bounded_part = part[: remaining - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+            else:
+                bounded_part = part[:remaining]
+            trimmed_parts.append((label, len(part), len(bounded_part)))
+
+        bounded_parts.append((label, bounded_part))
+        contributor_sizes[label] = len(part)
+        used += separator_len + len(bounded_part)
+
+    return (
+        _CONTEXT_SEPARATOR.join(part for _, part in bounded_parts),
+        contributor_sizes,
+        trimmed_parts,
+    )
 
 
 class CodexHooksAdapter(BaseAdapter):
@@ -214,12 +253,9 @@ class CodexHooksAdapter(BaseAdapter):
                 "decision": {"behavior": "allow"},
             }
 
-        # Build additionalContext from all context sources
+        # Build additionalContext from all context sources. Keep high-value
+        # session/system context ahead of large workflow payloads.
         context_parts: list[tuple[str, str]] = []
-
-        # Workflow-injected context (inject_context action)
-        if response.context:
-            context_parts.append(("response.context", response.context))
 
         session_start_hook = hook_event_name == "SessionStart"
 
@@ -250,14 +286,33 @@ class CodexHooksAdapter(BaseAdapter):
                 if context_lines:
                     context_parts.append(("metadata", "\n".join(context_lines)))
 
+        # Workflow-injected context (inject_context action). This can be large,
+        # so place it after session-critical context before applying the budget.
+        if response.context:
+            context_parts.append(("response.context", response.context))
+
         # Build hookSpecificOutput or systemMessage based on event type.
         if context_parts:
+            bounded_context, contributor_sizes, trimmed_parts = _bound_context_parts(context_parts)
+            for label, original_len, bounded_len in trimmed_parts:
+                record_adapter_degradation(
+                    provider=self.source,
+                    hook_type=hook_type,
+                    kind=AdapterDegradationKind.CONTEXT_TRUNCATED,
+                    response_field=label,
+                    destination_channel=context_channel,
+                    detail=(
+                        f"bounded_part original_len={original_len} "
+                        f"bounded_len={bounded_len} limit={ADDITIONAL_CONTEXT_LIMIT}"
+                    ),
+                    event_logger=logger,
+                )
             combined_context = truncate_context_for_adapter(
-                "\n\n".join(part for _, part in context_parts),
+                bounded_context,
                 provider=self.source,
                 hook_type=hook_type,
                 destination_channel=context_channel,
-                contributor_sizes={label: len(part) for label, part in context_parts},
+                contributor_sizes=contributor_sizes,
                 event_logger=logger,
             )
             if context_channel is ContextChannel.SYSTEM_MESSAGE:

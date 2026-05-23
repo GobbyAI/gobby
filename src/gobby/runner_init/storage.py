@@ -39,7 +39,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             f"or omit --config to use the default path (~/.gobby/bootstrap.yaml)."
         )
     runner._config_file = str(config_path) if config_path else None
-    runner.config = load_config(runner._config_file)
+    runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
     init_telemetry(runner.config.telemetry, verbose=verbose)
@@ -92,6 +92,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_file=runner._config_file,
         secret_resolver=runner.secret_store.get,
         config_store=runner.config_store,
+        resolve_database_url=True,
     )
 
     if hasattr(runner.config, "embeddings") and not runner.config.embeddings.api_key:

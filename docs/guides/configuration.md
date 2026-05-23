@@ -67,12 +67,15 @@ PostgreSQL remains the only runtime hub after import. Startup fails when the
 PostgreSQL DSN cannot be resolved instead of falling back to SQLite, so do not
 use `database_path` or `gobby postgres uninstall` as a runtime recovery path.
 
-`database_url_ref` must stay on `keyring:gobby:postgres_database_url`. The OS
-keyring credential belongs to the installing user. Linux desktop sessions need
-an unlocked Secret Service or KWallet backend; Linux headless/systemd services
-need the same Unix user and DBus/keyring context used during install. Windows
-uses Credential Manager, so a Windows service must run as the same user that
-created the credential.
+Root bootstrap `database_url_ref` must stay on
+`keyring:gobby:postgres_database_url`. The OS keyring credential belongs to the
+installing user. Linux desktop sessions need an unlocked Secret Service or
+KWallet backend; Linux headless/systemd services need the same Unix user and
+DBus/keyring context used during install. Windows uses Credential Manager, so a
+Windows service must run as the same user that created the credential. Gobby may
+generate isolated helper bootstraps with
+`daemon:gobby:postgres_database_url`; that ref is broker-only and is resolved by
+the local daemon, not the OS keyring.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
