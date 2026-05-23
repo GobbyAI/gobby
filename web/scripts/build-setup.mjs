@@ -22,6 +22,8 @@ const version = versionMatch ? versionMatch[1] : "0.0.0";
 // Output directories
 const distSetup = join(root, "dist-setup");
 const pyBundle = join(projectRoot, "src", "gobby", "install", "shared", "setup");
+const distBundlePath = join(distSetup, "cli.mjs");
+const pyBundlePath = join(pyBundle, "setup.mjs");
 
 mkdirSync(distSetup, { recursive: true });
 mkdirSync(pyBundle, { recursive: true });
@@ -34,7 +36,7 @@ await build({
   platform: "node",
   format: "esm",
   target: "node18",
-  outfile: join(distSetup, "cli.mjs"),
+  outfile: distBundlePath,
   banner: {
     js: "#!/usr/bin/env node",
   },
@@ -53,8 +55,11 @@ await build({
   keepNames: true,
 });
 
+const bundle = readFileSync(distBundlePath, "utf-8").replace(/[ \t]+$/gm, "");
+writeFileSync(distBundlePath, bundle);
+
 // Copy bundle to Python package location
-cpSync(join(distSetup, "cli.mjs"), join(pyBundle, "setup.mjs"));
+cpSync(distBundlePath, pyBundlePath);
 
 // Generate package.json for npm publish
 const pkgJson = {
@@ -79,6 +84,6 @@ writeFileSync(
 );
 
 console.log(`Done. Outputs:`);
-console.log(`  npm:    ${join(distSetup, "cli.mjs")}`);
-console.log(`  python: ${join(pyBundle, "setup.mjs")}`);
+console.log(`  npm:    ${distBundlePath}`);
+console.log(`  python: ${pyBundlePath}`);
 console.log(`  pkg:    ${join(distSetup, "package.json")}`);
