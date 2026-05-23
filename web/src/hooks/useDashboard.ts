@@ -1,5 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+export interface DashboardMemoryServiceStatus {
+  configured: boolean
+  healthy: boolean
+}
+
+export interface DashboardGraphServiceStatus extends DashboardMemoryServiceStatus {
+  installed: boolean
+}
+
+export interface DashboardMemoryStatus {
+  count: number
+  by_type: Record<string, number>
+  recent_count: number
+  falkordb?: DashboardGraphServiceStatus
+  qdrant?: DashboardMemoryServiceStatus
+}
+
 export interface AdminStatus {
   status: string
   project_id?: string
@@ -26,7 +43,7 @@ export interface AdminStatus {
     needs_review: number; review_approved: number; escalated: number
     ready: number; blocked: number; closed_24h: number
   }
-  memory: { count: number; by_type: Record<string, number>; recent_count: number; falkordb?: { configured: boolean; installed: boolean; healthy: boolean }; qdrant?: { configured: boolean; healthy: boolean } }
+  memory: DashboardMemoryStatus
   skills: { total: number }
   pipelines: { running: number; waiting_approval: number; completed: number; failed: number; total: number }
   savings: {

@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
 
-import { useMemory } from '../useMemory'
-import type { FalkorStatus } from '../useMemory'
+import { useFalkorStatus, useMemory } from '../useMemory'
 
 let mockFetch: MockFetchInstance
 
@@ -265,10 +264,6 @@ describe('useFalkorStatus', () => {
   })
 
   it('fetches falkordb status from admin endpoint', async () => {
-    const { useFalkorStatus } = await import('../useMemory') as unknown as {
-      useFalkorStatus: () => FalkorStatus | null
-    }
-
     mockFetch.mockJsonResponse('/api/admin/status', {
       memory: { falkordb: { configured: true, url: 'redis://localhost:6379' } },
     })
@@ -282,10 +277,6 @@ describe('useFalkorStatus', () => {
   })
 
   it('returns null when falkordb not configured', async () => {
-    const { useFalkorStatus } = await import('../useMemory') as unknown as {
-      useFalkorStatus: () => FalkorStatus | null
-    }
-
     mockFetch.mockJsonResponse('/api/admin/status', {
       memory: {},
     })
