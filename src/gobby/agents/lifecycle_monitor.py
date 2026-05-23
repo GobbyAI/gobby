@@ -119,6 +119,7 @@ class AgentLifecycleMonitor:
             stall_classifier=self._stall_classifier,
             loop_tracker=self._loop_tracker,
             master_fds=self._master_fds,
+            kill_tmux_session=lambda name: self._tmux.kill_session(name, missing_ok=True),
             run_db=run_db,
         )
         self._health_monitor = AgentHealthMonitor(
@@ -331,6 +332,11 @@ class AgentLifecycleMonitor:
 
         if run.tmux_session_name:
             await self._tmux.kill_session(run.tmux_session_name)
+            await self._run_sqlite(
+                self._agent_run_manager.clear_tmux_session_name,
+                run.id,
+                run.tmux_session_name,
+            )
 
         threshold = self._loop_tracker.threshold
         await self._cleanup_handler.cleanup_agent(

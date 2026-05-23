@@ -52,6 +52,14 @@ class AgentHealthMonitor:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
+    async def _clear_tmux_session_name(self, run: AgentRun) -> None:
+        if run.tmux_session_name:
+            await self._run_sqlite(
+                self._agent_run_manager.clear_tmux_session_name,
+                run.id,
+                run.tmux_session_name,
+            )
+
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
         runs = await self._run_sqlite(self._agent_run_manager.list_active)
@@ -108,13 +116,15 @@ class AgentHealthMonitor:
                         logger.debug(f"Failed to capture pane for agent {run.id}: {e}")
 
                 if run.tmux_session_name:
-                    await kill_agent(
+                    result = await kill_agent(
                         run,
                         self._db,
                         signal_name="TERM",
                         timeout=5.0,
                         close_terminal=True,
                     )
+                    if result.get("success"):
+                        await self._clear_tmux_session_name(run)
                 elif run.pid:
                     try:
                         os.kill(run.pid, signal.SIGTERM)
@@ -183,6 +193,7 @@ class AgentHealthMonitor:
                 )
                 if run.tmux_session_name:
                     await self._tmux.kill_session(run.tmux_session_name)
+                    await self._clear_tmux_session_name(run)
                 elif run.pid:
                     try:
                         os.kill(run.pid, signal.SIGTERM)
@@ -234,6 +245,7 @@ class AgentHealthMonitor:
                     )
 
                     await self._tmux.kill_session(tmux_name)
+                    await self._clear_tmux_session_name(run)
 
                     error_msg = (
                         f"Provider stall: {classification.reason} "

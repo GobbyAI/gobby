@@ -1353,6 +1353,62 @@ class TestCheckExpiredAgents:
         assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
+    async def test_terminal_completed_run_closes_lingering_tmux_after_daemon_outage(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+    ) -> None:
+        """Recovery closes tmux left behind after a successful end_agent_run outage."""
+        child_session = session_manager.register(
+            external_id="child-sess-completed-lingering-tmux",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-terminal-lingering-tmux",
+            child_session_id=child_session.id,
+        )
+        agent_run_manager.update_runtime(
+            run.id,
+            tmux_session_name="gobby-terminal-lingering-tmux",
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'success', completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (completed_at, completed_at, run.id),
+        )
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as kill_session:
+            expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        kill_session.assert_awaited_once_with(
+            "gobby-terminal-lingering-tmux",
+            missing_ok=True,
+        )
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.tmux_session_name is None
+        assert session_manager.get(child_session.id).status == "expired"
+
+    @pytest.mark.asyncio
     async def test_expired_agent_releases_worktrees(
         self,
         agent_run_manager: LocalAgentRunManager,
