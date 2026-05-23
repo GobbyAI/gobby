@@ -30,7 +30,6 @@ def _mock_ext_services_and_prompts():
     """Prevent real Docker service installers and interactive API-key prompts."""
     with (
         patch("gobby.cli.install._run_qdrant_install"),
-        patch("gobby.cli.install._run_neo4j_install"),
         patch("gobby.cli.install._run_falkordb_install"),
         patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
@@ -232,7 +231,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.install.load_full_config_from_db")
     def test_install_no_clis_detected_no_git(
         self,
         mock_load_config: MagicMock,
@@ -511,7 +510,6 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
             patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             with runner.isolated_filesystem(temp_dir=str(temp_dir)):
@@ -523,39 +521,7 @@ class TestInstallCommand:
         mock_codex.assert_called_once()
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
-        mock_neo4j.assert_not_called()
         mock_falkordb.assert_not_called()
-
-    def test_falkordb_install_skips_broad_setup(
-        self,
-        runner: CliRunner,
-        temp_dir: Path,
-    ) -> None:
-        """Targeted FalkorDB install only runs the FalkorDB service installer."""
-        with (
-            patch("gobby.cli.install.run_daemon_setup") as mock_daemon_setup,
-            patch("gobby.cli.install._ensure_daemon_config") as mock_ensure_config,
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
-        ):
-            mock_falkordb.side_effect = lambda _installer, _password, results: results.update(
-                {"falkordb": {"success": True}}
-            )
-            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-                result = runner.invoke(
-                    cli,
-                    [
-                        "install",
-                        "--falkordb",
-                        "--falkordb-password",
-                        "DirectPass123",
-                        "--no-interactive",
-                    ],
-                )
-
-        assert result.exit_code == 0
-        mock_falkordb.assert_called_once()
-        mock_daemon_setup.assert_not_called()
-        mock_ensure_config.assert_not_called()
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_git_hooks")
@@ -709,7 +675,10 @@ class TestInstallCommand:
             "skipped": [],
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        with (
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+            patch("gobby.cli.install.run_daemon_setup"),
+        ):
             # Create .git directory to trigger git hooks install
             Path(".git").mkdir()
             result = runner.invoke(cli, ["install", "--all"])

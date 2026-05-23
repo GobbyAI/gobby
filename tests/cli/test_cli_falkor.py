@@ -1,4 +1,4 @@
-"""Tests for --neo4j flag in CLI and Neo4j service utilities."""
+"""Tests for FalkorDB CLI flags and status surfaces."""
 
 from __future__ import annotations
 
@@ -7,91 +7,88 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from gobby.utils.status import format_status_message
 
 pytestmark = pytest.mark.unit
 
 
-# ---------------------------------------------------------------------------
-# services.py — is_neo4j_installed / get_neo4j_status
-# ---------------------------------------------------------------------------
+def _make_config_db(path: Path) -> LocalDatabase:
+    db = LocalDatabase(path)
+    run_migrations(db)
+    return db
 
 
-class TestIsNeo4jInstalled:
-    """Tests for is_neo4j_installed."""
+class TestIsFalkorDBInstalled:
+    """Tests for is_falkordb_installed."""
 
-    def test_returns_true_when_service_dir_exists(self, tmp_path: Path) -> None:
-        from gobby.cli.services import is_neo4j_installed
+    def test_returns_true_when_config_store_keys_exist(self, tmp_path: Path) -> None:
+        from gobby.cli.services import is_falkordb_installed
 
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+            assert is_falkordb_installed(db=db) is True
+        finally:
+            db.close()
 
-        assert is_neo4j_installed(gobby_home=tmp_path) is True
+    def test_returns_false_when_config_store_keys_are_missing(self, tmp_path: Path) -> None:
+        from gobby.cli.services import is_falkordb_installed
 
-    def test_returns_false_when_service_dir_missing(self, tmp_path: Path) -> None:
-        from gobby.cli.services import is_neo4j_installed
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            assert is_falkordb_installed(db=db) is False
+        finally:
+            db.close()
 
-        assert is_neo4j_installed(gobby_home=tmp_path) is False
 
-
-class TestGetNeo4jStatus:
-    """Tests for get_neo4j_status."""
+class TestGetFalkorDBStatus:
+    """Tests for get_falkordb_status."""
 
     @pytest.mark.asyncio
     async def test_returns_status_dict(self, tmp_path: Path) -> None:
-        from gobby.cli.services import get_neo4j_status
+        from gobby.cli.services import get_falkordb_status
 
-        svc_dir = tmp_path / "services" / "neo4j"
-        svc_dir.mkdir(parents=True)
-
-        with patch("gobby.cli.services.is_neo4j_healthy", return_value=False):
-            result = await get_neo4j_status(
-                gobby_home=tmp_path,
-                neo4j_url="http://localhost:8474",
-            )
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+            with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
+                result = await get_falkordb_status(
+                    db=db,
+                    host="127.0.0.1",
+                    port=16379,
+                    password="secret",
+                )
+        finally:
+            db.close()
 
         assert result["installed"] is True
         assert result["healthy"] is False
-        assert result["url"] == "http://localhost:8474"
+        assert result["url"] == "redis://127.0.0.1:16379"
 
     @pytest.mark.asyncio
     async def test_returns_not_installed(self, tmp_path: Path) -> None:
-        from gobby.cli.services import get_neo4j_status
+        from gobby.cli.services import get_falkordb_status
 
-        with patch("gobby.cli.services.is_neo4j_healthy", return_value=False):
-            result = await get_neo4j_status(gobby_home=tmp_path)
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            result = await get_falkordb_status(db=db)
+        finally:
+            db.close()
 
         assert result["installed"] is False
 
 
-# ---------------------------------------------------------------------------
-# install.py — --neo4j flag
-# ---------------------------------------------------------------------------
-
-
-class TestInstallNeo4jFlag:
-    """Tests for Neo4j-related params in install/uninstall commands."""
-
-    def test_install_command_has_neo4j_password(self) -> None:
-        """install command has --neo4j-password option."""
-        from gobby.cli.install import install
-
-        param_names = [p.name for p in install.params]
-        assert "neo4j_password" in param_names
-
-    def test_uninstall_command_has_neo4j_option(self) -> None:
-        """uninstall command has --neo4j flag."""
-        from gobby.cli.install import uninstall
-
-        param_names = [p.name for p in uninstall.params]
-        assert "neo4j_flag" in param_names
-
-
-class TestInstallFalkorDBFlag:
+class TestInstallFalkorDBFlags:
     """Tests for FalkorDB-related params in install/uninstall commands."""
 
     def test_install_command_has_falkordb_options(self) -> None:
-        """install command has FalkorDB options used by the setup wizard."""
         from gobby.cli.install import install
 
         param_names = [p.name for p in install.params]
@@ -99,24 +96,14 @@ class TestInstallFalkorDBFlag:
         assert "falkordb_password" in param_names
 
     def test_uninstall_command_has_falkordb_option(self) -> None:
-        """uninstall command has --falkordb option used by setup cleanup."""
         from gobby.cli.install import uninstall
 
         param_names = [p.name for p in uninstall.params]
         assert "falkordb_flag" in param_names
 
 
-# ---------------------------------------------------------------------------
-# daemon.py — --docker flag (consolidated from --neo4j)
-# ---------------------------------------------------------------------------
-
-
 class TestDaemonDockerFlag:
-    """Tests for --docker flag on daemon start/stop/restart.
-
-    Neo4j service management was consolidated into unified Docker
-    service management via the --docker flag.
-    """
+    """Tests for --docker flag on daemon start/stop/restart."""
 
     def test_start_has_docker_flag(self) -> None:
         from gobby.cli.daemon import start
@@ -157,9 +144,8 @@ class TestDaemonDockerFlag:
             mock_run.return_value = MagicMock(returncode=0)
             _services_start(tmp_path)
 
-        compose_calls = [c for c in mock_run.call_args_list if "up" in str(c)]
-        assert len(compose_calls) >= 1
-        assert mock_run.call_count >= 1
+        compose_calls = [call for call in mock_run.call_args_list if "up" in str(call)]
+        assert compose_calls
 
     def test_services_start_skips_when_no_docker(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_start
@@ -169,8 +155,6 @@ class TestDaemonDockerFlag:
                 _services_start(tmp_path)
 
         mock_run.assert_not_called()
-        assert mock_run.call_count == 0
-        assert not mock_run.called
 
     def test_services_stop_runs_compose_down(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_stop
@@ -186,8 +170,8 @@ class TestDaemonDockerFlag:
             mock_run.return_value = MagicMock(returncode=0)
             _services_stop(tmp_path)
 
-        compose_calls = [c for c in mock_run.call_args_list if "down" in str(c)]
-        assert len(compose_calls) >= 1
+        compose_calls = [call for call in mock_run.call_args_list if "down" in str(call)]
+        assert compose_calls
 
     def test_services_stop_skips_when_no_docker(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_stop
@@ -197,71 +181,6 @@ class TestDaemonDockerFlag:
                 _services_stop(tmp_path)
 
         mock_run.assert_not_called()
-        assert mock_run.call_count == 0
-        assert not mock_run.called
-
-
-# ---------------------------------------------------------------------------
-# status display — knowledge graph
-# ---------------------------------------------------------------------------
-
-
-class TestStatusLegacyNeo4jDisplay:
-    """Tests for legacy Neo4j status in format_status_message."""
-
-    def test_status_omits_legacy_neo4j_installed_healthy(self) -> None:
-        msg = format_status_message(
-            running=True,
-            pid=123,
-            api_data={
-                "memory": {
-                    "neo4j": {
-                        "configured": True,
-                        "installed": True,
-                        "healthy": True,
-                        "url": "http://localhost:8474",
-                    }
-                }
-            },
-        )
-        assert "Neo4j" not in msg
-
-    def test_status_omits_legacy_neo4j_installed_unhealthy(self) -> None:
-        msg = format_status_message(
-            running=True,
-            pid=123,
-            api_data={
-                "memory": {
-                    "neo4j": {
-                        "configured": True,
-                        "installed": True,
-                        "healthy": False,
-                        "url": "http://localhost:8474",
-                    }
-                }
-            },
-        )
-        assert "Neo4j" not in msg
-
-    def test_status_omits_legacy_neo4j_not_installed(self) -> None:
-        msg = format_status_message(
-            running=True,
-            pid=123,
-            api_data={
-                "memory": {
-                    "neo4j": {
-                        "configured": True,
-                        "installed": False,
-                        "healthy": False,
-                    }
-                }
-            },
-        )
-        assert "Neo4j" not in msg
-
-    def test_status_omits_neo4j_when_no_data(self) -> None:
-        msg = format_status_message(running=True, pid=123)
-        assert "Neo4j" not in msg
 
 
 class TestStatusFalkorDBDisplay:

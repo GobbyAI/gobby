@@ -326,12 +326,14 @@ def format_status_message(
 
         # FalkorDB
         falkordb = memory.get("falkordb", {})
-        if falkordb.get("configured"):
+        if falkordb.get("configured") or falkordb.get("installed"):
             url_str = f" ({falkordb['url']})" if falkordb.get("url") else ""
             if falkordb.get("healthy"):
                 lines.append(f"  {'FalkorDB:':<{_LW}}healthy{url_str}")
-            elif falkordb.get("installed"):
+            elif falkordb.get("configured") and falkordb.get("installed"):
                 lines.append(f"  {'FalkorDB:':<{_LW}}not responding{url_str}")
+            elif falkordb.get("installed"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}installed, not configured{url_str}")
             else:
                 lines.append(f"  {'FalkorDB:':<{_LW}}not installed")
 

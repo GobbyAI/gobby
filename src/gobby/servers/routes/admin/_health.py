@@ -94,6 +94,48 @@ async def _get_postgres_dashboard_status(
         }
 
 
+def _unavailable_falkordb_memory_status() -> dict[str, Any]:
+    return {
+        "configured": False,
+        "installed": False,
+        "healthy": False,
+        "url": None,
+    }
+
+
+async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
+    """Collect the FalkorDB status payload for the admin memory section."""
+    try:
+        from gobby.cli.services import get_falkordb_status
+        from gobby.config.persistence import is_falkordb_enabled
+
+        services = getattr(server, "services", None)
+        daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
+        if daemon_config is None or services is None:
+            raise RuntimeError("server config unavailable")
+
+        falkor_cfg = daemon_config.databases.falkordb
+        status = await get_falkordb_status(
+            db=getattr(services, "database", None),
+            host=falkor_cfg.host,
+            port=falkor_cfg.port,
+            password=falkor_cfg.requirepass,
+        )
+        return {
+            "configured": is_falkordb_enabled(daemon_config.databases),
+            "installed": status["installed"],
+            "healthy": status["healthy"],
+            "url": status["url"],
+        }
+    except Exception as e:
+        logger.warning(
+            "Failed to check FalkorDB status: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return _unavailable_falkordb_memory_status()
+
+
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
     async def health_check() -> dict[str, str]:
@@ -315,31 +357,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
-            # FalkorDB knowledge graph status
-            try:
-                from gobby.cli.services import is_falkordb_installed
-
-                falkor_client = getattr(server.memory_manager, "_falkor_client", None)
-                falkordb_url = falkor_client.base_url if falkor_client else None
-                installed = is_falkordb_installed()
-                healthy = bool(falkor_client and await falkor_client.ping())
-                memory_stats["falkordb"] = {
-                    "configured": falkor_client is not None,
-                    "installed": installed,
-                    "healthy": healthy,
-                    "url": falkordb_url,
-                }
-            except Exception as e:
-                logger.warning(
-                    "Failed to check FalkorDB status: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                memory_stats["falkordb"] = {
-                    "configured": False,
-                    "installed": False,
-                    "healthy": False,
-                }
+        memory_stats["falkordb"] = await _get_falkordb_memory_status(server)
 
         # Get pipeline execution statistics
         pipeline_stats: dict[str, Any] = {

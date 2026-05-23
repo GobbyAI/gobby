@@ -33,8 +33,6 @@ from ._install_prompts import (
     _run_falkordb_install,
     _run_falkordb_uninstall,
     _run_git_hooks_install,
-    _run_neo4j_install,  # noqa: F401 - re-exported for legacy tests/callers
-    _run_neo4j_uninstall,
     _run_qdrant_install,
     _run_standard_cli_install,
     _run_standard_cli_uninstall,
@@ -49,7 +47,6 @@ from .installers import (
     install_falkordb,
     install_gemini,
     install_git_hooks,
-    install_neo4j,  # noqa: F401 - re-exported for legacy tests/callers
     install_qdrant,
     install_qwen,
     uninstall_claude,
@@ -57,7 +54,6 @@ from .installers import (
     uninstall_droid,
     uninstall_falkordb,
     uninstall_gemini,
-    uninstall_neo4j,
     uninstall_qwen,
 )
 from .utils import get_install_dir, load_full_config_from_db
@@ -82,6 +78,18 @@ __all__ = [
     "install",
     "uninstall",
 ]
+
+
+_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password has been removed in 0.4.0.
+
+The knowledge graph backend has been replaced with FalkorDB.
+- Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
+- Uninstall: gobby uninstall --falkordb
+- Migration notes: see CHANGELOG.md for the full upgrade path."""
+
+
+def _raise_graph_backend_removed() -> None:
+    raise click.UsageError(_GRAPH_BACKEND_REMOVED_MESSAGE)
 
 
 @click.command("install")
@@ -136,22 +144,35 @@ __all__ = [
     help="Skip Docker service installation (Qdrant, FalkorDB)",
 )
 @click.option(
-    "--neo4j-password",
-    "neo4j_password",
-    default=None,
-    help="Set a custom Neo4j password (default: auto-generated)",
-)
-@click.option(
     "--falkordb",
     "falkordb_flag",
     is_flag=True,
-    help="Install FalkorDB knowledge graph backend only",
+    default=False,
+    help="Install only the FalkorDB service",
 )
 @click.option(
     "--falkordb-password",
     "falkordb_password",
     default=None,
-    help="Set a custom FalkorDB password (default: auto-generated)",
+    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
+)
+@click.option(
+    "--neo4j-password",
+    "deprecated_neo4j_password",
+    default=None,
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed()
+    if value is not None
+    else None,
+)
+@click.option(
+    "--neo4j",
+    "neo4j_flag",
+    is_flag=True,
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--project",
@@ -218,7 +239,6 @@ def install(
     hooks_flag: bool,
     all_flag: bool,
     no_ext_services_flag: bool,
-    neo4j_password: str | None,
     falkordb_flag: bool,
     falkordb_password: str | None,
     voice_flag: bool,
@@ -239,6 +259,13 @@ def install(
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+
+    if falkordb_flag:
+        service_results: dict[str, dict[str, Any]] = {}
+        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
+        if not _echo_install_summary(service_results, no_interactive_flag):
+            sys.exit(1)
+        return
 
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
@@ -304,14 +331,6 @@ def install(
         if droid_flag:
             clis_to_install.append("droid")
 
-    service_only_install = (
-        falkordb_flag
-        and not all_flag
-        and not clis_to_install
-        and not install_hooks
-        and not voice_flag
-    )
-
     # Get install directory info
     install_dir = get_install_dir()
     is_dev_mode = "src" in str(install_dir)
@@ -325,18 +344,6 @@ def install(
         click.echo(f"\nScope: Project ({project_path})")
     if is_dev_mode:
         click.echo("Mode: Development (using source directory)")
-
-    if service_only_install:
-        service_results: dict[str, dict[str, Any]] = {}
-        _run_falkordb_install(
-            install_falkordb,
-            falkordb_password or neo4j_password,
-            service_results,
-        )
-        all_success = all(r.get("success", False) for r in service_results.values())
-        if not all_success:
-            sys.exit(1)
-        return
 
     # Phase 1: daemon config, database, bundled content, MCP servers, IDE config
     config_result = _ensure_daemon_config()
@@ -414,17 +421,10 @@ def install(
 
         # Docker services (Qdrant + FalkorDB, installed by default if Docker available)
         # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
-        if falkordb_flag:
-            _run_falkordb_install(install_falkordb, falkordb_password, results)
-
         if is_full_install:
             if not no_ext_services_flag and selected_embedding_provider != "none":
                 _run_qdrant_install(install_qdrant, results)
-                _run_falkordb_install(
-                    install_falkordb,
-                    falkordb_password or neo4j_password,
-                    results,
-                )
+                _run_falkordb_install(install_falkordb, falkordb_password, results)
             elif selected_embedding_provider == "none":
                 click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
                 click.echo("")
@@ -486,22 +486,24 @@ def install(
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
 )
 @click.option(
-    "--neo4j",
-    "neo4j_flag",
-    is_flag=True,
-    help="Uninstall Neo4j knowledge graph backend",
-)
-@click.option(
     "--falkordb",
     "falkordb_flag",
     is_flag=True,
     help="Uninstall FalkorDB knowledge graph backend",
 )
 @click.option(
+    "--neo4j",
+    "neo4j_flag",
+    is_flag=True,
+    hidden=True,
+    expose_value=False,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
+)
+@click.option(
     "--volumes",
     "volumes_flag",
     is_flag=True,
-    help="Also remove Docker volumes (data loss, use with --falkordb or --neo4j)",
+    help="Also remove Docker volumes (data loss, use with --falkordb)",
 )
 @click.option(
     "--project",
@@ -525,7 +527,6 @@ def uninstall(
     droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
-    neo4j_flag: bool,
     falkordb_flag: bool,
     volumes_flag: bool,
     project_flag: bool,
@@ -547,7 +548,6 @@ def uninstall(
         and not codex_flag
         and not droid_flag
         and not all_flag
-        and not neo4j_flag
         and not falkordb_flag
     ):
         all_flag = True
@@ -659,9 +659,7 @@ def uninstall(
         click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
         click.echo("")
 
-    # Neo4j
-    if neo4j_flag:
-        _run_neo4j_uninstall(uninstall_neo4j, volumes_flag, results)
+    # FalkorDB
     if falkordb_flag:
         _run_falkordb_uninstall(uninstall_falkordb, volumes_flag, results)
 
