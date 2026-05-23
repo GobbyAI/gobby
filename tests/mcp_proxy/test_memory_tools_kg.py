@@ -10,7 +10,7 @@ pytestmark = pytest.mark.unit
 
 
 def _make_registry(
-    neo4j_url: str | None = None,
+    falkordb_host: str | None = None,
 ) -> tuple[MagicMock, MagicMock]:
     """Create a memory tool registry and return (registry, memory_manager)."""
     from gobby.config.persistence import MemoryConfig
@@ -22,12 +22,13 @@ def _make_registry(
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
 
-    config = MemoryConfig(
-        neo4j_url=neo4j_url,
-        neo4j_auth="neo4j:password" if neo4j_url else None,
+    config = MemoryConfig()
+    manager = MemoryManager(
+        db=db,
+        config=config,
+        falkordb_host=falkordb_host,
+        falkordb_password="password" if falkordb_host else None,
     )
-
-    manager = MemoryManager(db=db, config=config)
     registry = create_memory_registry(manager)
 
     return registry, manager
@@ -45,7 +46,7 @@ class TestSearchKnowledgeGraphTool:
     @pytest.mark.asyncio
     async def test_search_knowledge_graph_returns_results(self) -> None:
         """search_knowledge_graph returns graph search results."""
-        registry, manager = _make_registry(neo4j_url="http://localhost:7474")
+        registry, manager = _make_registry()
 
         # Mock KG service
         from gobby.memory.services.knowledge_graph import KnowledgeGraphService

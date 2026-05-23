@@ -62,15 +62,6 @@ logger = logging.getLogger(__name__)
 
 # Re-export for backwards compatibility (tests import from here)
 _ensure_daemon_config = ensure_daemon_config
-_NEO4J_MIGRATION_MESSAGE = (
-    "--neo4j / --neo4j-password has been removed in 0.4.0.\n\n"
-    "The knowledge graph backend has been replaced with FalkorDB.\n"
-    "- Install (auto-runs as part of gobby install; tune with): "
-    "gobby install [--falkordb-password <pw>] "
-    "(or service-only: gobby install --falkordb)\n"
-    "- Uninstall: gobby uninstall --falkordb\n"
-    "- Migration notes: see CHANGELOG.md for the full upgrade path."
-)
 
 # Re-exports from extracted modules (tests import these from gobby.cli.install)
 __all__ = [
@@ -89,14 +80,16 @@ __all__ = [
 ]
 
 
-def _fail_legacy_neo4j_option(
-    ctx: click.Context,
-    param: click.Option,
-    value: object,
-) -> None:
-    _ = (ctx, param)
-    if value:
-        raise click.UsageError(_NEO4J_MIGRATION_MESSAGE)
+_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password have been removed in this release.
+
+The knowledge graph backend has been replaced with FalkorDB.
+- Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
+- Uninstall: gobby uninstall --falkordb
+- Migration notes: see CHANGELOG.md for the full upgrade path."""
+
+
+def _raise_graph_backend_removed() -> None:
+    raise click.UsageError(_GRAPH_BACKEND_REMOVED_MESSAGE)
 
 
 @click.command("install")
@@ -154,29 +147,24 @@ def _fail_legacy_neo4j_option(
     "--falkordb",
     "falkordb_flag",
     is_flag=True,
-    help="Install only the FalkorDB service (service-targeting; skips CLI hooks/git/embedding/voice).",
+    default=False,
+    help="Install only the FalkorDB service",
 )
 @click.option(
     "--falkordb-password",
     "falkordb_password",
     default=None,
-    help="Set a custom FalkorDB password (default: auto-generated or reused from existing config)",
-)
-@click.option(
-    "--neo4j",
-    "neo4j_flag",
-    is_flag=True,
-    hidden=True,
-    expose_value=False,
-    callback=_fail_legacy_neo4j_option,
+    help="Set a custom FalkorDB password (default: auto-generated or reused)",
 )
 @click.option(
     "--neo4j-password",
-    "neo4j_password",
+    "deprecated_neo4j_password",
     default=None,
     hidden=True,
     expose_value=False,
-    callback=_fail_legacy_neo4j_option,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed()
+    if value is not None
+    else None,
 )
 @click.option(
     "--project",
@@ -243,6 +231,8 @@ def install(
     hooks_flag: bool,
     all_flag: bool,
     no_ext_services_flag: bool,
+    falkordb_flag: bool,
+    falkordb_password: str | None,
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
@@ -251,8 +241,6 @@ def install(
     embedding_dim: int | None,
     no_interactive_flag: bool,
     working_dir: Path | None,
-    falkordb_flag: bool = False,
-    falkordb_password: str | None = None,
 ) -> None:
     """Install Gobby hooks to AI coding CLIs and Git.
 
@@ -264,21 +252,15 @@ def install(
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
 
-    project_path = working_dir.resolve() if working_dir else Path.cwd()
-    mode = "project" if project_flag else "global"
-
     if falkordb_flag:
-        click.echo("=" * 60)
-        click.echo("  Gobby Hooks Installation")
-        click.echo("=" * 60)
-        click.echo("\nComponents to configure: falkordb")
-        click.echo("")
         service_results: dict[str, dict[str, Any]] = {}
         _run_falkordb_install(install_falkordb, falkordb_password, service_results)
-        all_success = _echo_install_summary(service_results, no_interactive_flag)
-        if not all_success:
+        if not _echo_install_summary(service_results, no_interactive_flag):
             sys.exit(1)
         return
+
+    project_path = working_dir.resolve() if working_dir else Path.cwd()
+    mode = "project" if project_flag else "global"
 
     if (
         not claude_flag
@@ -503,11 +485,11 @@ def install(
 )
 @click.option(
     "--neo4j",
-    "neo4j_flag",
+    "deprecated_neo4j_flag",
     is_flag=True,
     hidden=True,
     expose_value=False,
-    callback=_fail_legacy_neo4j_option,
+    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--volumes",

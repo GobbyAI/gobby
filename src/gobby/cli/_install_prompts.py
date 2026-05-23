@@ -30,9 +30,9 @@ __all__ = (
     "_prompt_hub_api_keys",
     "_run_codex_uninstall",
     "_run_embedding_install",
+    "_run_git_hooks_install",
     "_run_falkordb_install",
     "_run_falkordb_uninstall",
-    "_run_git_hooks_install",
     "_run_qdrant_install",
     "_run_standard_cli_install",
     "_run_standard_cli_uninstall",
@@ -582,14 +582,18 @@ def _run_falkordb_install(
     results["falkordb"] = result
 
     if result["success"]:
-        click.echo("FalkorDB installed")
+        click.echo("FalkorDB installed (docker mode)")
+        source = result.get("password_source")
+        if source == "generated" and result.get("password"):
+            click.echo(f"  Generated FalkorDB password: {result['password']}")
+        elif source == "provided":
+            click.echo("  Using provided FalkorDB password (not displayed)")
+        elif source == "reused":
+            click.echo("  Reusing existing FalkorDB password from config_store")
+        click.echo(f"  Redis: {result['url']}")
         click.echo(f"  Browser: {result['browser_url']}")
-        if result["password_source"] == "generated":
-            click.echo(f"Generated FalkorDB password: {result['password']}")
-        elif result["password_source"] == "provided":
-            click.echo("Using provided FalkorDB password (not displayed)")
-        elif result["password_source"] == "reused":
-            click.echo("Reusing existing FalkorDB password from config_store")
+        if result.get("compose_file"):
+            click.echo(f"  Compose: {result['compose_file']}")
         click.echo("\nRestart the daemon to apply: gobby restart")
     else:
         click.echo(f"Failed: {result['error']}", err=True)
@@ -769,9 +773,12 @@ def _run_falkordb_uninstall(
     results["falkordb"] = result
 
     if result["success"]:
-        click.echo("FalkorDB services removed")
-        if result.get("data_removed"):
-            click.echo("  Docker volumes removed (data deleted)")
+        if result.get("already_uninstalled"):
+            click.echo("FalkorDB was not installed")
+        else:
+            click.echo("FalkorDB services removed")
+            if result.get("data_removed"):
+                click.echo("  Docker volumes removed (data deleted)")
         click.echo("\nRestart the daemon to apply: gobby restart")
     else:
         click.echo(f"Failed: {result['error']}", err=True)

@@ -55,13 +55,13 @@ class IndexingService:
         self._kg_service = value
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with the memory storage source of truth."""
+        """Reconcile Qdrant and FalkorDB with the memory storage source of truth."""
         storage_ids = set(await self._run_storage(self._storage.list_all_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,
             "storage_count": len(storage_ids),
             "qdrant": {"orphans_found": 0, "orphans_deleted": 0, "errors": 0},
-            "neo4j": {
+            "falkordb": {
                 "orphan_memories_found": 0,
                 "orphan_memories_deleted": 0,
                 "orphan_entities_deleted": 0,
@@ -91,22 +91,22 @@ class IndexingService:
 
         if self._kg_service:
             try:
-                neo4j_ids = await self._kg_service.get_all_memory_node_ids()
-                orphaned = neo4j_ids - storage_ids
-                report["neo4j"]["total"] = len(neo4j_ids)
-                report["neo4j"]["orphan_memories_found"] = len(orphaned)
+                falkordb_ids = await self._kg_service.get_all_memory_node_ids()
+                orphaned = falkordb_ids - storage_ids
+                report["falkordb"]["total"] = len(falkordb_ids)
+                report["falkordb"]["orphan_memories_found"] = len(orphaned)
 
                 if not dry_run and orphaned:
                     deleted = await self._kg_service.remove_memories_from_graph(orphaned)
-                    report["neo4j"]["orphan_memories_deleted"] = deleted
+                    report["falkordb"]["orphan_memories_deleted"] = deleted
                     if deleted < len(orphaned):
-                        report["neo4j"]["errors"] += len(orphaned) - deleted
+                        report["falkordb"]["errors"] += len(orphaned) - deleted
 
                     entities_deleted = await self._kg_service.remove_orphaned_entities(scope="all")
-                    report["neo4j"]["orphan_entities_deleted"] = entities_deleted
+                    report["falkordb"]["orphan_entities_deleted"] = entities_deleted
             except Exception as e:
-                logger.error(f"Neo4j reconciliation failed: {e}")
-                report["neo4j"]["error"] = str(e)
+                logger.error(f"FalkorDB reconciliation failed: {e}")
+                report["falkordb"]["error"] = str(e)
 
         return report
 

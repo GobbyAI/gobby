@@ -331,6 +331,7 @@ class TestFalkorDBInstallPrompt:
                 "success": True,
                 "password_source": password_source,
                 "password": password,
+                "url": "redis://localhost:16379",
                 "browser_url": "http://localhost:13000",
             }
         )

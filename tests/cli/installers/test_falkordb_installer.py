@@ -66,8 +66,8 @@ class TestDockerComposeFalkorDB:
         assert falkordb["image"] == "falkordb/falkordb:latest"
         assert "falkordb" in falkordb["profiles"]
         assert "all" in falkordb["profiles"]
-        assert "16379:6379" in falkordb["ports"]
-        assert "13000:3000" in falkordb["ports"]
+        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
+        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
             "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
             in falkordb["environment"]
@@ -88,14 +88,14 @@ class TestInstallFalkorDB:
 
             result = module.install_falkordb(gobby_home=tmp_path, password="secret")
 
-        assert result == {
-            "success": True,
-            "password_source": "provided",
-            "password": None,
-            "browser_url": "http://localhost:13000",
-            "error": None,
-            "compose_running": False,
-        }
+        assert result["success"] is True
+        assert result["password_source"] == "provided"
+        assert result["password"] is None
+        assert result["browser_url"] == "http://localhost:13000"
+        assert result["url"] == "redis://127.0.0.1:16379"
+        assert result["mode"] == "docker"
+        assert "error" not in result
+        assert "compose_running" not in result
         assert (tmp_path / "services" / "docker-compose.yml").exists()
 
         commands = [call.args[0] for call in mock_run.call_args_list]
@@ -133,7 +133,7 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
-            patch("gobby.cli.installers.falkor.secrets.token_urlsafe", return_value="generated"),
+            patch("gobby.cli.installers.falkor._generate_falkordb_password", return_value="generated"),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password=None)
@@ -142,8 +142,8 @@ class TestInstallFalkorDB:
         assert result["password_source"] == "generated"
         assert result["password"] == "generated"
         assert result["browser_url"] == "http://localhost:13000"
-        assert result["error"] is None
-        assert result["compose_running"] is False
+        assert "error" not in result
+        assert "compose_running" not in result
 
     def test_provided_password_result_does_not_disclose_password(self, tmp_path: Path) -> None:
         module = _falkor_module()
@@ -294,7 +294,7 @@ class TestInstallFalkorDB:
         module = _falkor_module()
         received_homes: list[Path | None] = []
 
-        monkeypatch.setattr(module, "get_gobby_home", lambda: tmp_path)
+        monkeypatch.setattr("gobby.cli.utils.get_gobby_home", lambda: tmp_path)
 
         original_resolve_password = module._resolve_falkordb_password
         original_resolve_db_path = module._resolve_falkordb_db_path
@@ -360,7 +360,7 @@ class TestUninstallFalkorDB:
             result = module.uninstall_falkordb(gobby_home=tmp_path, purge=True)
 
         assert result == {"success": True, "data_removed": True}
-        assert mock_run.call_args.args[0] == [
+        assert mock_run.call_args_list[0].args[0] == [
             "docker",
             "compose",
             "-f",
@@ -368,9 +368,14 @@ class TestUninstallFalkorDB:
             "--profile",
             "falkordb",
             "down",
-            "-v",
         ]
-        assert mock_run.call_args.kwargs["cwd"] == str(services_dir)
+        assert mock_run.call_args_list[0].kwargs["cwd"] == str(services_dir)
+        assert mock_run.call_args_list[1].args[0] == [
+            "docker",
+            "volume",
+            "rm",
+            "gobby_falkordb_data",
+        ]
 
         verify_db = LocalDatabase(db_path)
         try:
@@ -395,7 +400,7 @@ class TestUninstallFalkorDB:
         services_dir.mkdir(parents=True)
         (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
 
-        monkeypatch.setattr(module, "get_gobby_home", lambda: tmp_path)
+        monkeypatch.setattr("gobby.cli.utils.get_gobby_home", lambda: tmp_path)
 
         original_clear_config = module._clear_config
 

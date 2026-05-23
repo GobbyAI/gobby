@@ -6,8 +6,8 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "16379:6379"
-      - "13000:3000"
+      - "${GOBBY_FALKORDB_PORT:-16379}:6379"
+      - "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000"
     environment:
       # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
       # FALKORDB_ARGS is reserved for module options; do not put auth there.

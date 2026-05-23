@@ -148,7 +148,7 @@ class TestGobbyRunnerRun:
         mock_ws_server.start = AsyncMock()
 
         mock_config_with_websocket.databases.qdrant.url = ""
-        mock_config_with_websocket.databases.neo4j.url = ""
+        mock_config_with_websocket.databases.falkordb.requirepass = None
         mock_config_with_websocket.embeddings.api_base = ""
         mock_config_with_websocket.ui.enabled = False
 
@@ -223,7 +223,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url=""),
-                    neo4j=SimpleNamespace(url=""),
+                    falkordb=SimpleNamespace(requirepass=None),
                 ),
                 embeddings=SimpleNamespace(
                     model="nomic-embed-text",
@@ -295,7 +295,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url="http://localhost:6333"),
-                    neo4j=SimpleNamespace(url=""),
+                    falkordb=SimpleNamespace(requirepass=None),
                 ),
                 embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
                 ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
@@ -341,6 +341,8 @@ class TestInitSubsystems:
         manager._kg_service = kg_service
         manager._search_service._kg_service = kg_service
         manager._indexing_service._kg_service = kg_service
+        code_indexer = SimpleNamespace(graph=object(), clear_graph_client=MagicMock())
+        code_indexer.clear_graph_client.side_effect = lambda: setattr(code_indexer, "graph", None)
         runner = SimpleNamespace(
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -353,6 +355,7 @@ class TestInitSubsystems:
                 )
             ),
             memory_manager=manager,
+            code_indexer=code_indexer,
         )
 
         await _check_external_services(runner, tracker=None)
@@ -361,6 +364,8 @@ class TestInitSubsystems:
         assert manager._kg_service is None
         assert manager._search_service._kg_service is None
         assert manager._indexing_service._kg_service is None
+        assert code_indexer.graph is None
+        code_indexer.clear_graph_client.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_provider_model_discovery_runs_in_background_without_startup_warning(
@@ -388,7 +393,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url=""),
-                    neo4j=SimpleNamespace(url=""),
+                    falkordb=SimpleNamespace(requirepass=None),
                 ),
                 embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
                 ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
@@ -494,7 +499,11 @@ class TestShutdownDaemonServices:
             database=SimpleNamespace(close=MagicMock()),
         )
         server = SimpleNamespace(should_exit=False)
-        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+
+        async def completed_server() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(completed_server())
 
         def cleanup_pid_file() -> None:
             nonlocal cleanup_saw_marker
@@ -1583,13 +1592,25 @@ class TestAgentRestartRecoveryHelpers:
 
     @pytest.mark.asyncio
     async def test_stop_shutdown_policy_cancels_active_agents(self) -> None:
+        class LifecycleMonitor:
+            def __init__(self) -> None:
+                self.stopped = False
+
+            async def stop(self) -> None:
+                self.stopped = True
+
+        monitor = LifecycleMonitor()
         runner = SimpleNamespace(
-            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=monitor,
             cron_scheduler=None,
             message_processor=None,
             communications_manager=None,
         )
-        cancel_active = AsyncMock(return_value=2)
+        cancelled_runners: list[object] = []
+
+        async def cancel_active(active_runner: object) -> int:
+            cancelled_runners.append(active_runner)
+            return 2
 
         await runner_lifecycle_shutdown._stop_started_services(
             runner,
@@ -1597,18 +1618,30 @@ class TestAgentRestartRecoveryHelpers:
             shutdown_intent=ShutdownIntent.STOP,
         )
 
-        cancel_active.assert_awaited_once_with(runner)
-        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+        assert cancelled_runners == [runner]
+        assert monitor.stopped is True
 
     @pytest.mark.asyncio
     async def test_restart_shutdown_policy_preserves_active_agents(self) -> None:
+        class LifecycleMonitor:
+            def __init__(self) -> None:
+                self.stopped = False
+
+            async def stop(self) -> None:
+                self.stopped = True
+
+        monitor = LifecycleMonitor()
         runner = SimpleNamespace(
-            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=monitor,
             cron_scheduler=None,
             message_processor=None,
             communications_manager=None,
         )
-        cancel_active = AsyncMock(return_value=2)
+        cancelled_runners: list[object] = []
+
+        async def cancel_active(active_runner: object) -> int:
+            cancelled_runners.append(active_runner)
+            return 2
 
         await runner_lifecycle_shutdown._stop_started_services(
             runner,
@@ -1616,5 +1649,5 @@ class TestAgentRestartRecoveryHelpers:
             shutdown_intent=ShutdownIntent.RESTART,
         )
 
-        cancel_active.assert_not_awaited()
-        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+        assert cancelled_runners == []
+        assert monitor.stopped is True

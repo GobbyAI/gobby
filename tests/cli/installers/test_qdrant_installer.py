@@ -56,8 +56,8 @@ class TestDockerComposeServices:
         falkordb = data["services"]["falkordb"]
 
         assert falkordb["image"] == "falkordb/falkordb:latest"
-        assert "16379:6379" in falkordb["ports"]
-        assert "13000:3000" in falkordb["ports"]
+        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
+        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
             "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
             in falkordb["environment"]

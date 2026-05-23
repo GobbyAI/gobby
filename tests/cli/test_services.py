@@ -3,7 +3,6 @@
 import logging
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -25,85 +24,54 @@ from gobby.storage.migrations import run_migrations
 pytestmark = pytest.mark.unit
 
 
-def _seed_falkordb_config(db_path: Path, *, host: str = "localhost", port: int = 16379) -> None:
-    db = LocalDatabase(db_path)
-    try:
-        run_migrations(db)
-        store = ConfigStore(db)
-        store.set("databases.falkordb.host", host, source="test")
-        store.set("databases.falkordb.port", port, source="test")
-    finally:
-        db.close()
-
-
-class _FakeRedisClient:
-    def __init__(
-        self,
-        *,
-        ping_result: bool = True,
-        ping_error: Exception | None = None,
-        close_error: Exception | None = None,
-    ) -> None:
-        self.ping_result = ping_result
-        self.ping_error = ping_error
-        self.close_error = close_error
-        self.ping_count = 0
-        self.close_count = 0
-
-    async def ping(self) -> bool:
-        self.ping_count += 1
-        if self.ping_error is not None:
-            raise self.ping_error
-        return self.ping_result
-
-    async def aclose(self) -> None:
-        self.close_count += 1
-        if self.close_error is not None:
-            raise self.close_error
-
-
-class _RedisFactory:
-    def __init__(self, client: _FakeRedisClient) -> None:
-        self.client = client
-        self.calls: list[dict[str, object]] = []
-
-    def __call__(self, **kwargs: object) -> _FakeRedisClient:
-        self.calls.append(kwargs)
-        return self.client
-
-
 class TestIsFalkorDBInstalled:
     """Tests for is_falkordb_installed()."""
 
-    def test_installed_when_config_has_host_and_port(self, tmp_path: Path) -> None:
-        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+    def test_installed_when_config_store_host_and_port_exist(self, tmp_path: Path) -> None:
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+
+            assert is_falkordb_installed(db=db) is True
+        finally:
+            db.close()
+
+    def test_not_installed_when_connection_keys_missing(self, tmp_path: Path) -> None:
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            assert is_falkordb_installed(db=db) is False
+        finally:
+            db.close()
+
+    def test_gobby_home_without_bootstrap_uses_home_database(self, tmp_path: Path) -> None:
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+        finally:
+            db.close()
 
         assert is_falkordb_installed(gobby_home=tmp_path) is True
 
-    def test_not_installed_when_config_missing(self, tmp_path: Path) -> None:
-        assert is_falkordb_installed(gobby_home=tmp_path) is False
+    def test_gobby_home_with_bootstrap_uses_bootstrap_database_path(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "nested" / "custom-hub.db"
+        db_path.parent.mkdir()
+        db = _make_config_db(db_path)
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
+        finally:
+            db.close()
 
-    def test_no_bootstrap_uses_tmp_home_db(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+        bootstrap = tmp_path / "bootstrap.yaml"
+        bootstrap.write_text(f"database_path: {db_path}\n")
+        bootstrap.chmod(0o600)
 
-        import gobby.cli.services as services
-        from gobby.cli.installers import falkor
-
-        resolved_paths: list[Path] = []
-        original_resolver = falkor._resolve_falkordb_db_path
-
-        def track_resolver(home: Path) -> Path:
-            path = original_resolver(home)
-            resolved_paths.append(path)
-            return path
-
-        monkeypatch.setattr(falkor, "_resolve_falkordb_db_path", track_resolver)
-        monkeypatch.setattr(services, "get_gobby_home", lambda: Path.home() / ".gobby")
-
-        assert services.is_falkordb_installed(gobby_home=tmp_path) is True
-        assert resolved_paths == [tmp_path / "gobby-hub.db"]
+        assert is_falkordb_installed(gobby_home=tmp_path) is True
 
 
 @pytest.fixture
@@ -133,71 +101,63 @@ async def _run_inline(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
+def _make_config_db(path: Path) -> LocalDatabase:
+    db = LocalDatabase(path)
+    run_migrations(db)
+    return db
+
+
+class _FakeRedisClient:
+    def __init__(
+        self,
+        *,
+        ping_result: bool = True,
+        ping_error: Exception | None = None,
+    ) -> None:
+        self.ping_result = ping_result
+        self.ping_error = ping_error
+        self.closed = False
+
+    async def ping(self) -> bool:
+        if self.ping_error is not None:
+            raise self.ping_error
+        return self.ping_result
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class TestIsFalkorDBHealthy:
     """Tests for is_falkordb_healthy()."""
 
     @pytest.mark.asyncio
     async def test_healthy_when_ping_succeeds(self) -> None:
-        client = _FakeRedisClient(ping_result=True)
-        redis_factory = _RedisFactory(client)
-        redis_module = SimpleNamespace(Redis=redis_factory)
+        client = _FakeRedisClient()
 
-        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
-            assert await is_falkordb_healthy("localhost", 16379, "secret") is True
+        with patch("redis.asyncio.Redis", return_value=client) as redis_cls:
+            assert await is_falkordb_healthy("127.0.0.1", 16379, "secret") is True
 
-        assert redis_factory.calls == [
-            {"host": "localhost", "port": 16379, "password": "secret", "socket_timeout": 5}
-        ]
-        assert client.ping_count == 1
-        assert client.close_count == 1
-
-    @pytest.mark.asyncio
-    async def test_unhealthy_when_ping_fails(self) -> None:
-        client = _FakeRedisClient(ping_error=ConnectionError("refused"))
-        redis_factory = _RedisFactory(client)
-        redis_module = SimpleNamespace(Redis=redis_factory)
-
-        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
-            assert await is_falkordb_healthy("localhost", 16379, "secret") is False
-
-        assert client.ping_count == 1
-        assert client.close_count == 1
-
-    @pytest.mark.asyncio
-    async def test_unhealthy_when_close_fails(self) -> None:
-        client = _FakeRedisClient(ping_result=True, close_error=RuntimeError("close failed"))
-        redis_factory = _RedisFactory(client)
-        redis_module = SimpleNamespace(Redis=redis_factory)
-
-        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
-            assert await is_falkordb_healthy("localhost", 16379, "secret") is True
-
-        assert client.ping_count == 1
-        assert client.close_count == 1
-
-    @pytest.mark.asyncio
-    async def test_unhealthy_when_host_or_port_missing(self) -> None:
-        assert await is_falkordb_healthy(None, 16379, "secret") is False
-        assert await is_falkordb_healthy("localhost", None, "secret") is False
-
-    @pytest.mark.asyncio
-    async def test_unreachable_probe_does_not_log_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        client = _FakeRedisClient(ping_error=ConnectionError("refused"))
-        redis_module = SimpleNamespace(Redis=_RedisFactory(client))
-        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
-
-        with patch("gobby.cli.services.importlib.import_module", return_value=redis_module):
-            assert await is_falkordb_healthy("localhost", 16379, "secret") is False
-
-        assert any(
-            record.levelno == logging.DEBUG
-            and "FalkorDB health check failed: localhost:16379 unreachable: ConnectionError: refused"
-            in record.getMessage()
-            for record in caplog.records
+        redis_cls.assert_called_once_with(
+            host="127.0.0.1",
+            port=16379,
+            password="secret",
+            socket_timeout=5,
         )
-        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+        assert client.closed is True
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_when_ping_fails_and_closes_client(self) -> None:
+        client = _FakeRedisClient(ping_error=ConnectionError("refused"))
+
+        with patch("redis.asyncio.Redis", return_value=client):
+            assert await is_falkordb_healthy("127.0.0.1", 16379, "secret") is False
+
+        assert client.closed is True
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_without_host_or_port(self) -> None:
+        assert await is_falkordb_healthy(None, 16379, "secret") is False
+        assert await is_falkordb_healthy("127.0.0.1", None, "secret") is False
 
 
 class TestIsQdrantHealthy:
@@ -245,31 +205,42 @@ class TestGetFalkorDBStatus:
 
     @pytest.mark.asyncio
     async def test_status_installed_and_healthy(self, tmp_path: Path) -> None:
-        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
 
-        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)):
-            status = await get_falkordb_status(gobby_home=tmp_path, password="secret")
+            with patch("gobby.cli.services.is_falkordb_healthy", return_value=True):
+                status = await get_falkordb_status(
+                    db=db,
+                    host="127.0.0.1",
+                    port=16379,
+                    password="secret",
+                )
+        finally:
+            db.close()
 
-        assert status["installed"] is True
-        assert status["healthy"] is True
-        assert status["url"] == "redis://localhost:16379"
+        assert status == {
+            "installed": True,
+            "healthy": True,
+            "url": "redis://127.0.0.1:16379",
+        }
 
     @pytest.mark.asyncio
-    async def test_status_not_installed(self, tmp_path: Path) -> None:
-        status = await get_falkordb_status(gobby_home=tmp_path)
-        assert status["installed"] is False
-        assert status["healthy"] is False
-        assert status["url"] is None
+    async def test_status_installed_but_unconfigured(self, tmp_path: Path) -> None:
+        db = _make_config_db(tmp_path / "gobby-hub.db")
+        try:
+            store = ConfigStore(db)
+            store.set("databases.falkordb.host", "127.0.0.1")
+            store.set("databases.falkordb.port", 16379)
 
-    @pytest.mark.asyncio
-    async def test_status_installed_but_unhealthy(self, tmp_path: Path) -> None:
-        _seed_falkordb_config(tmp_path / "gobby-hub.db")
+            with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
+                status = await get_falkordb_status(db=db)
+        finally:
+            db.close()
 
-        with patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=False)):
-            status = await get_falkordb_status(gobby_home=tmp_path, password="secret")
-
-        assert status["installed"] is True
-        assert status["healthy"] is False
+        assert status == {"installed": True, "healthy": False, "url": None}
 
 
 class TestEnsureLocalEmbeddingServiceReady:

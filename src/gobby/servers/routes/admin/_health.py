@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from gobby.cli.services import is_falkordb_healthy, is_falkordb_installed, is_qdrant_healthy
+from gobby.cli.services import is_qdrant_healthy
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -92,6 +92,48 @@ async def _get_postgres_dashboard_status(
             "healthy": False,
             "error": type(exc).__name__,
         }
+
+
+def _unavailable_falkordb_memory_status() -> dict[str, Any]:
+    return {
+        "configured": False,
+        "installed": False,
+        "healthy": False,
+        "url": None,
+    }
+
+
+async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
+    """Collect the FalkorDB status payload for the admin memory section."""
+    try:
+        from gobby.cli.services import get_falkordb_status
+        from gobby.config.persistence import is_falkordb_enabled
+
+        services = getattr(server, "services", None)
+        daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
+        if daemon_config is None or services is None:
+            raise RuntimeError("server config unavailable")
+
+        falkor_cfg = daemon_config.databases.falkordb
+        status = await get_falkordb_status(
+            db=getattr(services, "database", None),
+            host=falkor_cfg.host,
+            port=falkor_cfg.port,
+            password=falkor_cfg.requirepass,
+        )
+        return {
+            "configured": is_falkordb_enabled(daemon_config.databases),
+            "installed": status["installed"],
+            "healthy": status["healthy"],
+            "url": status["url"],
+        }
+    except Exception as e:
+        logger.warning(
+            "Failed to check FalkorDB status: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return _unavailable_falkordb_memory_status()
 
 
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -315,37 +357,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
-            # FalkorDB knowledge graph status
-            try:
-                services = getattr(server, "services", None)
-                daemon_config = getattr(services, "config", None) if services is not None else None
-                databases = (
-                    getattr(daemon_config, "databases", None) if daemon_config is not None else None
-                )
-                falkordb = getattr(databases, "falkordb", None) if databases is not None else None
-                host = getattr(falkordb, "host", None) if falkordb is not None else None
-                port = getattr(falkordb, "port", None) if falkordb is not None else None
-                password = getattr(falkordb, "requirepass", None) if falkordb is not None else None
-                falkor_client = getattr(server.memory_manager, "_falkor_client", None)
-                installed = is_falkordb_installed(db=server.services.database)
-                healthy = await is_falkordb_healthy(host, port, password) if installed else False
-                memory_stats["falkordb"] = {
-                    "configured": falkor_client is not None or bool(password),
-                    "installed": installed,
-                    "healthy": healthy,
-                    "url": f"redis://{host}:{port}" if host and port else None,
-                }
-            except Exception as e:
-                logger.warning(
-                    "Failed to check FalkorDB status: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                memory_stats["falkordb"] = {
-                    "configured": False,
-                    "installed": False,
-                    "healthy": False,
-                }
+        memory_stats["falkordb"] = await _get_falkordb_memory_status(server)
 
         # Get pipeline execution statistics
         pipeline_stats: dict[str, Any] = {

@@ -3,8 +3,10 @@
 import pytest
 
 from gobby.storage.config_store import (
+    _SECRET_SUFFIXES,
     ConfigStore,
     flatten_config,
+    is_secret_key_name,
     unflatten_config,
 )
 from gobby.storage.database import LocalDatabase
@@ -156,3 +158,11 @@ class TestConfigStore:
         assert store.get("str_val") == "hello"
         assert store.get("list_val") == [1, 2, 3]
         assert store.get("null_val") is None
+
+
+class TestSecretKeyDetection:
+    def test_requirepass_is_a_secret_suffix(self) -> None:
+        assert "requirepass" in _SECRET_SUFFIXES
+
+    def test_falkordb_requirepass_is_secret_key_name(self) -> None:
+        assert is_secret_key_name("databases.falkordb.requirepass") is True
