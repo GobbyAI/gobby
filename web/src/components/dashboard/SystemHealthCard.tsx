@@ -29,7 +29,7 @@ interface Props {
 
 export function SystemHealthCard({ data }: Props) {
   const { server, process, background_tasks, status, memory, mcp_servers } = data
-  const neo4j = memory?.neo4j
+  const falkordb = memory?.falkordb
   const qdrant = memory?.qdrant
 
   // External MCP servers summary
@@ -78,10 +78,10 @@ export function SystemHealthCard({ data }: Props) {
             label: `Qdrant ${qdrant.healthy ? 'connected' : qdrant.configured ? 'disconnected' : 'not configured'}`,
             status: qdrant.healthy ? 'healthy' : qdrant.configured ? 'unhealthy' : 'unknown',
           },
-          neo4j && {
-            id: 'neo4j',
-            label: `Neo4j ${neo4j.healthy ? 'connected' : neo4j.configured ? 'disconnected' : 'not configured'}`,
-            status: neo4j.healthy ? 'healthy' : neo4j.configured ? 'unhealthy' : 'unknown',
+          falkordb && {
+            id: 'falkordb',
+            label: `FalkorDB ${falkordb.healthy ? 'connected' : falkordb.configured ? 'disconnected' : 'not configured'}`,
+            status: falkordb.healthy ? 'healthy' : falkordb.configured ? 'unhealthy' : 'unknown',
           },
           externalTotal > 0 && {
             id: 'external-mcps',

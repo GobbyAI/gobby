@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../hooks/useMemory', () => ({
   useMemory: () => ({
@@ -44,6 +44,14 @@ import { useFalkorStatus } from '../../../hooks/useMemory'
 import { MemoryPage } from '../MemoryPage'
 
 describe('MemoryPage FalkorDB status', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('uses the renamed FalkorDB status hook to enable knowledge graph mode', async () => {
     render(<MemoryPage />)
 
