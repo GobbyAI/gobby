@@ -7,6 +7,21 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+#### gcode
+
+- **FalkorDB graph backend transition** - `gcode` now reads graph service
+  settings from the Gobby 0.4.x FalkorDB config path (`databases.falkordb.*`)
+  and uses FalkorDB for graph reads such as `callers`, `usages`, `imports`,
+  `blast-radius`, and graph-boosted search. `gcode 0.7.0+` requires
+  `gobby 0.4.0+`; running new `gcode` against an older daemon that still writes
+  Neo4j config-store keys silently degrades to "graph unavailable". Upgrade the
+  daemon and CLI together. This compatibility boundary is covered by the
+  Neo4j-to-FalkorDB Phase 8.3 validation matrix.
+
 ## [0.8.3] — gcode
 
 ### Changed
