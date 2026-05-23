@@ -885,6 +885,26 @@ class TestHookTemplates:
         assert "gobby tasks sync --export" in content
         assert "gobby memory backup" in content
 
+    def test_post_commit_template_escapes_nul_delimiter(self, tmp_path: Path) -> None:
+        """Generated post-commit hooks must not embed a literal NUL byte."""
+        content = HOOK_TEMPLATES["post-commit"]
+        assert "\0" not in content
+        assert r"tr '\n' '\0'" in content
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in content
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        result = install_git_hooks(tmp_path)
+
+        assert result["success"] is True
+        installed = (hooks_dir / "post-commit").read_text()
+        assert "\0" not in installed
+        assert r"tr '\n' '\0'" in installed
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in installed
+
     def test_templates_do_not_import_jsonl(self) -> None:
         """No installed hook template automatically imports JSONL."""
         for content in HOOK_TEMPLATES.values():
