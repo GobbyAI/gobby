@@ -1097,6 +1097,47 @@ class TestSignalHandlerBehavior:
         captured_handler()
         assert shutdown_called is True
 
+    def test_signal_handler_preserves_restart_after_marker_is_consumed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_maintenance import setup_signal_handlers
+        from gobby.shutdown_intent import write_shutdown_intent
+
+        mock_loop = MagicMock()
+        captured_handler = None
+
+        def capture_handler(sig, handler):
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+        shutdown_callback = MagicMock()
+        shutdown_intent_callback = MagicMock()
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+        ):
+            setup_signal_handlers(
+                shutdown_callback,
+                shutdown_intent_callback=shutdown_intent_callback,
+            )
+            write_shutdown_intent(
+                "cli_restart",
+                ShutdownIntent.RESTART,
+                sender_pid=123,
+                home=tmp_path,
+            )
+
+            assert captured_handler is not None
+            captured_handler()
+            captured_handler()
+
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
+        assert shutdown_callback.call_count == 2
+
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
         tmp_path: Path,
