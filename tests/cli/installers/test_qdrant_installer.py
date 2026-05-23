@@ -325,8 +325,10 @@ class TestConfigModels:
         config = DatabasesConfig()
         assert config.qdrant.url == "http://localhost:6333"
         assert config.qdrant.port == 6333
-        assert config.neo4j.url == "http://localhost:8474"
-        assert config.neo4j.database == "neo4j"
+        assert config.falkordb.host == "127.0.0.1"
+        assert config.falkordb.port == 16379
+        assert config.falkordb.requirepass is None
+        assert config.falkordb.graph_name == "gobby_kg"
 
     def test_embeddings_config_defaults(self) -> None:
         """EmbeddingsConfig has sensible defaults."""
