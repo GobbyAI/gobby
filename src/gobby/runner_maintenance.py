@@ -709,9 +709,7 @@ def setup_signal_handlers(
                     recorded_intent is ShutdownIntent.RESTART
                     and shutdown_record.intent is ShutdownIntent.STOP
                 ):
-                    logger.debug(
-                        "Ignoring stop shutdown intent after restart intent was recorded"
-                    )
+                    logger.debug("Ignoring stop shutdown intent after restart intent was recorded")
                 else:
                     try:
                         shutdown_intent_callback(shutdown_record.intent)

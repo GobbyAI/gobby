@@ -92,8 +92,7 @@ class _RepeatedFetchFailureLimiter:
         if self._message is None or not self._suppressed_count:
             return
         log.info(
-            "Linear issue fetch failure changed after %d suppressed repeat(s); "
-            "previous error: %s",
+            "Linear issue fetch failure changed after %d suppressed repeat(s); previous error: %s",
             self._suppressed_count,
             self._message,
         )
