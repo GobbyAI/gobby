@@ -343,9 +343,11 @@ Build state is resolved before dispatch:
 dispatchable state. The CLI command, MCP tool (`gobby-build:build_task`), and HTTP
 route (`POST /api/build`) must all call the shared build service in
 `src/gobby/build/service.py`, returning the same `BuildResult`.
-`gobby unbuild <ref>` is the task-scoped CLI inverse for an existing built task:
-it stops automation for the resolved task or subtree through the shared build
-control path without deleting task history or build artifacts.
+`gobby build stop <ref> [--yes]` is the task-scoped CLI inverse for an
+existing built task: it stops automation for the resolved task or subtree
+through the shared build control path without deleting task history or build
+artifacts. Sibling lifecycle actions on the same command are `resume`,
+`clean`, and `restart`.
 
 Concurrency and audit data are adjacent to tasks:
 
