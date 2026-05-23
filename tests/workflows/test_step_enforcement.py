@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def db(temp_db: "HubDatabase") -> "HubDatabase":
-    return temp_db
+def db(hub_db: "HubDatabase") -> "HubDatabase":
+    return hub_db
 
 
 @pytest.fixture
