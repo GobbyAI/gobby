@@ -575,7 +575,10 @@ def _run_falkordb_install(
     click.echo("FalkorDB Knowledge Graph")
     click.echo("-" * 40)
 
-    result = installer(password=falkordb_password)
+    try:
+        result = installer(password=falkordb_password)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     results["falkordb"] = result
 
     if result["success"]:

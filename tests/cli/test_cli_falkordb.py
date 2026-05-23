@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import click
@@ -97,6 +98,38 @@ class TestFalkorDBInstallFlags:
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
         mock_voice.assert_not_called()
+
+    def test_invalid_falkordb_password_returns_usage_error_without_side_effects(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.cli.install import install
+
+        gobby_home = tmp_path / "gobby-home"
+
+        with (
+            patch("gobby.cli.installers.falkor.shutil.which") as mock_docker_lookup,
+            patch("gobby.cli.installers.falkor.subprocess.run") as mock_subprocess,
+            patch("gobby.cli.installers.falkor._update_config") as mock_update_config,
+            patch("gobby.cli.installers.falkor._write_bootstrap_password") as mock_bootstrap_write,
+        ):
+            result = runner.invoke(
+                install,
+                ["--falkordb", "--falkordb-password", "has space", "--no-interactive"],
+                env={"GOBBY_HOME": str(gobby_home)},
+            )
+
+        assert result.exit_code == 2
+        assert "FalkorDB password must not contain whitespace" in result.output
+        assert "Traceback" not in result.output
+        mock_docker_lookup.assert_not_called()
+        mock_subprocess.assert_not_called()
+        mock_update_config.assert_not_called()
+        mock_bootstrap_write.assert_not_called()
+        assert not (gobby_home / "bootstrap.yaml").exists()
+        assert not (gobby_home / "gobby-hub.db").exists()
+        assert not (gobby_home / "services").exists()
 
 
 class TestLegacyNeo4jFlagErrors:
