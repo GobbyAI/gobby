@@ -118,6 +118,7 @@ def create_session_messages_registry(
             registry,
             session_manager,
             db,
+            llm_service=llm_service,
             web_chat_session_registry=web_chat_session_registry,
         )
 

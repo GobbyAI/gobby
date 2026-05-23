@@ -235,6 +235,63 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
+def _has_summary_refresh_source(session: Any) -> bool:
+    """Return whether summary generation has current session content to read."""
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if isinstance(digest_markdown, str) and digest_markdown.strip():
+        return True
+
+    transcript_path = getattr(session, "transcript_path", None)
+    return isinstance(transcript_path, str) and bool(transcript_path.strip())
+
+
+async def _refresh_compact_handoff_context(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    db: DatabaseProtocol,
+    llm_service: Any | None,
+) -> dict[str, Any]:
+    """Refresh summary_markdown before compact_self can trigger same-session resume."""
+    if not _has_summary_refresh_source(session):
+        return {"success": True, "refreshed": False, "reason": "no_summary_refresh_source"}
+
+    from gobby.sessions.summarize import generate_session_summaries
+
+    try:
+        result = await generate_session_summaries(
+            session_id=session_id,
+            session_manager=session_manager,
+            llm_service=llm_service,
+            db=db,
+            set_handoff_ready=True,
+        )
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed refreshing compact_self handoff context for %s: %s",
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return {"success": False, "error": detail}
+
+    if not result.get("success"):
+        error = str(result.get("error") or result.get("full_error") or "unknown error")
+        return {"success": False, "error": error}
+
+    refreshed_session = session_manager.get(session_id)
+    summary_markdown = getattr(refreshed_session, "summary_markdown", None)
+    if not isinstance(summary_markdown, str) or not summary_markdown.strip():
+        return {"success": False, "error": "summary refresh produced no summary_markdown"}
+
+    return {
+        "success": True,
+        "refreshed": True,
+        "summary_length": len(summary_markdown),
+    }
+
+
 async def _capture_transcript_tail(
     session_id: str,
     session_manager: SessionManager,
@@ -318,6 +375,7 @@ def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     db: DatabaseProtocol,
+    llm_service: Any | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
@@ -421,6 +479,20 @@ def register_terminal_tools(
         assert target is not None
         assert tmux is not None
 
+        refresh_result = await _refresh_compact_handoff_context(
+            resolved_session_id,
+            session,
+            session_manager,
+            db,
+            llm_service,
+        )
+        if not refresh_result.get("success"):
+            return {
+                "compacted": False,
+                "reason": "handoff context refresh failed before compaction: "
+                f"{refresh_result.get('error', 'unknown error')}",
+            }
+
         ok, reason, continuation_pending = await _send_terminal_compaction_command(
             tmux,
             target,
@@ -455,6 +527,9 @@ def register_terminal_tools(
             "interrupted": True,
             "continuation_pending": continuation_pending,
         }
+        if refresh_result.get("refreshed"):
+            result["handoff_context_refreshed"] = True
+            result["handoff_summary_length"] = refresh_result.get("summary_length")
         return result
 
     @registry.tool(

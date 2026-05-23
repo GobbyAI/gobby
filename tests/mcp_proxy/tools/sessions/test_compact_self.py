@@ -18,6 +18,7 @@ import pytest
 
 from gobby.llm.claude_models import DoneEvent
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _CLI_COMPACT_COMMANDS,
     _send_codex_compaction_command,
@@ -259,6 +260,73 @@ class TestCompactSelfTerminalPath:
         assert "tmux send-keys failed" in result["reason"]
         mock_mark.assert_called_once()
         mock_clear.assert_called_once()
+
+    def test_terminal_session_refreshes_handoff_context_before_compacting(self) -> None:
+        events: list[str] = []
+        session = _make_terminal_session("codex")
+        session.id = "s1"
+        session.title = "Coordinator"
+        session.status = "active"
+        session.digest_markdown = "### Turn 4\nFresh transcript digest for #15040."
+        session.transcript_path = None
+        session.summary_markdown = "stale pre-compaction summary"
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        db = MagicMock()
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        tmux = MagicMock()
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            events.append(f"tmux:{keys}")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+
+        async def refresh_summary(**kwargs: Any) -> dict[str, Any]:
+            assert kwargs["session_id"] == "s1"
+            events.append("refresh")
+            session.summary_markdown = "fresh compact handoff summary"
+            session.status = "handoff_ready"
+            return {"success": True, "full_length": len(session.summary_markdown)}
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_handoff_tools(registry, session_manager)
+
+        compact_self = registry.get_tool("compact_self")
+        get_handoff_context = registry.get_tool("get_handoff_context")
+        assert compact_self is not None
+        assert get_handoff_context is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                side_effect=refresh_summary,
+            ) as mock_refresh,
+        ):
+            result = asyncio.run(compact_self(session_id="s1"))
+            handoff = get_handoff_context(session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["handoff_context_refreshed"] is True
+        assert events == ["refresh", "tmux:Escape", "tmux:/compact\n"]
+        mock_refresh.assert_awaited_once()
+        assert handoff["context_type"] == "summary_markdown"
+        assert handoff["context"] == "fresh compact handoff summary"
+        assert "stale pre-compaction" not in handoff["context"]
 
 
 class TestCompactSelfFailureModes:
