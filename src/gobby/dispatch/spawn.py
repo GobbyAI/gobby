@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from gobby.build.workspaces import ensure_epic_integration_workspaces
+from gobby.build.workspaces import BuildWorkspaceError, ensure_epic_integration_workspaces
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._artifacts import (
@@ -211,15 +211,18 @@ def _prepare_spawn_artifacts(
     if not artifacts.target_branch:
         raise DispatchSpawnFailed("target_branch_missing")
 
-    ensure_epic_integration_workspaces(
-        task_manager=task_manager,
-        root_task=task,
-        backend=cast(Literal["worktree", "clone"], isolation),
-        target_branch=artifacts.target_branch,
-        project_id=project_id,
-        services=services,
-        merge_closed_descendant_commits=True,
-    )
+    try:
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=task,
+            backend=cast(Literal["worktree", "clone"], isolation),
+            target_branch=artifacts.target_branch,
+            project_id=project_id,
+            services=services,
+            merge_closed_descendant_commits=True,
+        )
+    except BuildWorkspaceError as exc:
+        raise DispatchSpawnFailed(str(exc)) from exc
     return TaskArtifactManager(db).get_artifacts(action.task_id)
 
 
