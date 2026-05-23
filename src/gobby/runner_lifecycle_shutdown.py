@@ -262,7 +262,13 @@ async def _stop_started_services(
         try:
             await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
         except TimeoutError:
-            logger.warning("Cron scheduler shutdown timed out")
+            if shutdown_intent is ShutdownIntent.RESTART:
+                logger.info(
+                    "Cron scheduler shutdown exceeded timeout during daemon restart; "
+                    "continuing with restart"
+                )
+            else:
+                logger.warning("Cron scheduler shutdown timed out")
 
     if runner.message_processor:
         try:

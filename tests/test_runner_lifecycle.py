@@ -1585,3 +1585,58 @@ class TestAgentRestartRecoveryHelpers:
 
         cancel_active.assert_not_awaited()
         runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_restart_cron_scheduler_timeout_logs_info(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=None,
+            cron_scheduler=SimpleNamespace(stop=AsyncMock()),
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=0)
+
+        async def raise_timeout(awaitable, timeout: float):
+            awaitable.close()
+            raise TimeoutError
+
+        caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+        with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
+            await runner_lifecycle_shutdown._stop_started_services(
+                runner,
+                cancel_active,
+                shutdown_intent=ShutdownIntent.RESTART,
+            )
+
+        assert "Cron scheduler shutdown exceeded timeout during daemon restart" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_stop_cron_scheduler_timeout_still_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=None,
+            cron_scheduler=SimpleNamespace(stop=AsyncMock()),
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=0)
+
+        async def raise_timeout(awaitable, timeout: float):
+            awaitable.close()
+            raise TimeoutError
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
+            await runner_lifecycle_shutdown._stop_started_services(
+                runner,
+                cancel_active,
+                shutdown_intent=ShutdownIntent.STOP,
+            )
+
+        assert "Cron scheduler shutdown timed out" in caplog.text
