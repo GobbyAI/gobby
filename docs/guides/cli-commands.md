@@ -151,7 +151,8 @@ gobby uninstall [OPTIONS]
 | `--git-hooks` | Install repository git hooks. |
 | `--all` | Install all supported integrations. |
 | `--no-ext-services` | Skip external service setup. |
-| `--neo4j-password PASSWORD` | Configure Neo4j with a specific password. |
+| `--falkordb` | Install only the FalkorDB graph backend service. |
+| `--falkordb-password PASSWORD` | Configure FalkorDB with a specific password. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
@@ -171,7 +172,7 @@ gobby uninstall [OPTIONS]
 | `--droid` | Remove Droid integration assets. |
 | `--qwen` | Remove QwenCode integration assets. |
 | `--all` | Remove all supported integration assets. |
-| `--neo4j` | Remove Neo4j integration data. |
+| `--falkordb` | Remove FalkorDB graph backend data and configuration. |
 | `--volumes` | Remove service volumes where supported. |
 | `--project` | Remove project-scoped configuration. |
 | `-C`, `--path PATH` | Uninstall from a specific path. |
@@ -594,4 +595,4 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

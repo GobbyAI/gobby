@@ -52,7 +52,7 @@ flowchart TB
     C --> D[gcode search and outline commands]
     C --> E[Daemon sync worker]
     E --> F[Qdrant vectors]
-    E --> G[Neo4j graph]
+    E --> G[FalkorDB graph]
     E --> H[Symbol summaries]
     G --> I[gcode callers, imports, blast-radius]
     G --> J[/api/code-index/graph routes]
@@ -76,7 +76,7 @@ The maintenance loop runs every `code_index.maintenance_interval_seconds`
 seconds. It replays `gcode index --project <root> --quiet` for each indexed
 project, purges projects whose root no longer exists, and fills missing symbol
 summaries when a summarizer is configured. A separate sync worker polls pending
-files and copies symbols to Qdrant vectors and Neo4j graph edges when those
+files and copies symbols to Qdrant vectors and FalkorDB graph edges when those
 backends are enabled and available.
 
 ## CLI Reference
@@ -153,7 +153,7 @@ The PostgreSQL hub-backed code-index store tracks:
 | Content chunks | Searchable chunks for comments, strings, configs, docs, and other non-symbol text |
 
 The code-index tables live in the runtime PostgreSQL hub; Qdrant adds semantic
-search and Neo4j adds graph traversal when configured and available. Symbol
+search and FalkorDB adds graph traversal when configured and available. Symbol
 summaries are cached in the code-index rows and invalidated when a symbol's
 content hash changes.
 
@@ -264,7 +264,7 @@ logs a warning and skips the incremental update.
 
 The maintenance loop checks indexed projects on the configured interval and
 uses `gcode index --project <root> --quiet` for refresh. The sync worker can
-then update Qdrant vectors and Neo4j graph edges in batches. Summary generation
+then update Qdrant vectors and FalkorDB graph edges in batches. Summary generation
 runs from maintenance when `code_index.summary_enabled` is true and the daemon
 has an LLM service.
 
@@ -326,4 +326,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_
