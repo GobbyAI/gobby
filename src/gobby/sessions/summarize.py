@@ -130,7 +130,7 @@ async def generate_session_summaries(
     if not session:
         return {"success": False, "error": "No session found", "session_id": session_id}
 
-    digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+    digest_markdown = _digest_markdown_for_summary(session)
     transcript_path = getattr(session, "transcript_path", None)
     path = Path(transcript_path) if transcript_path else None
     source = getattr(session, "source", None) or "claude"
@@ -274,7 +274,29 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
 
 def _summary_source_text(value: str | None) -> str:
     """Normalize optional markdown fields for summary context decisions."""
-    return value.strip() if value and value.strip() else ""
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _digest_markdown_for_summary(session: Any) -> str:
+    """Return digest context with the latest completed turn when digest lags."""
+    digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+    pending_turns = [
+        _summary_source_text(getattr(session, "last_turn_markdown", None)),
+        _summary_source_text(getattr(session, "last_assistant_content", None)),
+    ]
+
+    summary_parts = [digest_markdown] if digest_markdown else []
+    next_turn = len(TURN_PATTERN.findall(digest_markdown)) + 1
+    for turn_markdown in pending_turns:
+        if not turn_markdown:
+            continue
+        joined_summary = "\n\n".join(summary_parts)
+        if turn_markdown in joined_summary:
+            continue
+        summary_parts.append(f"### Turn {next_turn}\n{turn_markdown}")
+        next_turn += 1
+
+    return "\n\n".join(summary_parts)
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:
@@ -431,7 +453,7 @@ async def _generate_full_summary(
             format_turns_for_llm,
         )
 
-        digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+        digest_markdown = _digest_markdown_for_summary(session)
         source = getattr(session, "source", None) or "claude"
         first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
         if digest_markdown:
@@ -447,6 +469,10 @@ async def _generate_full_summary(
                 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
                 parser = GeminiTranscriptParser()
+            elif source == "grok":
+                from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+                parser = GrokTranscriptParser()
             elif source == "codex":
                 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 

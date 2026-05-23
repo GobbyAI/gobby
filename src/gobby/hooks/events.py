@@ -75,9 +75,11 @@ class HookEventType(str, Enum):
 class SessionSource(str, Enum):
     """Identifies which CLI originated the session."""
 
+    AGY = "agy"
     CLAUDE = "claude"
     DROID = "droid"
     GEMINI = "gemini"
+    GROK = "grok"
     QWEN = "qwen"
     CODEX = "codex"
     PIPELINE = "pipeline"
@@ -347,3 +349,16 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "codex": None,
     },
 }
+
+for _support in EVENT_TYPE_CLI_SUPPORT.values():
+    _support.setdefault("agy", None)
+    _support.setdefault("grok", None)
+
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["grok"] = "session_start"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["grok"] = "session_end"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_AGENT]["grok"] = "user_prompt_submit"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP]["grok"] = "stop"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["grok"] = "pre_tool_use"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["grok"] = "post_tool_use"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["grok"] = "pre_compact"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.NOTIFICATION]["grok"] = "notification"

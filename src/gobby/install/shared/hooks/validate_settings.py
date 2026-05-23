@@ -56,7 +56,7 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         nested=True,
     ),
     "gemini": ValidationConfig(
-        cli_name="Gemini CLI",
+        cli_name="Gemini CLI (deprecated)",
         settings_dir=".gemini",
         settings_file="settings.json",
         required_hooks=(
@@ -74,6 +74,23 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         ),
         nested=True,
         check_enable_hooks=True,
+    ),
+    "grok": ValidationConfig(
+        cli_name="Grok CLI",
+        settings_dir=".grok/hooks",
+        settings_file="gobby.json",
+        required_hooks=(
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PreCompact",
+            "Stop",
+            "Notification",
+        ),
+        nested=True,
     ),
     "qwen": ValidationConfig(
         cli_name="Qwen CLI",
@@ -231,7 +248,7 @@ def main() -> int:
     """Main entry point."""
     config = detect_cli_config()
     if config is None:
-        print("Could not detect CLI. Use --cli=<name> (claude, gemini, qwen, codex, droid)")
+        print("Could not detect CLI. Use --cli=<name> (claude, gemini, grok, qwen, codex, droid)")
         return 1
 
     return validate(config)

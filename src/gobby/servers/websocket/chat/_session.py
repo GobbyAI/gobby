@@ -41,7 +41,7 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
     normalized = provider.strip().lower()
     if normalized in {"", "inherit"}:
         return None
-    if normalized in {"claude", "gemini", "qwen", "codex", "droid"}:
+    if normalized in {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}:
         return normalized
     return None
 
@@ -727,7 +727,7 @@ class ChatSessionMixin:
                         session.system_prompt_override = persona_context
                 else:
                     context_parts: list[str] = []
-                    if effective_provider in {"gemini", "qwen"}:
+                    if effective_provider in {"gemini", "grok", "qwen"}:
                         preamble = _build_agent_identity_preamble(agent_body)
                     else:
                         preamble = agent_body.build_prompt_preamble()

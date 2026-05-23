@@ -8,10 +8,8 @@ from typing import Any, ClassVar
 from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.qwen import QwenAdapter
 from gobby.adapters.qwen_acp_client import QwenACPClient
-from gobby.servers.websocket.chat.backends.gemini import (
-    GeminiManagedChatSession,
-    GeminiWebChatBackend,
-)
+from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
+from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
 from gobby.servers.websocket.chat.local_openai_warmup import (
     ensure_qwen_local_openai_model_ready,
 )
@@ -22,7 +20,7 @@ _QWEN_BACKEND_START_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass
-class QwenManagedChatSession(GeminiManagedChatSession):
+class QwenManagedChatSession(ACPManagedChatSession):
     """Web-chat session backed by the shared Qwen ACP backend."""
 
     provider: str = field(default="qwen", init=False)
@@ -32,7 +30,7 @@ class QwenManagedChatSession(GeminiManagedChatSession):
         return _QWEN_TOOL_NAME_ADAPTER
 
 
-class QwenWebChatBackend(GeminiWebChatBackend):
+class QwenWebChatBackend(ACPWebChatBackend):
     """Shared daemon-owned Qwen ACP backend."""
 
     provider: ClassVar[str] = "qwen"
@@ -42,7 +40,7 @@ class QwenWebChatBackend(GeminiWebChatBackend):
 
     async def attach_session(
         self,
-        session: GeminiManagedChatSession,
+        session: ACPManagedChatSession,
         *,
         model: str | None = None,
     ) -> None:

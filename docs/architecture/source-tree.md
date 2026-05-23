@@ -250,7 +250,6 @@ gobby/                                  # Project root
 │   │   ├── task_dependencies.py        # Task dependency storage
 │   │   ├── memories.py                 # Memory storage
 │   │   ├── agents.py                   # Agent storage
-│   │   ├── agent_commands.py           # Agent command storage
 │   │   ├── inter_session_messages.py   # Inter-session messaging
 │   │   ├── workflow_definitions.py     # Workflow definition storage
 │   │   ├── workflow_audit.py           # Workflow audit log

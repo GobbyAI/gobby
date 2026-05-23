@@ -1,0 +1,38 @@
+{
+  "provider": "agy",
+  "capture_type": "transcript_manifest",
+  "cli_version": "1.0.1",
+  "captured_at": "2026-05-22T22:17:00Z",
+  "workspace": "/private/tmp/gobby-contract-probe-15038",
+  "project_config": {
+    "path_template": "~/.gemini/config/projects/<PROJECT_ID>.json",
+    "observed_project_id": "12cfa59c-25b3-4597-96fb-24e44d29172c",
+    "observed_resource_uri": "file:///private/tmp/gobby-contract-probe-15038"
+  },
+  "conversation_index": {
+    "path": "~/.gemini/antigravity-cli/cache/last_conversations.json",
+    "mapping": {
+      "/private/tmp/gobby-contract-probe-15038": "c27f2817-0ce1-4b68-b246-0afe6a8160ce"
+    }
+  },
+  "conversation_payloads": [
+    {
+      "conversation_id": "c27f2817-0ce1-4b68-b246-0afe6a8160ce",
+      "path_template": "~/.gemini/antigravity-cli/conversations/<CONVERSATION_ID>.pb",
+      "content_committed": false,
+      "reason": "Binary protobuf payload may contain private transcript data."
+    }
+  ],
+  "logs": [
+    {
+      "path_template": "~/.gemini/antigravity-cli/log/cli-YYYYMMDD_HHMMSS.log",
+      "observed_log": "~/.gemini/antigravity-cli/log/cli-20260522_171625.log",
+      "scrubbed_findings": [
+        "Silent auth via keyring succeeded.",
+        "Selected model label propagated as Gemini 3.5 Flash (High).",
+        "Created conversation c27f2817-0ce1-4b68-b246-0afe6a8160ce.",
+        "Conversation payload written under conversations/<conversation-id>.pb."
+      ]
+    }
+  ]
+}

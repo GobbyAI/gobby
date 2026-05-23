@@ -20,6 +20,10 @@ def _body() -> str:
     return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _normalized_body() -> str:
+    return " ".join(_body().split())
+
+
 def test_build_coordinator_skill_parses_and_is_discoverable() -> None:
     parsed = parse_skill_file(SKILL_DIR / "SKILL.md")
     skills = SkillLoader().load_directory(SKILLS_ROOT)
@@ -42,17 +46,18 @@ def test_build_coordinator_separates_target_and_coordination_epic() -> None:
 
 def test_build_coordinator_documents_unattended_build_discipline() -> None:
     body = _body()
+    normalized = _normalized_body()
 
     assert "coordinator intervention as evidence" in body
     assert "current coordinator session" in body
-    assert "Do not\ncreate or switch to a separate agent definition" in body
+    assert "Do not create or switch to a separate agent definition" in normalized
     assert "$gobby build-coordinator <target-ref>" in body
     assert "/gobby build-coordinator" in body
     assert "without `--quick`" in body
     assert "manual-ticking the dispatcher" in body
     assert "daemon-owned automation" in body
-    assert "Use `wait_for_agent` only when no useful coordinator work is available" in body
-    assert "compact context with `compact_self`" in body
+    assert "Prefer `gobby-sessions:compact_self` over `wait_for_agent`" in body
+    assert "If useful work exists, fix discovered build bugs" in normalized
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
@@ -80,12 +85,13 @@ def test_build_coordinator_requires_stage_normalization_and_bug_fixes() -> None:
 
 def test_build_coordinator_forbids_stop_hook_goal_closure_shortcut() -> None:
     body = _body()
+    normalized = _normalized_body()
 
     assert "The coordination epic is the active goal record" in body
-    assert "Do not close,\nunclaim, or move work out of it just to satisfy a stop hook" in body
-    assert "A stop\nhook is a reminder to finish or hand off the goal" in body
+    assert "Do not close, unclaim, or move work out of it just to satisfy a stop hook" in normalized
+    assert "A stop hook is a reminder to finish or hand off the goal" in normalized
     assert "do not detach or reparent them to make the coordinator task closable" in body
-    assert "Do not close the coordination epic to clear a stop\nhook" in body
+    assert "Do not close the coordination epic to clear a stop hook" in normalized
 
 
 def test_build_coordinator_is_generic_not_one_off() -> None:

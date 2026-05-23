@@ -1011,6 +1011,8 @@ describe("SessionsTab", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    expect(screen.getByRole("button", { name: "Send Context" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Command" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Expire Session" }));
 
     expect(onExpireSession).toHaveBeenCalledWith("paused-1");

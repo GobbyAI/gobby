@@ -694,9 +694,12 @@ def setup_signal_handlers(
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
+    recorded_intent: ShutdownIntent | None = None
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:
         def handle_shutdown() -> None:
+            nonlocal recorded_intent
+
             import traceback
 
             from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
@@ -709,10 +712,17 @@ def setup_signal_handlers(
             shutdown_record = read_shutdown_intent(home=get_gobby_home())
             logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
             if shutdown_intent_callback is not None:
-                try:
-                    shutdown_intent_callback(shutdown_record.intent)
-                except Exception:
-                    logger.exception("Shutdown intent callback failed")
+                if (
+                    recorded_intent is ShutdownIntent.RESTART
+                    and shutdown_record.intent is ShutdownIntent.STOP
+                ):
+                    logger.debug("Ignoring stop shutdown intent after restart intent was recorded")
+                else:
+                    try:
+                        shutdown_intent_callback(shutdown_record.intent)
+                        recorded_intent = shutdown_record.intent
+                    except Exception:
+                        logger.exception("Shutdown intent callback failed")
             shutdown_callback()
 
         return handle_shutdown

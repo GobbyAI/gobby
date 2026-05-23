@@ -35,7 +35,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManage
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
-_SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "droid"})
+_SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "gemini", "grok", "qwen", "droid"})
 
 
 def _infer_auth_cli(command: list[str]) -> str | None:

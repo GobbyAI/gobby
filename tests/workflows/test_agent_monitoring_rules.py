@@ -1,4 +1,4 @@
-"""Tests for agent-monitoring skill requirement rules."""
+"""Tests for build-coordinator monitoring skill requirement rules."""
 
 from __future__ import annotations
 
@@ -48,16 +48,17 @@ def _event(data: dict[str, object]) -> HookEvent:
     )
 
 
-class TestRequireAgentMonitoringSkill:
+class TestRequireBuildCoordinatorMonitoringSkill:
     def test_rule_structure(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("require-agent-monitoring-skill")
+        row = manager.get_by_name("require-build-coordinator-monitoring-skill")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.event.value == "before_tool"
-        assert "not skill_loaded('agent-monitoring')" in (body.when or "")
+        assert "skill_loaded('build-coordinator')" in (body.when or "")
+        assert "skill_loaded('agent-monitoring')" in (body.when or "")
         assert "list_running_agents" in (body.when or "")
         assert "capture_output" in (body.when or "")
         assert "tmux capture-pane" in (body.when or "")
@@ -66,7 +67,7 @@ class TestRequireAgentMonitoringSkill:
         assert body.effects[0].type == "block"
         assert (
             body.effects[0].reason
-            == 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.'
+            == 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.'
         )
 
     @pytest.mark.asyncio
@@ -86,10 +87,11 @@ class TestRequireAgentMonitoringSkill:
         response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
 
         assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert "build-coordinator" in (response.reason or "")
+        assert "agent-monitoring" not in (response.reason or "")
 
     @pytest.mark.asyncio
-    async def test_skips_monitoring_schema_after_skill_load(self, db) -> None:
+    async def test_skips_monitoring_schema_after_legacy_skill_load(self, db) -> None:
         _sync_bundled(db)
         event = _event(
             {
@@ -111,6 +113,28 @@ class TestRequireAgentMonitoringSkill:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_skips_monitoring_schema_after_build_coordinator_load(self, db) -> None:
+        _sync_bundled(db)
+        event = _event(
+            {
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "mcp_tool": "get_tool_schema",
+                "tool_input": {
+                    "server_name": "gobby-agents",
+                    "tool_name": "list_running_agents",
+                },
+            }
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["build-coordinator"]},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_blocks_monitoring_tool_call_before_skill_load(self, db) -> None:
         _sync_bundled(db)
         event = _event(
@@ -125,7 +149,8 @@ class TestRequireAgentMonitoringSkill:
         response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
 
         assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert "build-coordinator" in (response.reason or "")
+        assert "agent-monitoring" not in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_blocks_session_capture_raw_call_before_skill_load(self, db) -> None:
@@ -144,7 +169,8 @@ class TestRequireAgentMonitoringSkill:
         response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
 
         assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert "build-coordinator" in (response.reason or "")
+        assert "agent-monitoring" not in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_blocks_raw_tmux_monitoring_before_skill_load(self, db) -> None:
@@ -160,7 +186,8 @@ class TestRequireAgentMonitoringSkill:
         response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
 
         assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert "build-coordinator" in (response.reason or "")
+        assert "agent-monitoring" not in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_blocks_raw_sqlite_monitoring_before_skill_load(self, db) -> None:
@@ -178,4 +205,5 @@ class TestRequireAgentMonitoringSkill:
         response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
 
         assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert "build-coordinator" in (response.reason or "")
+        assert "agent-monitoring" not in (response.reason or "")

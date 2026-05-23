@@ -43,7 +43,7 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **PostgreSQL** | 17+ | Local runtime hub database |
+| **PostgreSQL** | 18+ | Local runtime hub database |
 | **pg_search** | ParadeDB extension | BM25 keyword indexes |
 | **psycopg** | 3.x | PostgreSQL driver and pools |
 

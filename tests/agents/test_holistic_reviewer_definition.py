@@ -96,12 +96,15 @@ def test_loads_required_skills_before_review() -> None:
     load_step = steps["load_skill"]
 
     assert agent["step_variables"]["required_skills"] == [
+        "code-index",
         "holistic-review",
         "tech-writer",
+        "task-transitions",
+        "verification-before-completion",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
-    assert 'get_skill(name="holistic-review")' in load_step["status_message"]
-    assert 'get_skill(name="tech-writer")' in load_step["status_message"]
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "review",

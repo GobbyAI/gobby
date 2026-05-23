@@ -22,6 +22,8 @@ from gobby.servers.websocket.chat.backends import (
     DroidWebChatBackend,
     GeminiManagedChatSession,
     GeminiWebChatBackend,
+    GrokManagedChatSession,
+    GrokWebChatBackend,
     ProviderBackendHealth,
     QwenManagedChatSession,
     QwenWebChatBackend,
@@ -54,6 +56,9 @@ class WebChatRuntimeManager:
         self._gemini_backend = GeminiWebChatBackend(
             default_model=gemini_default_model,
             sandbox_config=self._sandbox_config.model_copy(deep=True),
+        )
+        self._grok_backend = GrokWebChatBackend(
+            sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
         self._qwen_backend = QwenWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
@@ -108,6 +113,7 @@ class WebChatRuntimeManager:
 
         await self._codex_backend.start()
         await self._gemini_backend.start()
+        await self._grok_backend.start()
         await self._qwen_backend.start()
         await self._droid_backend.start()
 
@@ -115,6 +121,7 @@ class WebChatRuntimeManager:
         """Stop daemon-owned provider backends."""
         await self._droid_backend.stop()
         await self._qwen_backend.stop()
+        await self._grok_backend.stop()
         await self._gemini_backend.stop()
         await self._codex_backend.stop()
 
@@ -124,8 +131,16 @@ class WebChatRuntimeManager:
             return self._codex_backend.health()
         if provider == "gemini":
             return self._gemini_backend.health()
+        if provider == "grok":
+            return self._grok_backend.health()
         if provider == "qwen":
             return self._qwen_backend.health()
+        if provider == "agy":
+            return ProviderBackendHealth(
+                provider=provider,
+                available=False,
+                startup_error="AGY has no documented machine transport for live web chat yet",
+            )
         if provider == "droid":
             return self._droid_backend.health()
         if provider == "claude":
@@ -137,7 +152,9 @@ class WebChatRuntimeManager:
         return {
             "claude": self.health("claude").to_dict(),
             "gemini": self.health("gemini").to_dict(),
+            "grok": self.health("grok").to_dict(),
             "qwen": self.health("qwen").to_dict(),
+            "agy": self.health("agy").to_dict(),
             "codex": self.health("codex").to_dict(),
             "droid": self.health("droid").to_dict(),
         }
@@ -165,6 +182,15 @@ class WebChatRuntimeManager:
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
+        if provider == "grok":
+            return GrokManagedChatSession(
+                conversation_id=conversation_id,
+                _backend=self._grok_backend,
+                _model=model,
+                reasoning_effort=reasoning_effort,
+            )
+        if provider == "agy":
+            raise RuntimeError("AGY has no documented machine transport for live web chat yet")
         if provider == "codex":
             return CodexManagedChatSession(
                 conversation_id=conversation_id,

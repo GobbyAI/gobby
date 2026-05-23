@@ -1,12 +1,10 @@
-import { useState, useCallback, useEffect, useId, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   DialogDescription,
 } from "../chat/ui/Dialog";
-import { useMcp, type McpToolSchema } from "../../hooks/useMcp";
-import { ToolArgumentForm } from "../command-browser/ToolArgumentForm";
 import { getToolCallError, isSuccessfulToolCall } from "./toolCallStatus";
 
 interface SessionEntry {
@@ -18,7 +16,7 @@ interface SessionEntry {
   seqNum?: number | null;
 }
 
-export type InteractionMode = "context" | "command" | "keys" | "pane";
+export type InteractionMode = "context" | "keys" | "pane";
 
 interface SessionInteractionModalProps {
   open: boolean;
@@ -37,11 +35,6 @@ const MODE_CONFIG: Record<
     description:
       "Inject context into the session. The agent will see this on its next hook cycle.",
     placeholder: "Enter context to inject...",
-  },
-  command: {
-    title: "Send Command",
-    description: "Execute an MCP tool against this session's server.",
-    placeholder: "",
   },
   keys: {
     title: "Send Keys",
@@ -107,7 +100,6 @@ export function SessionInteractionModal({
   entry,
   fromSessionId,
 }: SessionInteractionModalProps) {
-  const argumentsLabelId = useId();
   const [text, setText] = useState("");
   const [literal, setLiteral] = useState(true);
   const [paneOutput, setPaneOutput] = useState<string | null>(null);
@@ -116,80 +108,12 @@ export function SessionInteractionModal({
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // MCP tool selector state (command mode)
-  const {
-    servers,
-    toolsByServer,
-    fetchServers,
-    fetchTools,
-    fetchToolSchema,
-    callTool: mcpCallTool,
-  } = useMcp();
-  const [selectedServer, setSelectedServer] = useState<string>("");
-  const [selectedTool, setSelectedTool] = useState<string>("");
-  const [toolSchema, setToolSchema] = useState<McpToolSchema | null>(null);
-  const [schemaLoading, setSchemaLoading] = useState(false);
-  const [formValues, setFormValues] = useState<Record<string, unknown>>({});
-  const [toolResult, setToolResult] = useState<{
-    success: boolean;
-    data?: unknown;
-    error?: string;
-  } | null>(null);
-
   // Focus input when modal opens
   useEffect(() => {
-    if (open && mode !== "pane" && mode !== "command") {
+    if (open && mode !== "pane") {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open, mode]);
-
-  // Fetch schema when tool is selected
-  const handleToolSelect = useCallback(
-    async (toolName: string) => {
-      setSelectedTool(toolName);
-      setFormValues({});
-      setToolResult(null);
-      setToolSchema(null);
-      if (!toolName || !selectedServer) return;
-      setSchemaLoading(true);
-      const fetched = await fetchToolSchema(selectedServer, toolName);
-      setToolSchema(fetched);
-      setSchemaLoading(false);
-    },
-    [selectedServer, fetchToolSchema],
-  );
-
-  // Handle server change — reset tool + schema
-  const handleServerSelect = useCallback((serverName: string) => {
-    setSelectedServer(serverName);
-    setSelectedTool("");
-    setToolSchema(null);
-    setFormValues({});
-    setToolResult(null);
-  }, []);
-
-  // Execute selected MCP tool
-  const handleExecuteTool = useCallback(async () => {
-    if (!selectedServer || !selectedTool) return;
-    setSending(true);
-    setError(null);
-    setToolResult(null);
-    try {
-      const res = await mcpCallTool(selectedServer, selectedTool, formValues);
-      setToolResult({
-        success: res.success,
-        data: res.result,
-        error: res.error,
-      });
-    } catch (err) {
-      setToolResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Tool execution failed",
-      });
-    } finally {
-      setSending(false);
-    }
-  }, [selectedServer, selectedTool, formValues, mcpCallTool]);
 
   const fetchPane = useCallback(async () => {
     setPaneLoading(true);
@@ -221,20 +145,11 @@ export function SessionInteractionModal({
       setError(null);
       setPaneOutput(null);
       setSending(false);
-      setSelectedServer("");
-      setSelectedTool("");
-      setToolSchema(null);
-      setFormValues({});
-      setToolResult(null);
       if (mode === "pane") {
         fetchPane();
       }
-      if (mode === "command") {
-        fetchServers();
-        fetchTools();
-      }
     }
-  }, [open, mode, fetchPane, fetchServers, fetchTools]);
+  }, [open, mode, fetchPane]);
 
   const handleSend = useCallback(async () => {
     if (!text.trim() && mode !== "keys") return;
@@ -245,7 +160,8 @@ export function SessionInteractionModal({
       if (mode === "context") {
         result = await callTool("gobby-agents", "send_message", {
           from_session: fromSessionId ?? "",
-          to_session: entry.id,
+          target: "session",
+          target_id: entry.id,
           content: text,
         });
       } else if (mode === "keys") {
@@ -302,7 +218,7 @@ export function SessionInteractionModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className={mode === "command" ? "max-w-lg" : "max-w-md md:max-w-2xl"}>
+      <DialogContent className="max-w-md md:max-w-2xl">
         <DialogTitle>{config.title}</DialogTitle>
         <DialogDescription>
           {config.description}
@@ -333,108 +249,6 @@ export function SessionInteractionModal({
               </button>
               <button className="session-modal-btn" onClick={onClose}>
                 Close
-              </button>
-            </div>
-          </div>
-        ) : mode === "command" ? (
-          <div className="mt-3 flex flex-col gap-3">
-            {/* Server dropdown */}
-            <label>
-              <span className="block text-sm font-medium text-foreground mb-1">
-                Server
-              </span>
-              <select
-                className="flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                value={selectedServer}
-                onChange={(e) => handleServerSelect(e.target.value)}
-              >
-                <option value="">-- select server --</option>
-                {servers
-                  .filter((s) => s.state === "connected")
-                  .map((s) => (
-                    <option key={s.name} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-
-            {/* Tool dropdown */}
-            {selectedServer && (
-              <label>
-                <span className="block text-sm font-medium text-foreground mb-1">
-                  Tool
-                </span>
-                <select
-                  className="flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  value={selectedTool}
-                  onChange={(e) => handleToolSelect(e.target.value)}
-                >
-                  <option value="">-- select tool --</option>
-                  {(toolsByServer[selectedServer] || []).map((t) => (
-                    <option key={t.name} value={t.name}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {/* Schema loading */}
-            {schemaLoading && (
-              <p className="text-xs text-muted-foreground">
-                Loading schema...
-              </p>
-            )}
-
-            {/* Dynamic args form */}
-            {toolSchema && !schemaLoading && (
-              <div role="group" aria-labelledby={argumentsLabelId}>
-                <span
-                  id={argumentsLabelId}
-                  className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2"
-                >
-                  Arguments
-                </span>
-                <ToolArgumentForm
-                  schema={toolSchema.inputSchema}
-                  values={formValues}
-                  onChange={setFormValues}
-                  disabled={sending}
-                />
-              </div>
-            )}
-
-            {/* Result display */}
-            {toolResult && (
-              <div
-                className={`rounded-md border p-3 text-sm font-mono whitespace-pre-wrap overflow-x-auto max-h-[20vh] overflow-y-auto ${
-                  toolResult.success
-                    ? "border-success/50 bg-success/5 text-foreground"
-                    : "border-destructive-foreground/50 bg-destructive/5 text-destructive-foreground"
-                }`}
-              >
-                {toolResult.error
-                  ? `Error: ${toolResult.error}`
-                  : JSON.stringify(toolResult.data, null, 2)}
-              </div>
-            )}
-
-            {error && <p className="text-xs text-error mt-2">{error}</p>}
-
-            <div className="flex justify-end gap-2 mt-1">
-              <button
-                className="session-modal-btn session-modal-btn--secondary"
-                onClick={onClose}
-              >
-                Cancel
-              </button>
-              <button
-                className="session-modal-btn"
-                onClick={handleExecuteTool}
-                disabled={sending || !selectedServer || !selectedTool}
-              >
-                {sending ? "Executing..." : "Execute"}
               </button>
             </div>
           </div>

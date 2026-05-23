@@ -27,7 +27,7 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "\\b(vitest|jest)\\b"
-        command_not_pattern: "\\b(vitest|jest)\\s+\\S+\\.(ts|js|tsx|jsx)\\b|\\b(vitest|jest)\\s.*(-t|--testNamePattern|--testPathPattern)\\s"
+        command_not_pattern: "\\b(vitest|jest)\\b[^;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b[^;&|]*(-t|--testNamePattern|--testPathPattern)(\\s+|=)"
         reason: >-
           Running the full test suite is not allowed for agents.
           Target specific test files or use filters.

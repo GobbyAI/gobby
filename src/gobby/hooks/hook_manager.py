@@ -5,6 +5,7 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 """
 
 import asyncio
+import concurrent.futures
 import copy
 import logging
 import os
@@ -528,21 +529,67 @@ class HookManager:
         # Stop health check monitoring (delegated to HealthMonitor)
         self._health_monitor.stop()
 
-        # Close webhook dispatcher HTTP client
-        try:
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._webhook_dispatcher.close(), self._loop
-                ).result(timeout=5.0)
-            else:
-                asyncio.run(self._webhook_dispatcher.close())
-        except Exception as e:
-            self.logger.warning(f"Failed to close webhook dispatcher: {e}")
+        self._close_webhook_dispatcher_sync()
 
         if self._owns_database and hasattr(self, "_database"):
             self._database.close()
 
         self.logger.debug("HookManager shutdown complete")
+
+    async def shutdown_async(self) -> None:
+        """Clean up HookManager resources from an async shutdown context."""
+        self.logger.debug("HookManager shutting down")
+
+        # Stop health check monitoring (delegated to HealthMonitor)
+        self._health_monitor.stop()
+
+        await self._close_webhook_dispatcher_async()
+
+        if self._owns_database and hasattr(self, "_database"):
+            self._database.close()
+
+        self.logger.debug("HookManager shutdown complete")
+
+    async def _close_webhook_dispatcher_async(self) -> None:
+        try:
+            await self._webhook_dispatcher.close()
+        except Exception as exc:
+            self._log_webhook_dispatcher_close_failure(exc)
+
+    def _close_webhook_dispatcher_sync(self) -> None:
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is not None:
+            running_loop.create_task(self._close_webhook_dispatcher_async())
+            self.logger.debug("Scheduled webhook dispatcher close on current event loop")
+            return
+
+        try:
+            if self._loop and self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._close_webhook_dispatcher_async(), self._loop
+                ).result(timeout=5.0)
+            else:
+                asyncio.run(self._close_webhook_dispatcher_async())
+        except concurrent.futures.TimeoutError:
+            self.logger.warning(
+                "Timed out closing webhook dispatcher after 5.0s",
+                exc_info=True,
+            )
+        except Exception as exc:
+            self._log_webhook_dispatcher_close_failure(exc)
+
+    def _log_webhook_dispatcher_close_failure(self, exc: Exception) -> None:
+        message = str(exc) or "<no message>"
+        self.logger.warning(
+            "Failed to close webhook dispatcher (%s): %s",
+            type(exc).__name__,
+            message,
+            exc_info=True,
+        )
 
     # ==================== HELPER METHODS ====================
 

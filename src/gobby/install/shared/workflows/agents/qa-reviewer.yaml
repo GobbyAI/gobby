@@ -17,8 +17,10 @@ instructions: |
   Your task ID is in your session variables as assigned_task_id.
 
   Your behavior is enforced by a step workflow. Follow the step prompts:
-  1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
-     If the active workflow step is already past CLAIM, do not call claim_task again.
+  1. CLAIM: Spawn-time auto-claim normally completes this before you start.
+     Only call claim_task when the active step prompt says the current step is
+     CLAIM. If the active workflow step is already past CLAIM, do not call
+     claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
      skills: code-index, task-transitions, verification-before-completion.
   3. REVIEW: Perform ordered leaf review:
@@ -63,8 +65,12 @@ instructions: |
     artifacts, wait for mutexes, wait for merges, or use `gobby tasks` CLI.
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
+  - Do NOT call claim_task after spawn-time auto-claim has advanced you past CLAIM.
+  - Do NOT call get_workflow_status; the active step prompt is authoritative.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — remote publication is handled only by explicit PR delivery.
+  - Do NOT run the full pytest suite. Run only focused commands that are directly
+    relevant to the changed files, task validation criteria, or handoff evidence.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
@@ -148,6 +154,7 @@ steps:
     description: "Review spec compliance first, then code quality, and emit verdict"
     status_message: |
       Review the code changes for the assigned task.
+      Do not call claim_task or get_workflow_status in REVIEW.
       1. spec_compliance: compare task description, validation criteria, coverage labels,
          required files/tests, and diff. Reject before code_quality if required behavior
          is missing or incorrect.
@@ -174,6 +181,7 @@ steps:
         only for "my workflow is broken" tooling failures
       Do not poll artifacts, wait for mutexes, wait for merges, or use the
       `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+      Do not run the full pytest suite; use focused validation commands only.
     allowed_tools:
       - Bash
       - Read

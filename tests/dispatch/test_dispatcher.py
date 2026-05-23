@@ -954,6 +954,82 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
     assert artifacts.target_branch == "main"
 
 
+async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.workspaces import BuildWorkspaceError
+    from gobby.dispatch import dispatcher
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+        integration_workspace_id="wt-integration",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+
+    def fail_prepare(**_kwargs: object) -> None:
+        raise BuildWorkspaceError("failed to refresh integration workspace: CONFLICT")
+
+    async def unexpected_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("spawn should not run after workspace preparation failure")
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fail_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        unexpected_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+    storage = _mutex_storage(temp_db)
+    caplog.set_level(logging.ERROR, logger="gobby.dispatch.dispatcher")
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "holistic_qa").state == "ready"
+    assert updated.dispatch_failure_count == 1
+    assert "### Dispatch spawn failed" in updated.description
+    assert "failed to refresh integration workspace: CONFLICT" in updated.description
+    assert "Dispatcher heartbeat candidate failed" not in caplog.text
+
+
 async def test_spawn_failure_rolls_stage_ready_and_releases(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1645,3 +1721,80 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], startup=True)
 
     assert storage.get_mutex(task.id) is None
+
+
+async def test_heartbeat_recovers_orphan_no_run_mutex_before_full_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    old_acquired_at = datetime.now(UTC) - timedelta(
+        seconds=dispatcher.ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS + 5
+    )
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=old_acquired_at,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: SpawnAgentAction(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            agent_slug="backend-developer",
+            prompt="resume work",
+        ),
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-recovered",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert spawned == [task.id]
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-recovered"
+
+
+async def test_heartbeat_preserves_fresh_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=datetime.now(UTC),
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-too-soon",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert spawned == []
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None

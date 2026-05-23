@@ -7,7 +7,7 @@ from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
 
-from ._constants import AgentRunStatus
+from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
@@ -126,6 +126,19 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             "WHERE ar.status = 'running'",
             order_by="ORDER BY ar.started_at ASC",
+            limit=limit,
+        )
+
+    def list_terminal_with_tmux(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
+        """List terminal agent runs that still have a persisted tmux session."""
+        status_placeholders = ", ".join("?" for _ in TERMINAL_AGENT_RUN_STATUSES)
+        return self._fetch_runs_with_live_stats(
+            f"""
+            WHERE ar.status IN ({status_placeholders})
+            AND ar.tmux_session_name IS NOT NULL
+            """,
+            TERMINAL_AGENT_RUN_STATUSES,
+            order_by="ORDER BY ar.completed_at ASC, ar.updated_at ASC",
             limit=limit,
         )
 

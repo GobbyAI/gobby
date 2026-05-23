@@ -4,11 +4,11 @@ Qwen currently exposes Gemini-compatible hook payloads, but it remains a
 distinct provider so storage, routing, and telemetry preserve Qwen identity.
 """
 
-from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.hooks.events import SessionSource
 
 
-class QwenAdapter(GeminiAdapter):
+class QwenAdapter(ACPHookAdapter):
     """Adapter for Qwen CLI hook translation."""
 
     source = SessionSource.QWEN

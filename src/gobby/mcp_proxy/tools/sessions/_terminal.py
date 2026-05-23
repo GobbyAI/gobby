@@ -14,6 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiofiles
+
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.sessions.compact_continuation import (
@@ -233,7 +235,7 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
-def _capture_transcript_tail(
+async def _capture_transcript_tail(
     session_id: str,
     session_manager: SessionManager,
     lines: int,
@@ -256,8 +258,8 @@ def _capture_transcript_tail(
     max_lines = max(1, lines)
     tail: deque[str] = deque(maxlen=max_lines)
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for raw_line in handle:
+        async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
+            async for raw_line in handle:
                 tail.append(raw_line.rstrip("\n"))
     except OSError as exc:
         detail = str(exc) or type(exc).__name__
@@ -469,7 +471,7 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
-            fallback, transcript_error = _capture_transcript_tail(
+            fallback, transcript_error = await _capture_transcript_tail(
                 session_id,
                 session_manager,
                 lines,

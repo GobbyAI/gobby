@@ -143,13 +143,13 @@ if command -v gobby >/dev/null 2>&1; then
     fi
 fi
 """,
-    "post-commit": """
+    "post-commit": r"""
 # Gobby incremental code indexing after commit
 CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
 if [ -n "$CHANGED_FILES" ]; then
     GCODE="$HOME/.gobby/bin/gcode"
     if [ -x "$GCODE" ]; then
-        echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --files --quiet &
+        echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &
     fi
 fi
 """,

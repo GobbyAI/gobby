@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import (
     SeededContextTokens,
@@ -22,6 +24,7 @@ from gobby.utils.session_context import (
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +101,57 @@ def test_resolve_and_seed_contexts_session_only_derives_project_from_session() -
     try:
         assert tokens.project_token == "project-token"
         mock_from_session.assert_called_once_with(SESSION_PLATFORM_UUID, mgr, mgr.db)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
+    temp_db,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed resumed Codex registration must not seed a stale wrapper session id."""
+    project = LocalProjectManager(temp_db).create(
+        name="resumed-codex-project",
+        repo_path="/tmp/resumed-codex-project",
+    )
+    session_manager = SessionManager(temp_db)
+    canonical_id = session_manager.register_session(
+        external_id="codex-external-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project.id,
+    )
+    stale_wrapper_id = str(uuid.uuid4())
+
+    with patch.object(session_manager, "register", side_effect=RuntimeError("boom")):
+        injected_session_id = session_manager.register_session(
+            external_id="codex-external-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project.id,
+        )
+
+    assert injected_session_id == canonical_id
+    assert injected_session_id != stale_wrapper_id
+
+    caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
+    tokens = resolve_and_seed_contexts(
+        session_ref=injected_session_id,
+        session_manager=session_manager,
+        db=temp_db,
+    )
+    try:
+        assert tokens.resolved_session_id == canonical_id
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == canonical_id
+        assert ctx.conversation_id == "codex-external-session"
+
+        variables = SessionVariableManager(temp_db)
+        variables.set_variable(ctx.session_id, "wrapper_recovery", True)
+        assert variables.get_variables(canonical_id)["wrapper_recovery"] is True
+        assert variables.get_variables(stale_wrapper_id) == {}
+        assert not any("could not resolve session ref" in rec.message for rec in caplog.records)
     finally:
         reset_seeded_contexts(tokens)
 
