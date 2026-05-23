@@ -56,6 +56,7 @@ class CronScheduler:
             logger.info("Cron scheduler disabled by config")
             return
 
+        self._fail_orphaned_running_runs_on_startup()
         self._running = True
         self._check_task = asyncio.create_task(
             self._check_loop(),
@@ -69,6 +70,13 @@ class CronScheduler:
             f"Cron scheduler started (interval={self.config.check_interval_seconds}s, "
             f"max_concurrent={self.config.max_concurrent_jobs})"
         )
+
+    def _fail_orphaned_running_runs_on_startup(self) -> None:
+        failed = self.storage.fail_running_runs(
+            "Cron run was still marked running when the scheduler started"
+        )
+        if failed:
+            logger.info("Marked %s orphaned cron run(s) failed at scheduler startup", failed)
 
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""

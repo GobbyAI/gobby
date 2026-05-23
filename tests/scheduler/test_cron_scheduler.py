@@ -113,6 +113,45 @@ async def test_start_creates_tasks(scheduler: CronScheduler) -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_fails_orphan_running_runs_before_first_tick(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Rows left running by a previous daemon must not suppress the first tick."""
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(job.id)
+    cron_storage.update_run(stale_run.id, status="running")
+    cron_storage.update_job(
+        job.id, next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    )
+
+    try:
+        await scheduler.start()
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count >= 1,
+            description="dispatch after startup stale cron cleanup",
+        )
+    finally:
+        await scheduler.stop()
+
+    refreshed_run = cron_storage.get_run(stale_run.id)
+    assert refreshed_run is not None
+    assert refreshed_run.status == "failed"
+    assert refreshed_run.error == "Cron run was still marked running when the scheduler started"
+    mock_executor.execute.assert_called_once()
+    assert mock_executor.execute.await_args.args[0].id == job.id
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_tasks(scheduler: CronScheduler) -> None:
     """stop() cancels tasks gracefully."""
     await scheduler.start()
