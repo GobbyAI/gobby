@@ -48,7 +48,10 @@ def test_coderabbit_skill_requires_plan_mode_triage_before_edits() -> None:
 
     assert "## Plan Mode Gate" in body
     assert "If it is not, you MUST enter native Plan Mode" in body
-    assert "before reading\nreports, verifying findings, creating or claiming tasks, or editing files" in body
+    assert (
+        "before reading\nreports, verifying findings, creating or claiming tasks, or editing files"
+        in body
+    )
     assert "session-level planning is the\nassistant's internal planning posture" in body
     assert "`EnterPlanMode`" in body
     assert "wait for plan approval before continuing" in body

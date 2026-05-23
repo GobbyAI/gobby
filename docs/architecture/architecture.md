@@ -191,5 +191,5 @@ Hook event fired (e.g., before_tool)
 4. **Progressive Discovery**: MCP tools loaded on-demand to reduce token usage
 5. **Multi-Provider LLM**: Abstraction layer supports Claude, Gemini, OpenAI, and LiteLLM
 6. **Event-Driven Hooks**: Hook events feed into RuleEngine for enforcement and context injection
-7. **P2P Agent Messaging**: Agents communicate via send_message/send_command without parent relay
+7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access

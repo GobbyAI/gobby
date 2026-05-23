@@ -103,11 +103,15 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     terminate = _step(agent, "terminate")
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"holistic-review", "tech-writer"}.issubset(
-        set(agent["step_variables"]["required_skills"])
-    )
-    assert 'get_skill(name="holistic-review")' in load_skill["status_message"]
-    assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
+    assert {
+        "code-index",
+        "holistic-review",
+        "tech-writer",
+        "task-transitions",
+        "verification-before-completion",
+    }.issubset(set(agent["step_variables"]["required_skills"]))
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
     assert "Discovery Brief" in agent["instructions"]
     assert "descendant task set" in agent["instructions"]
     assert review["allowed_tools"] == "all"
@@ -190,10 +194,17 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
-    assert agent["step_variables"]["required_skills"] == ["development-discipline"]
+    assert agent["step_variables"]["required_skills"] == [
+        "development-discipline",
+        "task-transitions",
+        "verification-before-completion",
+    ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
-    assert 'get_skill(name="development-discipline")' in load_required["status_message"]
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
     assert "development-discipline" in agent["instructions"]
+    assert "task-transitions" in agent["instructions"]
+    assert "verification-before-completion" in agent["instructions"]
     assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]

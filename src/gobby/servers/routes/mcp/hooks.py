@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
-from gobby.adapters.claude_contract import build_graceful_error_hook_response, get_claude_contract
+from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
+from gobby.adapters.claude_contract import get_claude_contract
+from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -55,43 +57,83 @@ def _graceful_error_response(
 
     This prevents agents from being confused by non-fatal hook errors.
     """
-    if source == "droid":
-        from gobby.adapters.droid import DroidAdapter
-        from gobby.adapters.droid_contract import get_droid_contract
-        from gobby.hooks.events import HookResponse
+    provider = source or "claude"
+    message = f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
+    record_adapter_degradation(
+        provider=provider,
+        hook_type=hook_type,
+        kind=AdapterDegradationKind.GRACEFUL_ERROR,
+        response_field="context",
+        destination_channel="provider_capability",
+    )
 
-        message = (
-            f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
-        )
-        droid_contract = get_droid_contract(hook_type)
-        hook_response = HookResponse(
-            decision="allow",
-            context=(
-                message if droid_contract and droid_contract.allows_additional_context else None
-            ),
-            system_message=(
-                None if droid_contract and droid_contract.allows_additional_context else message
-            ),
-        )
+    try:
+        capabilities = get_provider_capabilities(provider)
+        context_channel = capabilities.context_channel_for(hook_type)
+    except ValueError:
+        provider = "claude"
+        context_channel = get_provider_capabilities(provider).context_channel_for(hook_type)
+
+    from gobby.hooks.events import HookResponse
+
+    if context_channel is ContextChannel.ADDITIONAL_CONTEXT:
+        hook_response = HookResponse(decision="allow", context=message)
+    elif context_channel is ContextChannel.SYSTEM_MESSAGE:
+        hook_response = HookResponse(decision="allow", context=message)
+    else:
+        hook_response = HookResponse(decision="allow", system_message=message)
+
+    if provider == "droid":
+        from gobby.adapters.droid import DroidAdapter
+
         result = DroidAdapter().translate_from_hook_response(hook_response, hook_type=hook_type)
         if isinstance(result, dict):
             return result
 
-    if source == "codex":
+    if provider == "codex":
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         codex_response = CodexHooksAdapter().translate_from_hook_response(
-            build_graceful_error_hook_response(error_msg),
+            hook_response,
             hook_type=hook_type,
         )
         if isinstance(codex_response, dict):
             return codex_response
 
+    if provider == "gemini":
+        from gobby.adapters.gemini import GeminiAdapter
+
+        gemini_response = GeminiAdapter().translate_from_hook_response(
+            hook_response,
+            hook_type=hook_type,
+        )
+        if isinstance(gemini_response, dict):
+            return gemini_response
+
+    if provider == "grok":
+        from gobby.adapters.grok import GrokAdapter
+
+        grok_response = GrokAdapter().translate_from_hook_response(
+            hook_response,
+            hook_type=hook_type,
+        )
+        if isinstance(grok_response, dict):
+            return grok_response
+
+    if provider == "qwen":
+        from gobby.adapters.qwen import QwenAdapter
+
+        qwen_response = QwenAdapter().translate_from_hook_response(
+            hook_response,
+            hook_type=hook_type,
+        )
+        if isinstance(qwen_response, dict):
+            return qwen_response
+
     from gobby.adapters.claude_code import ClaudeCodeAdapter
 
-    adapter = ClaudeCodeAdapter()
-    claude_response = adapter.translate_from_hook_response(
-        build_graceful_error_hook_response(error_msg),
+    claude_response = ClaudeCodeAdapter().translate_from_hook_response(
+        hook_response,
         hook_type=hook_type,
     )
     if isinstance(claude_response, dict):
@@ -102,9 +144,7 @@ def _graceful_error_response(
     if claude_contract and claude_contract.allows_additional_context:
         fallback["hookSpecificOutput"] = {
             "hookEventName": claude_contract.hook_event_name,
-            "additionalContext": (
-                f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
-            ),
+            "additionalContext": message,
         }
     return fallback
 
@@ -444,6 +484,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
             from gobby.adapters.gemini import GeminiAdapter
+            from gobby.adapters.grok import GrokAdapter
             from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
@@ -452,6 +493,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "qwen":
                 adapter = QwenAdapter(hook_manager=hook_manager)
+            elif source == "grok":
+                adapter = GrokAdapter(hook_manager=hook_manager)
             elif source == "codex":
                 # Always use CodexHooksAdapter for HTTP hook requests from
                 # Gobby-managed hook commands. app.state.codex_adapter is the
@@ -469,7 +512,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail=(
                         f"Unsupported source: {source}. "
-                        "Supported: claude, gemini, qwen, codex, droid"
+                        "Supported: claude, gemini, grok, qwen, codex, droid"
                     ),
                 )
 

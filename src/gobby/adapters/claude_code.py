@@ -16,14 +16,20 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
+from gobby.adapters.capabilities import ContextChannel, ReasonFormat, get_provider_capabilities
 from gobby.adapters.claude_contract import (
     CLAUDE_EVENT_MAP,
     CLAUDE_HOOK_EVENT_NAME_MAP,
     ClaudeDecisionStyle,
     get_claude_contract,
 )
+from gobby.adapters.degradation import (
+    AdapterDegradationKind,
+    record_adapter_degradation,
+    record_unsupported_response_fields,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -207,7 +213,13 @@ class ClaudeCodeAdapter(BaseAdapter):
     ) -> str | None:
         """Build Claude ``additionalContext`` content for supported events."""
         contract = get_claude_contract(hook_type)
-        if not contract or not contract.allows_additional_context:
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_type)
+        if (
+            not contract
+            or not capability
+            or capability.context_channel is not ContextChannel.ADDITIONAL_CONTEXT
+        ):
             return None
 
         additional_context_parts: list[tuple[str, str]] = []
@@ -236,10 +248,13 @@ class ClaudeCodeAdapter(BaseAdapter):
             return None
 
         contributor_sizes = {label: len(part) for label, part in additional_context_parts}
-        return truncate_additional_context(
+        return truncate_context_for_adapter(
             "\n\n".join(part for _, part in additional_context_parts),
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
             contributor_sizes=contributor_sizes,
-            logger=logger,
+            event_logger=logger,
         )
 
     def translate_from_hook_response(
@@ -267,6 +282,15 @@ class ClaudeCodeAdapter(BaseAdapter):
             Dict in Claude Code's expected format.
         """
         contract = get_claude_contract(hook_type)
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_type)
+        record_unsupported_response_fields(
+            response,
+            provider=self.source,
+            hook_type=hook_type,
+            capability=capability,
+            event_logger=logger,
+        )
         hook_event_name = contract.hook_event_name if contract else "Unknown"
         additional_context = self._build_additional_context(response, hook_type=hook_type)
 
@@ -318,10 +342,26 @@ class ClaudeCodeAdapter(BaseAdapter):
                     hook_output["permissionDecision"] = permission_decision
                     if normalized_reason:
                         permission_reason = normalized_reason
-                        if is_denied:
-                            permission_reason = _compact_claude_pre_tool_deny_reason(
+                        if (
+                            is_denied
+                            and capability
+                            and capability.reason_format is ReasonFormat.CLAUDE_PRE_TOOL_COMPACT
+                        ):
+                            compacted_reason = _compact_claude_pre_tool_deny_reason(
                                 normalized_reason
                             )
+                            if compacted_reason != normalized_reason:
+                                record_adapter_degradation(
+                                    provider=self.source,
+                                    hook_type=hook_type,
+                                    kind=AdapterDegradationKind.REASON_COMPACTED,
+                                    response_field="reason",
+                                    destination_channel=(
+                                        "hookSpecificOutput.permissionDecisionReason"
+                                    ),
+                                    event_logger=logger,
+                                )
+                            permission_reason = compacted_reason
                         hook_output["permissionDecisionReason"] = permission_reason
                 if response.modified_input is not None and permission_decision != "deny":
                     hook_output["updatedInput"] = response.modified_input

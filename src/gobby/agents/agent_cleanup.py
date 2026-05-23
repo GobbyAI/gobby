@@ -63,6 +63,7 @@ class AgentCleanupHandler:
         stall_classifier: StallClassifier,
         loop_tracker: LoopTracker,
         master_fds: dict[str, int],
+        kill_tmux_session: Callable[[str], Awaitable[bool]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
@@ -77,6 +78,7 @@ class AgentCleanupHandler:
         self._stall_classifier = stall_classifier
         self._loop_tracker = loop_tracker
         self._master_fds = master_fds
+        self._kill_tmux_session = kill_tmux_session
         self._run_db = run_db
 
     async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -123,6 +125,7 @@ class AgentCleanupHandler:
                 os.close(fd)
             except OSError:
                 pass
+        await self._close_tmux_session(run)
 
         self._prompt_detector.clear(run.id)
         self._terminal_prompt_monitor.clear(run.id)
@@ -184,6 +187,56 @@ class AgentCleanupHandler:
                     run.task_id,
                     exc_info=True,
                 )
+
+    async def _close_tmux_session(self, run: AgentRun) -> bool:
+        tmux_session_name = run.tmux_session_name
+        if not tmux_session_name or self._kill_tmux_session is None:
+            return False
+
+        latest = await self._run_sqlite(self._agent_run_manager.get, run.id)
+        if latest is None or latest.tmux_session_name != tmux_session_name:
+            return False
+
+        try:
+            killed = await self._kill_tmux_session(tmux_session_name)
+        except Exception:
+            logger.warning(
+                "Failed to close lingering tmux session %s for terminal agent %s",
+                tmux_session_name,
+                run.id,
+                exc_info=True,
+            )
+            return False
+
+        if not killed:
+            logger.warning(
+                "Tmux session %s for terminal agent %s was not closed",
+                tmux_session_name,
+                run.id,
+            )
+            return False
+
+        cleared = await self._run_sqlite(
+            self._agent_run_manager.clear_tmux_session_name,
+            run.id,
+            tmux_session_name,
+        )
+        if cleared:
+            logger.info(
+                "Closed lingering tmux session %s for terminal agent %s",
+                tmux_session_name,
+                run.id,
+            )
+        return cast(bool, cleared)
+
+    async def cleanup_terminal_tmux_sessions(self) -> int:
+        """Close tmux sessions left behind for already-terminal agent runs."""
+        runs = await self._run_sqlite(self._agent_run_manager.list_terminal_with_tmux)
+        closed = 0
+        for run in runs:
+            if await self._close_tmux_session(run):
+                closed += 1
+        return closed
 
     async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
         tool_calls_count = run.tool_calls_count or 0
@@ -321,6 +374,9 @@ class AgentCleanupHandler:
         expired = await self._run_sqlite(self._agent_run_manager.expire_sessions_for_terminal_runs)
         if expired:
             logger.info("Expired %s session(s) for terminal agent runs", expired)
+        closed = await self.cleanup_terminal_tmux_sessions()
+        if closed:
+            logger.info("Closed %s lingering tmux session(s) for terminal agent runs", closed)
         return cast(int, expired)
 
     async def cleanup_stale_pending_runs(self) -> int:

@@ -11,6 +11,7 @@ import pytest
 from gobby.shutdown_intent import (
     ShutdownIntent,
     get_active_shutdown_marker_path,
+    read_active_shutdown_intent,
     read_shutdown_intent,
     write_shutdown_intent,
 )
@@ -120,6 +121,43 @@ def test_write_shutdown_intent_records_non_consuming_active_marker(tmp_path: Pat
     assert record.intent is ShutdownIntent.RESTART
     assert not (tmp_path / "shutdown_source.json").exists()
     assert get_active_shutdown_marker_path(tmp_path).exists()
+
+
+def test_read_active_shutdown_intent_survives_consuming_source_marker(
+    tmp_path: Path,
+) -> None:
+    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=789, home=tmp_path)
+    consumed = read_shutdown_intent(home=tmp_path)
+
+    active = read_active_shutdown_intent(home=tmp_path)
+
+    assert consumed.intent is ShutdownIntent.RESTART
+    assert active is not None
+    assert active.intent is ShutdownIntent.RESTART
+    assert active.source == "cli_restart"
+    assert active.sender_pid == 789
+    assert active.stale is False
+
+
+def test_read_active_shutdown_intent_returns_stale_record(tmp_path: Path) -> None:
+    marker = get_active_shutdown_marker_path(tmp_path)
+    marker.write_text(
+        json.dumps(
+            {
+                "source": "cli_restart",
+                "intent": "restart",
+                "sender_pid": 123,
+                "timestamp": time.time() - 60,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    active = read_active_shutdown_intent(home=tmp_path, max_age_seconds=10)
+
+    assert active is not None
+    assert active.intent is ShutdownIntent.STOP
+    assert active.stale is True
 
 
 def test_read_shutdown_intent_logs_malformed_content(

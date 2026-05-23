@@ -129,12 +129,18 @@ def resolve_hook_project_context(
         apply_project_id_to_event(event, project_id)
         return HookProjectResolution(project_id, source="existing-session")
 
+    cwd = _as_nonempty_str(event.cwd) or _as_nonempty_str(event.data.get("cwd"))
+    if is_hook_contract_probe_cwd(cwd):
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        apply_project_id_to_event(event, GLOBAL_PROJECT_ID)
+        return HookProjectResolution(GLOBAL_PROJECT_ID, source="contract-probe")
+
     project_id = _project_id_from_current_context()
     if project_id:
         apply_project_id_to_event(event, project_id)
         return HookProjectResolution(project_id, source="current-context")
 
-    cwd = _as_nonempty_str(event.cwd) or _as_nonempty_str(event.data.get("cwd"))
     if is_unusable_hook_cwd(cwd):
         return HookProjectResolution(
             None,
@@ -230,6 +236,17 @@ def _project_id_from_current_context() -> str | None:
     if not context:
         return None
     return _as_nonempty_str(context.get("id"))
+
+
+def is_hook_contract_probe_cwd(cwd: str | None) -> bool:
+    if not cwd:
+        return False
+    path = Path(cwd).expanduser()
+    return (
+        path.is_absolute()
+        and "tmp" in path.parts
+        and any(part.startswith("gobby-contract-probe-") for part in path.parts)
+    )
 
 
 def _as_nonempty_str(value: Any) -> str | None:

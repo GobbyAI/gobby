@@ -14,14 +14,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from threading import Lock
 
-STATUSLINE_GAP_WARNING_THRESHOLD_MS = 120_000
+STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS = 120_000
+STATUSLINE_GAP_WARNING_THRESHOLD_MS = 600_000
+STATUSLINE_GAP_WARNING_THROTTLE_SECONDS = 3_600
 STATUSLINE_LAST_SEEN_TTL_SECONDS = 86_400
 STATUSLINE_PRUNE_INTERVAL_SECONDS = 300
 
 _STATUSLINE_LAST_SEEN: dict[str, datetime] = {}
 _SESSION_ACTIVITY_LAST_SEEN: dict[str, datetime] = {}
+_STATUSLINE_GAP_WARNING_LAST_EMITTED: dict[str, datetime] = {}
 _STATUSLINE_LAST_SEEN_LOCK = Lock()
 _SESSION_ACTIVITY_LAST_SEEN_LOCK = Lock()
+_STATUSLINE_GAP_WARNING_LOCK = Lock()
 _LAST_PRUNE_AT: datetime | None = None
 
 
@@ -54,33 +58,52 @@ def last_session_activity(session_id: str) -> datetime | None:
         return _SESSION_ACTIVITY_LAST_SEEN.get(session_id)
 
 
+def should_emit_statusline_gap_warning(session_id: str, when: datetime) -> bool:
+    """Return true once per throttle window for a session's anomalous gap."""
+    with _STATUSLINE_GAP_WARNING_LOCK:
+        previous = _STATUSLINE_GAP_WARNING_LAST_EMITTED.get(session_id)
+        if previous is not None:
+            elapsed = (when - previous).total_seconds()
+            if elapsed < STATUSLINE_GAP_WARNING_THROTTLE_SECONDS:
+                return False
+        _STATUSLINE_GAP_WARNING_LAST_EMITTED[session_id] = when
+        return True
+
+
 def prune_trackers(now: datetime) -> None:
     """Drop stale entries from both trackers so they stay bounded."""
     global _LAST_PRUNE_AT
 
     with _STATUSLINE_LAST_SEEN_LOCK:
         with _SESSION_ACTIVITY_LAST_SEEN_LOCK:
-            if _LAST_PRUNE_AT is not None:
-                elapsed = (now - _LAST_PRUNE_AT).total_seconds()
-                if elapsed < STATUSLINE_PRUNE_INTERVAL_SECONDS:
-                    return
+            with _STATUSLINE_GAP_WARNING_LOCK:
+                if _LAST_PRUNE_AT is not None:
+                    elapsed = (now - _LAST_PRUNE_AT).total_seconds()
+                    if elapsed < STATUSLINE_PRUNE_INTERVAL_SECONDS:
+                        return
 
-            cutoff = now.timestamp() - STATUSLINE_LAST_SEEN_TTL_SECONDS
-            for tracker in (_STATUSLINE_LAST_SEEN, _SESSION_ACTIVITY_LAST_SEEN):
-                stale_ids = [
-                    sid for sid, seen_at in tracker.items() if seen_at.timestamp() < cutoff
-                ]
-                for sid in stale_ids:
-                    tracker.pop(sid, None)
-            _LAST_PRUNE_AT = now
+                cutoff = now.timestamp() - STATUSLINE_LAST_SEEN_TTL_SECONDS
+                for tracker in (
+                    _STATUSLINE_LAST_SEEN,
+                    _SESSION_ACTIVITY_LAST_SEEN,
+                    _STATUSLINE_GAP_WARNING_LAST_EMITTED,
+                ):
+                    stale_ids = [
+                        sid for sid, seen_at in tracker.items() if seen_at.timestamp() < cutoff
+                    ]
+                    for sid in stale_ids:
+                        tracker.pop(sid, None)
+                _LAST_PRUNE_AT = now
 
 
 def clear_trackers(session_id: str) -> None:
     """Remove a session's entries from both trackers on teardown."""
     with _STATUSLINE_LAST_SEEN_LOCK:
         with _SESSION_ACTIVITY_LAST_SEEN_LOCK:
-            _STATUSLINE_LAST_SEEN.pop(session_id, None)
-            _SESSION_ACTIVITY_LAST_SEEN.pop(session_id, None)
+            with _STATUSLINE_GAP_WARNING_LOCK:
+                _STATUSLINE_LAST_SEEN.pop(session_id, None)
+                _SESSION_ACTIVITY_LAST_SEEN.pop(session_id, None)
+                _STATUSLINE_GAP_WARNING_LAST_EMITTED.pop(session_id, None)
 
 
 def reset_for_tests() -> None:
@@ -88,6 +111,8 @@ def reset_for_tests() -> None:
     global _LAST_PRUNE_AT
     with _STATUSLINE_LAST_SEEN_LOCK:
         with _SESSION_ACTIVITY_LAST_SEEN_LOCK:
-            _STATUSLINE_LAST_SEEN.clear()
-            _SESSION_ACTIVITY_LAST_SEEN.clear()
-            _LAST_PRUNE_AT = None
+            with _STATUSLINE_GAP_WARNING_LOCK:
+                _STATUSLINE_LAST_SEEN.clear()
+                _SESSION_ACTIVITY_LAST_SEEN.clear()
+                _STATUSLINE_GAP_WARNING_LAST_EMITTED.clear()
+                _LAST_PRUNE_AT = None

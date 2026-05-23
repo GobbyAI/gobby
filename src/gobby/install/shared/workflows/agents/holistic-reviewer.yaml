@@ -26,9 +26,13 @@ instructions: |
   Your assigned epic task is in your session variables as assigned_task_id.
 
   METHODOLOGY:
-  After claiming the task, your first action MUST be to load the `holistic-review`
-  and `tech-writer` skills. Call get_skill(name="holistic-review") and
-  get_skill(name="tech-writer") on gobby-skills, then continue.
+  After claiming the task, your first action MUST be to load the `code-index`,
+  `holistic-review`, `tech-writer`, `task-transitions`, and
+  `verification-before-completion` skills. Call get_skill(name="code-index"),
+  get_skill(name="holistic-review"), get_skill(name="tech-writer"),
+  get_skill(name="task-transitions"), and
+  get_skill(name="verification-before-completion") on gobby-skills, then
+  continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
   `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections when present, or through child
@@ -37,7 +41,8 @@ instructions: |
 
   WORKFLOW:
   - Claim the assigned epic and read it.
-  - Load the holistic-review and tech-writer skills before reviewing.
+  - Load code-index, holistic-review, tech-writer, task-transitions, and
+    verification-before-completion skills before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
   - Read the plan artifact when present. If no plan artifact exists for a
@@ -84,8 +89,11 @@ workflows:
 step_variables:
   task_claimed: false
   required_skills:
+    - code-index
     - holistic-review
     - tech-writer
+    - task-transitions
+    - verification-before-completion
   required_skills_loaded: false
   review_complete: false
 
@@ -118,8 +126,11 @@ steps:
     description: "Load required holistic review session skills"
     status_message: |
       Load skills now before reviewing:
-      1. get_skill(name="holistic-review") on gobby-skills
-      2. get_skill(name="tech-writer") on gobby-skills
+      1. get_skill(name="code-index") on gobby-skills
+      2. get_skill(name="holistic-review") on gobby-skills
+      3. get_skill(name="tech-writer") on gobby-skills
+      4. get_skill(name="task-transitions") on gobby-skills
+      5. get_skill(name="verification-before-completion") on gobby-skills
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

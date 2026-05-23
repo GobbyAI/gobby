@@ -50,7 +50,7 @@ def update_existing_session(
     parent_session_id: str | None,
     terminal_context_json: str | None,
     workflow_name: str | None,
-    is_local: bool,
+    is_local: bool | None,
     sandbox_enabled: bool | None,
     sandbox_policy_hash: str | None,
     now: str,
@@ -64,7 +64,10 @@ def update_existing_session(
             parent_session_id = COALESCE(?, parent_session_id),
             terminal_context = COALESCE(?, terminal_context),
             workflow_name = COALESCE(?, workflow_name),
-            is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
+            is_local = CASE
+                WHEN ? THEN ?
+                ELSE is_local
+            END,
             sandbox_enabled = COALESCE(?, sandbox_enabled),
             sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
             status = 'active',
@@ -78,7 +81,8 @@ def update_existing_session(
             parent_session_id,
             terminal_context_json,
             workflow_name,
-            is_local,
+            is_local is not None,
+            bool(is_local) if is_local is not None else False,
             sandbox_enabled,
             sandbox_policy_hash,
             now,

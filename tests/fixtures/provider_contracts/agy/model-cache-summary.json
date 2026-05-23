@@ -1,0 +1,20 @@
+{
+  "provider": "agy",
+  "capture_type": "model_cache_summary",
+  "cli_version": "1.0.1",
+  "captured_at": "2026-05-22T22:17:00Z",
+  "settings_json_keys": [
+    "colorScheme",
+    "enableTelemetry",
+    "trustedWorkspaces"
+  ],
+  "model_sources": [
+    {
+      "source": "runtime_log",
+      "path_template": "~/.gemini/antigravity-cli/log/cli-YYYYMMDD_HHMMSS.log",
+      "observed_model_label": "Gemini 3.5 Flash (High)"
+    }
+  ],
+  "stable_json_model_cache_found": false,
+  "notes": "No committed fixture includes OAuth tokens or raw model cache data."
+}

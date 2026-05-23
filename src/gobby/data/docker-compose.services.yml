@@ -3,27 +3,29 @@
 # Managed by daemon start/stop via Docker Compose profiles.
 
 services:
-  neo4j:
-    image: neo4j:latest
+  falkordb:
+    image: falkordb/falkordb:latest
     ports:
-      - "8474:7474"
-      - "8687:7687"
+      - "${GOBBY_FALKORDB_PORT:-16379}:6379"
+      - "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000"
     environment:
-      - NEO4J_AUTH=neo4j/${GOBBY_NEO4J_PASSWORD:-gobbyneo4j}
-      - NEO4J_PLUGINS=["apoc"]
+      # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
+      # FALKORDB_ARGS is reserved for module options; do not put auth there.
+      - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
+      # Pass-through so the healthcheck below can read the same value.
+      - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
     volumes:
-      - gobby_neo4j_data:/data
-      - gobby_neo4j_logs:/logs
-      - ./neo4j/conf:/var/lib/neo4j/conf
+      - gobby_falkordb_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${GOBBY_NEO4J_PASSWORD:-gobbyneo4j} 'RETURN 1'"]
+      # Quote the shell-expanded password so future relaxed password rules do not word-split.
+      test:
+        - CMD-SHELL
+        - 'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG'
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    profiles:
-      - neo4j
-      - all
+    profiles: [falkordb, all]
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -115,10 +117,8 @@ services:
       - all
 
 volumes:
-  gobby_neo4j_data:
-    name: gobby_neo4j_data
-  gobby_neo4j_logs:
-    name: gobby_neo4j_logs
+  gobby_falkordb_data:
+    name: gobby_falkordb_data
   gobby_qdrant_data:
     name: gobby_qdrant_data
   gobby_postgres_data:

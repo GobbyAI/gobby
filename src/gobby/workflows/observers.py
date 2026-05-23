@@ -11,6 +11,7 @@ from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
+from gobby.sessions.handoff_identity import sessions_have_continuous_terminal_context
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
     get_claimed_session_id,
@@ -691,13 +692,14 @@ def _sessions_share_lineage(
     if session_manager is None:
         return False
 
+    related_by_lineage = False
     is_ancestor = getattr(session_manager, "is_ancestor", None)
     if callable(is_ancestor):
         try:
             owner_is_ancestor = is_ancestor(owner_session_id, session_id)
             session_is_ancestor = is_ancestor(session_id, owner_session_id)
             if owner_is_ancestor is True or session_is_ancestor is True:
-                return True
+                related_by_lineage = True
         except Exception as e:
             logger.debug(
                 "Failed to compare session lineage for %s and %s: %s",
@@ -718,9 +720,13 @@ def _sessions_share_lineage(
         )
         return False
 
-    return (
+    related_by_lineage = related_by_lineage or (
         getattr(current_session, "parent_session_id", None) == owner_session_id
         or getattr(owner_session, "parent_session_id", None) == session_id
+    )
+    return related_by_lineage and sessions_have_continuous_terminal_context(
+        current_session,
+        owner_session,
     )
 
 

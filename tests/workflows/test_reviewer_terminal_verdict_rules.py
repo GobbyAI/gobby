@@ -214,6 +214,21 @@ async def test_codex_cmd_alias_validation_sets_pending(db: LocalDatabase) -> Non
 
 
 @pytest.mark.asyncio
+async def test_python_module_ruff_format_check_is_validation_command(
+    db: LocalDatabase,
+) -> None:
+    """`python -m ruff format --check` counts as validation, including through uv."""
+    engine = RuleEngine(db)
+    variables = _review_vars("qa-reviewer")
+    event = _cmd_validation_event("uv run python -m ruff format --check src/gobby")
+
+    response = await engine.evaluate(event, "sess-codex", variables)
+
+    assert response.decision == "allow"
+    assert variables["reviewer_terminal_verdict_pending"] is True
+
+
+@pytest.mark.asyncio
 async def test_doc_reviewer_successful_validation_uses_review_verdict_contract(
     db: LocalDatabase,
 ) -> None:

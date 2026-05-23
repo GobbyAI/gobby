@@ -162,7 +162,7 @@ class _SessionCRUDMixin:
                     parent_session_id=parent_session_id,
                     terminal_context_json=terminal_context_json,
                     workflow_name=workflow_name,
-                    is_local=is_local,
+                    is_local=True if is_local else None,
                     sandbox_enabled=sandbox_enabled,
                     sandbox_policy_hash=sandbox_policy_hash,
                     now=now,
@@ -250,7 +250,7 @@ class _SessionCRUDMixin:
                         parent_session_id=parent_session_id,
                         terminal_context_json=terminal_context_json,
                         workflow_name=workflow_name,
-                        is_local=is_local,
+                        is_local=True if is_local else None,
                         sandbox_enabled=sandbox_enabled,
                         sandbox_policy_hash=sandbox_policy_hash,
                         now=now,
@@ -322,12 +322,12 @@ class _SessionCRUDMixin:
                 """
                 UPDATE sessions
                 SET model = COALESCE(?, model),
-                    is_local = CASE WHEN ? THEN TRUE ELSE is_local END,
+                    is_local = ?,
                     chat_mode = COALESCE(?, chat_mode),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, is_local, chat_mode, now, session.id),
+                (model, int(is_local), chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:

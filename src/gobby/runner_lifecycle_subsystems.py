@@ -317,7 +317,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
             sync_worker_loop(
                 storage=runner.code_indexer.storage,
                 vector_store=runner.vector_store,
-                graph=runner.code_indexer.graph,
+                context=runner.code_indexer,
                 config=runner.config.code_index,
                 embeddings_config=runner.config.embeddings,
                 shutdown_flag=sync_shutdown,

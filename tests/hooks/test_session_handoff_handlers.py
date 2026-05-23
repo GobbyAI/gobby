@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._session_start.handoff import find_parent_session
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_VARIABLE,
@@ -68,6 +71,36 @@ class TestSessionStartHandoff:
 
         return _consume
 
+    def test_compact_parent_miss_logs_below_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A no-parent /compact restart is the safe no-handoff path."""
+        handler = MagicMock()
+        handler._session_manager.find_parent.return_value = None
+        handler.logger = logging.getLogger("test.compact_parent_miss")
+        input_data = {"source": "compact"}
+        caplog.set_level(logging.INFO, logger=handler.logger.name)
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.handoff.time.monotonic",
+            side_effect=[10.0, 16.0],
+        ):
+            parent_session_id, session_source = find_parent_session(
+                handler,
+                input_data,
+                "compact",
+                "machine-1",
+                "project-1",
+                "codex",
+            )
+
+        assert parent_session_id is None
+        assert session_source == "startup"
+        assert input_data["source"] == "startup"
+        assert "No handoff_ready parent found for /compact" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_finds_parent(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
@@ -77,6 +110,7 @@ class TestSessionStartHandoff:
 
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
+        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent
@@ -86,7 +120,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "compact", "cwd": "/some/dir"},
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -107,11 +145,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
         mock_parent_obj.summary_markdown = "# Summary\nWorked on feature X"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         # get() called: pre-created check (None), handoff var population (parent),
         # seq_num fetch (new session)
@@ -130,7 +173,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "clear", "cwd": "/some/dir"},
+            data={
+                "source": "clear",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -158,11 +205,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
         mock_parent_obj.summary_markdown = "# Compact\nContinuation of task Y"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
@@ -179,7 +231,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "compact", "cwd": "/some/dir"},
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -195,6 +251,150 @@ class TestSessionStartHandoff:
         )
         assert mock_sv_mgr.merge_variables.call_count >= 1
         assert mock_sv_mgr.merge_variables.call_args is not None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_compact_handoff_refreshes_existing_parent_summary_before_injecting(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Existing parent summaries must be refreshed before /compact handoff injection."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
+
+        stale_parent = MagicMock()
+        stale_parent.id = "parent-sess-123"
+        stale_parent.seq_num = 42
+        stale_parent.summary_markdown = "# Old\nStale coordinator handoff"
+        stale_parent.terminal_context = mock_parent_for_find.terminal_context
+
+        refreshed_parent = MagicMock()
+        refreshed_parent.id = "parent-sess-123"
+        refreshed_parent.seq_num = 42
+        refreshed_parent.summary_markdown = "# Fresh\nCurrent compact handoff"
+        refreshed_parent.terminal_context = mock_parent_for_find.terminal_context
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            stale_parent,  # initial parent fetch before summary refresh
+            refreshed_parent,  # parent refetch after summary generation
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        dispatch_calls: list[tuple[str, bool, Any, bool]] = []
+
+        def dispatch_summary(
+            session_id: str,
+            background: bool,
+            done_event: Any,
+            set_handoff_ready: bool,
+        ) -> None:
+            dispatch_calls.append((session_id, background, done_event, set_handoff_ready))
+            done_event.set()
+
+        handlers = EventHandlers(**mock_dependencies)
+        handlers._dispatch_session_summaries_fn = dispatch_summary
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert len(dispatch_calls) == 1
+        assert dispatch_calls[0][0] == "parent-sess-123"
+        assert dispatch_calls[0][1] is True
+        assert dispatch_calls[0][3] is False
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-456",
+            {
+                "session_summary": "# Fresh\nCurrent compact handoff",
+                "full_session_summary": "# Fresh\nCurrent compact handoff",
+            },
+        )
+        merged_payloads = [args[1] for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list]
+        assert all(
+            "# Old\nStale coordinator handoff" not in payload.values()
+            for payload in merged_payloads
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_compact_handoff_ignores_stale_parent_from_different_terminal(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """A native-helper session must not inherit stale coordinator compact context."""
+        parent_vars = {
+            "handoff_source": "compact",
+            "task_claimed": True,
+            "claimed_tasks": {"coordination-task-uuid": "#14997"},
+        }
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda sid: (
+            parent_vars if sid == "session-5815" else {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        stale_parent = MagicMock()
+        stale_parent.id = "session-5815"
+        stale_parent.terminal_context = {
+            "tmux_pane": "%5815",
+            "tmux_socket_path": "/tmp/gobby-tmux",
+        }
+        stale_parent.summary_markdown = (
+            "Build coordinator handoff for #12746 / coordination task #14997."
+        )
+
+        new_session = MagicMock()
+        new_session.seq_num = 5867
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,
+            new_session,
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = stale_parent
+        mock_dependencies["session_manager"].register_session.return_value = "session-5867"
+        mock_dependencies["session_task_manager"] = MagicMock()
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="019e5137-53a9-7a20-be96-cdcb5f168f62",
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {
+                    "tmux_pane": "%5867",
+                    "tmux_socket_path": "/tmp/gobby-tmux",
+                },
+            },
+            metadata={"first_user_prompt": "Fix Native Helper Precedence And Version Floors"},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert "Parent session: session-5815" not in (response.context or "")
+        assert "Build coordinator handoff" not in (response.context or "")
+        mock_sv_mgr.merge_variables.assert_not_called()
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_task_claim_vars_carried_over_on_compact(
@@ -214,11 +414,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
         mock_parent_obj.summary_markdown = "# Compact\nContinuation"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
@@ -242,7 +447,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "compact", "cwd": "/some/dir"},
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -287,11 +496,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
         mock_parent_obj.summary_markdown = "# Compact\nDone"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
@@ -309,7 +523,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "compact", "cwd": "/some/dir"},
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -342,11 +560,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-500"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-500"
         mock_parent_obj.seq_num = 50
         mock_parent_obj.summary_markdown = "# Summary\nCleared session"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 51
@@ -370,7 +593,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-456",
-            data={"source": "clear", "cwd": "/some/dir"},
+            data={
+                "source": "clear",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 
@@ -416,11 +643,16 @@ class TestSessionStartHandoff:
 
         mock_parent_for_find = MagicMock()
         mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
 
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
         mock_parent_obj.summary_markdown = "# Compact\nContinuation"
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
@@ -442,7 +674,11 @@ class TestSessionStartHandoff:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "compact", "cwd": "/some/dir"},
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
 

@@ -1,0 +1,115 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-session-start",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=session_start",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-session-end",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=session_end",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-user-prompt-submit",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=user_prompt_submit",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-pre-tool-use",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=pre_tool_use",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-post-tool-use",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=post_tool_use",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "gobby-post-tool-use-failure",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=post_tool_use_failure",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-pre-compact",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=pre_compact",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-stop",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=stop",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-notification",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=notification",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -126,6 +126,9 @@ def register_handoff_tools(
         # --- Agent-authored fast path ---
         if content is not None:
             session_manager.update_summary(session.id, summary_markdown=content)
+            update_last_turn = getattr(session_manager, "update_last_turn_markdown", None)
+            if callable(update_last_turn):
+                update_last_turn(session.id, content)
 
             if set_handoff_ready:
                 session_manager.update_status(session.id, "handoff_ready")

@@ -350,10 +350,7 @@ class TestMessagingToolsAvailability:
 
         expected_tools = [
             "send_message",
-            "send_command",
-            "complete_command",
             "deliver_pending_messages",
-            "activate_command",
         ]
 
         for tool in expected_tools:

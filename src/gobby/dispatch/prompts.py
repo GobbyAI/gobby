@@ -170,11 +170,20 @@ def _qa_dev(task: object, context: Mapping[str, object]) -> str:
 
 
 def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
-    return _prompt(
+    base = _prompt(
         task,
         context,
         role="Review the implementation",
         contract="qa-reviewer.yaml agent",
+    )
+    return (
+        f"{base}\n"
+        "Spawn-time auto-claim normally already owns the task. Do not call "
+        "claim_task unless the active step prompt explicitly says the current "
+        "step is CLAIM. Load the required QA skills before review, then use "
+        "get_task, get_task_diff, and exactly one review verdict tool. Do not "
+        "call get_workflow_status. Do not run the full pytest suite; run only "
+        "focused validation relevant to the task diff."
     )
 
 

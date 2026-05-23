@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 # Label width for alignment in status sections
 _LW = 18
 _CODING_CLI_LABELS = (
+    ("agy", "AGY CLI"),
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
-    ("gemini", "Gemini CLI"),
+    ("gemini", "Gemini CLI (deprecated)"),
+    ("grok", "Grok CLI"),
     ("qwen", "Qwen CLI"),
 )
 
@@ -146,6 +148,8 @@ def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name
     parts = []
     if hooks.get(name):
         parts.append("hooks installed")
+    if name == "agy":
+        parts.append("unavailable: no machine transport")
 
     model_count = _provider_model_count(provider_models, name)
     if model_count is not None:
@@ -324,16 +328,18 @@ def format_status_message(
             status_str = "healthy" if qdrant.get("healthy") else "unhealthy"
             lines.append(f"  {'Qdrant:':<{_LW}}{status_str}")
 
-        # Neo4j
-        neo4j = memory.get("neo4j", {})
-        if neo4j.get("configured"):
-            url_str = f" ({neo4j['url']})" if neo4j.get("url") else ""
-            if neo4j.get("healthy"):
-                lines.append(f"  {'Neo4j:':<{_LW}}healthy{url_str}")
-            elif neo4j.get("installed"):
-                lines.append(f"  {'Neo4j:':<{_LW}}not responding{url_str}")
+        # FalkorDB
+        falkordb = memory.get("falkordb", {})
+        if falkordb.get("configured") or falkordb.get("installed"):
+            url_str = f" ({falkordb['url']})" if falkordb.get("url") else ""
+            if falkordb.get("healthy"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}healthy{url_str}")
+            elif falkordb.get("configured") and falkordb.get("installed"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}not responding{url_str}")
+            elif falkordb.get("installed"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}installed, not configured{url_str}")
             else:
-                lines.append(f"  {'Neo4j:':<{_LW}}not installed")
+                lines.append(f"  {'FalkorDB:':<{_LW}}not installed")
 
         # Embeddings
         configured_embeddings_provider = dep.get("embeddings_provider")

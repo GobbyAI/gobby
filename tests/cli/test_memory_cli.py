@@ -393,7 +393,7 @@ class TestMemoryReconcileCommand:
         response.json.return_value = {
             "storage_count": 7,
             "qdrant": {"orphans_found": 1, "orphans_deleted": 0},
-            "neo4j": {
+            "falkordb": {
                 "orphan_memories_found": 2,
                 "orphan_memories_deleted": 0,
                 "orphan_entities_deleted": 0,

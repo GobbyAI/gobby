@@ -31,15 +31,28 @@ async def _delete_memories(manager: _MemoryDeleteManager, memory_ids: list[str])
     return deleted
 
 
-def _list_all_memories(manager: _MemoryListManager, *, page_size: int = 1000) -> list[Any]:
+def _list_all_memories(
+    manager: _MemoryListManager,
+    *,
+    page_size: int = 1000,
+    max_results: int | None = None,
+) -> list[Any]:
     memories: list[Any] = []
     offset = 0
     while True:
-        page = manager.list_memories(limit=page_size, offset=offset)
-        memories.extend(page)
-        if len(page) < page_size:
+        remaining = None if max_results is None else max_results - len(memories)
+        if remaining is not None and remaining <= 0:
             return memories
-        offset += page_size
+        limit = page_size if remaining is None else min(page_size, remaining)
+        try:
+            page = manager.list_memories(limit=limit, offset=offset)
+        except (OSError, RuntimeError, ValueError) as exc:
+            click.echo(f"Failed to list memories at offset {offset}: {exc}", err=True)
+            return memories
+        memories.extend(page)
+        if len(page) < limit:
+            return memories
+        offset += limit
 
 
 @click.command("dedupe")

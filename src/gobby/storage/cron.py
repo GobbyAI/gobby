@@ -688,6 +688,26 @@ class CronJobStorage:
         )
         return cursor.rowcount
 
+    def fail_running_runs(self, error: str) -> int:
+        """Mark all currently running cron runs failed.
+
+        This is used when a scheduler process starts. In-process cron tasks do not
+        survive daemon restart, so any persisted running row at scheduler startup is
+        orphaned and must not keep consuming concurrency slots.
+        """
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = ?,
+                   error = ?
+             WHERE status = 'running'
+            """,
+            (now, error[:5000]),
+        )
+        return cursor.rowcount
+
     def cleanup_old_runs(self, days: int) -> int:
         """Delete runs older than the given number of days."""
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
 
-import { useMemory, useNeo4jStatus } from '../useMemory'
+import { useFalkorStatus, useMemory } from '../useMemory'
 
 let mockFetch: MockFetchInstance
 
@@ -255,26 +255,33 @@ describe('useMemory', () => {
   })
 })
 
-describe('useNeo4jStatus', () => {
-  it('fetches neo4j status from admin endpoint', async () => {
+describe('useFalkorStatus', () => {
+  it('exports the renamed FalkorDB status hook and removes the Neo4j-named hook', async () => {
+    const memoryModule = await import('../useMemory')
+
+    expect(memoryModule).toHaveProperty('useFalkorStatus')
+    expect(memoryModule).not.toHaveProperty('useNeo4jStatus')
+  })
+
+  it('fetches falkordb status from admin endpoint', async () => {
     mockFetch.mockJsonResponse('/api/admin/status', {
-      memory: { neo4j: { configured: true, url: 'bolt://localhost:7687' } },
+      memory: { falkordb: { configured: true, url: 'redis://localhost:6379' } },
     })
 
-    const { result } = renderHook(() => useNeo4jStatus())
+    const { result } = renderHook(() => useFalkorStatus())
 
     await waitFor(() => expect(result.current).toBeTruthy())
 
     expect(result.current?.configured).toBe(true)
-    expect(result.current?.url).toBe('bolt://localhost:7687')
+    expect(result.current?.url).toBe('redis://localhost:6379')
   })
 
-  it('returns null when neo4j not configured', async () => {
+  it('returns null when falkordb not configured', async () => {
     mockFetch.mockJsonResponse('/api/admin/status', {
       memory: {},
     })
 
-    const { result } = renderHook(() => useNeo4jStatus())
+    const { result } = renderHook(() => useFalkorStatus())
 
     // Wait for the fetch to complete
     await waitFor(() => {
@@ -284,7 +291,7 @@ describe('useNeo4jStatus', () => {
       )
     })
 
-    // Result should remain null since neo4j is not in response
+    // Result should remain null since falkordb is not in response
     expect(result.current).toBeNull()
   })
 })

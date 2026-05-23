@@ -9,17 +9,61 @@ import type { StepProps } from "../types.js";
 
 type Phase = "prompt" | "password" | "installing" | "done";
 
+const INSTALL_TIMEOUT_MS = 120000;
+const FAILURE_PREVIEW_LENGTH = 200;
+
+type InstallResult = { success: boolean; message: string };
+
+function validateFalkorPassword(value: string): string | null {
+  if (!value) {
+    return "FalkorDB password must not be empty";
+  }
+  if (/\s/.test(value)) {
+    return "FalkorDB password must not contain whitespace";
+  }
+  if ([...value].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f)) {
+    return "FalkorDB password must not contain ASCII control characters";
+  }
+  if (/[^\x21-\x7E]/.test(value)) {
+    return "FalkorDB password must use printable ASCII only (Docker round-trip constraint)";
+  }
+  return null;
+}
+
+function extractFalkorPasswordError(output: string): string | null {
+  const valueErrorMatch = output.match(/ValueError:\s*(FalkorDB password[^\r\n]*)/);
+  if (valueErrorMatch) {
+    return valueErrorMatch[1];
+  }
+
+  const directMatch = output.match(/(FalkorDB password[^\r\n]*)/);
+  return directMatch?.[1] ?? null;
+}
+
+function buildInstallArgs(password?: string): string[] {
+  const args = ["install", "--falkordb"];
+  if (password) {
+    args.push("--falkordb-password", password);
+  }
+  return args;
+}
+
+function formatInstallFailure(output: string): string {
+  return `Installation failed: ${output.trim().slice(0, FAILURE_PREVIEW_LENGTH)}`;
+}
+
 export function Services({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>("prompt");
   const [customPassword, setCustomPassword] = useState("");
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [result, setResult] = useState<InstallResult | null>(null);
 
   const finish = (installed: boolean, passwordSet: boolean): void => {
     setState((prev) => {
       const next = {
         ...prev,
-        neo4j_installed: installed,
-        neo4j_password_set: passwordSet,
+        falkordb_installed: installed,
+        falkordb_password_set: passwordSet,
         completed_step_id: "services" as const,
       };
       saveState(next);
@@ -29,32 +73,49 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   };
 
   const install = (password?: string): void => {
-    setPhase("installing");
-
-    const args = ["install", "--neo4j"];
     if (password) {
-      args.push("--neo4j-password", password);
+      const validationError = validateFalkorPassword(password);
+      if (validationError) {
+        setPasswordError(validationError);
+        setPhase("password");
+        return;
+      }
     }
 
-    const r = runGobby(args, { timeout: 120000 });
+    setPasswordError(null);
+    setResult(null);
+    setPhase("installing");
+
+    const r = runGobby(buildInstallArgs(password), { timeout: INSTALL_TIMEOUT_MS });
+
+    if (r.success) {
+      setResult({ success: true, message: "FalkorDB installed successfully." });
+      setPhase("done");
+      finish(true, !!password);
+      return;
+    }
+
+    if (password) {
+      setPasswordError(extractFalkorPasswordError(r.output) ?? formatInstallFailure(r.output));
+      setPhase("password");
+      return;
+    }
 
     setResult({
-      success: r.success,
-      message: r.success
-        ? "Neo4j installed successfully."
-        : `Installation failed: ${r.output.trim().slice(0, 200)}`,
+      success: false,
+      message: formatInstallFailure(r.output),
     });
     setPhase("done");
-    finish(r.success, r.success && !!password);
+    finish(false, false);
   };
 
   if (phase === "prompt") {
     return (
       <Box flexDirection="column">
-        <Text>{"  "}Install Neo4j knowledge graph? (requires Docker)</Text>
+        <Text>{"  "}Install FalkorDB knowledge graph? (requires Docker)</Text>
         <Text> </Text>
         <Text dimColor>
-          {"  "}Neo4j enables relationship-based memory search across sessions.
+          {"  "}FalkorDB enables relationship-based memory search across sessions.
         </Text>
         <Text> </Text>
         <Text>
@@ -73,6 +134,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
               if (choice === "y" || choice === "yes") {
                 install();
               } else if (choice === "p" || choice === "password") {
+                setPasswordError(null);
                 setPhase("password");
               } else {
                 finish(false, false);
@@ -87,15 +149,19 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   if (phase === "password") {
     return (
       <Box flexDirection="column">
-        <Text>{"  "}Enter Neo4j password (leave blank to auto-generate):</Text>
+        <Text>{"  "}Enter FalkorDB password (leave blank to auto-generate):</Text>
+        {passwordError ? <StatusMessage level="error">{passwordError}</StatusMessage> : null}
         <Box marginTop={1}>
           <Text dimColor>{"  "}</Text>
           <TextInput
             value={customPassword}
-            onChange={setCustomPassword}
+            onChange={(value) => {
+              setCustomPassword(value);
+              setPasswordError(null);
+            }}
             mask="*"
             onSubmit={(val) => {
-              install(val.trim() || undefined);
+              install(val === "" ? undefined : val);
             }}
           />
         </Box>
@@ -106,7 +172,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
   if (phase === "installing") {
     return (
       <Text>
-        <Spinner type="dots" /> Installing Neo4j (pulling Docker image)...
+        <Spinner type="dots" /> Installing FalkorDB via Docker...
       </Text>
     );
   }

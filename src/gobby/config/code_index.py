@@ -46,7 +46,7 @@ class CodeIndexConfig(BaseModel):
     )
     graph_enabled: bool = Field(
         default=True,
-        description="Enable Neo4j call/import graph",
+        description="Enable FalkorDB call/import graph",
     )
     qdrant_collection_prefix: str = Field(
         default="code_symbols_",

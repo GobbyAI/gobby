@@ -16,6 +16,7 @@ from gobby.storage.sql_dialect import (
     table_column_names,
     timestamp_plus_seconds_before_now_expr,
 )
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.token_events import TokenEventStore
 
 
@@ -87,6 +88,29 @@ def test_json_array_contains_condition_uses_json_each_for_sqlite() -> None:
 
     assert condition == "EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)"
     assert params == ("gobby",)
+
+
+def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
+    db = _CaptureDb("postgres")
+    manager = LocalTaskManager(db)  # type: ignore[arg-type]
+
+    assert (
+        manager.list_tasks(project_id="proj1", label="interactive:planning-in-progress:sess") == []
+    )
+
+    task_query_index = next(
+        index for index, query in enumerate(db.queries) if query.startswith("SELECT * FROM tasks")
+    )
+    task_query = db.queries[task_query_index]
+
+    assert "tasks.labels @> ?::jsonb" in task_query
+    assert "json_each" not in task_query
+    assert db.params[task_query_index] == (
+        "proj1",
+        '["interactive:planning-in-progress:sess"]',
+        50,
+        0,
+    )
 
 
 def test_skill_list_negative_limit_omits_limit_for_postgres() -> None:

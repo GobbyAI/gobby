@@ -285,6 +285,7 @@ class TestSessionStartNewSession:
 
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
+        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         # No pre-created session found
         mock_dependencies["session_storage"].get.return_value = None
@@ -295,7 +296,11 @@ class TestSessionStartNewSession:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "clear", "cwd": "/some/dir"},
+            data={
+                "source": "clear",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
             metadata={},
         )
         event.machine_id = "machine-123"
@@ -365,6 +370,7 @@ class TestSessionStartNewSession:
 
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
+        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent
@@ -377,7 +383,10 @@ class TestSessionStartNewSession:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "clear"},
+            data={
+                "source": "clear",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
         )
 
         response = handlers.handle_session_start(event)

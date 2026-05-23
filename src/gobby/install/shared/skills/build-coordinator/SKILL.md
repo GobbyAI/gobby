@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.0.1"
+version: "1.0.2"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -51,8 +51,8 @@ or pause the goal.
 ## Startup
 
 1. Load relevant local skills before acting: `task-creation`,
-   `agent-monitoring`, `task-transitions`, and `source-control`. Load `build`
-   when launch semantics or CLI flags are in scope.
+   `task-transitions`, and `source-control`. Load `build` when launch
+   semantics or CLI flags are in scope.
 2. Identify the target task or epic and the user's non-default constraints.
    Ask only when the target is missing or a decision cannot be inferred safely.
 3. Create and claim a separate coordination epic outside the target task tree.
@@ -73,16 +73,23 @@ Use supported MCP surfaces first:
 - `gobby-tasks` for task state, stage manifests, build status, dispatch
   explanation, and build history.
 - `gobby-agents` for running agents and agent results.
+- `gobby-sessions` for session metadata, terminal capture, handoff context, and
+  coordinator compaction.
 - `gobby-worktrees` or `gobby-clones` when workspace state is part of the
   failure.
+
+Monitor agents directly with the supported MCP surfaces above. Do not require a
+separate monitoring skill for coordinator runs.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after
 recording evidence that they are diagnostics or recovery for a build bug.
 
-Use `wait_for_agent` only when no useful coordinator work is available. If
-agents are running and there is useful work, fix discovered build bugs, improve
-observability needed for this run, or compact context with `compact_self`.
+Prefer `gobby-sessions:compact_self` over `wait_for_agent` when agents are
+running and no useful coordinator work is available. Use `wait_for_agent` only
+for a short bounded wait when you have a specific run and need its terminal
+result. If useful work exists, fix discovered build bugs or improve
+observability needed for this run.
 
 Resolve escalations yourself whenever possible. Leave a task escalated only
 when a user decision is genuinely required.
@@ -179,10 +186,10 @@ Before dispatch, inspect the target task tree and normalize leaf task stages to
 the required stage. Default implementation leaves to development unless the user
 specified another stage.
 
-Use wait_for_agent only when no useful coordinator work exists. Otherwise fix
-discovered build bugs or call gobby-sessions:compact_self with the current
-session id. Resolve escalations yourself unless a genuine user decision is
-required.
+Prefer gobby-sessions:compact_self over wait_for_agent when agents are running
+and no useful coordinator work exists. Otherwise fix discovered build bugs or
+improve observability. Resolve escalations yourself unless a genuine user
+decision is required.
 
 Completion requires the target work complete, all discovered build bugs fixed and
 closed with linked commits, required validation run, no unexpected running agents

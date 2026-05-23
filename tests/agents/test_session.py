@@ -1,5 +1,6 @@
 """Tests for child session management."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -411,13 +412,40 @@ class TestChildSessionManagerQueryMethods:
 
         assert lineage == []
 
-    def test_get_session_lineage_safety_limit(self, manager, mock_storage) -> None:
-        """Lineage has safety limit for cycles."""
-        # Create cycle
-        mock_session = MagicMock(id="sess-cycle", parent_session_id="sess-cycle")
+    def test_get_session_lineage_allows_long_valid_chain(
+        self, manager, mock_storage, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Legitimate long lineage chains should not be treated as corrupt."""
+        sessions = {}
+        for index in range(25):
+            session = MagicMock()
+            session.id = f"sess-{index}"
+            session.parent_session_id = f"sess-{index - 1}" if index else None
+            sessions[session.id] = session
+        mock_storage.get.side_effect = lambda sid: sessions.get(sid)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.agents.session"):
+            lineage = manager.get_session_lineage("sess-24")
+
+        assert [session.id for session in lineage] == [f"sess-{index}" for index in range(25)]
+        assert "Lineage" not in caplog.text
+
+    def test_get_session_lineage_cycle_logs_once(
+        self, manager, mock_storage, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Lineage cycles are detected without repeated warning spam."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-cycle"
+        mock_session.parent_session_id = "sess-cycle"
         mock_storage.get.return_value = mock_session
 
-        lineage = manager.get_session_lineage("sess-cycle")
+        with caplog.at_level(logging.WARNING, logger="gobby.agents.session"):
+            lineage = manager.get_session_lineage("sess-cycle")
+            lineage_again = manager.get_session_lineage("sess-cycle")
 
-        # Should stop at safety limit
-        assert len(lineage) <= 11
+        assert [session.id for session in lineage] == ["sess-cycle"]
+        assert [session.id for session in lineage_again] == ["sess-cycle"]
+        cycle_warnings = [
+            record.message for record in caplog.records if "Lineage cycle detected" in record.message
+        ]
+        assert cycle_warnings == ["Lineage cycle detected for sess-cycle at sess-cycle"]

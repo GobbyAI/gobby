@@ -17,6 +17,7 @@ from gobby.cli.installers.git_hooks import (
     _is_precommit_framework_hook,
     _remove_gobby_section,
     _remove_legacy_import_section,
+    _resolve_git_hooks_dir,
     _wrap_gobby_section,
     install_git_hooks,
     uninstall_git_hooks,
@@ -358,6 +359,22 @@ class TestInstallGitHooks:
         install_git_hooks(tmp_path)
 
         assert (git_dir / "hooks").exists()
+
+    def test_resolves_hooks_dir_for_linked_worktree(self, tmp_path: Path) -> None:
+        """Test that linked worktree .git files use the common hooks directory."""
+        worktree = tmp_path / "worktree"
+        git_dir = tmp_path / "main" / ".git" / "worktrees" / "worktree"
+        common_dir = tmp_path / "main" / ".git"
+        worktree.mkdir()
+        git_dir.mkdir(parents=True)
+        (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+        (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+
+        result = install_git_hooks(worktree)
+
+        assert result["success"] is True
+        assert _resolve_git_hooks_dir(worktree) == common_dir / "hooks"
+        assert (common_dir / "hooks" / "pre-commit").exists()
 
     def test_installs_all_hook_types(self, tmp_path: Path) -> None:
         """Test that all hook types are installed."""
@@ -746,6 +763,21 @@ class TestUninstallGitHooks:
 
         assert result["success"] is True
 
+    def test_uninstall_uses_common_hooks_dir_for_linked_worktree(self, tmp_path: Path) -> None:
+        """Test that linked worktree uninstall reads hooks from the common Git dir."""
+        worktree = tmp_path / "worktree"
+        git_dir = tmp_path / "main" / ".git" / "worktrees" / "worktree"
+        worktree.mkdir()
+        git_dir.mkdir(parents=True)
+        (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+        (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        install_git_hooks(worktree)
+
+        result = uninstall_git_hooks(worktree)
+
+        assert result["success"] is True
+        assert set(result["removed"]) == set(HOOK_TEMPLATES.keys())
+
     def test_removes_gobby_section_from_hooks(self, tmp_path: Path) -> None:
         """Test that Gobby sections are removed from hooks."""
         git_dir = tmp_path / ".git"
@@ -884,6 +916,26 @@ class TestHookTemplates:
         assert "GOBBY_JSONL_EXPORT_CONTEXT=pre-push" in content
         assert "gobby tasks sync --export" in content
         assert "gobby memory backup" in content
+
+    def test_post_commit_template_escapes_nul_delimiter(self, tmp_path: Path) -> None:
+        """Generated post-commit hooks must not embed a literal NUL byte."""
+        content = HOOK_TEMPLATES["post-commit"]
+        assert "\0" not in content
+        assert r"tr '\n' '\0'" in content
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in content
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        result = install_git_hooks(tmp_path)
+
+        assert result["success"] is True
+        installed = (hooks_dir / "post-commit").read_text()
+        assert "\0" not in installed
+        assert r"tr '\n' '\0'" in installed
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in installed
 
     def test_templates_do_not_import_jsonl(self) -> None:
         """No installed hook template automatically imports JSONL."""
