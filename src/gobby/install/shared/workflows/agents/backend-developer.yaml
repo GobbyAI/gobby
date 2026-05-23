@@ -52,10 +52,10 @@ instructions: |
   rather than broad full-suite runs.
 
   ADDITIONAL SKILLS:
-  After claiming the task, first load development-discipline with
-  get_skill(name="development-discipline") on gobby-skills. Then inspect the
-  prompt's additional_skills list. For each entry, call get_skill(name=<skill>)
-  on gobby-skills before implementing. TDD-required leaves include
+  After claiming the task, first load development-discipline, task-transitions,
+  and verification-before-completion with gobby-skills. Then inspect the prompt's
+  additional_skills list. For each entry, call get_skill(name=<skill>) on
+  gobby-skills before implementing. TDD-required leaves include
   test-driven-development in additional_skills.
 
   HANDOFF:
@@ -83,6 +83,8 @@ step_variables:
   task_claimed: false
   required_skills:
     - development-discipline
+    - task-transitions
+    - verification-before-completion
   required_skills_loaded: false
   additional_skills: []
   additional_skills_loaded: false
@@ -114,8 +116,11 @@ steps:
   - name: load_required_skills
     description: "Load required developer discipline skills"
     status_message: |
-      Call get_skill(name="development-discipline") on gobby-skills before
-      loading optional task skills or implementing.
+      Load required developer skills before loading optional task skills or
+      implementing:
+      1. get_skill(name="development-discipline") on gobby-skills
+      2. get_skill(name="task-transitions") on gobby-skills
+      3. get_skill(name="verification-before-completion") on gobby-skills
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

@@ -16,6 +16,7 @@ import pytest
 
 from gobby.cli.utils import (
     _is_process_alive,
+    _redact_dsn,
     format_uptime,
     get_active_session_id,
     get_gobby_home,
@@ -56,6 +57,12 @@ class TestGetGobbyHome:
         with patch.dict(os.environ, {"GOBBY_HOME": custom_path}):
             result = get_gobby_home()
             assert result == Path(custom_path)
+
+
+def test_redact_dsn_uses_last_at_for_passwords_with_at_sign() -> None:
+    dsn = "postgresql://gobby:p@ss@localhost:5432/gobby"
+
+    assert _redact_dsn(dsn) == "postgresql://gobby:****@localhost:5432/gobby"
 
 
 # ==============================================================================

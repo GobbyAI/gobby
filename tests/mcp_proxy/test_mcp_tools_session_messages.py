@@ -458,6 +458,9 @@ async def test_set_handoff_context_agent_authored(mock_session_manager, full_ses
     mock_session_manager.update_summary.assert_called_once_with(
         "sess-abc", summary_markdown="## My Summary"
     )
+    mock_session_manager.update_last_turn_markdown.assert_called_once_with(
+        "sess-abc", "## My Summary"
+    )
     mock_session_manager.update_status.assert_called_once_with("sess-abc", "handoff_ready")
 
 

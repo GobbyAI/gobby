@@ -32,6 +32,17 @@ def _git(cwd: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _is_ancestor(cwd: Path, ancestor: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, "HEAD"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _init_repo(path: Path) -> None:
     _git(path, "init", "-b", "main")
     _git(path, "config", "user.email", "test@example.com")
@@ -248,6 +259,136 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
 
     assert _git(integration_path, "rev-parse", "HEAD") == target_head
     assert (integration_path / "after-child-merge.txt").read_text() == "landed on target\n"
+
+
+def test_epic_integration_workspace_merges_closed_descendant_commits(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    integration_branch = _integration_branch(parent)
+
+    _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
+    _git(repo, "checkout", "-b", "task/leaf")
+    (repo / "feature.txt").write_text("feature\n")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    feature_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=integration.id,
+        target_branch="main",
+    )
+    task_manager.close_task_with_commit(leaf.id, feature_sha, force=True, cwd=repo)
+
+    assert not _is_ancestor(integration_path, feature_sha)
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+        merge_closed_descendant_commits=True,
+    )
+
+    assert _is_ancestor(integration_path, feature_sha)
+    assert (integration_path / "feature.txt").read_text() == "feature\n"
+
+
+def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    integration_branch = _integration_branch(parent)
+
+    _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
+    _git(repo, "checkout", "-b", "stale/leaf")
+    (repo / "feature.txt").write_text("stale\n")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "stale feature")
+    stale_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", "task/leaf")
+    (repo / "feature.txt").write_text("accepted\n")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "accepted feature")
+    accepted_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=integration.id,
+        target_branch="main",
+    )
+    task_manager.link_commit(leaf.id, stale_sha, cwd=repo)
+    task_manager.close_task_with_commit(leaf.id, accepted_sha, force=True, cwd=repo)
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+        merge_closed_descendant_commits=True,
+    )
+
+    assert _is_ancestor(integration_path, accepted_sha)
+    assert not _is_ancestor(integration_path, stale_sha)
+    assert (integration_path / "feature.txt").read_text() == "accepted\n"
 
 
 def test_epic_integration_workspace_refresh_aborts_timeout_merge(

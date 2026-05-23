@@ -7,6 +7,7 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "ParsedMessage",
     "ClaudeTranscriptParser",
     "GeminiTranscriptParser",
+    "GrokTranscriptParser",
     "QwenTranscriptParser",
     "CodexTranscriptParser",
     "DroidTranscriptParser",
@@ -24,6 +26,7 @@ __all__ = [
 PARSER_REGISTRY: dict[str, type[TranscriptParser]] = {
     "claude": ClaudeTranscriptParser,
     "gemini": GeminiTranscriptParser,
+    "grok": GrokTranscriptParser,
     "qwen": QwenTranscriptParser,
     "codex": CodexTranscriptParser,
     "droid": DroidTranscriptParser,

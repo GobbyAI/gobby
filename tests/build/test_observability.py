@@ -189,9 +189,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         no_match.id: "no_matching_rule",
     }
     for task_id, reason in cases.items():
-        assert (
-            explain_dispatch(task_id, db=temp_db, project_id=project_id)["reason"] == reason
-        )
+        assert explain_dispatch(task_id, db=temp_db, project_id=project_id)["reason"] == reason
 
     explanation = explain_dispatch(ready.id, db=temp_db, project_id=project_id)
     assert explanation["eligible"] is True

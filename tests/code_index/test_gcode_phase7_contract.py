@@ -218,6 +218,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
             "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
             "depth.clamp(1, 5)",
             "limit.clamp(1, MAX_GRAPH_LIMIT)",
+            "offset.min(MAX_GRAPH_LIMIT)",
             "SKIP {offset} LIMIT {limit}",
             "target.id IN [{ids}]",
             "src.id IN [{ids}]",
@@ -229,6 +230,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         (
             r"fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String",
             r"fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String",
+            r"fn\s+clamp_offset\(offset:\s*usize\)\s*->\s*usize",
             r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)",
         ),
     )

@@ -51,6 +51,11 @@ def test_qa_reviewer_prompt_builder_registered() -> None:
 
     assert "qa-reviewer.yaml agent" in prompt
     assert "#42" in prompt
+    assert "Spawn-time auto-claim normally already owns the task" in prompt
+    assert "Do not call claim_task unless" in prompt
+    assert "Do not call get_workflow_status" in prompt
+    assert "Do not run the full pytest suite" in prompt
+    assert "focused validation" in prompt
 
 
 def test_prompt_builder_uses_seq_ref_when_loaded_task_has_no_ref() -> None:

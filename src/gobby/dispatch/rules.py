@@ -17,6 +17,7 @@ from gobby.dispatch.actions import (
     StartStageAction,
 )
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
 
@@ -319,6 +320,8 @@ def merge_rule(task: object, context: object) -> Action | None:
 def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceAction | None:
     stage = _matching_current_stage(task, context, "merge", "in_progress")
     if stage is None or not _has_workspace_merge_source(task, context):
+        return None
+    if _task_has_label(task, WORKSPACE_MERGE_CONFLICT_LABEL):
         return None
     artifacts = _artifacts(task, context)
     target_branch = _field(artifacts, "target_branch")
@@ -720,7 +723,7 @@ def _development_agent(task: object, stage: object, context: object) -> str:
         )
     if _field(task, "category") == "code":
         implementation_domain = _field(task, "implementation_domain")
-        if implementation_domain in IMPLEMENTATION_DOMAINS:
+        if implementation_domain is not None and implementation_domain in IMPLEMENTATION_DOMAINS:
             return AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
     if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"
@@ -769,6 +772,10 @@ def _is_closed(task: object) -> bool:
 
 def _isolation(task: object) -> str:
     return str(_field(task, "isolation", "worktree"))
+
+
+def _task_has_label(task: object, label: str) -> bool:
+    return label in set(_field(task, "labels", ()) or ())
 
 
 def _has_isolation_pair(artifacts: object, isolation: str) -> bool:

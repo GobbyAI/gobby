@@ -5,6 +5,7 @@ _retry_async logic, _format_summary_context, _prepare_image_data,
 generate_json, stream_with_mcp_tools, and describe_image.
 """
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -120,6 +121,13 @@ class TestIsTransientError:
         assert ClaudeLLMProvider._is_transient_error(Exception("rate limit exceeded")) is True
         assert ClaudeLLMProvider._is_transient_error(Exception("500 Internal Server Error")) is True
         assert ClaudeLLMProvider._is_transient_error(Exception("connection reset")) is True
+
+    def test_error_result_success_is_not_retried(self) -> None:
+        """Known Claude SDK error-result-success failures are not retried noisily."""
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        error = Exception("Claude Code returned an error result: success")
+        assert ClaudeLLMProvider._is_transient_error(error) is False
 
 
 # ─── _retry_async tests ─────────────────────────────────────────────────
@@ -409,6 +417,70 @@ class TestGenerateJson:
             result = await provider._generate_json_sdk("Generate JSON")
 
             assert result == {"entities": []}
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_classifies_error_result_success(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Known SDK error-result-success failures log one warning and no traceback."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            raise Exception("Claude Code returned an error result: success")
+            yield
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKProviderFailure, match="generate_json provider degraded"),
+            ):
+                await provider._generate_json_sdk("Generate JSON")
+
+        sleep.assert_not_awaited()
+        assert "provider degraded: Claude SDK returned error-result-success" in caplog.text
+        assert "retrying" not in caplog.text
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+class TestGenerateTextProviderFailures:
+    """Tests for generate_text provider failure classification."""
+
+    @pytest.mark.asyncio
+    async def test_code_index_summary_failure_classified_without_retry_noise(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """code_index.symbol_summary calls get one typed degradation warning."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            raise Exception("Claude Code returned an error result: success")
+            yield
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(
+                    ClaudeSDKProviderFailure,
+                    match=r"generate_text\[code_index\.symbol_summary\] provider degraded",
+                ),
+            ):
+                await provider.generate_text(
+                    "Summarize",
+                    caller="code_index.symbol_summary",
+                )
+
+        sleep.assert_not_awaited()
+        assert "provider degraded: Claude SDK returned error-result-success" in caplog.text
+        assert "retrying" not in caplog.text
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 # ─── describe_image tests ───────────────────────────────────────────────

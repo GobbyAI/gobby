@@ -175,7 +175,7 @@ async def handle_recovered_plan_approval(
 
     # Compatibility fallback for older clients that still send external_id.
     if not db_session:
-        for source in ("claude", "gemini", "qwen", "codex", "droid"):
+        for source in ("claude", "gemini", "grok", "qwen", "codex", "droid"):
             try:
                 db_session = await run_db(
                     mixin, session_manager.find_active_by_external_id, conversation_id, source

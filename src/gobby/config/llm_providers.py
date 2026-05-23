@@ -3,7 +3,7 @@ LLM providers configuration module.
 
 Contains LLM-related Pydantic config models:
 - LLMProviderConfig: Single provider config (models, auth_mode)
-- LLMProvidersConfig: Multi-provider config (claude, codex, gemini, qwen)
+- LLMProvidersConfig: Multi-provider config (claude, codex, gemini, grok, qwen)
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
@@ -52,6 +52,9 @@ class LLMProvidersConfig(BaseModel):
       gemini:
         models: gemini-3.1-pro-preview,gemini-3-flash-preview
         auth_mode: subscription
+      grok:
+        models: grok-build
+        auth_mode: subscription
       qwen:
         models: qwen3-coder-plus,qwen3-coder-flash
         auth_mode: subscription
@@ -82,7 +85,11 @@ class LLMProvidersConfig(BaseModel):
     )
     gemini: LLMProviderConfig | None = Field(
         default=None,
-        description="Gemini provider configuration",
+        description="Gemini provider configuration (deprecated)",
+    )
+    grok: LLMProviderConfig | None = Field(
+        default=None,
+        description="Grok provider configuration",
     )
     qwen: LLMProviderConfig | None = Field(
         default=None,
@@ -98,6 +105,8 @@ class LLMProvidersConfig(BaseModel):
             providers.append("codex")
         if self.gemini:
             providers.append("gemini")
+        if self.grok:
+            providers.append("grok")
         if self.qwen:
             providers.append("qwen")
         return providers

@@ -181,6 +181,46 @@ def read_shutdown_intent(
         except OSError as exc:
             logger.warning("Failed to consume shutdown marker %s: %s", marker, exc)
 
+    return _record_from_marker_data(data, max_age_seconds=max_age_seconds)
+
+
+def read_active_shutdown_intent(
+    *,
+    max_age_seconds: float = 120.0,
+    home: Path | None = None,
+) -> ShutdownIntentRecord | None:
+    """Read the non-consuming active shutdown marker used by hook guards."""
+    marker = get_active_shutdown_marker_path(home)
+    try:
+        raw = marker.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.debug("Failed to read active shutdown marker %s: %s", marker, exc)
+        return None
+
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError("shutdown marker must be a JSON object")
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.debug("Malformed active shutdown marker at %s: %s", marker, exc)
+        return ShutdownIntentRecord(
+            intent=ShutdownIntent.STOP,
+            source="unknown",
+            sender_pid=None,
+            timestamp=None,
+            error=str(exc),
+        )
+
+    return _record_from_marker_data(data, max_age_seconds=max_age_seconds)
+
+
+def _record_from_marker_data(
+    data: dict[str, Any],
+    *,
+    max_age_seconds: float,
+) -> ShutdownIntentRecord:
     source = str(data.get("source", "unknown"))
     timestamp = _optional_float(data.get("timestamp"))
     age = (time.time() - timestamp) if timestamp is not None else None

@@ -224,7 +224,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         except Exception as e:
             handler.logger.error(f"Failed to setup session tracking: {e}", exc_info=True)
 
-    event.metadata["_platform_session_id"] = session_id
+    if session_id:
+        event.metadata["_platform_session_id"] = session_id
     if parent_session_id:
         event.metadata["_parent_session_id"] = parent_session_id
 

@@ -85,7 +85,7 @@ def _ensure_headless_settings() -> None:
 
 def init_hub_database(config: DatabasePathConfig) -> Any:
     """Initialize the runtime hub database."""
-    if getattr(config, "hub_backend", "postgres") != "postgres":
+    if config.hub_backend != "postgres":
         logger.warning("Only PostgreSQL is supported for the runtime hub")
         raise ValueError(HUB_BACKEND_POSTGRES_REQUIRED)
 
@@ -128,10 +128,11 @@ def open_protected_test_database(
         try:
             run_migrations(db)
         except MigrationUnsupportedError as exc:
-            logger.debug(
+            logger.warning(
                 "Protected test SQLite migrations unsupported: %s",
                 exc,
                 exc_info=True,
             )
+            raise
     logger.info("Database: protected test SQLite hub")
     return db

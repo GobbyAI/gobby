@@ -891,12 +891,6 @@ export const SessionsTab = memo(function SessionsTab({
             >
               Send Context
             </button>
-            <button
-              className="session-ctx-item"
-              onClick={() => openModal("command", ctxMenu.entry)}
-            >
-              Send Command
-            </button>
             {ctxMenu.entry.hasTmux && (
               <>
                 <button

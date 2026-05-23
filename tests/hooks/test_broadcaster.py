@@ -215,6 +215,39 @@ async def test_broadcast_event_with_response(mock_websocket_server, default_conf
 
 
 @pytest.mark.asyncio
+async def test_broadcast_event_permission_request_allow_uses_decision_payload(
+    mock_websocket_server, default_config, caplog
+):
+    """Plain allow PermissionRequest responses must match the nested output schema."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("permission-request")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.PERMISSION_REQUEST,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": "git status"},
+        },
+    )
+
+    await broadcaster.broadcast_event(event, HookResponse(decision="allow"))
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "permission-request"
+    assert call_args["result"]["decision"] == {"behavior": "allow"}
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_output(
     mock_websocket_server, default_config, caplog
 ):

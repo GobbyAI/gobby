@@ -663,15 +663,11 @@ registry is the runtime side.
 | `end_agent_run` | Signal that the current run is complete and release its resources. |
 | `unregister_agent` | Internal registry cleanup helper. |
 
-### Messaging and Commands
+### Messaging
 
 | Tool | Description |
 | :--- | :--- |
 | `send_message` | Message a `session`, `agent`, `project`, `build`, or `all` target. |
-| `send_command` | Send a constrained command to a descendant session. |
-| `activate_command` | Activate a pending command in the target session. |
-| `complete_command` | Mark a command complete and send the result back. |
-| `wait_for_command` | Block until a pending command arrives or the timeout fires. |
 | `deliver_pending_messages` | Fetch undelivered messages and mark them delivered. |
 | `get_inter_session_messages` | Read message history. |
 
@@ -724,13 +720,6 @@ call_tool("gobby-agents", "send_message", {
     "content": "Pause work before merge validation.",
 })
 
-# Command coordination
-call_tool("gobby-agents", "send_command", {
-    "from_session": "<parent>",
-    "to_session": "<child>",
-    "command_text": "Run test suite",
-    "allowed_tools": ["Bash", "Read"],
-})
 ```
 
 ---

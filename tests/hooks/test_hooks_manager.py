@@ -1,6 +1,8 @@
 """Tests for the HookManager coordinator."""
 
 import json
+import logging
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +14,8 @@ from gobby.hooks.hook_manager import HookManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
+from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -958,6 +962,76 @@ class TestHookManagerSessionLookup:
         assert response.decision == "allow"
         mock_register.assert_not_called()
         assert event.metadata["_platform_session_id"] == precreated.id
+
+    def test_resumed_codex_ignores_stale_wrapper_metadata_for_session_context(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A stale injected wrapper id must be replaced by the canonical Codex session."""
+        manager = hook_manager_with_mocks
+        external_id = "resumed-codex-session"
+
+        start_event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "source": "startup",
+                "transcript_path": str(temp_dir / "resumed-codex.jsonl"),
+            },
+            machine_id="test-machine-id",
+        )
+        response = manager.handle(start_event)
+
+        assert response.decision == "allow"
+        canonical_id = start_event.metadata["_platform_session_id"]
+        stale_wrapper_id = str(uuid.uuid4())
+        assert stale_wrapper_id != canonical_id
+
+        caplog.set_level(logging.WARNING)
+        caplog.clear()
+        resumed_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__set_variable",
+                "tool_input": {
+                    "name": "wrapper_recovery",
+                    "value": True,
+                    "session_id": canonical_id,
+                },
+                "cwd": str(temp_dir),
+            },
+            machine_id="test-machine-id",
+            metadata={"_platform_session_id": stale_wrapper_id},
+        )
+        response = manager.handle(resumed_event)
+
+        assert response.decision == "allow"
+        assert resumed_event.metadata["_platform_session_id"] == canonical_id
+
+        tokens = resolve_and_seed_contexts(
+            session_ref=resumed_event.metadata["_platform_session_id"],
+            session_manager=manager._session_manager,
+            db=manager._database,
+        )
+        try:
+            assert tokens.resolved_session_id == canonical_id
+            variables = SessionVariableManager(manager._database)
+            variables.set_variable(tokens.resolved_session_id, "wrapper_recovery", True)
+            assert variables.get_variables(canonical_id)["wrapper_recovery"] is True
+            assert variables.get_variables(stale_wrapper_id) == {}
+            warning_messages = [record.getMessage() for record in caplog.records]
+            assert not any("Session not found" in message for message in warning_messages)
+            assert not any("could not resolve session ref" in message for message in warning_messages)
+        finally:
+            reset_seeded_contexts(tokens)
 
     def test_handle_looks_up_session_from_database(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path

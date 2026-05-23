@@ -56,6 +56,14 @@ class IdleCheckHandler:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
+    async def _clear_tmux_session_name(self, run: AgentRun) -> None:
+        if run.tmux_session_name:
+            await self._run_sqlite(
+                self._agent_run_manager.clear_tmux_session_name,
+                run.id,
+                run.tmux_session_name,
+            )
+
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
@@ -297,6 +305,7 @@ class IdleCheckHandler:
         """Fail an agent that is irrecoverably idle."""
         if run.tmux_session_name:
             await self._tmux.kill_session(run.tmux_session_name)
+            await self._clear_tmux_session_name(run)
 
         self._idle_detector.clear_state(run.id)
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")

@@ -424,7 +424,7 @@ class TestSpawnAgentStepVariables:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
-    async def test_auto_claimed_developer_agent_without_additional_skills_starts_at_implement(
+    async def test_auto_claimed_developer_agent_without_additional_skills_loads_required_skill(
         self,
         db,
         mock_runner,
@@ -441,14 +441,16 @@ class TestSpawnAgentStepVariables:
         assert result["success"] is True
         assert instance is not None
         assert task_manager.get_task(task.id).assignee == instance.session_id
-        assert instance.current_step == "implement"
+        assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
+        assert instance.variables["required_skills"] == ["development-discipline"]
+        assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
         assert instance.variables["additional_skills_loaded"] is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
-    async def test_auto_claimed_developer_agent_with_required_skill_waits_for_skill_load(
+    async def test_auto_claimed_developer_agent_with_optional_skill_still_loads_required_first(
         self,
         db,
         mock_runner,
@@ -465,8 +467,10 @@ class TestSpawnAgentStepVariables:
 
         assert result["success"] is True
         assert instance is not None
-        assert instance.current_step == "load_additional_skills"
+        assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
+        assert instance.variables["required_skills"] == ["development-discipline"]
+        assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]
         assert instance.variables["additional_skills_loaded"] is False
 

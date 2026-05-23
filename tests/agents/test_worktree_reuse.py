@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
+from gobby.agents.worktree_reuse import (
+    ReusedWorktreeRebaseConflict,
+    sync_reused_worktree_to_base,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -100,7 +103,7 @@ async def test_sync_reused_worktree_aborts_failed_rebase(tmp_path: Path) -> None
         ]
     )
 
-    with pytest.raises(RuntimeError, match="rebase aborted"):
+    with pytest.raises(ReusedWorktreeRebaseConflict, match="rebase aborted"):
         await sync_reused_worktree_to_base(
             git_manager=git,
             worktree_path=str(worktree),

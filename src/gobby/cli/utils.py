@@ -84,7 +84,7 @@ def _redact_dsn(dsn: str) -> str:
     """Redact the password component from a PostgreSQL DSN for CLI output."""
     if "@" not in dsn:
         return dsn
-    prefix, suffix = dsn.split("@", 1)
+    prefix, suffix = dsn.rsplit("@", 1)
     scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
     if ":" not in auth:
         return dsn

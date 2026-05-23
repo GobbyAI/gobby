@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
 
-_SUPPORTED_PROVIDERS = {"claude", "codex", "gemini", "qwen", "droid"}
+_SUPPORTED_PROVIDERS = {"claude", "codex", "gemini", "grok", "qwen", "droid", "agy"}
 
 
 class ChatMessageIngressMixin:

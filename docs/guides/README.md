@@ -54,6 +54,7 @@ links to the guide that owns that topic.
 | [mcp-tools.md](mcp-tools.md) | MCP proxy behavior and native Gobby tool reference |
 | [http-endpoints.md](http-endpoints.md) | HTTP API route reference |
 | [hook-schemas.md](hook-schemas.md) | Hook event schema and adapter payload reference |
+| [adapter-fidelity.md](adapter-fidelity.md) | Provider capability declarations and adapter response fidelity |
 | [variables.md](variables.md) | Session variables, conditions, and safe expression evaluation |
 
 ## Integrations

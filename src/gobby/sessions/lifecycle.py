@@ -28,6 +28,7 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.sessions import SessionManager
@@ -484,6 +485,8 @@ class SessionLifecycleManager:
         parser: Any = ClaudeTranscriptParser(session_id=session_id)
         if session.source == "gemini":
             parser = GeminiTranscriptParser(session_id=session_id)
+        elif session.source == "grok":
+            parser = GrokTranscriptParser(session_id=session_id)
         elif session.source == "qwen":
             parser = QwenTranscriptParser(session_id=session_id)
         elif session.source == "codex":

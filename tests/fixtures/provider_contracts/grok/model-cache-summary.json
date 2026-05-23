@@ -1,0 +1,42 @@
+{
+  "provider": "grok",
+  "capture_type": "model_cache_summary",
+  "cli_version": "0.1.216",
+  "captured_at": "2026-05-22T22:12:00Z",
+  "models_cache_path": "~/.grok/models_cache.json",
+  "models_cache_keys": [
+    "auth_method",
+    "etag",
+    "fetched_at",
+    "grok_version",
+    "models"
+  ],
+  "models_cache_summary": {
+    "fetched_at": "2026-05-22T22:10:10.352749Z",
+    "grok_version": "0.1.216",
+    "auth_method": "session",
+    "model_ids": [
+      "grok-build"
+    ]
+  },
+  "grok_models_stdout_summary": {
+    "default_model": "grok-build",
+    "available_models": [
+      "grok-build"
+    ]
+  },
+  "acp_initialize_model_state": {
+    "currentModelId": "grok-build",
+    "availableModels": [
+      {
+        "modelId": "grok-build",
+        "name": "Grok Build",
+        "description": "Best for advanced coding tasks",
+        "_meta": {
+          "totalContextTokens": 512000,
+          "agentType": "grok-build-plan"
+        }
+      }
+    ]
+  }
+}
