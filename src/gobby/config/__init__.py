@@ -7,6 +7,8 @@ Configuration classes are organized into submodules by functionality:
 Module structure:
 - app.py: Main DaemonConfig aggregator and utility functions
 - bootstrap.py: Pre-DB bootstrap settings from bootstrap.yaml
+- local.py: Local model endpoint configs
+- ui.py: Web UI, auth, and tool approval configs
 - servers.py: WebSocket and MCP proxy configs
 - llm_providers.py: LLM provider configurations
 - persistence.py: Memory storage configs
@@ -16,6 +18,8 @@ Module structure:
 - features.py: MCP proxy feature configs (code execution, tool recommendation)
 
 Import from submodules directly for specific configs:
+    from gobby.config.local import LocalConfig
+    from gobby.config.ui import UIConfig
     from gobby.config.tasks import TaskValidationConfig
     from gobby.config.extensions import WebhooksConfig
 

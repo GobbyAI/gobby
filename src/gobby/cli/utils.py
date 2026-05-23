@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 import click
 import psutil
 
-from gobby.config.app import DaemonConfig, UIConfig, load_config
+from gobby.config.app import DaemonConfig, load_config
+from gobby.config.ui import UIConfig
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context

@@ -395,7 +395,7 @@ async def spawn_agent_impl(
 
     # Resolve model: local from daemon config
     if effective_model == "local":
-        from gobby.config.app import LocalConfig
+        from gobby.config.local import LocalConfig
 
         local_cfg: LocalConfig | None = (
             getattr(daemon_config, "local", None) if daemon_config else None

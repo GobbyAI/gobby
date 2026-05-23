@@ -38,6 +38,7 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.llm_providers import LLMProvidersConfig
+from gobby.config.local import LocalConfig, LocalLLMConfig
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -57,138 +58,17 @@ from gobby.config.sessions import (
 from gobby.config.skills import SkillsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
 from gobby.config.tmux import TmuxConfig
+from gobby.config.ui import (
+    AuthConfig,
+    ToolApprovalConfig,
+    UIConfig,
+)
+from gobby.config.ui import (
+    ToolApprovalPolicy as ToolApprovalPolicy,
+)
 from gobby.config.voice import VoiceConfig
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
-
-
-class LocalConfig(BaseModel):
-    """Configuration for local model endpoint (e.g., LMStudio)."""
-
-    url: str = Field(
-        description="Local model API endpoint (e.g., http://localhost:1234/v1)",
-    )
-    model: str = Field(
-        description="Model name to load/use at the local endpoint",
-    )
-    api_key: str | None = Field(
-        default=None,
-        description="API key for the local endpoint. Use $secret:NAME for encrypted secrets store.",
-    )
-
-
-class LocalLLMConfig(BaseModel):
-    """Configuration for routing providers through a local LLM endpoint.
-
-    When enabled, sets ANTHROPIC_BASE_URL for the specified providers so that
-    Claude Code (or other tools) routes API traffic through the local endpoint
-    (e.g., LMStudio, Ollama, llama.cpp server).
-    """
-
-    enabled: bool = Field(default=False, description="Enable local LLM endpoint override")
-    endpoint: str = Field(
-        default="",
-        description="Base URL for the local LLM (e.g., http://localhost:1234/v1)",
-    )
-    providers: list[str] = Field(
-        default_factory=lambda: ["claude"],
-        description="Providers to route through the local endpoint",
-    )
-
-    @model_validator(mode="after")
-    def validate_enabled_endpoint(self) -> LocalLLMConfig:
-        """Require a non-empty endpoint when local routing is enabled."""
-        if self.enabled and not self.endpoint.strip():
-            raise ValueError("endpoint must be set when enabled is True")
-        return self
-
-
-class ToolApprovalPolicy(BaseModel):
-    """A single tool approval policy matching server/tool glob patterns."""
-
-    server_pattern: str = Field(default="*", description="Glob pattern for server name")
-    tool_pattern: str = Field(default="*", description="Glob pattern for tool name")
-    policy: Literal["auto", "approve_once", "always_ask"] = Field(
-        default="always_ask",
-        description="Approval policy: 'auto', 'approve_once', or 'always_ask'",
-    )
-
-
-class ToolApprovalConfig(BaseModel):
-    """Configuration for tool approval UI in web chat."""
-
-    enabled: bool = Field(default=False, description="Enable tool approval prompts")
-    default_policy: Literal["auto", "approve_once", "always_ask"] = Field(
-        default="auto",
-        description="Default policy: 'auto' (no prompts), 'approve_once', or 'always_ask'",
-    )
-    policies: list[ToolApprovalPolicy] = Field(
-        default_factory=list,
-        description="Per-tool approval policies (server/tool glob patterns)",
-    )
-
-
-class AuthConfig(BaseModel):
-    """Basic authentication for the web UI.
-
-    Leave username and password empty to disable auth (default).
-    Once both are set, the UI requires login. Password is encrypted
-    via Fernet in the secrets table.
-    """
-
-    username: str = Field(
-        default="",
-        description="Username for web UI login. Leave empty to disable auth.",
-    )
-    password: str = Field(
-        default="",
-        description="Password for web UI login (encrypted in secrets table).",
-    )
-    session_secret: str = Field(
-        default="",
-        description="HMAC signing key for session cookies (auto-generated on first login).",
-        json_schema_extra={"ui_hidden": True},
-    )
-
-
-class UIConfig(BaseModel):
-    """Configuration for the web UI."""
-
-    enabled: bool = Field(default=False, description="Enable web UI serving")
-    mode: str = Field(default="production", description="'production' or 'dev'")
-    port: int = Field(default=60889, description="Dev server port (dev mode only)")
-    host: str = Field(default="localhost", description="Dev server host (dev mode only)")
-    web_dir: str | None = Field(
-        default=None, description="Path to web/ dir (auto-detected if None)"
-    )
-    memory_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 2D memory graph (nodes)",
-    )
-    knowledge_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 3D knowledge graph (entities)",
-    )
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port number is in valid range."""
-        if not (1024 <= v <= 65535):
-            raise ValueError("Port must be between 1024 and 65535")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        if v not in ("production", "dev"):
-            raise ValueError("UI mode must be 'production' or 'dev'")
-        return v
-
 
 __all__ = [
     "CompactHandoffConfig",
