@@ -46,12 +46,12 @@ codebase → tree-sitter AST → PostgreSQL hub → search / retrieve / navigate
      │          │          │        │
   symbols    chunks     files    ┌──┴──┐
   (BM25)    (BM25)   (hashes)   │     │
-                              Neo4j  Qdrant
+                              FalkorDB Qdrant
                              (calls) (vectors)
 ```
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, extract symbols and content chunks
-2. **Store** — PostgreSQL hub tables for symbols/content, Neo4j for call/import graphs, Qdrant for semantic vectors
+2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
 3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → Reciprocal Rank Fusion
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
@@ -90,7 +90,7 @@ cargo install gobby-code
 ```
 
 Graph and semantic features are configured at runtime. You do not need Cargo
-feature flags to enable Neo4j, Qdrant, or embeddings support.
+feature flags to enable FalkorDB, Qdrant, or embeddings support.
 
 Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
 `~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
@@ -130,7 +130,7 @@ gcode symbol <id>                         # Source code by symbol ID
 gcode symbols <id1> <id2> ...             # Batch retrieve
 gcode tree                                # File tree with symbol counts
 
-# Dependency graph reads (requires Neo4j)
+# Dependency graph reads (requires FalkorDB)
 gcode callers "handleAuth"                # Who calls this?
 gcode usages "handleAuth"                 # Incoming call sites
 gcode imports src/auth.ts                 # Import graph for a file
@@ -186,7 +186,7 @@ source of truth for code-index rows.
 
 ```
 codebase → tree-sitter → PostgreSQL hub + pg_search BM25
-                          Neo4j                 → call graphs, blast radius, imports
+                          FalkorDB              → call graphs, blast radius, imports
                           Qdrant + embeddings   → semantic vector search
                           Gobby daemon          → auto-indexing, graph/vector sync,
                                                   config, secrets, sessions, agents
@@ -194,9 +194,9 @@ codebase → tree-sitter → PostgreSQL hub + pg_search BM25
 
 Gobby adds graph queries, graph lifecycle orchestration, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
 
-**Search quality improves.** With Neo4j, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
+**Search quality improves.** With FalkorDB, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
-**Config and secrets are managed.** Neo4j URLs, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
+**Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
 **PostgreSQL DSNs stay out of plaintext files.** Isolated gcode runtimes keep
 `database_url_ref: keyring:gobby:postgres_database_url`; gcode resolves it
@@ -208,10 +208,10 @@ keyring.
 | Capability | gcode CLI | With Gobby daemon/services |
 |-----------|-----------|-----------|
 | AST indexing + BM25 search | Yes, via PostgreSQL hub | Yes |
-| Graph-boosted search ranking | When Neo4j is configured | Yes |
+| Graph-boosted search ranking | When FalkorDB is configured | Yes |
 | Semantic vector search | When Qdrant + embeddings are configured | Yes |
-| Call graph / blast radius | When Neo4j is configured | Yes |
-| Import graph | When Neo4j is configured | Yes |
+| Call graph / blast radius | When FalkorDB is configured | Yes |
+| Import graph | When FalkorDB is configured | Yes |
 | Graph clear / rebuild lifecycle | Requires daemon | Yes |
 | Auto-indexing on file change | Manual `gcode index` | Yes (daemon file watcher) |
 | Centralized config + secrets | Reads PostgreSQL `config_store` + secrets | Yes |
@@ -226,13 +226,13 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 
 | Service unavailable | Behavior |
 |---------------------|----------|
-| Neo4j down | Graph commands return `[]`. Search loses graph boost. |
+| FalkorDB down | Graph commands return `[]`. Search loses graph boost. |
 | Qdrant down | Search loses semantic boost. BM25 + graph still work. |
 | Embeddings API unavailable | Semantic embeddings disabled. BM25 + graph still work. |
 | PostgreSQL hub unavailable | Runtime index/search commands fail with a bootstrap or connection error. |
 | No index yet | Commands error with `Run gcode init to initialize`. |
 
-Read-side graph commands depend on Neo4j. `gcode graph clear` and `gcode graph rebuild`
+Read-side graph commands depend on FalkorDB. `gcode graph clear` and `gcode graph rebuild`
 are separate lifecycle operations routed through the Gobby daemon for the
 current resolved project.
 
