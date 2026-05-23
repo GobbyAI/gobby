@@ -208,8 +208,8 @@ ${cliRows}
 ${projectRows}
 
 ## Services
-- Neo4j: ${state.neo4j_installed ? "installed (Docker)" : "not installed"}
-- Neo4j password: ${state.neo4j_password_set ? "custom" : state.neo4j_installed ? "auto-generated" : "n/a"}
+- FalkorDB: ${state.falkordb_installed ? "installed (Docker)" : "not installed"}
+- FalkorDB password: ${state.falkordb_password_set ? "custom" : state.falkordb_installed ? "auto-generated" : "n/a"}
 
 ## Personal Workspace
 - Path: ~/.gobby/personal/

@@ -19,8 +19,8 @@ describe("setup bundle FalkorDB contract", () => {
       hasFalkorPasswordSet: bundle.includes("falkordb_password_set"),
       hasNeo4jFlag: bundle.includes("--neo4j"),
       hasNeo4jPasswordFlag: bundle.includes("--neo4j-password"),
-      hasNeo4jInstalled: bundle.includes("neo4j_installed"),
-      hasNeo4jPasswordSet: bundle.includes("neo4j_password_set"),
+      hasNeo4jInstalledMigrator: bundle.includes("neo4j_installed"),
+      hasNeo4jPasswordSetMigrator: bundle.includes("neo4j_password_set"),
     }).toEqual({
       hasFalkorFlag: true,
       hasFalkorPasswordFlag: true,
@@ -28,8 +28,8 @@ describe("setup bundle FalkorDB contract", () => {
       hasFalkorPasswordSet: true,
       hasNeo4jFlag: false,
       hasNeo4jPasswordFlag: false,
-      hasNeo4jInstalled: false,
-      hasNeo4jPasswordSet: false,
+      hasNeo4jInstalledMigrator: true,
+      hasNeo4jPasswordSetMigrator: true,
     });
   });
 });
