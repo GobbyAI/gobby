@@ -396,65 +396,89 @@ This section summarizes the non-merge changes since `v0.3.8`.
 
 ### Breaking Changes
 
-- Replaced Neo4j with FalkorDB as the knowledge graph backend. FalkorDB is
+- The knowledge graph backend moved from Neo4j to FalkorDB. FalkorDB is
   Docker-only in 0.4.0; a native local-install path is planned for a follow-up
-  release. The `--neo4j-password` install option and the `--neo4j` uninstall
-  flag have been **removed** and are not aliased; both hard-fail with a
-  migration error pointing operators to `--falkordb`.
+  release.
+- `gobby install --neo4j-password <value>` and `gobby uninstall --neo4j` were
+  removed in `0.4.0` as part of the backend move. Passing either flag now
+  hard-fails with the migration message instead of acting as a compatibility
+  alias.
+- Existing Neo4j Docker services must be stopped manually because the removed
+  `gobby uninstall --neo4j` flag no longer performs service actions:
+  `docker compose -f ~/.gobby/services/docker-compose.yml --profile neo4j down -v`.
+  The explicit `-f` path is required when running from outside the services
+  directory.
+- Use `gobby install [--falkordb-password <pw>]` for the normal install path,
+  `gobby install --falkordb` for service-only setup, and
+  `gobby uninstall --falkordb` when removing the graph service.
+- Neo4j graph data is not migrated to FalkorDB. Rebuild memory graph data with
+  the `gobby-memory` `rebuild_knowledge_graph` MCP tool and rebuild code graph
+  data with `gcode index <project>` after installing FalkorDB.
+- Upgrade the Rust `gobby-cli` crate to a matching FalkorDB-era release
+  (`gcode 0.7.0+`) at the same time as `gobby 0.4.0+`. Mismatched versions can
+  degrade graph features to "graph unavailable" because old daemons still write
+  Neo4j-era config keys.
+- The legacy aliases are intentionally absent because accepting both old and new
+  flags would obscure the backend cutover and leave users with two visible
+  command surfaces for one running service. See the FalkorDB migration notes
+  below for the service-level upgrade context.
 
-Upgrade steps:
+### FalkorDB Migration Notes
 
-1. `gobby uninstall --neo4j` is no longer available. If Neo4j was previously
-   installed, manually stop and remove the Docker service:
+- The knowledge graph backend changed from Neo4j to FalkorDB in `0.4.0`; graph
+  features now read `databases.falkordb.requirepass` and the FalkorDB connection
+  settings instead of the retired Neo4j configuration surface.
+- Existing Neo4j service installs should be replaced through the FalkorDB
+  installer commands listed in the upgrade notes above. The removed Neo4j flags
+  fail fast so operators see the migration path before any service action runs.
 
-   ```bash
-   docker compose -f ~/.gobby/services/docker-compose.yml --profile neo4j down -v
-   ```
+### Cross-Repo Merge Order
 
-   The Gobby installer keeps the unified Compose file at
-   `~/.gobby/services/docker-compose.yml`; the `-f` flag is required because
-   there is no `docker-compose.yml` in the working directory.
-2. Run `gobby install` to auto-install FalkorDB alongside Qdrant, or run
-   `gobby install --falkordb` for the graph service only. Pass
-   `--falkordb-password <value>` for a custom password.
-3. Knowledge graph and code graph data are not migrated. Re-run
-   `rebuild_knowledge_graph` through the `gobby-memory` MCP server for memory,
-   and run `gcode index <project>` for the code graph.
-4. Upgrade the `gobby-cli` Rust crate to a matching FalkorDB-era version:
-   `gcode 0.7.0+` requires `gobby 0.4.0+`. Mismatched versions silently degrade
-   to "graph unavailable" because old daemons write Neo4j config keys and new
-   `gcode` reads FalkorDB config keys.
+1. Land `gobby:falkordb-migration` first after Phase 1-6 and Phase 8.1-8.2 are
+   complete, then cut and publish `gobby 0.4.0-rc1`.
+2. Validate `gobby-cli:falkordb-migration` against `gobby 0.4.0-rc1`, then cut
+   `gcode 0.7.0-rc1`.
+3. Run the joint matrix below against one live Docker FalkorDB instance before
+   either branch merges to `main`.
+4. Bump both repos from `-rc1` to final versions in coordinated PRs that land in
+   the same release window, so users do not pull only one side of the backend
+   cutover.
 
-#### Verification
+### FalkorDB Verification Matrix
 
-Operators can self-check a completed upgrade with the same matrix used for the
-cross-repo migration:
+Every row below is a release gate. It must pass before final release and before
+either branch merges to `main`. Documenting the matrix is not pass evidence: the
+release validation run must record the date/time, Python and Rust commit SHAs,
+RC versions, isolated `GOBBY_HOME` or fixture path, exact commands, exit
+statuses, and the relevant Docker output, logs, DB query result, or screenshot
+for each row. If any row fails or cannot run because Docker/cross-repo access is
+unavailable, fix the blocker and re-run the full matrix.
 
 | # | Check | Pass criterion |
 | --- | --- | --- |
-| 1 | `gobby install` from clean `~/.gobby` | Exits 0; `docker compose -f ~/.gobby/services/docker-compose.yml ps` shows the `falkordb` profile healthy; FalkorDB Browser at `http://localhost:13000` loads; `gobby status` reports FalkorDB healthy |
-| 2 | `gobby install --falkordb` from clean `~/.gobby` | Exits 0; only the FalkorDB container starts; the `falkordb` profile is healthy |
-| 3 | `gobby install --neo4j-password foo` and `gobby uninstall --neo4j` | Both hard-fail with the migration message |
-| 4 | `GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/ tests/cli/ tests/code_index/ tests/config/ tests/utils/ tests/servers/routes/ tests/mcp_proxy/ tests/test_runner_lifecycle.py tests/test_runner_shutdown.py --cov=gobby --cov-fail-under=80 --cov-report=term-missing` | Exit 0 |
-| 5 | `uv run mypy src/gobby/memory/ src/gobby/code_index/ src/gobby/cli/installers/` | Exit 0 |
-| 6 | `uv run ruff check src/` | Exit 0 |
-| 7 | `cd web && npm run type-check && npm run test && npm run build` | All commands exit 0 |
-| 8 | `gobby setup` from clean state | Wizard completes; FalkorDB installs through Docker; `setup_state.json` has `falkordb_*` fields |
-| 9 | `gobby setup` with custom password | Password persists in config_store and bootstrap; `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <pw> PING` returns `PONG` |
-| 10 | `gobby setup` with a pre-existing `neo4j_*` state file | Wizard rewrites state to `falkordb_*` without crashing |
-| 11 | `cargo test -p gobby-code && cargo build --release -p gobby-code` | Exit 0 |
-| 12 | `gcode index .` on a fixture project, then `gcode callers <known_function>` | Returns expected callers |
-| 13 | `gcode blast-radius <known_function>` | Returns expected transitive callers |
-| 14 | `gcode search "<query>"` with graph boost enabled | Returns ranked results with graph-boosted entries |
-| 15 | Browser memory page | 3D graph renders and dashboard shows "FalkorDB connected" |
-| 16 | Daemon restart with stale `databases.neo4j.*` keys present | Logs the migration warning and deletes the stale keys |
-| 17 | `gobby uninstall --falkordb` from a non-services-dir CWD with tuned FalkorDB values pre-seeded | Removes connection/auth keys and `falkordb_password`, preserves `rrf_k` and `graph_min_score`, stops the container through the explicit Compose file path |
-| 18 | Existing Neo4j-era Compose file followed by `gobby install` from a non-services-dir CWD | Compose refreshes to FalkorDB, the Neo4j container stops, FalkorDB starts, and `redis-cli ... PING` returns `PONG` |
-| 19 | Set `databases.falkordb.requirepass` through `/api/config/values`, `gobby-config set_config`, and `gobby-config set_config_batch`; read it back through all config read surfaces | Reads are masked; raw DB stores `$secret:requirepass` and encrypted secret data |
-| 20 | `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/ tests/` and the matching `crates/` scan in `gobby-cli` | Only the documented migration/deprecation allowlist remains |
-| 21 | Force bootstrap write failure during `gobby install --falkordb` | Installer returns `success: False`, names `gobby uninstall --falkordb` for cleanup, and reports `compose_running: True` |
-| 22 | Change `databases.falkordb.requirepass`, test before and after `gobby restart` | Before restart returns `WRONGPASS` or `NOAUTH`; after restart returns `PONG`; config write response includes `requires_restart: true` |
-| 23 | Password validator across CLI, setup wizard, HTTP config, and `gobby-config` | Accepted punctuation passwords persist; empty, whitespace, tab, control, and non-ASCII samples are rejected and not persisted |
+| 1 | `gobby install` from clean `~/.gobby` | Exits 0; FalkorDB profile is healthy in `docker compose -f ~/.gobby/services/docker-compose.yml ps`; browser loads at `http://localhost:13000`; `gobby status` reports FalkorDB healthy. |
+| 2 | `gobby install --falkordb` from clean `~/.gobby` | Exits 0; only the FalkorDB service starts; CLI hooks, git, embedding, and voice setup do not run. |
+| 3 | Deprecated flags: `gobby install --neo4j-password foo` and `gobby uninstall --neo4j` | Both hard-fail with the migration message. |
+| 4 | `GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/ tests/cli/ tests/code_index/ tests/config/ tests/utils/ tests/servers/routes/ tests/mcp_proxy/ tests/test_runner_lifecycle.py tests/test_runner_shutdown.py --cov=gobby --cov-fail-under=80 --cov-report=term-missing` | Exits 0. |
+| 5 | `uv run mypy src/gobby/memory/ src/gobby/code_index/ src/gobby/cli/installers/` | Exits 0. |
+| 6 | `uv run ruff check src/` | Exits 0. |
+| 7 | `cd web && npm run type-check && npm run test && npm run build` | All commands exit 0. |
+| 8 | `gobby setup` end-to-end from clean state | Wizard completes; FalkorDB installs via Docker; `setup_state.json` contains `falkordb_*` fields. |
+| 9 | `gobby setup` end-to-end with `[p]` custom password | Wizard accepts and persists the password; `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <pw> PING` returns `PONG`. |
+| 10 | `gobby setup` migration with pre-existing `neo4j_*` state | Wizard rewrites state to `falkordb_*` without crashing. |
+| 11 | `cargo test -p gobby-code && cargo build --release -p gobby-code` | Exits 0. |
+| 12 | `gcode index .`, then `gcode callers <known_function>` against a fixture project | Expected callers match the saved fixture diff. |
+| 13 | `gcode blast-radius <known_function>` | Expected transitive callers are returned. |
+| 14 | `gcode search "<query>"` with graph boost enabled | Ranked results include the expected graph-boosted entries. |
+| 15 | Browser memory page | Page loads; 3D graph renders; dashboard shows a "FalkorDB connected" pill. |
+| 16 | Daemon restart with stale `databases.neo4j.*` keys in `config_store` | Startup logs the migration warning and deletes the stale keys. |
+| 17 | Pre-seed `databases.falkordb.rrf_k=80` and `graph_min_score=0.7`, then run `gobby uninstall --falkordb` from outside the services directory | Bootstrap `falkordb_password`, connection/auth keys, and `secrets.name = 'requirepass'` are removed; tunables remain; FalkorDB container is stopped. |
+| 18 | Seed the old Neo4j-era compose file, start the old `neo4j` profile, then run `gobby install` from outside the services directory | Compose refreshes to the FalkorDB template; old Neo4j container is stopped; no orphans remain; FalkorDB starts and `redis-cli -a <pw> PING` returns `PONG`. |
+| 19 | Set `databases.falkordb.requirepass` through `/api/config/values`, `gobby-config set_config`, and `gobby-config set_config_batch`; read through HTTP and MCP surfaces | All reads mask `requirepass` as `********`; plaintext tunables round-trip; raw DB stores `$secret:requirepass` in `config_store` with encrypted secret material. |
+| 20 | Residual Neo4j sweep: `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/ tests/` and the matching `crates/` sweep in `gobby-cli` | Only intentional migration, deprecated-flag, changelog, and test-fixture references remain. |
+| 21 | Step-6 failure path: make `~/.gobby/bootstrap.yaml` read-only after staging install, then run `gobby install --falkordb` | Installer returns `success: False`, names `gobby uninstall --falkordb` as cleanup, and includes `compose_running: True`. |
+| 22 | Password update and restart via `/api/config/values` and `gobby-config set_config` | New password fails before restart, succeeds after `gobby restart`, and both write responses include `requires_restart: true` plus a hint. |
+| 23 | Password charset validator across CLI, setup wizard, HTTP config, and MCP config ingress | Accepted punctuation password persists and works with `redis-cli`; empty, whitespace, tab, control, and non-ASCII passwords are rejected and do not persist. |
 
 ### Added
 
