@@ -6,39 +6,37 @@ enforcement and step transitions via on_mcp_success handlers.
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_step_enforcement.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    return database
+def db(temp_db: "HubDatabase") -> "HubDatabase":
+    return temp_db
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: "HubDatabase") -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: "HubDatabase") -> RuleEngine:
     return RuleEngine(db)
 
 
 @pytest.fixture
-def instance_mgr(db: LocalDatabase) -> WorkflowInstanceManager:
+def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
@@ -122,21 +120,23 @@ _DEVELOPER_WORKFLOW = {
 }
 
 
-def _create_session(db: LocalDatabase, session_id: str = "test-session") -> None:
+def _create_session(db: "HubDatabase", session_id: str = "test-session") -> None:
     """Create a minimal session row to satisfy foreign key constraints."""
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, "ext-1", "machine-1", "claude", "project-1"),
     )
 
 
 def _setup_step_workflow(
-    db: LocalDatabase,
+    db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
     session_id: str = "test-session",
@@ -177,7 +177,13 @@ class TestStepToolBlocking:
     """Test that step-level tool restrictions are enforced on BEFORE_TOOL events."""
 
     @pytest.mark.asyncio
-    async def test_allowed_tool_passes(self, db, manager, engine, instance_mgr) -> None:
+    async def test_allowed_tool_passes(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Tool in allowed_tools list should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(data={"tool_name": "mcp__gobby__call_tool"})
@@ -187,7 +193,13 @@ class TestStepToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_disallowed_tool_blocked(self, db, manager, engine, instance_mgr) -> None:
+    async def test_disallowed_tool_blocked(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Tool NOT in allowed_tools list should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(data={"tool_name": "Edit"})
@@ -195,11 +207,18 @@ class TestStepToolBlocking:
 
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
         assert response.decision == "block"
+        assert response.reason is not None
         assert "step-enforcement" in response.reason
         assert "claim" in response.reason
 
     @pytest.mark.asyncio
-    async def test_all_tools_allowed_when_set(self, db, manager, engine, instance_mgr) -> None:
+    async def test_all_tools_allowed_when_set(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """When allowed_tools is 'all', any native tool should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(data={"tool_name": "Edit"})
@@ -209,7 +228,13 @@ class TestStepToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_blocked_tools_enforced(self, db, manager, engine, instance_mgr) -> None:
+    async def test_blocked_tools_enforced(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Tool in blocked_tools list should be blocked even with allowed_tools='all'."""
         workflow = {
             "name": "test-blocked",
@@ -229,10 +254,17 @@ class TestStepToolBlocking:
 
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
         assert response.decision == "block"
+        assert response.reason is not None
         assert "blocked" in response.reason.lower()
 
     @pytest.mark.asyncio
-    async def test_discovery_tools_always_pass(self, db, manager, engine, instance_mgr) -> None:
+    async def test_discovery_tools_always_pass(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Discovery tools should pass regardless of step restrictions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
 
@@ -248,7 +280,12 @@ class TestStepToolBlocking:
             assert response.decision == "allow", f"Discovery tool {tool} should pass"
 
     @pytest.mark.asyncio
-    async def test_no_step_workflow_allows_all(self, db, manager, engine) -> None:
+    async def test_no_step_workflow_allows_all(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+    ) -> None:
         """Without an active step workflow, all tools should pass."""
         event = _make_event(data={"tool_name": "Edit"})
         variables: dict[str, Any] = {}
@@ -262,7 +299,13 @@ class TestStepMCPToolBlocking:
     """Test MCP tool restrictions (allowed_mcp_tools/blocked_mcp_tools)."""
 
     @pytest.mark.asyncio
-    async def test_allowed_mcp_tool_passes(self, db, manager, engine, instance_mgr) -> None:
+    async def test_allowed_mcp_tool_passes(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """MCP tool in allowed_mcp_tools should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -280,7 +323,13 @@ class TestStepMCPToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_disallowed_mcp_tool_blocked(self, db, manager, engine, instance_mgr) -> None:
+    async def test_disallowed_mcp_tool_blocked(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """MCP tool NOT in allowed_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -296,10 +345,17 @@ class TestStepMCPToolBlocking:
 
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
         assert response.decision == "block"
+        assert response.reason is not None
         assert "gobby-tasks:close_task" in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocked_mcp_tool_enforced(self, db, manager, engine, instance_mgr) -> None:
+    async def test_blocked_mcp_tool_enforced(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """MCP tool in blocked_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(
@@ -317,7 +373,13 @@ class TestStepMCPToolBlocking:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_mcp_discovery_tools_always_pass(self, db, manager, engine, instance_mgr) -> None:
+    async def test_mcp_discovery_tools_always_pass(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """MCP discovery tools should pass even when allowed_mcp_tools is restrictive."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -335,7 +397,13 @@ class TestStepMCPToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_wildcard_mcp_tool_pattern(self, db, manager, engine, instance_mgr) -> None:
+    async def test_wildcard_mcp_tool_pattern(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Wildcard pattern 'server:*' should match all tools on that server."""
         workflow = {
             "name": "test-wildcard",
@@ -369,7 +437,13 @@ class TestStepTransitions:
     """Test step transitions via on_mcp_success handlers."""
 
     @pytest.mark.asyncio
-    async def test_on_mcp_success_sets_variable(self, db, manager, engine, instance_mgr) -> None:
+    async def test_on_mcp_success_sets_variable(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """on_mcp_success handler should set workflow instance variable."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -393,7 +467,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_transition_fires_after_variable_set(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Transition should fire when its condition becomes true via on_mcp_success."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -420,7 +498,13 @@ class TestStepTransitions:
         assert "implement" in response.context
 
     @pytest.mark.asyncio
-    async def test_no_transition_on_failure(self, db, manager, engine, instance_mgr) -> None:
+    async def test_no_transition_on_failure(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Failed tool calls should not trigger on_mcp_success or transitions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -445,7 +529,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_implement_to_terminate_transition(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """submit_for_review in implement step should transition to terminate."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -474,7 +562,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_implement_to_terminate_transition_for_codex_call_tool_alias(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Codex's alternate call_tool alias should fire on_mcp_success handlers."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -502,7 +594,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_no_transition_for_unmatched_tool(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """MCP tools not in on_mcp_success should not trigger transitions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -526,7 +622,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_no_transition_returns_no_context(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """When no transition fires, response context should not contain transition info."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -548,7 +648,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_transition_includes_status_message(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Transition notification should include the new step's status_message."""
         workflow_with_status = {
@@ -603,7 +707,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_on_mcp_success_handler_when_gates_variable_update(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Handler-level when clauses should gate on_mcp_success variable updates."""
         workflow = {
@@ -669,7 +777,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_session_var_does_not_shadow_instance_var_for_transition(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Session-scoped variables must NOT drive workflow transitions.
 
@@ -717,7 +829,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_handler_set_instance_var_transitions_despite_session_false(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Workflow-local handler state must transition even when session var is False.
 
@@ -750,7 +866,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_session_only_var_remains_readable_in_transition_when(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Session-only variables (not present in instance.variables) must stay readable.
 
@@ -808,7 +928,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_send_keys_bypasses_step_allow_list(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Operator tool send_keys must bypass step MCP allow-lists.
 
@@ -841,7 +965,11 @@ class TestStepTransitions:
 
     @pytest.mark.asyncio
     async def test_capture_output_bypasses_step_allow_list(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Operator tool capture_output must bypass step MCP allow-lists."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -910,7 +1038,11 @@ class TestToolOutputRouting:
 
     @pytest.mark.asyncio
     async def test_on_mcp_success_skipped_on_tool_failure(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Tool output with success:false should NOT fire on_mcp_success handlers."""
         _setup_step_workflow(
@@ -938,7 +1070,11 @@ class TestToolOutputRouting:
 
     @pytest.mark.asyncio
     async def test_on_mcp_error_fires_on_tool_failure(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Tool output with success:false should fire on_mcp_error handlers."""
         _setup_step_workflow(
@@ -967,7 +1103,11 @@ class TestToolOutputRouting:
 
     @pytest.mark.asyncio
     async def test_on_mcp_success_fires_on_tool_success(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Tool output with success:true should fire on_mcp_success (no regression)."""
         _setup_step_workflow(
@@ -995,7 +1135,13 @@ class TestToolOutputRouting:
         assert instance.current_step == "done"
 
     @pytest.mark.asyncio
-    async def test_on_mcp_error_with_nested_result(self, db, manager, engine, instance_mgr) -> None:
+    async def test_on_mcp_error_with_nested_result(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """Proxy-wrapped response {success:true, result:{success:false}} should route to on_mcp_error."""
         _setup_step_workflow(
             db, manager, instance_mgr, current_step="merge", workflow_data=_MERGE_WORKFLOW
@@ -1025,7 +1171,11 @@ class TestToolOutputRouting:
 
     @pytest.mark.asyncio
     async def test_no_tool_output_uses_on_mcp_success(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """When tool_output is absent, should default to on_mcp_success (backward compat)."""
         _setup_step_workflow(
@@ -1052,7 +1202,13 @@ class TestToolOutputRouting:
         assert instance.current_step == "done"
 
     @pytest.mark.asyncio
-    async def test_string_tool_output_parsed(self, db, manager, engine, instance_mgr) -> None:
+    async def test_string_tool_output_parsed(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """JSON string tool_output should be parsed and routed correctly."""
         _setup_step_workflow(
             db, manager, instance_mgr, current_step="merge", workflow_data=_MERGE_WORKFLOW
@@ -1079,7 +1235,11 @@ class TestToolOutputRouting:
 
     @pytest.mark.asyncio
     async def test_on_mcp_error_handler_when_gates_variable_update(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """Handler-level when clauses should gate on_mcp_error variable updates."""
         workflow = {
@@ -1158,7 +1318,11 @@ class TestStepEnforcementAfterTransition:
 
     @pytest.mark.asyncio
     async def test_tools_restricted_after_transition_to_terminate(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """After transitioning to terminate, only kill_agent should be allowed."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -1177,7 +1341,13 @@ class TestStepEnforcementAfterTransition:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_kill_agent_allowed_in_terminate(self, db, manager, engine, instance_mgr) -> None:
+    async def test_kill_agent_allowed_in_terminate(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
         """kill_agent should be allowed in the terminate step."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
         event = _make_event(
@@ -1196,7 +1366,11 @@ class TestStepEnforcementAfterTransition:
 
     @pytest.mark.asyncio
     async def test_set_variable_allowed_in_restricted_step(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """set_variable should be allowed even in steps with restricted allowed_tools.
 
@@ -1214,7 +1388,11 @@ class TestStepEnforcementAfterTransition:
 
     @pytest.mark.asyncio
     async def test_get_variable_allowed_in_restricted_step(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """get_variable should be allowed even in steps with restricted allowed_tools."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -1228,7 +1406,11 @@ class TestStepEnforcementAfterTransition:
 
     @pytest.mark.asyncio
     async def test_toolsearch_allowed_in_restricted_step(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         """ToolSearch (Claude Code deferred tool loader) should always be allowed."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -1247,7 +1429,11 @@ class TestStepBeforeMcpHandlers:
 
     @pytest.mark.asyncio
     async def test_on_mcp_before_enforces_retry_counter_per_conflict(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -1328,6 +1514,7 @@ class TestStepBeforeMcpHandlers:
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "retry cap reached" in response.reason
         instance = instance_mgr.get_instance("test-session", "merge-retry-test")
         assert instance is not None
@@ -1336,7 +1523,11 @@ class TestStepBeforeMcpHandlers:
 
     @pytest.mark.asyncio
     async def test_merge_retry_counter_ignores_retry_later_tool_results(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -1454,6 +1645,7 @@ class TestStepBeforeMcpHandlers:
         )
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "retry cap reached" in response.reason
         instance = instance_mgr.get_instance("test-session", "merge-retry-test")
         assert instance is not None
@@ -1461,7 +1653,11 @@ class TestStepBeforeMcpHandlers:
 
     @pytest.mark.asyncio
     async def test_duplicate_proxy_before_tool_does_not_consume_retry_budget(
-        self, db, manager, engine, instance_mgr
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -1543,4 +1739,5 @@ class TestStepBeforeMcpHandlers:
         )
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "retry cap reached" in response.reason
