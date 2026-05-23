@@ -414,7 +414,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     sample_project,
     tmp_path: Path,
 ) -> None:
-    from gobby.build import controls
+    from gobby.build import control_artifacts, controls
     from gobby.storage.tasks import TaskArtifactManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -476,7 +476,11 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
         def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("active agent worktree must not be deleted")
 
-    monkeypatch.setattr(controls, "WorktreeGitManager", ExplodingWorktreeGitManager)
+    monkeypatch.setattr(
+        control_artifacts,
+        "WorktreeGitManager",
+        ExplodingWorktreeGitManager,
+    )
 
     def fail_branch_cleanup(*_args: object, **_kwargs: object) -> tuple[int, list[str]]:
         raise AssertionError("branch cleanup must wait while an agent owns the worktree")
@@ -505,7 +509,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     sample_project,
     tmp_path: Path,
 ) -> None:
-    from gobby.build import controls
+    from gobby.build import control_artifacts, controls
     from gobby.storage.tasks import TaskArtifactManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -545,7 +549,11 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
             Path(path).rmdir()
             return SimpleNamespace(success=True, error=None, message="deleted")
 
-    monkeypatch.setattr(controls, "WorktreeGitManager", DeletingWorktreeGitManager)
+    monkeypatch.setattr(
+        control_artifacts,
+        "WorktreeGitManager",
+        DeletingWorktreeGitManager,
+    )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
     artifacts = controls.cleanup_successful_merge_artifacts(
@@ -571,7 +579,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     sample_project,
     tmp_path: Path,
 ) -> None:
-    from gobby.build import controls
+    from gobby.build import control_artifacts, controls
     from gobby.storage.tasks import TaskArtifactManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -613,7 +621,11 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
             Path(path).rmdir()
             return SimpleNamespace(success=True, error=None, message="deleted")
 
-    monkeypatch.setattr(controls, "WorktreeGitManager", ForceOnlyWorktreeGitManager)
+    monkeypatch.setattr(
+        control_artifacts,
+        "WorktreeGitManager",
+        ForceOnlyWorktreeGitManager,
+    )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
     artifacts = controls.cleanup_successful_merge_artifacts(
