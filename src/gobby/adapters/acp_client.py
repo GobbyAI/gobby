@@ -37,6 +37,7 @@ DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS = 120.0
 ACP_PROMPT_TIMEOUT_ENV_GEMINI = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
+ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
 
 
 def _make_id() -> int:
@@ -153,6 +154,7 @@ class ACPClient:
     protocol_version: ClassVar[int] = 1
     default_prompt_timeout_seconds: ClassVar[float] = DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
     required_env: ClassVar[Mapping[str, str]] = MappingProxyType({})
+    supports_cached_auth: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -211,6 +213,7 @@ class ACPClient:
         *,
         auto_session: bool = True,
         cwd: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         """Launch ``<cli> --acp``, perform initialize handshake, and create/resume session.
 
@@ -229,11 +232,7 @@ class ACPClient:
         if not path:
             raise FileNotFoundError(f"{self.display_name} CLI not found in PATH")
 
-        cmd = [path, "--acp"]
-        if model:
-            cmd.extend(["--model", model])
-        if self._extra_args:
-            cmd.extend(self._extra_args)
+        cmd = self._build_launch_command(path, model=model, reasoning_effort=reasoning_effort)
 
         env = os.environ.copy()
         if self._env_overrides:
@@ -272,11 +271,21 @@ class ACPClient:
             },
         )
         logger.debug(f"ACP initialize response: {init_result}")
+        await self._maybe_authenticate(init_result)
         if auto_session:
             if session_id:
-                session_result = await self.load_session(session_id, model=model, cwd=cwd)
+                session_result = await self.load_session(
+                    session_id,
+                    model=model,
+                    cwd=cwd,
+                    reasoning_effort=reasoning_effort,
+                )
             else:
-                session_result = await self.create_session(model=model, cwd=cwd)
+                session_result = await self.create_session(
+                    model=model,
+                    cwd=cwd,
+                    reasoning_effort=reasoning_effort,
+                )
             self._session_info = session_result if isinstance(session_result, dict) else {}
             self._session_id = (
                 session_result.get("sessionId")
@@ -287,6 +296,37 @@ class ACPClient:
         else:
             self._session_id = None
             self._session_info = {}
+
+    def _build_launch_command(
+        self,
+        path: str,
+        *,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> list[str]:
+        """Build the provider subprocess command."""
+        cmd = [path, "--acp"]
+        if model:
+            cmd.extend(["--model", model])
+        if self._extra_args:
+            cmd.extend(self._extra_args)
+        return cmd
+
+    async def _maybe_authenticate(self, init_result: dict[str, Any]) -> None:
+        """Authenticate with cached credentials when a provider advertises them."""
+        if not self.supports_cached_auth:
+            return
+        auth_methods = init_result.get("authMethods")
+        if not isinstance(auth_methods, list):
+            return
+        method_id = None
+        for method in auth_methods:
+            if isinstance(method, dict) and method.get("id") == "cached_token":
+                method_id = "cached_token"
+                break
+        if method_id is None:
+            return
+        await self._send_request("authenticate", {"methodId": method_id})
 
     async def create_session(
         self,
@@ -393,6 +433,19 @@ class ACPClient:
                     data = json.loads(line_str)
                 except json.JSONDecodeError:
                     logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
+                    continue
+
+                if "id" in data and data.get("method"):
+                    from gobby.adapters.acp_client_requests import write_json_rpc_error
+
+                    await write_json_rpc_error(
+                        self,
+                        data.get("id"),
+                        code=-32601,
+                        message=(
+                            f"Unsupported client request during {method}: {data.get('method')}"
+                        ),
+                    )
                     continue
 
                 if "id" in data:
@@ -540,6 +593,14 @@ class ACPClient:
                 data = json.loads(line_str)
             except json.JSONDecodeError:
                 logger.warning("Non-JSON line from %s ACP: %s", self.display_name, line_str[:200])
+                continue
+
+            # JSON-RPC request from the provider to the client.
+            if "id" in data and data.get("method"):
+                from gobby.adapters.acp_client_requests import handle_client_request
+
+                async for event in handle_client_request(self, data):
+                    yield event
                 continue
 
             # JSON-RPC response (has "id") = end of turn

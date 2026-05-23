@@ -258,11 +258,7 @@ Run tools:
 Coordination tools:
 
 - `send_message`
-- `send_command`
-- `activate_command`
-- `complete_command`
 - `deliver_pending_messages`
-- `wait_for_command`
 - `get_inter_session_messages`
 
 `send_message` uses explicit targets: `session`, `agent`, `project`, `build`,

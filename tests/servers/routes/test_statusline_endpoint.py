@@ -213,7 +213,43 @@ class TestStatuslineEndpoint:
         assert response_two.status_code == 200
         assert "statusline_usage_gap" not in caplog.text
 
-    def test_warns_for_gap_with_concurrent_session_activity(
+    def test_warns_for_anomalous_gap_with_concurrent_session_activity(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=605)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            # A hook event landed after the first statusline POST: session is alive
+            # while the statusline feed is silent — this is the actionable case.
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" in caplog.text
+        assert "gap_ms=605000" in caplog.text
+        assert "threshold_ms=600000" in caplog.text
+        mock_counter.assert_any_call(
+            "statusline_usage_gap_warnings_total", attributes={"source": "claude"}
+        )
+        mock_counter.assert_any_call(
+            "statusline_posts_succeeded_total", attributes={"source": "claude"}
+        )
+
+    def test_suppresses_warning_for_short_active_gap(
         self, client, mock_server, caplog, enable_log_propagation
     ) -> None:
         session = _make_session()
@@ -232,22 +268,55 @@ class TestStatuslineEndpoint:
             mock_datetime.now.side_effect = [start, start + timedelta(seconds=125)]
 
             response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
-            # A hook event landed after the first statusline POST: session is alive
-            # while the statusline feed is silent — this is the actionable case.
             statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
             response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
 
         assert response_one.status_code == 200
         assert response_two.status_code == 200
-        assert "statusline_usage_gap" in caplog.text
-        assert "gap_ms=125000" in caplog.text
-        assert "threshold_ms=120000" in caplog.text
-        mock_counter.assert_any_call(
-            "statusline_usage_gap_warnings_total", attributes={"source": "claude"}
-        )
-        mock_counter.assert_any_call(
-            "statusline_posts_succeeded_total", attributes={"source": "claude"}
-        )
+        assert "statusline_usage_gap" not in caplog.text
+        assert (
+            "statusline_usage_gap_warnings_total",
+            {"attributes": {"source": "claude"}},
+        ) not in [(call.args[0], call.kwargs) for call in mock_counter.call_args_list if call.args]
+
+    def test_throttles_repeated_anomalous_gap_warnings(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [
+                start,
+                start + timedelta(seconds=605),
+                start + timedelta(seconds=1210),
+            ]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=610))
+            response_three = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert response_three.status_code == 200
+        assert caplog.text.count("statusline_usage_gap session_id=") == 1
+        warning_counter_calls = [
+            call
+            for call in mock_counter.call_args_list
+            if call.args and call.args[0] == "statusline_usage_gap_warnings_total"
+        ]
+        assert len(warning_counter_calls) == 1
 
     def test_suppresses_gap_when_session_is_otherwise_quiet(
         self, client, mock_server, caplog, enable_log_propagation

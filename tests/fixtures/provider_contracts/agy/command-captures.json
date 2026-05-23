@@ -1,0 +1,92 @@
+{
+  "provider": "agy",
+  "capture_type": "command_captures",
+  "cli_version": "1.0.1",
+  "captured_at": "2026-05-22T22:17:00Z",
+  "commands": [
+    {
+      "command": "command -v agy",
+      "exit_code": 0,
+      "stdout_summary": "<HOME>/.local/bin/agy"
+    },
+    {
+      "command": "agy --version",
+      "exit_code": 0,
+      "stdout_summary": "1.0.1"
+    },
+    {
+      "command": "agy --help",
+      "exit_code": 0,
+      "stdout_summary": {
+        "flags": [
+          "--add-dir",
+          "--continue",
+          "--conversation",
+          "--dangerously-skip-permissions",
+          "--log-file",
+          "--print",
+          "--print-timeout",
+          "--prompt",
+          "--prompt-interactive",
+          "--sandbox"
+        ],
+        "subcommands": [
+          "changelog",
+          "help",
+          "install",
+          "plugin",
+          "plugins",
+          "update"
+        ]
+      }
+    },
+    {
+      "command": "agy changelog",
+      "exit_code": 0,
+      "stdout_summary": {
+        "latest": "1.0.1",
+        "highlights": [
+          "Fixed OAuth token persistence and authentication hangs.",
+          "Added proceed-in-sandbox tool permission mode.",
+          "Added consumer/free-tier onboarding.",
+          "Added plugin discovery for skills and agents."
+        ]
+      }
+    },
+    {
+      "command": "~/.gemini/antigravity-cli/bin/agentapi --help",
+      "exit_code": 0,
+      "stdout_summary": "Returned top-level agy help; no agentapi-specific help was exposed."
+    },
+    {
+      "command": "printf 'contract ping\\n' | ~/.gemini/antigravity-cli/bin/agentapi send",
+      "exit_code": -1,
+      "stdout_summary": "Entered agent execution and timed out waiting for response.",
+      "contract_status": "unsupported"
+    },
+    {
+      "command": "script -q /dev/null ~/.gemini/antigravity-cli/bin/agentapi send",
+      "exit_code": -1,
+      "stdout_summary": "Entered terminal UI/alternate-screen execution and timed out.",
+      "contract_status": "unsupported"
+    },
+    {
+      "command": "agy --print \"Reply with exactly: agy direct ok\"",
+      "exit_code": 0,
+      "stdout_summary": "agy direct ok",
+      "contract_status": "fresh_print_supported"
+    },
+    {
+      "command": "agy --print --conversation <conversation-id> \"Reply with exactly: agy resumed ok\"",
+      "exit_code": 0,
+      "stdout_summary": "Timed out waiting for response.",
+      "contract_status": "resume_not_reliable"
+    },
+    {
+      "command": "agy --print --continue \"Reply with exactly: agy continued ok\"",
+      "exit_code": 0,
+      "stdout_summary": "Resumed unrelated previous state and started exploratory tool planning before timeout.",
+      "contract_status": "continue_not_reliable"
+    }
+  ]
+}

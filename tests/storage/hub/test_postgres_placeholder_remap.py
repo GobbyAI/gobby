@@ -345,6 +345,20 @@ def test_postgres_safe_update_shifts_dollar_where_style() -> None:
     )
 
 
+def test_postgres_safe_update_shifts_only_top_level_dollar_placeholders() -> None:
+    module = _postgres_module()
+
+    assert module._build_safe_update(
+        "sessions",
+        {"message_count": 3},
+        "id = $1 AND note = $$keep $1 literal$$",
+        ("session-1",),
+    ) == (
+        "UPDATE sessions SET message_count = $1 WHERE id = $2 AND note = $$keep $1 literal$$",
+        (3, "session-1"),
+    )
+
+
 def test_postgres_transaction_executemany_reuses_first_row_rewrite(monkeypatch) -> None:
     module = _postgres_module()
     calls: list[tuple[str, tuple[object, ...]]] = []

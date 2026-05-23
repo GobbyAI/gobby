@@ -10,6 +10,7 @@ This module provides query operations for listing and filtering tasks:
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
@@ -192,9 +193,9 @@ def list_tasks(
         query += f" AND task_type IN ({placeholders})"
         params.extend(task_type_values)
     if label:
-        # tasks.labels is a JSON list. We use json_each to find if the label is in the list.
-        query += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value = ?)"
-        params.append(label)
+        label_clause, label_params = json_array_contains_condition(db, "tasks.labels", label)
+        query += f" AND {label_clause}"
+        params.extend(label_params)
     if parent_task_id:
         query += " AND parent_task_id = ?"
         params.append(parent_task_id)

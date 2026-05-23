@@ -2,10 +2,7 @@
 
 Covers:
     - send_message: target-based messaging, auto-writes agent_runs.result
-- send_command: ancestor-only command sending, rejects if active command exists
-- complete_command: clears session variables and sends result to parent
 - deliver_pending_messages: returns undelivered messages and marks them delivered
-- activate_command: sets session variables from command fields
 - get_inter_session_messages: read-only message history query
 """
 
@@ -75,33 +72,6 @@ class MockMessage:
         }
 
 
-@dataclass
-class MockCommand:
-    id: str = "cmd-1"
-    from_session: str = "s-parent"
-    to_session: str = "s-child"
-    command_text: str = "Run tests"
-    status: str = "pending"
-    created_at: str = "2026-01-01T00:00:00"
-    allowed_tools: str | None = None
-    allowed_mcp_tools: str | None = None
-    exit_condition: str | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "from_session": self.from_session,
-            "to_session": self.to_session,
-            "command_text": self.command_text,
-            "status": self.status,
-            "allowed_tools": self.allowed_tools,
-            "allowed_mcp_tools": self.allowed_mcp_tools,
-            "exit_condition": self.exit_condition,
-        }
-
-
 class FakeWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -131,24 +101,6 @@ def mock_message_manager():
 
 
 @pytest.fixture
-def mock_command_manager():
-    mgr = MagicMock()
-    mgr.create_command = MagicMock(return_value=MockCommand())
-    mgr.get_command = MagicMock(return_value=None)
-    mgr.list_commands = MagicMock(return_value=[])
-    mgr.update_status = MagicMock(return_value=MockCommand(status="running"))
-    return mgr
-
-
-@pytest.fixture
-def mock_session_var_manager():
-    mgr = MagicMock()
-    mgr.merge_variables = MagicMock(return_value=True)
-    mgr.delete_variables = MagicMock()
-    return mgr
-
-
-@pytest.fixture
 def mock_db():
     db = MagicMock()
     db.fetchone = MagicMock(return_value=None)
@@ -160,8 +112,6 @@ def mock_db():
 def messaging_registry(
     mock_session_manager,
     mock_message_manager,
-    mock_command_manager,
-    mock_session_var_manager,
     mock_db,
 ):
     from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
@@ -174,8 +124,6 @@ def messaging_registry(
         registry=registry,
         message_manager=mock_message_manager,
         session_manager=mock_session_manager,
-        command_manager=mock_command_manager,
-        session_var_manager=mock_session_var_manager,
         db=mock_db,
     )
     return registry
@@ -385,8 +333,6 @@ class TestSendMessage:
         self,
         mock_session_manager,
         mock_message_manager,
-        mock_command_manager,
-        mock_session_var_manager,
         mock_db,
     ) -> None:
         """Project target delegates fanout and optional wake to MailboxService."""
@@ -401,8 +347,6 @@ class TestSendMessage:
             registry=registry,
             message_manager=mock_message_manager,
             session_manager=mock_session_manager,
-            command_manager=mock_command_manager,
-            session_var_manager=mock_session_var_manager,
             db=mock_db,
             wake_dispatcher=wake_dispatcher,
         )
@@ -455,8 +399,6 @@ class TestSendMessage:
         self,
         mock_session_manager,
         mock_message_manager,
-        mock_command_manager,
-        mock_session_var_manager,
         mock_db,
     ) -> None:
         """include_wakeup stores mailbox rows even when no live pane exists."""
@@ -476,8 +418,6 @@ class TestSendMessage:
             registry=registry,
             message_manager=mock_message_manager,
             session_manager=mock_session_manager,
-            command_manager=mock_command_manager,
-            session_var_manager=mock_session_var_manager,
             db=mock_db,
             wake_dispatcher=wake_dispatcher,
         )
@@ -593,215 +533,6 @@ class TestSendMessage:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# send_command
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestSendCommand:
-    """send_command validates ancestor relationship and rejects active commands."""
-
-    @pytest.mark.asyncio
-    async def test_send_command_success(
-        self, messaging_registry, mock_session_manager, mock_command_manager
-    ) -> None:
-        """Lower-depth session can send command to higher-depth session."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-parent": MockSession(id="s-parent", agent_depth=0, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-        mock_command_manager.list_commands.return_value = []  # no active commands
-
-        result = await messaging_registry.call(
-            "send_command",
-            {
-                "from_session": "s-parent",
-                "to_session": "s-child",
-                "command_text": "Run tests",
-            },
-        )
-
-        assert result["success"] is True
-        mock_command_manager.create_command.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_command_same_depth_rejected_for_agents(
-        self, messaging_registry, mock_session_manager
-    ) -> None:
-        """Agent at depth 1 cannot send command to another at depth 1."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-unrelated": MockSession(id="s-unrelated", agent_depth=1, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-
-        result = await messaging_registry.call(
-            "send_command",
-            {
-                "from_session": "s-unrelated",
-                "to_session": "s-child",
-                "command_text": "Run tests",
-            },
-        )
-
-        assert result["success"] is False
-        assert "depth" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_send_command_depth_zero_can_command_same_depth(
-        self, messaging_registry, mock_session_manager, mock_command_manager
-    ) -> None:
-        """Depth-0 session (web chat) can command any session, even depth 0."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-webchat": MockSession(id="s-webchat", agent_depth=0, project_id="proj-1"),
-            "s-cli": MockSession(id="s-cli", agent_depth=0, project_id="proj-1"),
-        }.get(sid)
-        mock_command_manager.list_commands.return_value = []
-
-        result = await messaging_registry.call(
-            "send_command",
-            {
-                "from_session": "s-webchat",
-                "to_session": "s-cli",
-                "command_text": "Run tests",
-            },
-        )
-
-        assert result["success"] is True
-
-    @pytest.mark.asyncio
-    async def test_send_command_active_command_rejected(
-        self, messaging_registry, mock_session_manager, mock_command_manager
-    ) -> None:
-        """Reject if target session already has an active command."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-parent": MockSession(id="s-parent", agent_depth=0, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-        # Return an active command
-        mock_command_manager.list_commands.return_value = [
-            MockCommand(id="cmd-existing", status="running"),
-        ]
-
-        result = await messaging_registry.call(
-            "send_command",
-            {
-                "from_session": "s-parent",
-                "to_session": "s-child",
-                "command_text": "Another task",
-            },
-        )
-
-        assert result["success"] is False
-        assert "active command" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_send_command_with_tools_and_exit(
-        self, messaging_registry, mock_session_manager, mock_command_manager
-    ) -> None:
-        """Command with allowed_tools and exit_condition."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-parent": MockSession(id="s-parent", agent_depth=0, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-        mock_command_manager.list_commands.return_value = []
-
-        result = await messaging_registry.call(
-            "send_command",
-            {
-                "from_session": "s-parent",
-                "to_session": "s-child",
-                "command_text": "Search code",
-                "allowed_tools": ["Read", "Grep"],
-                "exit_condition": "task_complete()",
-            },
-        )
-
-        assert result["success"] is True
-        call_kwargs = mock_command_manager.create_command.call_args
-        assert (
-            call_kwargs[1].get("allowed_tools") == ["Read", "Grep"] or call_kwargs[0][3]
-            if len(call_kwargs[0]) > 3
-            else True
-        )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# complete_command
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestCompleteCommand:
-    """complete_command clears variables and sends result."""
-
-    @pytest.mark.asyncio
-    async def test_complete_command_success(
-        self,
-        messaging_registry,
-        mock_command_manager,
-        mock_session_var_manager,
-        mock_message_manager,
-    ) -> None:
-        """Completing a command clears variables and sends result to parent."""
-        mock_command_manager.get_command.return_value = MockCommand(
-            id="cmd-1",
-            from_session="s-parent",
-            to_session="s-child",
-            status="running",
-        )
-        mock_command_manager.update_status.return_value = MockCommand(
-            id="cmd-1",
-            status="completed",
-        )
-
-        result = await messaging_registry.call(
-            "complete_command",
-            {"target_session_id": "s-child", "command_id": "cmd-1", "result": "All tests pass"},
-        )
-
-        assert result["success"] is True
-        # Verify command marked completed
-        mock_command_manager.update_status.assert_called_once_with("cmd-1", "completed")
-        # Verify session variables cleared
-        mock_session_var_manager.delete_variables.assert_called_once_with("s-child")
-        # Verify result sent to parent as message
-        mock_message_manager.create_message.assert_called_once()
-        msg_call = mock_message_manager.create_message.call_args
-        assert msg_call[1]["to_session"] == "s-parent" or msg_call[0][1] == "s-parent"
-
-    @pytest.mark.asyncio
-    async def test_complete_command_not_found(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
-        """Error when command does not exist."""
-        mock_command_manager.get_command.return_value = None
-
-        result = await messaging_registry.call(
-            "complete_command",
-            {"target_session_id": "s-child", "command_id": "no-such", "result": "done"},
-        )
-
-        assert result["success"] is False
-        assert "not found" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_complete_command_wrong_session(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
-        """Error when session_id doesn't match command's to_session."""
-        mock_command_manager.get_command.return_value = MockCommand(
-            id="cmd-1",
-            to_session="s-other",
-        )
-
-        result = await messaging_registry.call(
-            "complete_command",
-            {"target_session_id": "s-wrong", "command_id": "cmd-1", "result": "done"},
-        )
-
-        assert result["success"] is False
-        assert "mismatch" in result["error"].lower() or "not assigned" in result["error"].lower()
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # deliver_pending_messages
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -873,82 +604,6 @@ class TestDeliverPendingMessages:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# activate_command
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestActivateCommand:
-    """activate_command sets session variables from command fields."""
-
-    @pytest.mark.asyncio
-    async def test_activate_command_success(
-        self,
-        messaging_registry,
-        mock_command_manager,
-        mock_session_var_manager,
-    ) -> None:
-        """Activating a command sets session variables and marks running."""
-        mock_command_manager.get_command.return_value = MockCommand(
-            id="cmd-1",
-            to_session="s-child",
-            command_text="Run tests",
-            allowed_tools='["Read", "Grep"]',
-            exit_condition="task_complete()",
-        )
-        mock_command_manager.update_status.return_value = MockCommand(
-            id="cmd-1",
-            status="running",
-        )
-
-        result = await messaging_registry.call(
-            "activate_command",
-            {"target_session_id": "s-child", "command_id": "cmd-1"},
-        )
-
-        assert result["success"] is True
-        # Verify command marked running
-        mock_command_manager.update_status.assert_called_once_with("cmd-1", "running")
-        # Verify session variables set
-        mock_session_var_manager.merge_variables.assert_called_once()
-        merge_call = mock_session_var_manager.merge_variables.call_args
-        variables = merge_call[0][1] if len(merge_call[0]) > 1 else merge_call[1].get("updates", {})
-        assert variables.get("command_id") == "cmd-1"
-        assert variables.get("command_text") == "Run tests"
-
-    @pytest.mark.asyncio
-    async def test_activate_command_not_found(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
-        """Error when command does not exist."""
-        mock_command_manager.get_command.return_value = None
-
-        result = await messaging_registry.call(
-            "activate_command",
-            {"target_session_id": "s-child", "command_id": "no-such"},
-        )
-
-        assert result["success"] is False
-        assert "not found" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_activate_command_wrong_session(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
-        """Error when session_id doesn't match command's to_session."""
-        mock_command_manager.get_command.return_value = MockCommand(
-            id="cmd-1",
-            to_session="s-other",
-        )
-
-        result = await messaging_registry.call(
-            "activate_command",
-            {"target_session_id": "s-wrong", "command_id": "cmd-1"},
-        )
-
-        assert result["success"] is False
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Tool registration
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -961,12 +616,12 @@ class TestToolRegistration:
         tool_names = {t["name"] for t in tools}
 
         assert "send_message" in tool_names
-        assert "send_command" in tool_names
-        assert "complete_command" in tool_names
         assert "deliver_pending_messages" in tool_names
-        assert "activate_command" in tool_names
-        assert "wait_for_command" in tool_names
         assert "get_inter_session_messages" in tool_names
+        assert "send_command" not in tool_names
+        assert "activate_command" not in tool_names
+        assert "complete_command" not in tool_names
+        assert "wait_for_command" not in tool_names
 
 
 # ═══════════════════════════════════════════════════════════════════════

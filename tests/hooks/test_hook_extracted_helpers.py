@@ -9,10 +9,10 @@ import pytest
 
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.project_context import ProjectIdResolver
+from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_ref_resolution import resolve_session_refs_in_tool_input
-from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -60,6 +60,78 @@ class TestProjectIdResolver:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with pytest.raises(ValueError, match="gobby init"):
                 resolver.resolve(None, "/tmp/project")
+
+
+class TestHookProjectContext:
+    def test_contract_probe_cwd_uses_global_project(self) -> None:
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id="probe-session",
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={"cwd": "/private/tmp/gobby-contract-probe-15038"},
+            machine_id="machine-1",
+        )
+        resolve_project_id = MagicMock(side_effect=AssertionError("should not resolve cwd"))
+
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            resolution = resolve_hook_project_context(
+                event,
+                session_manager=None,
+                resolve_project_id=resolve_project_id,
+            )
+
+        assert resolution.project_id == GLOBAL_PROJECT_ID
+        assert resolution.source == "contract-probe"
+        assert resolution.skipped is False
+        assert event.project_id == GLOBAL_PROJECT_ID
+        assert event.data["project_id"] == GLOBAL_PROJECT_ID
+        resolve_project_id.assert_not_called()
+
+    def test_contract_probe_cwd_overrides_daemon_current_context(self) -> None:
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id="probe-session",
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={"cwd": "/tmp/gobby-contract-probe-15038"},
+            machine_id="machine-1",
+        )
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "daemon-project", "name": "daemon"},
+        ):
+            resolution = resolve_hook_project_context(
+                event,
+                session_manager=None,
+                resolve_project_id=MagicMock(),
+            )
+
+        assert resolution.project_id == GLOBAL_PROJECT_ID
+        assert resolution.source == "contract-probe"
+
+    def test_non_probe_tmp_cwd_still_uses_normal_project_resolution(self) -> None:
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id="tmp-session",
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={"cwd": "/private/tmp/not-a-probe"},
+            machine_id="machine-1",
+        )
+        resolve_project_id = MagicMock(return_value="resolved-project")
+
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            resolution = resolve_hook_project_context(
+                event,
+                session_manager=None,
+                resolve_project_id=resolve_project_id,
+            )
+
+        assert resolution.project_id == "resolved-project"
+        assert resolution.source == "cwd"
+        resolve_project_id.assert_called_once_with(None, "/private/tmp/not-a-probe")
 
 
 class TestSessionRefResolution:

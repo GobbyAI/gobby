@@ -275,7 +275,9 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 | Factory Droid | Hooks + MCP | Droid sessions, transcript parsing, spawned-agent flows |
 
 A task started in any one of them can be continued in any other with the same
-local state, validation gates, and review state.
+local state, validation gates, and review state. Hook policy is portable across
+providers, while native response fidelity remains provider-specific and is
+tracked in [adapter-fidelity.md](docs/guides/adapter-fidelity.md).
 
 Local model providers (LM Studio, Ollama) work through the same hooks and MCP
 layer wherever the underlying CLI supports OpenAI-compatible endpoints.

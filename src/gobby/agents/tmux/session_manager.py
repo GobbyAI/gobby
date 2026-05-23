@@ -20,7 +20,7 @@ from gobby.config.tmux import TmuxConfig
 logger = logging.getLogger(__name__)
 
 
-_MISSING_SESSION_ERRORS = ("can't find session", "no such session")
+_MISSING_SESSION_ERRORS = ("can't find session", "no such session", "no server running")
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
 
 

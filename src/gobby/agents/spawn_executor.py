@@ -20,6 +20,7 @@ from gobby.agents.sandbox import (
     compute_sandbox_paths,
 )
 from gobby.agents.trust import pre_approve_directory
+from gobby.providers import AGY_UNAVAILABLE_REASON
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -185,12 +186,22 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     if request.provider == "gemini":
         return await _spawn_gemini_terminal(request)
+    elif request.provider == "grok":
+        return await _spawn_grok_terminal(request)
     elif request.provider == "qwen":
         return await _spawn_qwen_terminal(request)
     elif request.provider == "codex":
         return await _spawn_codex_terminal(request)
     elif request.provider == "droid":
         return await _spawn_droid_terminal(request)
+    elif request.provider == "agy":
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=AGY_UNAVAILABLE_REASON,
+        )
     # Unknown providers intentionally preserve the historical Claude fallback.
     return await _spawn_claude_terminal(request)
 
@@ -541,6 +552,90 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         tmux_socket_name=terminal_result.tmux_socket_name,
         tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Qwen agent spawned in terminal with session {gobby_session_id}",
+    )
+
+
+async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
+    """Spawn Grok agent in terminal with direct hook/env-based session linkage."""
+    if validation_error := _session_manager_validation_error(request, "Grok"):
+        return validation_error
+
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="grok",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
+        title=request.title,
+        agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
+        timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
+    )
+
+    gobby_session_id = spawn_context.session_id
+    cmd, _cmd_env = build_cli_command(
+        cli="grok",
+        prompt=request.prompt,
+        auto_approve=True,
+        working_directory=request.cwd,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+    )
+
+    env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
+
+    if request.api_base:
+        env["GROK_API_BASE"] = request.api_base
+    if request.api_token:
+        env["XAI_API_KEY"] = request.api_token
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("grok", request.cwd)
+
+    terminal_spawner = _tmux_spawner_for_request(request)
+    terminal_result = terminal_spawner.spawn(
+        command=cmd,
+        cwd=request.cwd,
+        env=env,
+    )
+
+    if not terminal_result.success:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=gobby_session_id,
+            status="failed",
+            error=terminal_result.error or terminal_result.message,
+        )
+
+    return SpawnResult(
+        success=True,
+        run_id=spawn_context.agent_run_id,
+        child_session_id=gobby_session_id,
+        status="pending",
+        pid=terminal_result.pid,
+        terminal_type=terminal_result.terminal_type,
+        tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
+        message=f"Grok agent spawned in terminal with session {gobby_session_id}",
     )
 
 

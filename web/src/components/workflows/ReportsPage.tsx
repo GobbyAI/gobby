@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { usePipelineExecutions } from "../../hooks/usePipelineExecutions";
 import type { PipelineExecutionRecord } from "../../hooks/usePipelineExecutions";
 import { useAgentRuns } from "../../hooks/useAgentRuns";
-import type { AgentRunRecord, AgentRunDetail } from "../../hooks/useAgentRuns";
+import type { AgentRunRecord } from "../../hooks/useAgentRuns";
 import { PipelineStatusDot as StatusDot } from "./execution-utils";
 import { formatDuration } from "./executionFormatters";
 import { SegmentedControl } from "../ui/SegmentedControl";
@@ -84,9 +84,6 @@ export function ReportsPage({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [agentDetails, setAgentDetails] = useState<
-    Record<string, AgentRunDetail>
-  >({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const [pipelineSortCol, setPipelineSortCol] =
@@ -137,7 +134,6 @@ export function ReportsPage({
     runs: agentRuns,
     isLoading: agentsLoading,
     cancelRun,
-    fetchRunDetail,
   } = useAgentRuns(projectId);
 
   useEffect(() => {
@@ -235,16 +231,9 @@ export function ReportsPage({
     setSelectedId(null);
   }, [subTab]);
 
-  const handleSelectAgent = useCallback(
-    async (id: string) => {
-      setSelectedId(id);
-      if (!agentDetails[id]) {
-        const detail = await fetchRunDetail(id);
-        if (detail) setAgentDetails((prev) => ({ ...prev, [id]: detail }));
-      }
-    },
-    [agentDetails, fetchRunDetail],
-  );
+  const handleSelectAgent = useCallback((id: string) => {
+    setSelectedId(id);
+  }, []);
 
   const handleApprove = async (token: string) => {
     setActionLoading(token);
@@ -535,7 +524,6 @@ export function ReportsPage({
             {selectedAgent && (
               <AgentDetail
                 run={selectedAgent}
-                detail={agentDetails[selectedAgent.id]}
                 actionLoading={actionLoading}
                 onCancel={handleCancel}
                 onClose={() => setSelectedId(null)}

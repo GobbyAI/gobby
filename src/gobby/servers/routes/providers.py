@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.providers import provider_metadata
 from gobby.servers.provider_models import DROID_MODEL_CATALOG, with_context_lengths
 
 if TYPE_CHECKING:
@@ -51,6 +51,16 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             },
         ],
     ),
+    "grok": with_context_lengths(
+        "grok",
+        [
+            {
+                "value": "grok-build",
+                "label": "Grok Build",
+                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
+            },
+        ],
+    ),
     "qwen": [],
     "codex": with_context_lengths(
         "codex",
@@ -88,16 +98,12 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
         ],
     ),
     "droid": DROID_MODEL_CATALOG,
+    "agy": [],
 }
 
-_PROVIDER_DEFS = [
-    ("claude", "claude"),
-    ("gemini", "gemini"),
-    ("qwen", "qwen"),
-    ("codex", "codex"),
-    ("droid", "droid"),
-]
-_LAZY_ACP_PROVIDERS = frozenset({"gemini", "qwen"})
+_PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
+_PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
+_LAZY_ACP_PROVIDERS = frozenset({"gemini", "grok", "qwen"})
 
 
 def _friendly_label(provider: str, model: str) -> str:
@@ -166,8 +172,12 @@ def _build_model_catalog(
         getattr(server, "services", None), "provider_model_catalog", None
     )
     if provider_model_catalog is not None:
-        catalog = {}
+        catalog: dict[str, tuple[list[dict[str, Any]], str]] = {}
         for provider, _binary in _PROVIDER_DEFS:
+            meta = _PROVIDER_META[provider]
+            if not meta.live_model_discovery:
+                catalog[provider] = ([], "unsupported")
+                continue
             snapshot = provider_model_catalog.get_provider_snapshot(provider)
             models = snapshot.get("models", [])
             catalog[provider] = (
@@ -176,7 +186,11 @@ def _build_model_catalog(
             )
     else:
         catalog = {
-            provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()
+            provider: (
+                [*models],
+                "static" if _PROVIDER_META[provider].live_model_discovery else "unsupported",
+            )
+            for provider, models in _BASE_MODEL_CATALOG.items()
         }
 
     config = getattr(getattr(server, "services", None), "config", None)
@@ -203,6 +217,10 @@ def _provider_health(
     path: str | None,
 ) -> tuple[bool, str | None]:
     """Resolve provider availability using runtime backend health when available."""
+    meta = _PROVIDER_META.get(provider)
+    if meta and not meta.supports_web_chat:
+        return False, meta.unavailable_reason
+
     runtime_manager = getattr(getattr(server, "services", None), "web_chat_runtime_manager", None)
     if runtime_manager is None:
         return path is not None, None
@@ -227,10 +245,21 @@ async def _probe_providers() -> list[tuple[str, str | None]]:
 
     Returns a list of (name, path_or_none) tuples.
     """
-    paths = await asyncio.gather(
-        *[asyncio.to_thread(shutil.which, binary) for _name, binary in _PROVIDER_DEFS]
-    )
+    paths = await asyncio.gather(*[asyncio.to_thread(meta.path) for meta in provider_metadata()])
     return [(name, path) for (name, _binary), path in zip(_PROVIDER_DEFS, paths, strict=False)]
+
+
+def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
+    meta = _PROVIDER_META[name]
+    return {
+        "display_name": meta.display_name,
+        "installed": path is not None,
+        "deprecated": meta.deprecated,
+        "deprecation_message": meta.deprecation_message,
+        "supports_web_chat": meta.supports_web_chat,
+        "supports_agent_spawn": meta.supports_agent_spawn,
+        "unavailable_reason": meta.unavailable_reason,
+    }
 
 
 def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
@@ -254,6 +283,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     "available": available,
                     "path": path,
                     "startup_error": startup_error,
+                    **_provider_metadata_fields(name, path),
                 }
             )
         return {"providers": providers}
@@ -283,6 +313,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     "models": filtered_models,
                     "source": source,
                     "startup_error": startup_error,
+                    **_provider_metadata_fields(name, path),
                 }
             )
         return {"providers": result}

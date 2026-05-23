@@ -29,6 +29,10 @@ from typing import Any, ClassVar, cast
 
 import httpx
 
+from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
+
+PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
+
 
 class DaemonClient:
     """
@@ -107,7 +111,13 @@ class DaemonClient:
             error_msg = str(e)
             # Check if it's a connection refused (daemon not running)
             if "refused" in error_msg.lower() or "connection" in error_msg.lower():
-                self.logger.warning(f"Daemon not running: {e}")
+                restart_source = self._planned_restart_source()
+                if restart_source:
+                    self.logger.debug(
+                        f"Daemon not running during planned restart ({restart_source}): {e}"
+                    )
+                else:
+                    self.logger.warning(f"Daemon not running: {e}")
                 return False, None  # None means daemon not running
             else:
                 # Other errors (timeout, DNS, etc.)
@@ -134,6 +144,14 @@ class DaemonClient:
                 return False, f"Cannot access daemon: {health_error}", "cannot_access", health_error
 
         return True, "Daemon is ready", "ready", None
+
+    def _planned_restart_source(self) -> str | None:
+        record = read_active_shutdown_intent(max_age_seconds=PLANNED_RESTART_MARKER_MAX_AGE_SECONDS)
+        if record is None or record.stale or record.error:
+            return None
+        if record.intent is not ShutdownIntent.RESTART:
+            return None
+        return record.source
 
     def call_http_api(
         self,

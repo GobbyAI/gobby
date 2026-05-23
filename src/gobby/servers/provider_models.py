@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.acp_client import ACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.config.app import deep_merge
+from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
+from gobby.servers.provider_models_grok import models_from_acp_session as grok_models_from_acp
+from gobby.servers.provider_models_grok import models_from_cache as grok_models_from_cache
+from gobby.servers.provider_models_grok import static_models as grok_static_models
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -24,8 +28,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROVIDERS = ("claude", "gemini", "qwen", "codex", "droid")
-_CACHE_VERSION = 3
+_PROVIDER_METADATA = {entry.provider: entry for entry in provider_metadata()}
+_PROVIDERS = tuple(_PROVIDER_METADATA)
+_CACHE_VERSION = 4
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
 _MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
@@ -65,6 +70,7 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "gemini-3.1-pro-preview": 1_000_000,
     "gemini-3-flash-preview": 1_000_000,
     "gemini-2.5-pro": 1_000_000,
+    "grok-build": 512_000,
     "qwen3-coder": 262_144,
     "qwen3-coder-plus": 262_144,
     "qwen3-coder-flash": 262_144,
@@ -351,7 +357,7 @@ class ProviderModelCatalog:
 
         if not isinstance(payload, dict):
             return
-        if payload.get("version") not in (None, 2, _CACHE_VERSION):
+        if payload.get("version") not in (None, 2, 3, _CACHE_VERSION):
             logger.warning(
                 "Ignoring unsupported provider model cache version: %s", payload.get("version")
             )
@@ -551,13 +557,27 @@ class ProviderModelCatalog:
         for provider in _PROVIDERS:
             previous = old.get(provider)
             cli_version = await self._get_cli_version(provider)
+            metadata = _PROVIDER_METADATA[provider]
+            if not metadata.live_model_discovery:
+                results[provider] = {
+                    "source": "unsupported",
+                    "cli_version": cli_version or (previous or {}).get("cli_version"),
+                    "error": metadata.unavailable_reason,
+                    "models": [],
+                    "generated_at": generated_at,
+                }
+                continue
             try:
-                discovered_models = await self._discover_provider_models(
-                    provider, codex_client=codex_client
-                )
+                source = "live"
+                if provider == "grok":
+                    discovered_models, source = await self._discover_grok_models_with_source()
+                else:
+                    discovered_models = await self._discover_provider_models(
+                        provider, codex_client=codex_client
+                    )
                 models = with_context_lengths(provider, discovered_models)
                 results[provider] = {
-                    "source": "live",
+                    "source": source,
                     "cli_version": cli_version or (previous or {}).get("cli_version"),
                     "error": None,
                     "models": models,
@@ -600,12 +620,16 @@ class ProviderModelCatalog:
             return await self._discover_claude_models()
         if provider == "gemini":
             return await self._discover_gemini_models()
+        if provider == "grok":
+            return await self._discover_grok_models()
         if provider == "qwen":
             return await self._discover_qwen_models()
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         if provider == "droid":
             return copy.deepcopy(DROID_MODEL_CATALOG)
+        if provider == "agy":
+            return []
         raise ValueError(f"Unknown provider: {provider}")
 
     async def _discover_codex_models(
@@ -657,6 +681,38 @@ class ProviderModelCatalog:
         from gobby.adapters.gemini_acp_client import GeminiACPClient
 
         return await self._discover_acp_models(client_cls=GeminiACPClient)
+
+    async def _discover_grok_models(self) -> list[dict[str, Any]]:
+        models, _source = await self._discover_grok_models_with_source()
+        return models
+
+    async def _discover_grok_models_with_source(self) -> tuple[list[dict[str, Any]], str]:
+        from gobby.adapters.grok_acp_client import GrokACPClient
+
+        if not shutil.which(GrokACPClient.cli_name):
+            try:
+                cached = grok_models_from_cache()
+            except Exception:
+                cached = []
+            if cached:
+                return cached, "cache"
+            return grok_static_models(), "static"
+
+        acp_error: Exception | None = None
+        try:
+            return await self._discover_acp_models(client_cls=GrokACPClient), "live"
+        except Exception as exc:
+            acp_error = exc
+
+        try:
+            cached = grok_models_from_cache()
+        except Exception:
+            cached = []
+        if cached:
+            return cached, "cache"
+        if acp_error is not None:
+            logger.debug("Grok ACP model discovery failed; using static fallback: %s", acp_error)
+        return grok_static_models(), "static"
 
     async def _discover_qwen_models(self) -> list[dict[str, Any]]:
         from gobby.adapters.qwen_acp_client import QwenACPClient
@@ -791,6 +847,9 @@ class ProviderModelCatalog:
         finally:
             await client.stop()
 
+        if client_cls.cli_name == "grok" and isinstance(session_info, dict):
+            return grok_models_from_acp(session_info)
+
         raw_models = (
             session_info.get("models", {}).get("availableModels", [])
             if isinstance(session_info, dict)
@@ -887,9 +946,13 @@ class ProviderModelCatalog:
         if not shutil.which(provider):
             return None
 
+        if provider == "grok":
+            args = [provider, "version"]
+        else:
+            args = [provider, "--version"]
+
         proc = await asyncio.create_subprocess_exec(
-            provider,
-            "--version",
+            *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

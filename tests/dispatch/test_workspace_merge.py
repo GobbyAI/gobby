@@ -7,6 +7,7 @@ import pytest
 
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -745,9 +746,12 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     )
 
     stage = task_manager.stage_states.get(leaf.id, "merge")
+    updated = task_manager.get_task(leaf.id)
     assert merge_sha is None
     assert stage is not None
     assert stage.state == "ready"
+    assert not updated.is_escalated
+    assert WORKSPACE_MERGE_CONFLICT_LABEL in (updated.labels or [])
     assert worktrees.get(source.id) is not None
     assert task_path.exists()
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id == source.id

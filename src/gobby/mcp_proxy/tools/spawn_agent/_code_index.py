@@ -26,7 +26,8 @@ async def prepare_isolation_code_index(
         return None, env if isinstance(env, dict) else {}
     except Exception as exc:
         reason = str(exc)
-        logger.warning(
+        log = logger.info if reason.startswith("gcode_index_timeout:") else logger.warning
+        log(
             "Continuing isolated spawn after code index preflight failed for cwd=%s: %s",
             cwd,
             reason,

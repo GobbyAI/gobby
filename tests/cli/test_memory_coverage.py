@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.memory import memory
+from gobby.cli.memory.maintenance import _list_all_memories
 
 pytestmark = pytest.mark.unit
 
@@ -173,6 +174,27 @@ class TestExportMemories:
 
 
 class TestDedupeMemories:
+    def test_list_all_memories_bounds_results_and_stops_on_listing_errors(self) -> None:
+        manager = MagicMock()
+        manager.list_memories.side_effect = [
+            ["mem-1", "mem-2"],
+            RuntimeError("backend unavailable"),
+        ]
+
+        assert _list_all_memories(manager, page_size=2) == ["mem-1", "mem-2"]
+        assert manager.list_memories.call_args_list[0].kwargs == {"limit": 2, "offset": 0}
+        assert manager.list_memories.call_args_list[1].kwargs == {"limit": 2, "offset": 2}
+
+        manager.reset_mock()
+        manager.list_memories.side_effect = [["mem-1", "mem-2", "mem-3"]]
+
+        assert _list_all_memories(manager, page_size=5, max_results=3) == [
+            "mem-1",
+            "mem-2",
+            "mem-3",
+        ]
+        assert manager.list_memories.call_args.kwargs == {"limit": 3, "offset": 0}
+
     def test_dedupe_no_memories(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mock_manager.list_memories.return_value = []
         result = runner.invoke(memory, ["dedupe"])

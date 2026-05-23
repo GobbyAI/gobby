@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
@@ -93,6 +95,11 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
 
     reconciled = await _recover_agent_runs_after_restart(runner)
     active_runs = _list_active_agent_runs_once(runner)
+    non_tmux_runs = [run for run in active_runs if not getattr(run, "tmux_session_name", None)]
+    for run in non_tmux_runs:
+        if _refresh_active_run_dispatch_mutex(runner, run):
+            reconciled += 1
+
     tmux_runs = [run for run in active_runs if getattr(run, "tmux_session_name", None)]
     if not tmux_runs:
         return reconciled
@@ -137,8 +144,41 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
                 run_id,
                 e,
             )
+        if _refresh_active_run_dispatch_mutex(runner, run):
+            reconciled += 1
 
     return reconciled
+
+
+def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:
+    """Extend the dispatch mutex for a run that survived daemon restart."""
+    task_id = getattr(run, "task_id", None)
+    run_id = getattr(run, "id", None)
+    if not task_id or not run_id:
+        return False
+
+    db = getattr(runner, "database", None)
+    if db is None:
+        run_storage = getattr(getattr(runner, "agent_runner", None), "run_storage", None)
+        db = getattr(run_storage, "db", None)
+    if db is None:
+        return False
+
+    try:
+        return TaskDispatchMutexManager(db).acquire_mutex(
+            str(task_id),
+            holder="dispatcher",
+            kind="heartbeat",
+            ttl_seconds=600,
+            run_id=str(run_id),
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to refresh dispatch mutex for recovered agent %s: %s",
+            run_id,
+            e,
+        )
+        return False
 
 
 def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:

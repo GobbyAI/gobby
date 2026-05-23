@@ -1,13 +1,9 @@
 import { useState } from "react";
-import type {
-  AgentRunDetail,
-  AgentRunRecord,
-} from "../../hooks/useAgentRuns";
+import type { AgentRunRecord } from "../../hooks/useAgentRuns";
 import {
   ChevronIcon,
   PipelineStatusDot as StatusDot,
 } from "./execution-utils";
-import { formatTime } from "./executionFormatters";
 import { cn } from "../../lib/utils";
 import { normalizeStatus } from "./ReportsPage.helpers";
 import { CloseIcon } from "./ReportsPage.icons";
@@ -17,10 +13,6 @@ import {
   DETAIL_BODY_CLS,
   DETAIL_CLOSE_CLS,
   DETAIL_CODE_CLS,
-  DETAIL_COMMAND_CLS,
-  DETAIL_COMMAND_TIME_CLS,
-  DETAIL_COMMAND_TYPE_CLS,
-  DETAIL_COMMANDS_CLS,
   DETAIL_ERROR_CLS,
   DETAIL_HEADER_CLS,
   DETAIL_HEADER_TOP_CLS,
@@ -43,7 +35,6 @@ import {
 
 interface AgentDetailProps {
   run: AgentRunRecord;
-  detail?: AgentRunDetail;
   actionLoading: string | null;
   onCancel: (runId: string) => Promise<void>;
   onClose: () => void;
@@ -51,7 +42,6 @@ interface AgentDetailProps {
 
 export function AgentDetail({
   run,
-  detail,
   actionLoading,
   onCancel,
   onClose,
@@ -124,26 +114,6 @@ export function AgentDetail({
             {showResult && (
               <div className={DETAIL_CODE_CLS}>{run.result}</div>
             )}
-          </div>
-        )}
-
-        {detail?.commands && detail.commands.length > 0 && (
-          <div className={DETAIL_SECTION_CLS}>
-            <span className={DETAIL_LABEL_CLS}>
-              Commands ({detail.commands.length})
-            </span>
-            <div className={DETAIL_COMMANDS_CLS}>
-              {detail.commands.map((cmd) => (
-                <div key={cmd.id} className={DETAIL_COMMAND_CLS}>
-                  <span className={DETAIL_COMMAND_TYPE_CLS}>
-                    {cmd.command_text}
-                  </span>
-                  <span className={DETAIL_COMMAND_TIME_CLS}>
-                    {formatTime(cmd.created_at)}
-                  </span>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
