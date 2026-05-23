@@ -322,8 +322,7 @@ def mock_daemon_config() -> "MagicMock":
         str(temp_root / "gobby_test_client_error.log"),
     )
     config.ui.enabled = False
-    config.databases.neo4j.url = None
-    config.databases.neo4j.auth = None
+    config.databases.falkordb.requirepass = None
     return config
 
 

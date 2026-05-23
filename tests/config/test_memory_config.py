@@ -1,10 +1,11 @@
-"""Tests for MemoryConfig, QdrantConfig, Neo4jConfig, and EmbeddingsConfig fields."""
+"""Tests for MemoryConfig, QdrantConfig, FalkorConfig, and EmbeddingsConfig fields."""
 
 from __future__ import annotations
 
 import pytest
 
-from gobby.config.persistence import EmbeddingsConfig, MemoryConfig, Neo4jConfig, QdrantConfig
+from gobby.config.persistence import EmbeddingsConfig, MemoryConfig, QdrantConfig
+from gobby.storage.config_store import config_key_to_secret_name
 
 pytestmark = pytest.mark.unit
 
@@ -105,20 +106,46 @@ def test_old_config_with_removed_fields_does_not_crash() -> None:
 
 
 # ===========================================================================
-# Neo4jConfig tests (fields moved from MemoryConfig)
+# FalkorConfig tests (fields moved from MemoryConfig)
 # ===========================================================================
 
 
-def test_neo4j_url_defaults_to_docker_compose() -> None:
-    """Neo4jConfig.url should default to the gobby docker-compose port mapping."""
-    config = Neo4jConfig()
-    assert config.url == "http://localhost:8474"
+def test_falkor_host_defaults_to_loopback() -> None:
+    """FalkorConfig.host should default to the Docker host mapping."""
+    from gobby.config.persistence import FalkorConfig
+
+    config = FalkorConfig()
+    assert config.host == "127.0.0.1"
 
 
-def test_neo4j_auth_defaults_to_none() -> None:
-    """Neo4jConfig.auth should default to None (must be provided when enabled)."""
-    config = Neo4jConfig()
-    assert config.auth is None
+def test_falkor_port_defaults_to_redis_mapping() -> None:
+    """FalkorConfig.port should default to the host-side Redis port."""
+    from gobby.config.persistence import FalkorConfig
+
+    config = FalkorConfig()
+    assert config.port == 16379
+
+
+def test_falkor_requirepass_defaults_to_none() -> None:
+    """FalkorConfig.requirepass should default to None until configured."""
+    from gobby.config.persistence import FalkorConfig
+
+    config = FalkorConfig()
+    assert config.requirepass is None
+
+
+def test_databases_config_exposes_falkordb_field() -> None:
+    """DatabasesConfig should expose databases.falkordb."""
+    from gobby.config.persistence import DatabasesConfig, FalkorConfig
+
+    config = DatabasesConfig()
+    assert isinstance(config.falkordb, FalkorConfig)
+    assert not hasattr(config, "neo4j")
+
+
+def test_falkordb_requirepass_secret_name_is_unique() -> None:
+    """databases.falkordb.requirepass should derive the requirepass secret name."""
+    assert config_key_to_secret_name("databases.falkordb.requirepass") == "requirepass"
 
 
 # ===========================================================================

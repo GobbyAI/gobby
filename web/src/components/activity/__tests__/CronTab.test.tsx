@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -88,19 +88,19 @@ describe('CronTab', () => {
     expect(screen.getByText('paused-job')).toBeInTheDocument()
   })
 
-  it('shows a Load more button when more jobs are available than the page size', async () => {
+  it('shows a Load more button when more jobs are available than the page size', () => {
     cronMock.jobs = Array.from({ length: 25 }, (_, i) =>
       makeJob({ id: `j${i}`, name: `job-${i}` }),
     )
     render(<CronTab projectId="p" />)
-    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
+    expect(screen.getByText('Load more')).toBeInTheDocument()
     expect(screen.getByText('job-19')).toBeInTheDocument()
     expect(screen.queryByText('job-20')).toBeNull()
 
-    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+    fireEvent.click(screen.getByText('Load more'))
     expect(screen.getByText('job-20')).toBeInTheDocument()
     expect(screen.getByText('job-24')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+    expect(screen.queryByText('Load more')).toBeNull()
   })
 
   it('renders the runs list inside the detail pane when a job is selected', () => {

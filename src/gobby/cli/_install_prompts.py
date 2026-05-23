@@ -31,8 +31,8 @@ __all__ = (
     "_run_codex_uninstall",
     "_run_embedding_install",
     "_run_git_hooks_install",
-    "_run_neo4j_install",
-    "_run_neo4j_uninstall",
+    "_run_falkordb_install",
+    "_run_falkordb_uninstall",
     "_run_qdrant_install",
     "_run_standard_cli_install",
     "_run_standard_cli_uninstall",
@@ -571,23 +571,33 @@ def _run_voice_install(
     click.echo("")
 
 
-def _run_neo4j_install(
+def _run_falkordb_install(
     installer: Callable[..., dict[str, Any]],
-    neo4j_password: str | None,
+    falkordb_password: str | None,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for Neo4j."""
+    """Run install + echo for FalkorDB."""
     click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
+    click.echo("FalkorDB Knowledge Graph")
     click.echo("-" * 40)
 
-    result = installer(password=neo4j_password)
-    results["neo4j"] = result
+    try:
+        result = installer(password=falkordb_password)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    results["falkordb"] = result
 
     if result["success"]:
-        click.echo("Neo4j installed (local mode)")
-        click.echo(f"  HTTP: {result['neo4j_url']}")
-        click.echo(f"  Bolt: {result.get('bolt_url', 'N/A')}")
+        click.echo("FalkorDB installed (docker mode)")
+        source = result.get("password_source")
+        if source == "generated" and result.get("password"):
+            click.echo(f"  Generated FalkorDB password: {result['password']}")
+        elif source == "provided":
+            click.echo("  Using provided FalkorDB password (not displayed)")
+        elif source == "reused":
+            click.echo("  Reusing existing FalkorDB password from config_store")
+        click.echo(f"  Redis: {result['url']}")
+        click.echo(f"  Browser: {result['browser_url']}")
         if result.get("compose_file"):
             click.echo(f"  Compose: {result['compose_file']}")
         click.echo("\nRestart the daemon to apply: gobby restart")
@@ -755,25 +765,25 @@ def _run_codex_uninstall(
     click.echo("")
 
 
-def _run_neo4j_uninstall(
+def _run_falkordb_uninstall(
     uninstaller: Callable[..., dict[str, Any]],
     volumes_flag: bool,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run uninstall + echo for Neo4j."""
+    """Run uninstall + echo for FalkorDB."""
     click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
+    click.echo("FalkorDB Knowledge Graph")
     click.echo("-" * 40)
 
-    result = uninstaller(remove_volumes=volumes_flag)
-    results["neo4j"] = result
+    result = uninstaller(purge=volumes_flag)
+    results["falkordb"] = result
 
     if result["success"]:
         if result.get("already_uninstalled"):
-            click.echo("Neo4j was not installed")
+            click.echo("FalkorDB was not installed")
         else:
-            click.echo("Neo4j services removed")
-            if result.get("volumes_removed"):
+            click.echo("FalkorDB services removed")
+            if result.get("data_removed"):
                 click.echo("  Docker volumes removed (data deleted)")
         click.echo("\nRestart the daemon to apply: gobby restart")
     else:

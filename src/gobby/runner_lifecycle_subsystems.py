@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.persistence import is_falkordb_enabled
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
 )
@@ -83,20 +84,26 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
     else:
         logger.debug("Qdrant URL is not configured; vector health check skipped")
 
-    if runner.memory_manager and db_cfg.neo4j.url:
-        from gobby.cli.services import is_neo4j_healthy
-
-        if not await is_neo4j_healthy(db_cfg.neo4j.url):
+    if runner.memory_manager and is_falkordb_enabled(db_cfg):
+        falkor_cfg = db_cfg.falkordb
+        falkor_client = getattr(runner.memory_manager, "falkor_client", None)
+        is_healthy = bool(falkor_client and await falkor_client.ping())
+        endpoint = f"{falkor_cfg.host}:{falkor_cfg.port}"
+        if not is_healthy:
             logger.warning(
-                f"Neo4j configured but unreachable at {db_cfg.neo4j.url} — graph features disabled"
+                "FalkorDB configured but unreachable at %s — graph features disabled",
+                endpoint,
             )
             runner.memory_manager.clear_graph_clients()
+            code_indexer = getattr(runner, "code_indexer", None)
+            if code_indexer:
+                code_indexer.clear_graph_client()
             if tracker:
-                tracker.error("Neo4j", f"unreachable at {db_cfg.neo4j.url}")
+                tracker.error("FalkorDB", f"unreachable at {endpoint}")
         elif tracker:
-            tracker.complete("Neo4j healthy")
+            tracker.complete("FalkorDB healthy")
     elif runner.memory_manager:
-        logger.debug("Neo4j URL is not configured; graph health check skipped")
+        logger.debug("FalkorDB is not configured; graph health check skipped")
 
 
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
@@ -310,7 +317,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
             sync_worker_loop(
                 storage=runner.code_indexer.storage,
                 vector_store=runner.vector_store,
-                graph=runner.code_indexer.graph,
+                context=runner.code_indexer,
                 config=runner.config.code_index,
                 embeddings_config=runner.config.embeddings,
                 shutdown_flag=sync_shutdown,

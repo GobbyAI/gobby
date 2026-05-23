@@ -1,14 +1,14 @@
-"""
-Tests for config/persistence.py module.
+"""Tests for config/persistence.py module."""
 
-RED PHASE: Tests initially import from persistence.py (should fail),
-then will pass once memory/skill config classes are extracted from app.py.
-"""
+import tomllib
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.unit
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # =============================================================================
 # Import Tests (RED phase targets)
@@ -312,44 +312,127 @@ class TestEmbeddingsConfigFields:
         assert config.dim == 768
 
 
-class TestNeo4jConfigFields:
-    """Test Neo4jConfig fields (moved from MemoryConfig)."""
+class TestFalkorConfigFields:
+    """Test FalkorConfig fields."""
 
-    def test_neo4j_url_defaults_to_docker_compose(self) -> None:
-        """url should default to the gobby docker-compose port mapping."""
-        from gobby.config.persistence import Neo4jConfig
+    def test_falkor_host_defaults_to_loopback(self) -> None:
+        """host should default to the Docker port-mapped loopback address."""
+        from gobby.config.persistence import FalkorConfig
 
-        config = Neo4jConfig()
-        assert config.url == "http://localhost:8474"
+        config = FalkorConfig()
+        assert config.host == "127.0.0.1"
 
-    def test_neo4j_auth_defaults_to_docker_compose(self) -> None:
-        """auth should default to None (must be provided when enabled)."""
-        from gobby.config.persistence import Neo4jConfig
+    def test_falkor_port_defaults_to_remapped_redis_port(self) -> None:
+        """port should default to the host-side FalkorDB Redis port."""
+        from gobby.config.persistence import FalkorConfig
 
-        config = Neo4jConfig()
-        assert config.auth is None
+        config = FalkorConfig()
+        assert config.port == 16379
 
-    def test_neo4j_url_accepts_valid_url(self) -> None:
-        """Setting url to a valid URL should work."""
-        from gobby.config.persistence import Neo4jConfig
+    def test_falkor_requirepass_defaults_to_none(self) -> None:
+        """requirepass defaults to None so unconfigured installs stay disabled."""
+        from gobby.config.persistence import FalkorConfig
 
-        config = Neo4jConfig(url="http://localhost:8474")
-        assert config.url == "http://localhost:8474"
+        config = FalkorConfig()
+        assert config.requirepass is None
 
-    def test_neo4j_auth_stores_credentials(self) -> None:
-        """auth stores user:password format."""
-        from gobby.config.persistence import Neo4jConfig
+    @pytest.mark.parametrize(
+        "password",
+        [
+            "Pa$$w0rd!",
+            "aB-3.7=z",
+            "xyz_123-ABC",
+        ],
+    )
+    def test_validate_falkordb_password_accepts_printable_ascii(self, password: str) -> None:
+        """Accepted FalkorDB passwords are printable ASCII without whitespace."""
+        from gobby.config.persistence import FalkorConfig, validate_falkordb_password
 
-        config = Neo4jConfig(auth="neo4j:password")
-        assert config.auth == "neo4j:password"
+        assert validate_falkordb_password(password) == password
+        assert FalkorConfig(requirepass=password).requirepass == password
 
-    def test_neo4j_url_with_auth(self) -> None:
-        """Both url and auth can be set together."""
-        from gobby.config.persistence import Neo4jConfig
+    @pytest.mark.parametrize(
+        ("password", "message"),
+        [
+            ("", "must not be empty"),
+            ("has space", "must not contain whitespace"),
+            ("has\ttab", "must not contain whitespace"),
+            ("has\nnewline", "must not contain whitespace"),
+            ("has\x00control", "must not contain ASCII control characters"),
+            ("has-é-high-bit", "must use printable ASCII only"),
+        ],
+    )
+    def test_validate_falkordb_password_rejects_docker_unsafe_values(
+        self, password: str, message: str
+    ) -> None:
+        """Docker-unsafe FalkorDB passwords are rejected with actionable messages."""
+        from gobby.config.persistence import FalkorConfig, validate_falkordb_password
 
-        config = Neo4jConfig(
-            url="http://localhost:8474",
-            auth="neo4j:gobbyneo4j",
-        )
-        assert config.url == "http://localhost:8474"
-        assert config.auth == "neo4j:gobbyneo4j"
+        with pytest.raises(ValueError, match=message):
+            validate_falkordb_password(password)
+        with pytest.raises(ValidationError, match=message):
+            FalkorConfig(requirepass=password)
+
+    def test_falkor_graph_name_defaults_to_memory_graph(self) -> None:
+        """graph_name defaults to the memory knowledge graph."""
+        from gobby.config.persistence import FalkorConfig
+
+        config = FalkorConfig()
+        assert config.graph_name == "gobby_kg"
+
+    def test_falkor_graph_min_score_validation(self) -> None:
+        """graph_min_score keeps the previous 0.0-1.0 validation contract."""
+        from gobby.config.persistence import FalkorConfig
+
+        assert FalkorConfig(graph_min_score=0.0).graph_min_score == 0.0
+        assert FalkorConfig(graph_min_score=1.0).graph_min_score == 1.0
+        with pytest.raises(ValidationError):
+            FalkorConfig(graph_min_score=-0.1)
+        with pytest.raises(ValidationError):
+            FalkorConfig(graph_min_score=1.1)
+
+    def test_databases_config_uses_falkordb_not_neo4j(self) -> None:
+        """DatabasesConfig exposes falkordb and drops the legacy neo4j field."""
+        from gobby.config.persistence import DatabasesConfig, FalkorConfig
+
+        config = DatabasesConfig()
+        assert isinstance(config.falkordb, FalkorConfig)
+        assert not hasattr(config, "neo4j")
+
+    def test_is_falkordb_enabled_requires_requirepass(self) -> None:
+        """Only a resolved requirepass value enables the graph backend."""
+        from gobby.config.persistence import DatabasesConfig, is_falkordb_enabled
+
+        assert is_falkordb_enabled(DatabasesConfig()) is False
+        assert is_falkordb_enabled(DatabasesConfig(falkordb={"requirepass": "secret"})) is True
+
+    def test_neo4j_config_symbol_is_removed(self) -> None:
+        """FalkorConfig replaces the exported Neo4jConfig symbol."""
+        import gobby.config.persistence as persistence
+
+        assert not hasattr(persistence, "Neo4jConfig")
+
+
+class TestFalkorDependencyLock:
+    """Tests for the pyproject.toml and uv.lock dependency contract."""
+
+    def test_pyproject_declares_falkordb_dependency_and_drops_neo4j(self) -> None:
+        """The runtime dependency set should name falkordb and omit neo4j."""
+        data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+        dependencies = data["project"]["dependencies"]
+
+        assert any(dep.startswith("falkordb>=1.1.0") for dep in dependencies)
+        assert not any(dep.startswith("neo4j") for dep in dependencies)
+
+    def test_uv_lock_contains_falkordb_and_gobby_dep_entry(self) -> None:
+        """The lockfile should be regenerated with falkordb in the resolved graph."""
+        data = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+        packages = data["package"]
+        package_names = {package["name"] for package in packages}
+        gobby_package = next(package for package in packages if package["name"] == "gobby")
+        gobby_deps = {dependency["name"] for dependency in gobby_package["dependencies"]}
+
+        assert "falkordb" in package_names
+        assert "falkordb" in gobby_deps
+        assert "neo4j" not in package_names
+        assert "neo4j" not in gobby_deps

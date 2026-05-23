@@ -155,11 +155,11 @@ class TestFormatStatusMessage:
             api_data={
                 "memory": {
                     "qdrant": {"configured": True, "healthy": True},
-                    "neo4j": {
+                    "falkordb": {
                         "configured": True,
                         "installed": True,
                         "healthy": True,
-                        "url": "bolt://localhost:7687",
+                        "url": "redis://127.0.0.1:16379",
                     },
                 },
             },
@@ -168,7 +168,26 @@ class TestFormatStatusMessage:
         assert "Services:" in result
         assert "Qdrant" in result
         assert "healthy" in result
-        assert "Neo4j" in result
+        assert "FalkorDB" in result
+
+    def test_services_section_distinguishes_installed_unconfigured_falkordb(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "memory": {
+                    "falkordb": {
+                        "configured": False,
+                        "installed": True,
+                        "healthy": False,
+                        "url": "redis://127.0.0.1:16379",
+                    },
+                },
+            },
+        )
+
+        assert "FalkorDB" in result
+        assert "installed, not configured" in result
+        assert "redis://127.0.0.1:16379" in result
 
     def test_provider_model_counts_attach_to_coding_clis_and_health_issues(self) -> None:
         result = format_status_message(

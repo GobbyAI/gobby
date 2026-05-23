@@ -32,6 +32,12 @@ _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 
 
+def _positive_int_or_default(value: Any, default: int) -> int:
+    if not isinstance(value, int):
+        return default
+    return max(1, value)
+
+
 async def _run_db(
     runner: Callable[..., Awaitable[Any]] | None,
     func: Callable[..., Any],
@@ -206,19 +212,19 @@ async def memory_reconcile_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 24 * 60 * 60,
 ) -> None:
-    """Background loop for periodic Qdrant/Neo4j orphan reconciliation (every 24 hours)."""
+    """Background loop for periodic Qdrant/FalkorDB orphan reconciliation."""
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
             report = await memory_manager.reconcile_stores(dry_run=False)
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
-            neo4j_orphans = report.get("neo4j", {}).get("orphan_memories_deleted", 0)
-            neo4j_entities = report.get("neo4j", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or neo4j_orphans or neo4j_entities:
+            falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
+            falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
+            if qdrant_orphans or falkordb_orphans or falkordb_entities:
                 logger.info(
                     f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{neo4j_orphans} Neo4j memory orphans, "
-                    f"{neo4j_entities} Neo4j entity orphans cleaned"
+                    f"{falkordb_orphans} FalkorDB memory orphans, "
+                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
                 )
         except asyncio.CancelledError:
             break
@@ -332,10 +338,11 @@ async def cleanup_chat_attachments_loop(
     """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
     from gobby.storage import chat_attachments
 
-    interval_seconds = max(1, interval_minutes) * 60
+    retention_hours = _positive_int_or_default(retention_hours, 24)
+    interval_seconds = _positive_int_or_default(interval_minutes, 60) * 60
 
     async def cleanup_once() -> None:
-        cutoff = datetime.now(UTC) - timedelta(hours=max(1, retention_hours))
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         records = await _run_db(
             run_db,
             chat_attachments.delete_stale_unbound_attachments,

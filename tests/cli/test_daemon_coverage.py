@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,8 +17,22 @@ from gobby.cli.daemon import (
     status,
     stop,
 )
+from gobby.config.persistence import DatabasesConfig
 
 pytestmark = pytest.mark.unit
+
+
+def _service_config(
+    *,
+    falkordb_password: str | None = None,
+    qdrant_url: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        databases=DatabasesConfig(
+            falkordb={"requirepass": falkordb_password},
+            qdrant={"url": qdrant_url},
+        )
+    )
 
 
 @pytest.fixture
@@ -32,45 +47,51 @@ class TestServicesStart:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         """No compose file → early return, no error."""
         _services_start(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
     def test_compose_exists_success(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        cfg = MagicMock()
-        cfg.databases.neo4j.auth = "neo4j:password123"
-        mock_config.return_value = cfg
+        mock_config.return_value = _service_config(
+            falkordb_password="password123",
+            qdrant_url=None,
+        )
         mock_run.return_value = MagicMock(returncode=0)
 
         _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
+        cmd = mock_run.call_args.args[0]
+        assert "falkordb" in cmd
+        assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "password123"
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
     def test_compose_exists_failure(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        cfg = MagicMock()
-        cfg.databases.neo4j.auth = None
-        mock_config.return_value = cfg
+        mock_config.return_value = _service_config(
+            falkordb_password=None,
+            qdrant_url="http://localhost:6333",
+        )
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
         _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
+        assert "qdrant" in mock_run.call_args.args[0]
         assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
     @patch("gobby.cli.daemon.subprocess.run")
@@ -78,11 +99,14 @@ class TestServicesStart:
     def test_compose_timeout(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.return_value = MagicMock(memory=MagicMock(neo4j_auth=None))
+        mock_config.return_value = _service_config(
+            falkordb_password=None,
+            qdrant_url="http://localhost:6333",
+        )
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
         result = _services_start(tmp_path)
         assert result is None
@@ -92,7 +116,7 @@ class TestServicesStart:
 
     @patch("gobby.config.app.load_config")
     def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
@@ -108,11 +132,11 @@ class TestServicesStart:
 class TestServicesStop:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         _services_stop(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.return_value = MagicMock(returncode=0)
@@ -123,7 +147,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
@@ -133,7 +157,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_exception(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
@@ -196,6 +220,9 @@ class TestStatusCommand:
         config.logging.client = str(tmp_path / "gobby.log")
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Not running" in result.output
+        _fmt.assert_called_once()
+        _svc.assert_called_once()
 
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
@@ -214,6 +241,9 @@ class TestStatusCommand:
         config.logging.client = str(tmp_path / "gobby.log")
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Not running" in result.output
+        _fmt.assert_called_once()
+        _svc.assert_called_once()
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(

@@ -446,7 +446,7 @@ class DaemonConfig(BaseModel):
     )
     databases: DatabasesConfig = Field(
         default_factory=DatabasesConfig,
-        description="Shared database connections (Qdrant, Neo4j)",
+        description="Shared database connections (Qdrant, FalkorDB)",
     )
     embeddings: EmbeddingsConfig = Field(
         default_factory=EmbeddingsConfig,
@@ -760,6 +760,7 @@ def _resolve_config_values(
 _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
+_LEGACY_NEO4J_CONFIG_PREFIX = "databases.neo4j."
 
 # Mapping from old logging.* field names to new telemetry.* field names
 _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
@@ -816,6 +817,30 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
                 kg["model"] = legacy_kg_model
 
     return config_dict
+
+
+def _drop_legacy_neo4j_config_store_keys(
+    flat_config: dict[str, Any], config_store: Any | None
+) -> dict[str, Any]:
+    """Ignore and delete stale Neo4j config_store keys after the FalkorDB migration."""
+    legacy_keys = sorted(key for key in flat_config if key.startswith(_LEGACY_NEO4J_CONFIG_PREFIX))
+    if not legacy_keys:
+        return flat_config
+
+    logger.warning(
+        "Ignoring stale Neo4j config_store keys after FalkorDB migration: %s",
+        ", ".join(legacy_keys),
+    )
+    migrated = dict(flat_config)
+    for key in legacy_keys:
+        migrated.pop(key, None)
+        delete = getattr(config_store, "delete", None)
+        if callable(delete):
+            try:
+                delete(key)
+            except Exception as exc:
+                logger.debug("Failed to delete stale Neo4j config key %s: %s", key, exc)
+    return migrated
 
 
 _BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
@@ -878,6 +903,7 @@ def load_config(
 
         # Layer 3: DB values (runtime overrides via config_store)
         flat_db = config_store.get_all()
+        flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         if flat_db:
             db_dict = unflatten_config(flat_db)
             # Resolve $secret:NAME and ${VAR} patterns in DB values

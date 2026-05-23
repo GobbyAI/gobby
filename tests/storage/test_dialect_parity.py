@@ -171,7 +171,7 @@ def test_memory_fused_search_preserves_rrf_configuration_surface() -> None:
     signature = inspect.signature(MemoryManager.__init__)
 
     assert "rrf_k" in signature.parameters
-    assert "neo4j_rrf_k" in signature.parameters
+    assert "falkordb_rrf_k" in signature.parameters
     assert MemoryManager._rrf_scores(["keyword"], k=17)["keyword"] == pytest.approx(1 / 18)
     assert MemoryManager._rrf_scores(["graph"], k=29)["graph"] == pytest.approx(1 / 30)
 
@@ -192,7 +192,7 @@ async def test_fused_search_dialect_parity_cases(hub_db: Any, signal_case: str) 
         vector_store=vector_store,
         embed_fn=_embed,
         rrf_k=17,
-        neo4j_rrf_k=29,
+        falkordb_rrf_k=29,
     )
 
     keyword_strong = await manager.create_memory(content="alpha alpha phase four")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,7 +12,7 @@ import pytest
 
 from gobby.code_index.models import IndexedFile, IndexedProject, Symbol
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass
+from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
 from gobby.config.code_index import CodeIndexConfig
 
 pytestmark = pytest.mark.unit
@@ -54,6 +55,11 @@ class RecoveringVectorStore:
         self.items = items
 
 
+class SyncWorkerVectorStore(RecoveringVectorStore):
+    async def close(self) -> None:
+        return None
+
+
 class RecordingRunDb:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -63,6 +69,155 @@ class RecordingRunDb:
             getattr(func, "__name__", None) or getattr(func, "_mock_name", repr(func))
         )
         return func(*args, **kwargs)
+
+
+def _indexed_project(root: Path) -> IndexedProject:
+    return IndexedProject(id="proj-1", root_path=str(root), total_files=1, total_symbols=1)
+
+
+def _indexed_file(
+    *,
+    vectors_synced: int = 0,
+    graph_synced: int = 0,
+) -> IndexedFile:
+    return IndexedFile(
+        id=IndexedFile.make_id("proj-1", "src/app.py"),
+        project_id="proj-1",
+        file_path="src/app.py",
+        language="python",
+        content_hash="abc123",
+        symbol_count=1,
+        vectors_synced=vectors_synced,
+        graph_synced=graph_synced,
+    )
+
+
+def _write_source(root: Path) -> None:
+    source_file = root / "src/app.py"
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("def greet(name: str) -> str:\n    return name\n")
+
+
+@pytest.mark.asyncio
+async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A cleared FalkorDB client must not starve vector syncing."""
+
+    async def fake_generate_embeddings(
+        texts: list[str],
+        **_kwargs: Any,
+    ) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=0, graph_synced=0)
+    old_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
+    context = SimpleNamespace(graph=None)
+    shutdown_flag = asyncio.Event()
+
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [_indexed_project(tmp_path)]
+    storage.get_file.return_value = pending_file
+    storage.get_symbols_for_file.return_value = [
+        SimpleNamespace(
+            id="sym-1",
+            name="greet",
+            kind="function",
+            qualified_name="greet",
+            signature="greet(name: str) -> str",
+            docstring=None,
+            file_path="src/app.py",
+        )
+    ]
+
+    def pending_once(*_args: Any, **_kwargs: Any) -> list[IndexedFile]:
+        shutdown_flag.set()
+        return [pending_file]
+
+    storage.get_pending_sync_files.side_effect = pending_once
+    vector_store = SyncWorkerVectorStore()
+
+    await sync_worker_loop(
+        storage=storage,
+        vector_store=vector_store,
+        context=context,
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=True,
+            sync_worker_interval_seconds=0.01,
+        ),
+        embeddings_config=SimpleNamespace(
+            model="test-model",
+            api_base=None,
+            api_key=None,
+            dim=4,
+        ),
+        shutdown_flag=shutdown_flag,
+        run_db=RecordingRunDb(),
+    )
+
+    old_graph.sync_file.assert_not_awaited()
+    assert [call[0] for call in vector_store.calls] == [
+        "ensure_collection",
+        "delete",
+        "batch_upsert",
+    ]
+    storage.mark_vectors_synced.assert_called_once_with(pending_file.id)
+
+
+@pytest.mark.asyncio
+async def test_sync_worker_uses_restored_graph_client_on_next_iteration(tmp_path: Path) -> None:
+    """The loop re-reads CodeIndexContext.graph and resumes graph writes."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=1, graph_synced=0)
+    new_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
+    context = SimpleNamespace(graph=None)
+    shutdown_flag = asyncio.Event()
+
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [_indexed_project(tmp_path)]
+    storage.get_file.return_value = pending_file
+    storage.get_imports_for_file.return_value = []
+    storage.get_calls_for_file.return_value = []
+    storage.get_symbols_for_file.return_value = []
+    calls = 0
+
+    def pending_across_recovery(*_args: Any, **_kwargs: Any) -> list[IndexedFile]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            context.graph = new_graph
+            return []
+        shutdown_flag.set()
+        return [pending_file]
+
+    storage.get_pending_sync_files.side_effect = pending_across_recovery
+
+    await sync_worker_loop(
+        storage=storage,
+        vector_store=None,
+        context=context,
+        config=CodeIndexConfig(
+            embedding_enabled=False,
+            graph_enabled=True,
+            sync_worker_interval_seconds=0.01,
+        ),
+        embeddings_config=SimpleNamespace(
+            model="test-model",
+            api_base=None,
+            api_key=None,
+            dim=4,
+        ),
+        shutdown_flag=shutdown_flag,
+        run_db=RecordingRunDb(),
+    )
+
+    assert calls == 2
+    new_graph.sync_file.assert_awaited_once()
+    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
 
 
 @pytest.mark.asyncio
@@ -264,7 +419,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
 
 @pytest.mark.asyncio
 async def test_sync_graph_routes_relation_reads_through_run_db() -> None:
-    """Graph relation reads use the injected DB runner before Neo4j writes."""
+    """Graph relation reads use the injected DB runner before FalkorDB writes."""
     storage = MagicMock()
     storage.get_imports_for_file.return_value = [{"source_file": "a.py", "target_module": "b"}]
     storage.get_calls_for_file.return_value = []

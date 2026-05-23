@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
-from gobby.memory.neo4j_client import Neo4jConnectionError
 from gobby.memory.services.knowledge_graph import (
     Entity,
     KnowledgeGraphService,
@@ -22,8 +22,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_neo4j() -> AsyncMock:
-    """Mock Neo4jClient."""
+def mock_falkor() -> AsyncMock:
+    """Mock FalkorDBClient."""
     client = AsyncMock()
     client.merge_node = AsyncMock(return_value=[])
     client.merge_relationship = AsyncMock(return_value=[])
@@ -56,17 +56,32 @@ def mock_prompt_loader() -> MagicMock:
 
 @pytest.fixture
 def service(
-    mock_neo4j: AsyncMock,
+    mock_falkor: AsyncMock,
     mock_llm: AsyncMock,
     mock_embed_fn: AsyncMock,
     mock_prompt_loader: MagicMock,
 ) -> KnowledgeGraphService:
     """Create a KnowledgeGraphService with all mocked deps."""
     return KnowledgeGraphService(
-        neo4j_client=mock_neo4j,
+        falkor_client=mock_falkor,
         llm_provider=mock_llm,
         embed_fn=mock_embed_fn,
         prompt_loader=mock_prompt_loader,
+    )
+
+
+def _mock_graph_extraction(mock_llm: AsyncMock) -> None:
+    """Prime LLM mocks with one entity and one relationship."""
+    mock_llm.generate_json = AsyncMock(
+        side_effect=[
+            {"entities": [{"entity": "Josh", "entity_type": "person"}]},
+            {
+                "relations": [
+                    {"source": "Josh", "relationship": "uses", "destination": "Python"},
+                ]
+            },
+            {"relations_to_delete": []},
+        ]
     )
 
 
@@ -120,16 +135,72 @@ class TestAddToGraph:
     async def test_ensure_graph_schema_serializes_concurrent_initialization(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """Concurrent callers should only run schema DDL once."""
 
-        mock_neo4j.ensure_memory_graph_schema = AsyncMock()
+        mock_falkor.ensure_memory_graph_schema = AsyncMock()
 
         await asyncio.gather(*[service._ensure_graph_schema() for _ in range(5)])
 
-        mock_neo4j.ensure_memory_graph_schema.assert_awaited_once()
+        mock_falkor.ensure_memory_graph_schema.assert_awaited_once()
         assert service._graph_schema_ensured is True
+
+    async def test_add_to_graph_blocks_writes_when_schema_connection_fails(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
+    ) -> None:
+        """A schema connection failure blocks graph writes."""
+        mock_falkor.ensure_memory_graph_schema = AsyncMock(
+            side_effect=FalkorConnectionError("schema unavailable")
+        )
+        _mock_graph_extraction(mock_llm)
+
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == ["schema unavailable"]
+
+        assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
+        mock_falkor.merge_node.assert_not_awaited()
+        mock_falkor.merge_relationship.assert_not_awaited()
+        mock_falkor.set_node_vector.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "schema_error",
+        [
+            FalkorQueryError("constraint status FAILED"),
+            TimeoutError("constraint readiness timed out"),
+        ],
+    )
+    async def test_add_to_graph_stops_writes_when_schema_readiness_fails(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
+        schema_error: Exception,
+    ) -> None:
+        """Constraint readiness failures must not be swallowed before graph writes."""
+        mock_falkor.ensure_memory_graph_schema = AsyncMock(side_effect=schema_error)
+        _mock_graph_extraction(mock_llm)
+
+        result = await service.add_to_graph("Josh uses Python", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert result.errors == [str(schema_error)]
+
+        assert service._graph_schema_ensured is False
+        mock_llm.generate_json.assert_not_awaited()
+        mock_falkor.merge_node.assert_not_awaited()
+        mock_falkor.merge_relationship.assert_not_awaited()
+        mock_falkor.set_node_vector.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
 
     async def test_add_to_graph_extracts_entities(
         self,
@@ -191,7 +262,7 @@ class TestAddToGraph:
     async def test_add_to_graph_merges_nodes(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph calls merge_node for each extracted entity."""
@@ -210,15 +281,15 @@ class TestAddToGraph:
 
         await service.add_to_graph("Josh uses Python")
 
-        assert mock_neo4j.merge_node.call_count == 2
+        assert mock_falkor.merge_node.call_count == 2
         # Check first call was for Josh
-        first_call = mock_neo4j.merge_node.call_args_list[0]
+        first_call = mock_falkor.merge_node.call_args_list[0]
         assert first_call.kwargs["name"] == "Josh"
 
     async def test_add_to_graph_merges_relationships(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph calls merge_relationship for each extracted relationship."""
@@ -241,8 +312,8 @@ class TestAddToGraph:
 
         await service.add_to_graph("Josh uses Python")
 
-        mock_neo4j.merge_relationship.assert_called_once()
-        call_kwargs = mock_neo4j.merge_relationship.call_args.kwargs
+        mock_falkor.merge_relationship.assert_called_once()
+        call_kwargs = mock_falkor.merge_relationship.call_args.kwargs
         assert call_kwargs["source_key"] == entity_key(None, "Josh")
         assert call_kwargs["target_key"] == entity_key(None, "Python")
         assert call_kwargs["rel_type"] == "uses"
@@ -250,7 +321,7 @@ class TestAddToGraph:
     async def test_add_to_graph_sets_embeddings(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         mock_embed_fn: AsyncMock,
     ) -> None:
@@ -268,22 +339,22 @@ class TestAddToGraph:
         mock_embed_fn.assert_called()
         assert mock_embed_fn.call_count >= 1
         assert mock_embed_fn.call_args is not None
-        mock_neo4j.set_node_vector.assert_called_once()
-        assert mock_neo4j.set_node_vector.call_count == 1
-        assert mock_neo4j.set_node_vector.call_args is not None
-        vector_call_kwargs = mock_neo4j.set_node_vector.call_args.kwargs
+        mock_falkor.set_node_vector.assert_called_once()
+        assert mock_falkor.set_node_vector.call_count == 1
+        assert mock_falkor.set_node_vector.call_args is not None
+        vector_call_kwargs = mock_falkor.set_node_vector.call_args.kwargs
         assert vector_call_kwargs["entity_key"] == entity_key(None, "Josh")
         assert "node_key" not in vector_call_kwargs
 
     async def test_add_to_graph_succeeds_without_embed_fn(
         self,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         mock_prompt_loader: MagicMock,
     ) -> None:
         """add_to_graph still writes graph nodes when embeddings are unavailable."""
         service = KnowledgeGraphService(
-            neo4j_client=mock_neo4j,
+            falkor_client=mock_falkor,
             llm_provider=mock_llm,
             embed_fn=None,
             prompt_loader=mock_prompt_loader,
@@ -299,18 +370,18 @@ class TestAddToGraph:
         result = await service.add_to_graph("Josh is a person")
 
         assert result.status is KnowledgeGraphStatus.SUCCESS
-        mock_neo4j.merge_node.assert_called_once()
-        mock_neo4j.set_node_vector.assert_not_called()
+        mock_falkor.merge_node.assert_called_once()
+        mock_falkor.set_node_vector.assert_not_called()
 
     async def test_add_to_graph_deletes_outdated_relations(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph deletes outdated relationships identified by LLM."""
-        # Existing relations in Neo4j
-        mock_neo4j.query = AsyncMock(
+        # Existing relations in FalkorDB
+        mock_falkor.query = AsyncMock(
             return_value=[
                 {"source": "Josh", "rel_type": "uses", "target": "Python 3.12"},
             ]
@@ -340,13 +411,13 @@ class TestAddToGraph:
         await service.add_to_graph("Josh uses Python 3.13")
 
         # Should have called query to delete the outdated relation
-        delete_calls = [c for c in mock_neo4j.query.call_args_list if "DELETE" in str(c)]
+        delete_calls = [c for c in mock_falkor.query.call_args_list if "DELETE" in str(c)]
         assert len(delete_calls) >= 1
 
     async def test_add_to_graph_no_entities_returns_early(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph returns early when no entities are extracted."""
@@ -356,9 +427,9 @@ class TestAddToGraph:
 
         await service.add_to_graph("nothing useful")
 
-        mock_neo4j.merge_node.assert_not_called()
-        assert mock_neo4j.merge_node.call_count == 0
-        assert not mock_neo4j.merge_node.called
+        mock_falkor.merge_node.assert_not_called()
+        assert mock_falkor.merge_node.call_count == 0
+        assert not mock_falkor.merge_node.called
 
 
 # ===========================================================================
@@ -372,16 +443,16 @@ class TestGetEntityGraph:
     async def test_get_entity_graph_delegates_to_client(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """get_entity_graph delegates to neo4j_client."""
+        """get_entity_graph delegates to falkor_client."""
         expected = {"entities": [{"name": "Josh"}], "relationships": []}
-        mock_neo4j.get_entity_graph = AsyncMock(return_value=expected)
+        mock_falkor.get_entity_graph = AsyncMock(return_value=expected)
 
         result = await service.get_entity_graph(limit=100)
 
         assert result == expected
-        mock_neo4j.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
+        mock_falkor.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
 
 
 class TestGetEntityNeighbors:
@@ -390,16 +461,16 @@ class TestGetEntityNeighbors:
     async def test_get_entity_neighbors_delegates(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """get_entity_neighbors delegates to neo4j_client."""
+        """get_entity_neighbors delegates to falkor_client."""
         expected = {"entities": [{"name": "Python"}], "relationships": []}
-        mock_neo4j.get_entity_neighbors = AsyncMock(return_value=expected)
+        mock_falkor.get_entity_neighbors = AsyncMock(return_value=expected)
 
         result = await service.get_entity_neighbors("Josh")
 
         assert result == expected
-        mock_neo4j.get_entity_neighbors.assert_called_once_with("Josh", project_id=None)
+        mock_falkor.get_entity_neighbors.assert_called_once_with("Josh", project_id=None)
 
 
 class TestSearchGraph:
@@ -408,10 +479,10 @@ class TestSearchGraph:
     async def test_search_graph_returns_matching_entities(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """search_graph queries Neo4j for entities matching the query."""
-        mock_neo4j.query = AsyncMock(
+        """search_graph queries FalkorDB for entities matching the query."""
+        mock_falkor.query = AsyncMock(
             return_value=[
                 {"name": "Python", "labels": ["Tool"], "score": 0.9},
             ]
@@ -420,7 +491,7 @@ class TestSearchGraph:
         result = await service.search_graph("programming language", limit=5)
 
         assert len(result) >= 1
-        mock_neo4j.query.assert_called()
+        mock_falkor.query.assert_called()
 
 
 # ===========================================================================
@@ -429,39 +500,39 @@ class TestSearchGraph:
 
 
 class TestGracefulDegradation:
-    """Tests for graceful behavior when Neo4j is unavailable."""
+    """Tests for graceful behavior when FalkorDB is unavailable."""
 
-    async def test_get_entity_graph_returns_none_when_neo4j_down(
+    async def test_get_entity_graph_returns_none_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """get_entity_graph returns None when Neo4j is unreachable."""
-        mock_neo4j.get_entity_graph = AsyncMock(side_effect=Neo4jConnectionError("refused"))
+        """get_entity_graph returns None when FalkorDB is unreachable."""
+        mock_falkor.get_entity_graph = AsyncMock(side_effect=FalkorConnectionError("refused"))
 
         result = await service.get_entity_graph()
 
         assert result is None
 
-    async def test_get_entity_neighbors_returns_none_when_neo4j_down(
+    async def test_get_entity_neighbors_returns_none_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """get_entity_neighbors returns None when Neo4j is unreachable."""
-        mock_neo4j.get_entity_neighbors = AsyncMock(side_effect=Neo4jConnectionError("refused"))
+        """get_entity_neighbors returns None when FalkorDB is unreachable."""
+        mock_falkor.get_entity_neighbors = AsyncMock(side_effect=FalkorConnectionError("refused"))
 
         result = await service.get_entity_neighbors("Josh")
 
         assert result is None
 
-    async def test_add_to_graph_handles_neo4j_down(
+    async def test_add_to_graph_handles_falkordb_down(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
-        """add_to_graph logs warning but doesn't crash when Neo4j is down."""
+        """add_to_graph logs warning but doesn't crash when FalkorDB is down."""
         mock_llm.generate_json = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
@@ -469,20 +540,20 @@ class TestGracefulDegradation:
                 {"relations_to_delete": []},
             ]
         )
-        mock_neo4j.merge_node = AsyncMock(side_effect=Neo4jConnectionError("refused"))
+        mock_falkor.merge_node = AsyncMock(side_effect=FalkorConnectionError("refused"))
 
         result = await service.add_to_graph("Josh is here")
 
         assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
-        assert mock_neo4j.merge_node.await_count == 1
+        assert mock_falkor.merge_node.await_count == 1
 
-    async def test_search_graph_returns_empty_when_neo4j_down(
+    async def test_search_graph_returns_empty_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """search_graph returns empty list when Neo4j is unreachable."""
-        mock_neo4j.query = AsyncMock(side_effect=Neo4jConnectionError("refused"))
+        """search_graph returns empty list when FalkorDB is unreachable."""
+        mock_falkor.query = AsyncMock(side_effect=FalkorConnectionError("refused"))
 
         result = await service.search_graph("test")
 
@@ -492,7 +563,7 @@ class TestGracefulDegradation:
         self,
         service: KnowledgeGraphService,
         mock_llm: AsyncMock,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """add_to_graph handles LLM extraction failure gracefully."""
         mock_llm.generate_json = AsyncMock(side_effect=Exception("LLM error"))
@@ -500,9 +571,9 @@ class TestGracefulDegradation:
         # Should not raise
         await service.add_to_graph("some content")
 
-        mock_neo4j.merge_node.assert_not_called()
-        assert mock_neo4j.merge_node.call_count == 0
-        assert not mock_neo4j.merge_node.called
+        mock_falkor.merge_node.assert_not_called()
+        assert mock_falkor.merge_node.call_count == 0
+        assert not mock_falkor.merge_node.called
 
     async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
         self,
@@ -534,7 +605,7 @@ def mock_vector_store() -> AsyncMock:
 
 @pytest.fixture
 def service_with_vector_store(
-    mock_neo4j: AsyncMock,
+    mock_falkor: AsyncMock,
     mock_llm: AsyncMock,
     mock_embed_fn: AsyncMock,
     mock_prompt_loader: MagicMock,
@@ -542,7 +613,7 @@ def service_with_vector_store(
 ) -> KnowledgeGraphService:
     """KnowledgeGraphService with VectorStore for code linking tests."""
     return KnowledgeGraphService(
-        neo4j_client=mock_neo4j,
+        falkor_client=mock_falkor,
         llm_provider=mock_llm,
         embed_fn=mock_embed_fn,
         prompt_loader=mock_prompt_loader,
@@ -569,7 +640,7 @@ class TestRelatesToCode:
     async def test_writes_edges_for_hits_above_threshold(
         self,
         service_with_vector_store: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         mock_vector_store: AsyncMock,
     ) -> None:
@@ -584,7 +655,7 @@ class TestRelatesToCode:
         )
 
         # Find the UNWIND RELATES_TO_CODE query call
-        relates_calls = [c for c in mock_neo4j.query.call_args_list if "RELATES_TO_CODE" in str(c)]
+        relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 1
         call_args = relates_calls[0]
         links = (
@@ -600,7 +671,7 @@ class TestRelatesToCode:
     async def test_filters_hits_below_threshold(
         self,
         service_with_vector_store: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         mock_vector_store: AsyncMock,
     ) -> None:
@@ -614,7 +685,7 @@ class TestRelatesToCode:
             "auth module", memory_id="mem-1", project_id="proj-1"
         )
 
-        relates_calls = [c for c in mock_neo4j.query.call_args_list if "RELATES_TO_CODE" in str(c)]
+        relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
     async def test_skips_when_no_project_id(
@@ -636,20 +707,20 @@ class TestRelatesToCode:
         self,
         service: KnowledgeGraphService,
         mock_llm: AsyncMock,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """Step 9 is skipped when service has no VectorStore."""
         _stub_llm_for_entities(mock_llm, [{"entity": "auth", "entity_type": "concept"}])
 
         await service.add_to_graph("auth module", memory_id="mem-1", project_id="proj-1")
 
-        relates_calls = [c for c in mock_neo4j.query.call_args_list if "RELATES_TO_CODE" in str(c)]
+        relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
     async def test_graceful_noop_when_collection_missing(
         self,
         service_with_vector_store: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         mock_vector_store: AsyncMock,
     ) -> None:
@@ -664,7 +735,7 @@ class TestRelatesToCode:
             "auth module", memory_id="mem-1", project_id="proj-1"
         )
 
-        relates_calls = [c for c in mock_neo4j.query.call_args_list if "RELATES_TO_CODE" in str(c)]
+        relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
     async def test_uses_correct_collection_name(
@@ -697,7 +768,7 @@ class TestMemoryNodeProjectIdScoping:
     async def test_link_entities_sets_project_id_on_memory_node(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """_link_entities_to_memory sets project_id on the Memory node."""
         entities = service._normalize_entities(
@@ -707,7 +778,7 @@ class TestMemoryNodeProjectIdScoping:
         await service._link_entities_to_memory(entities, "mem-1", project_id="proj-A")
 
         # First query call is the MERGE for Memory node
-        merge_call = mock_neo4j.query.call_args_list[0]
+        merge_call = mock_falkor.query.call_args_list[0]
         cypher = merge_call.args[0]
         params = merge_call.args[1]
         assert "ON CREATE SET m.project_id" in cypher
@@ -718,7 +789,7 @@ class TestMemoryNodeProjectIdScoping:
     async def test_link_entities_with_none_project_id(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """_link_entities_to_memory with project_id=None doesn't overwrite existing value."""
         entities = service._normalize_entities(
@@ -727,7 +798,7 @@ class TestMemoryNodeProjectIdScoping:
         )
         await service._link_entities_to_memory(entities, "mem-1", project_id=None)
 
-        merge_call = mock_neo4j.query.call_args_list[0]
+        merge_call = mock_falkor.query.call_args_list[0]
         params = merge_call.args[1]
         # coalesce(NULL, m.project_id) preserves existing value
         assert params["project_id"] is None
@@ -735,7 +806,7 @@ class TestMemoryNodeProjectIdScoping:
     async def test_add_to_graph_passes_project_id_to_link(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph passes project_id through to _link_entities_to_memory."""
@@ -751,7 +822,7 @@ class TestMemoryNodeProjectIdScoping:
 
         # Find the Memory MERGE query (has ON CREATE SET m.project_id)
         memory_merges = [
-            c for c in mock_neo4j.query.call_args_list if "ON CREATE SET m.project_id" in str(c)
+            c for c in mock_falkor.query.call_args_list if "ON CREATE SET m.project_id" in str(c)
         ]
         assert len(memory_merges) == 1
         assert memory_merges[0].args[1]["project_id"] == "proj-B"
@@ -759,10 +830,10 @@ class TestMemoryNodeProjectIdScoping:
     async def test_search_entities_by_vector_filters_by_project_id(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """search_entities_by_vector passes project_id filter to memory lookup query."""
-        mock_neo4j.vector_search = AsyncMock(
+        mock_falkor.vector_search = AsyncMock(
             return_value=[
                 {
                     "entity_key": entity_key("proj-A", "Auth"),
@@ -774,7 +845,7 @@ class TestMemoryNodeProjectIdScoping:
                 }
             ]
         )
-        mock_neo4j.ensure_vector_index = AsyncMock()
+        mock_falkor.ensure_vector_index = AsyncMock()
 
         await service.search_entities_by_vector(
             query_embedding=[0.1, 0.2],
@@ -782,7 +853,7 @@ class TestMemoryNodeProjectIdScoping:
         )
 
         # Find the MENTIONED_IN query
-        mem_queries = [c for c in mock_neo4j.query.call_args_list if "MENTIONED_IN" in str(c)]
+        mem_queries = [c for c in mock_falkor.query.call_args_list if "MENTIONED_IN" in str(c)]
         assert len(mem_queries) == 1
         cypher = mem_queries[0].args[0]
         params = mem_queries[0].args[1]
@@ -792,17 +863,17 @@ class TestMemoryNodeProjectIdScoping:
     async def test_find_related_memory_ids_filters_by_project_id(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids passes project_id filter to traversal query."""
-        mock_neo4j.query = AsyncMock(return_value=[{"memory_id": "mem-1"}])
+        mock_falkor.query = AsyncMock(return_value=[{"memory_id": "mem-1"}])
 
         await service.find_related_memory_ids(
             entity_keys=[entity_key("proj-A", "Auth")],
             project_id="proj-A",
         )
 
-        call = mock_neo4j.query.call_args_list[0]
+        call = mock_falkor.query.call_args_list[0]
         cypher = call.args[0]
         params = call.args[1]
         assert "m.project_id = $project_id" in cypher
@@ -815,13 +886,13 @@ class TestRemoveMemoryFromGraph:
     async def test_remove_memory_from_graph_deletes_node(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """remove_memory_from_graph issues DETACH DELETE on the Memory node."""
         await service.remove_memory_from_graph("mem-1")
 
         delete_calls = [
-            c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]
+            c for c in mock_falkor.query.call_args_list if "DETACH DELETE m" in c.args[0]
         ]
         assert len(delete_calls) == 1
         cypher = delete_calls[0].args[0]
@@ -833,22 +904,22 @@ class TestRemoveMemoryFromGraph:
     async def test_remove_memory_from_graph_nonexistent_is_noop(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
         """remove_memory_from_graph on non-existent ID doesn't raise."""
-        mock_neo4j.query.return_value = []
+        mock_falkor.query.return_value = []
         await service.remove_memory_from_graph("nonexistent")
         delete_calls = [
-            c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]
+            c for c in mock_falkor.query.call_args_list if "DETACH DELETE m" in c.args[0]
         ]
         assert len(delete_calls) == 1
 
-    async def test_remove_memory_from_graph_neo4j_unreachable(
+    async def test_remove_memory_from_graph_FalkorDB_unreachable(
         self,
         service: KnowledgeGraphService,
-        mock_neo4j: AsyncMock,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """remove_memory_from_graph logs warning when Neo4j is unreachable."""
-        mock_neo4j.query.side_effect = Neo4jConnectionError("connection refused")
+        """remove_memory_from_graph logs warning when FalkorDB is unreachable."""
+        mock_falkor.query.side_effect = FalkorConnectionError("connection refused")
         await service.remove_memory_from_graph("mem-1")
-        assert mock_neo4j.query.await_count == 1
+        assert mock_falkor.query.await_count == 1

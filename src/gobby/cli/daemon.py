@@ -46,10 +46,9 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
 def _services_start(gobby_home: Path) -> None:
-    """Start Docker services (Qdrant, Neo4j) via unified compose file.
+    """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
     Uses Docker Compose profiles to start only installed services.
-    Falls back to legacy per-service compose files during migration.
     """
     import shutil
 
@@ -59,36 +58,44 @@ def _services_start(gobby_home: Path) -> None:
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
-    # Fall back to legacy Neo4j-only compose if unified file doesn't exist yet
     if not compose_file.exists():
-        legacy_compose = services_dir / "neo4j" / "docker-compose.yml"
-        if legacy_compose.exists():
-            compose_file = legacy_compose
-        else:
-            return
+        return
 
-    # Build subprocess env with config resolved from bootstrap + DB config
+    # Build subprocess env with resolved service config.
     env = dict(os.environ)
     profiles: list[str] = []
+    db = None
     try:
+        from gobby.cli.installers.falkor import _resolve_falkordb_db_path
         from gobby.config.app import load_config
-        from gobby.config.bootstrap import load_bootstrap
+        from gobby.config.persistence import is_falkordb_enabled
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.secrets import SecretStore
 
-        bootstrap = load_bootstrap()
-        config = load_config()
-
-        # Neo4j auth — read password directly from bootstrap
-        env["GOBBY_NEO4J_PASSWORD"] = bootstrap.neo4j_password
+        db = LocalDatabase(_resolve_falkordb_db_path(gobby_home))
+        config_store = ConfigStore(db)
+        secret_store = SecretStore(db)
+        bootstrap_file = gobby_home / "bootstrap.yaml"
+        config = load_config(
+            str(bootstrap_file) if bootstrap_file.exists() else None,
+            config_store=config_store,
+            secret_resolver=secret_store.get,
+        )
 
         # Determine which profiles to start
-        if config.databases.neo4j.url:
-            profiles.append("neo4j")
+        if is_falkordb_enabled(config.databases):
+            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.requirepass or ""
+            profiles.append("falkordb")
         if config.databases.qdrant.url:
             profiles.append("qdrant")
     except Exception as e:
         logger.warning(f"Could not resolve config for services: {e}")
         # Default: try starting all profiles
         profiles = ["all"]
+    finally:
+        if db is not None:
+            db.close()
 
     if not profiles:
         logger.debug("No external services configured — skipping Docker startup")
@@ -126,13 +133,8 @@ def _services_stop(gobby_home: Path) -> None:
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
-    # Fall back to legacy Neo4j-only compose
     if not compose_file.exists():
-        legacy_compose = services_dir / "neo4j" / "docker-compose.yml"
-        if legacy_compose.exists():
-            compose_file = legacy_compose
-        else:
-            return
+        return
 
     try:
         result = subprocess.run(  # nosec B603 B607 # hardcoded docker command
@@ -348,7 +350,7 @@ def _wait_for_service_stop(
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also start Docker service containers (Qdrant, Neo4j)",
+    help="Also start Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
@@ -390,8 +392,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
     # Start Docker services if compose file exists or --docker flag
     services_compose = gobby_dir / "services" / "docker-compose.yml"
-    legacy_compose = gobby_dir / "services" / "neo4j" / "docker-compose.yml"
-    if services_compose.exists() or legacy_compose.exists() or docker_flag:
+    if services_compose.exists() or docker_flag:
         _services_start(gobby_dir)
         _step("Docker services started")
 
@@ -598,7 +599,7 @@ def _do_stop(
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also stop Docker service containers (Qdrant, Neo4j)",
+    help="Also stop Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def stop(ctx: click.Context, docker_flag: bool) -> None:
@@ -622,7 +623,7 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also restart Docker service containers (Qdrant, Neo4j)",
+    help="Also restart Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:

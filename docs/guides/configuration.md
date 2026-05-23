@@ -57,7 +57,7 @@ daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
-neo4j_password: "gobbyneo4j"
+falkordb_password: "gobbyfalkor"
 ```
 
 `database_path` is only relevant to `DEPRECATED_SQLITE_IMPORT` tooling and
@@ -234,11 +234,14 @@ databases:
     api_key: null
     port: 6333
     collection_prefix: code_symbols_
-  neo4j:
-    url: http://localhost:8474
-    auth: null
-    database: neo4j
+  falkordb:
+    host: 127.0.0.1
+    port: 16379
+    requirepass: null
+    graph_name: gobby_kg
     graph_search: true
+    graph_min_score: 0.5
+    rrf_k: 60
 
 embeddings:
   model: nomic-embed-text
@@ -282,8 +285,9 @@ gobby install --embedding-url http://localhost:1234/v1 \
 # --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
 ```
 
-`memory.backend` accepts `local` or `null`. Qdrant and Neo4j connection settings
-are shared infrastructure; memory-specific behavior lives under `memory`.
+`memory.backend` accepts `local` or `null`. Qdrant and FalkorDB connection
+settings are shared infrastructure; memory-specific behavior lives under
+`memory`.
 
 ### Sessions
 
@@ -582,4 +586,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

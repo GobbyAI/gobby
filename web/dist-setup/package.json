@@ -1,6 +1,6 @@
 {
   "name": "@gobby/setup",
-  "version": "0.4.0",
+  "version": "0.4.8",
   "description": "Interactive setup wizard for Gobby",
   "type": "module",
   "bin": {

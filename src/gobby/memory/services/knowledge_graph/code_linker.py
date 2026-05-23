@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.neo4j_client import Neo4jConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
 
 from .models import _GraphEntity
 
 if TYPE_CHECKING:
-    from gobby.memory.neo4j_client import Neo4jClient
+    from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -31,14 +31,14 @@ class KnowledgeGraphCodeLinker:
 
     def __init__(
         self,
-        neo4j_client: Neo4jClient,
+        falkor_client: FalkorClient,
         vector_store: VectorStore | None,
         *,
         code_link_min_score: float,
         code_symbol_collection_prefix: str,
         search_limit: int = 3,
     ) -> None:
-        self._neo4j = neo4j_client
+        self._falkor = falkor_client
         self._vector_store = vector_store
         self._code_link_min_score = code_link_min_score
         self._code_symbol_collection_prefix = code_symbol_collection_prefix
@@ -53,7 +53,7 @@ class KnowledgeGraphCodeLinker:
         """Cross-link entities to code symbols via RELATES_TO_CODE edges.
 
         Searches the code symbol Qdrant collection for each entity embedding
-        and writes edges to Neo4j for matches above the similarity threshold.
+        and writes edges to FalkorDB for matches above the similarity threshold.
         Gracefully no-ops if the collection doesn't exist.
         """
         vector_store = self._vector_store
@@ -105,12 +105,12 @@ class KnowledgeGraphCodeLinker:
             return
 
         try:
-            await self._neo4j.query(
+            await self._falkor.query(
                 "UNWIND $links AS link "
                 "MATCH (e:_Entity {entity_key: link.entity_key}) "
                 "MATCH (c:CodeSymbol {id: link.symbol_id, project: $project_id}) "
                 "MERGE (e)-[r:RELATES_TO_CODE]->(c) "
-                "SET r.score = link.score, r.updated_at = datetime()",
+                "SET r.score = link.score, r.updated_at = timestamp()",
                 {"links": links, "project_id": project_id},
             )
             logger.debug(
@@ -118,7 +118,7 @@ class KnowledgeGraphCodeLinker:
                 len(links),
                 project_id,
             )
-        except Neo4jConnectionError as e:
-            logger.warning("Neo4j unreachable during RELATES_TO_CODE write: %s", e)
+        except FalkorConnectionError as e:
+            logger.warning("FalkorDB unreachable during RELATES_TO_CODE write: %s", e)
         except Exception as e:
             logger.warning("Failed to write RELATES_TO_CODE edges: %s", e)

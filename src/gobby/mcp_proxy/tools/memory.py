@@ -653,7 +653,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="search_knowledge_graph",
-        description="Search the Neo4j knowledge graph for entities matching a query.",
+        description="Search the knowledge graph backend for entities matching a query.",
     )
     async def search_knowledge_graph(
         query: str,
@@ -715,7 +715,7 @@ def create_memory_registry(
 
     @registry.tool(
         name="rebuild_knowledge_graph",
-        description="Extract entities and relationships from all memories into the Neo4j knowledge graph. Powers the 3D graph visualization.",
+        description="Extract entities and relationships from all memories into the FalkorDB knowledge graph. Powers the 3D graph visualization.",
     )
     async def rebuild_knowledge_graph(
         project_id: str | None = None,
@@ -724,7 +724,7 @@ def create_memory_registry(
         """
         Rebuild the knowledge graph from all existing memories.
 
-        Extracts entities and relationships using LLM and stores them in Neo4j.
+        Extracts entities and relationships using LLM and stores them in FalkorDB.
         This powers the 3D knowledge graph visualization.
 
         Args:

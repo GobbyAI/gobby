@@ -1,7 +1,7 @@
 """Bootstrap configuration for pre-database settings.
 
 These settings are needed before the PostgreSQL hub is available:
-daemon_port, bind_host, websocket_port, ui_port, neo4j_password, hub_backend,
+daemon_port, bind_host, websocket_port, ui_port, falkordb_password, hub_backend,
 database_url_ref, postgres_install_mode. database_path remains only for
 DEPRECATED_SQLITE_IMPORT tooling and test compatibility.
 
@@ -81,7 +81,7 @@ class BootstrapConfig:
     bind_host: str = DEFAULT_DAEMON_BIND_HOST
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
-    neo4j_password: str = "gobbyneo4j"
+    falkordb_password: str = "gobbyfalkor"
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
     postgres_install_mode: PostgresInstallMode | None = None
@@ -127,11 +127,11 @@ def load_bootstrap(
         if candidate.exists():
             bootstrap_path = candidate
         elif not bootstrap_path.exists():
-            # Neither file exists — use defaults
-            return BootstrapConfig()
+            # Neither file exists — use defaults plus supported env overrides.
+            return _default_bootstrap_config()
 
     if not bootstrap_path.exists():
-        return BootstrapConfig()
+        return _default_bootstrap_config()
 
     try:
         if bootstrap_path.name == "bootstrap.yaml":
@@ -139,7 +139,7 @@ def load_bootstrap(
         data = read_bootstrap_yaml(bootstrap_path)
 
         if not isinstance(data, dict):
-            return BootstrapConfig()
+            return _default_bootstrap_config()
 
         explicit_hub_backend = "hub_backend" in data
         hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
@@ -168,12 +168,7 @@ def load_bootstrap(
             bind_host=str(data.get("bind_host", BootstrapConfig.bind_host)),
             websocket_port=int(data.get("websocket_port", BootstrapConfig.websocket_port)),
             ui_port=int(data.get("ui_port", BootstrapConfig.ui_port)),
-            neo4j_password=str(
-                data.get(
-                    "neo4j_password",
-                    os.environ.get("GOBBY_NEO4J_PASSWORD", BootstrapConfig.neo4j_password),
-                )
-            ),
+            falkordb_password=_load_falkordb_password(data),
             hub_backend=hub_backend,
             database_url=database_url,
             postgres_install_mode=postgres_install_mode,
@@ -182,7 +177,19 @@ def load_bootstrap(
         raise
     except Exception as e:
         logger.warning(f"Failed to load bootstrap config from {bootstrap_path}: {e}")
-        return BootstrapConfig()
+        return _default_bootstrap_config()
+
+
+def _load_falkordb_password(data: dict[str, Any]) -> str:
+    """Load the FalkorDB bootstrap password from the current key or env fallback."""
+    if "falkordb_password" in data:
+        return str(data["falkordb_password"])
+
+    return os.environ.get("GOBBY_FALKORDB_PASSWORD", BootstrapConfig.falkordb_password)
+
+
+def _default_bootstrap_config() -> BootstrapConfig:
+    return BootstrapConfig(falkordb_password=_load_falkordb_password({}))
 
 
 def _parse_hub_backend(value: object) -> HubBackend:

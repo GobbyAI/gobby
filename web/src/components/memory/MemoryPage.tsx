@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense, Component, type ReactNode } from 'react'
-import { useMemory, useNeo4jStatus } from '../../hooks/useMemory'
+import { useFalkorStatus, useMemory } from '../../hooks/useMemory'
 import { useNow } from '../../hooks/useNow'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { MemoryFilters } from './MemoryFilters'
@@ -108,7 +108,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
     fetchKnowledgeGraph,
     fetchEntityNeighbors,
   } = useMemory(projectId)
-  const neo4jStatus = useNeo4jStatus()
+  const falkorStatus = useFalkorStatus()
 
   const [knowledgeGraphLimit, setKnowledgeGraphLimit] = useState(DEFAULT_KNOWLEDGE_GRAPH_LIMIT)
 
@@ -137,7 +137,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
 
   const autoSwitchedRef = useRef(false)
   useEffect(() => {
-    if (neo4jStatus?.configured && viewMode === 'list' && !autoSwitchedRef.current) {
+    if (falkorStatus?.configured && viewMode === 'list' && !autoSwitchedRef.current) {
       try {
         if (!localStorage.getItem('gobby-memory-view') && !localStorage.getItem('gobby-kg-failed')) {
           setViewMode('knowledge')
@@ -147,7 +147,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
       }
       autoSwitchedRef.current = true
     }
-  }, [neo4jStatus?.configured, viewMode])
+  }, [falkorStatus?.configured, viewMode])
 
   useEffect(() => {
     try { localStorage.setItem('gobby-memory-view', viewMode) } catch { /* noop */ }
@@ -259,7 +259,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   }, [selectedMemory, handleDelete])
 
   const viewModes: [ViewMode, React.ComponentType, string][] = [
-    ...(neo4jStatus?.configured ? [['knowledge' as ViewMode, KnowledgeIcon, 'Knowledge graph'] as [ViewMode, React.ComponentType, string]] : []),
+    ...(falkorStatus?.configured ? [['knowledge' as ViewMode, KnowledgeIcon, 'Knowledge graph'] as [ViewMode, React.ComponentType, string]] : []),
     ['list', ListIcon, 'List view'],
   ]
 
