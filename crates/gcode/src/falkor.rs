@@ -197,6 +197,10 @@ fn clamp_limit(limit: usize) -> usize {
     limit.clamp(1, MAX_GRAPH_LIMIT)
 }
 
+fn clamp_offset(offset: usize) -> usize {
+    offset.min(MAX_GRAPH_LIMIT)
+}
+
 fn id_list_literal(ids: &[String]) -> String {
     ids.iter()
         .map(|id| cypher_string_literal(id))
@@ -232,6 +236,7 @@ fn find_callers_query(
     offset: usize,
     limit: usize,
 ) -> (String, HashMap<String, String>) {
+    let offset = clamp_offset(offset);
     let limit = clamp_limit(limit);
     (
         format!(
@@ -251,6 +256,7 @@ fn find_usages_query(
     offset: usize,
     limit: usize,
 ) -> (String, HashMap<String, String>) {
+    let offset = clamp_offset(offset);
     let limit = clamp_limit(limit);
     (
         format!(
@@ -463,9 +469,22 @@ mod tests {
 
     #[test]
     fn find_callers_query_interpolates_numeric_skip_and_limit() {
-        let (query, params) = find_callers_query("project-1", "symbol-1", 17, 0);
+        let (query, params) = find_callers_query("project-1", "symbol-1", 250, 0);
 
-        assert!(query.contains("SKIP 17 LIMIT 1"), "{query}");
+        assert!(query.contains("SKIP 100 LIMIT 1"), "{query}");
+        assert_no_numeric_or_list_placeholders(&query);
+        assert_eq!(
+            params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+        assert_eq!(params.get("id").map(String::as_str), Some("'symbol-1'"));
+    }
+
+    #[test]
+    fn find_usages_query_clamps_numeric_skip_and_limit() {
+        let (query, params) = find_usages_query("project-1", "symbol-1", 250, 250);
+
+        assert!(query.contains("SKIP 100 LIMIT 100"), "{query}");
         assert_no_numeric_or_list_placeholders(&query);
         assert_eq!(
             params.get("project").map(String::as_str),
