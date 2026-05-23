@@ -40,13 +40,19 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 def _make_event(
     event_type: HookEventType = HookEventType.BEFORE_TOOL,
     data: dict[str, Any] | None = None,
+    platform_session_id: str | None = "plat-sess-1",
 ) -> HookEvent:
+    metadata = {}
+    if platform_session_id is not None:
+        metadata["_platform_session_id"] = platform_session_id
+
     return HookEvent(
         event_type=event_type,
         session_id="test-session",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
+        metadata=metadata,
     )
 
 
@@ -77,12 +83,15 @@ class TestDeliverPendingMessages:
     def _rule_body(self) -> RuleDefinitionBody:
         return RuleDefinitionBody(
             event=RuleEvent.TURN_START,
-            when="variables.get('is_spawned_agent')",
+            when="variables.get('is_spawned_agent') and event.metadata.get('_platform_session_id')",
             effects=[
                 RuleEffect(
                     type="mcp_call",
                     server="gobby-agents",
                     tool="deliver_pending_messages",
+                    arguments={
+                        "target_session_id": "{{ event.metadata.get('_platform_session_id', '') }}"
+                    },
                 )
             ],
         )
@@ -116,6 +125,7 @@ class TestDeliverPendingMessages:
         call = response.metadata["mcp_calls"][0]
         assert call["server"] == "gobby-agents"
         assert call["tool"] == "deliver_pending_messages"
+        assert call["arguments"] == {"target_session_id": "plat-sess-1"}
 
     @pytest.mark.asyncio
     async def test_skips_for_non_agent_session(
@@ -128,6 +138,21 @@ class TestDeliverPendingMessages:
         response = await engine.evaluate(
             event, session_id="sess-1", variables={"servers_listed": True}
         )
+
+        assert response.decision == "allow"
+        mcp_calls = response.metadata.get("mcp_calls", [])
+        assert len(mcp_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_skips_when_platform_session_id_is_missing(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
+
+        engine = RuleEngine(db)
+        event = _make_event(HookEventType.BEFORE_AGENT, platform_session_id=None)
+        variables: dict[str, Any] = {"is_spawned_agent": True, "servers_listed": True}
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
         mcp_calls = response.metadata.get("mcp_calls", [])
