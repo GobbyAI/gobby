@@ -9,6 +9,11 @@ import type { StepProps } from "../types.js";
 
 type Phase = "prompt" | "password" | "installing" | "done";
 
+const INSTALL_TIMEOUT_MS = 120000;
+const FAILURE_PREVIEW_LENGTH = 200;
+
+type InstallResult = { success: boolean; message: string };
+
 function validateFalkorPassword(value: string): string | null {
   if (!value) {
     return "FalkorDB password must not be empty";
@@ -35,11 +40,23 @@ function extractFalkorPasswordError(output: string): string | null {
   return directMatch?.[1] ?? null;
 }
 
+function buildInstallArgs(password?: string): string[] {
+  const args = ["install", "--falkordb"];
+  if (password) {
+    args.push("--falkordb-password", password);
+  }
+  return args;
+}
+
+function formatInstallFailure(output: string): string {
+  return `Installation failed: ${output.trim().slice(0, FAILURE_PREVIEW_LENGTH)}`;
+}
+
 export function Services({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>("prompt");
   const [customPassword, setCustomPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<InstallResult | null>(null);
 
   const finish = (installed: boolean, passwordSet: boolean): void => {
     setState((prev) => {
@@ -69,12 +86,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
     setResult(null);
     setPhase("installing");
 
-    const args = ["install", "--falkordb"];
-    if (password) {
-      args.push("--falkordb-password", password);
-    }
-
-    const r = runGobby(args, { timeout: 120000 });
+    const r = runGobby(buildInstallArgs(password), { timeout: INSTALL_TIMEOUT_MS });
 
     if (r.success) {
       setResult({ success: true, message: "FalkorDB installed successfully." });
@@ -84,17 +96,14 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
     }
 
     if (password) {
-      setPasswordError(
-        extractFalkorPasswordError(r.output) ??
-          `Installation failed: ${r.output.trim().slice(0, 200)}`,
-      );
+      setPasswordError(extractFalkorPasswordError(r.output) ?? formatInstallFailure(r.output));
       setPhase("password");
       return;
     }
 
     setResult({
       success: false,
-      message: `Installation failed: ${r.output.trim().slice(0, 200)}`,
+      message: formatInstallFailure(r.output),
     });
     setPhase("done");
     finish(false, false);
@@ -152,7 +161,7 @@ export function Services({ state: _state, setState, onNext }: StepProps): React.
             }}
             mask="*"
             onSubmit={(val) => {
-              install(val.trim() || undefined);
+              install(val === "" ? undefined : val);
             }}
           />
         </Box>
