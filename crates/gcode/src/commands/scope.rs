@@ -162,7 +162,6 @@ mod tests {
             project_id: "current".to_string(),
             quiet: false,
             falkordb: None,
-            neo4j: None,
             qdrant: None,
             embedding: None,
             daemon_url: None,

@@ -27,7 +27,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 
     // Fetch generously for RRF. Total is a best-effort estimate bounded by fetch_limit
     // per source — exact counts aren't feasible because RRF merges results from BM25,
-    // Qdrant, and Neo4j with deduplication, so source counts aren't additive.
+    // Qdrant, and FalkorDB with deduplication, so source counts aren't additive.
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
 
     let exact_results = fts::search_symbols_exact_first(
@@ -68,7 +68,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let semantic_results = semantic::semantic_search(ctx, query, fetch_limit);
     let semantic_ids: Vec<String> = semantic_results.iter().map(|(id, _)| id.clone()).collect();
 
-    // Source 3: Graph boost (Neo4j callers + usages of the resolved query symbol)
+    // Source 3: Graph boost (FalkorDB callers + usages of the resolved query symbol)
     let graph_ids = graph_boost::graph_boost(ctx, query);
 
     // Source 4: Graph expand — seed from top BM25+semantic results, expand neighborhood

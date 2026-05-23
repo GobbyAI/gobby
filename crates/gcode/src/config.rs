@@ -14,14 +14,6 @@ use crate::db;
 use crate::git::{self, WorktreeKind};
 use crate::secrets;
 
-/// Neo4j connection configuration.
-#[derive(Debug, Clone)]
-pub struct Neo4jConfig {
-    pub url: String,
-    pub auth: Option<String>,
-    pub database: String,
-}
-
 /// FalkorDB connection configuration.
 #[derive(Debug, Clone)]
 pub struct FalkorConfig {
@@ -59,8 +51,6 @@ pub struct Context {
     pub quiet: bool,
     /// FalkorDB config (None if unavailable)
     pub falkordb: Option<FalkorConfig>,
-    /// Neo4j config (None if unavailable)
-    pub neo4j: Option<Neo4jConfig>,
     /// Qdrant config (None if unavailable)
     pub qdrant: Option<QdrantConfig>,
     /// Embedding API config (None if unavailable → no semantic search)
@@ -117,7 +107,6 @@ impl Context {
         // Resolve service configs from config_store (best-effort).
         let mut conn = db::connect_readonly(&database_url)?;
         let falkordb = resolve_falkordb_config(&mut conn, quiet);
-        let neo4j = resolve_neo4j_config(&mut conn, quiet);
         let qdrant = resolve_qdrant_config(&mut conn, quiet);
         let embedding = resolve_embedding_config(&mut conn, quiet);
 
@@ -129,7 +118,6 @@ impl Context {
             project_id,
             quiet,
             falkordb,
-            neo4j,
             qdrant,
             embedding,
             daemon_url,
@@ -398,11 +386,13 @@ impl FalkorConfigSource for PostgresFalkorConfigSource<'_> {
     }
 }
 
+#[cfg(test)]
 struct ClosureFalkorConfigSource<R, S> {
     read_config_value: R,
     resolve_value: S,
 }
 
+#[cfg(test)]
 impl<R, S> FalkorConfigSource for ClosureFalkorConfigSource<R, S>
 where
     R: FnMut(&str) -> Option<String>,
@@ -417,6 +407,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn resolve_falkordb_config_from_values<R, S>(
     read_config_value: R,
     quiet: bool,
@@ -497,42 +488,6 @@ fn parse_falkordb_port(raw_port: Option<&str>, quiet: bool) -> u16 {
         },
         None => FALKORDB_DEFAULT_PORT,
     }
-}
-
-/// Resolve Neo4j configuration from config_store + env vars.
-fn resolve_neo4j_config(conn: &mut Client, quiet: bool) -> Option<Neo4jConfig> {
-    // Read from config_store with env var overrides.
-    let url = std::env::var("GOBBY_NEO4J_URL")
-        .ok()
-        .or_else(|| read_config_value(conn, "databases.neo4j.url"))
-        .or_else(|| Some("http://localhost:8474".to_string()))?;
-
-    let raw_auth = std::env::var("GOBBY_NEO4J_AUTH")
-        .ok()
-        .or_else(|| read_config_value(conn, "databases.neo4j.auth"));
-
-    // Resolve $secret: patterns in auth
-    let auth = match raw_auth {
-        Some(v) => match secrets::resolve_config_value(&v, conn) {
-            Ok(resolved) => Some(resolved),
-            Err(e) => {
-                if !quiet {
-                    eprintln!("Warning: failed to resolve Neo4j auth: {e}");
-                }
-                None
-            }
-        },
-        None => None,
-    };
-
-    let database =
-        read_config_value(conn, "databases.neo4j.database").unwrap_or_else(|| "neo4j".to_string());
-
-    Some(Neo4jConfig {
-        url,
-        auth,
-        database,
-    })
 }
 
 /// Resolve Qdrant configuration from config_store + env vars.
@@ -671,15 +626,6 @@ mod tests {
             decode_config_value("http://legacy:7474"),
             Some("http://legacy:7474".to_string())
         );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_config_env_override() {
-        unsafe { std::env::set_var("GOBBY_NEO4J_URL", "http://env-override:9999") };
-        let url = std::env::var("GOBBY_NEO4J_URL").unwrap();
-        assert_eq!(url, "http://env-override:9999");
-        unsafe { std::env::remove_var("GOBBY_NEO4J_URL") };
     }
 
     fn clear_falkordb_env() {

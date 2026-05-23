@@ -140,7 +140,6 @@ mod tests {
             project_id: "proj".to_string(),
             quiet: true,
             falkordb: None,
-            neo4j: None,
             qdrant: None,
             embedding: None,
             daemon_url: None,

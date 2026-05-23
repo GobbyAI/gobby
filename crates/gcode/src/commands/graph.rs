@@ -4,13 +4,13 @@ use serde_json::Value;
 
 use crate::config::Context;
 use crate::db;
+use crate::falkor;
 use crate::models::PagedResponse;
-use crate::neo4j;
 use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
 
 const GOBBY_HINT: &str =
-    "Graph commands require Neo4j, available with Gobby. See: https://github.com/GobbyAI/gobby";
+    "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
 
 #[derive(Clone, Copy, Debug)]
 enum GraphLifecycleAction {
@@ -201,7 +201,7 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
 }
 
 fn hint_for(ctx: &Context) -> Option<String> {
-    if ctx.neo4j.is_none() {
+    if ctx.falkordb.is_none() {
         Some(GOBBY_HINT.to_string())
     } else {
         None
@@ -209,7 +209,7 @@ fn hint_for(ctx: &Context) -> Option<String> {
 }
 
 fn print_graph_hint_text(ctx: &Context) {
-    if ctx.neo4j.is_none() {
+    if ctx.falkordb.is_none() {
         eprintln!("Hint: {GOBBY_HINT}");
     }
 }
@@ -263,8 +263,8 @@ pub fn callers(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = neo4j::count_callers(ctx, &symbol.id)?;
-    let results = neo4j::find_callers(ctx, &symbol.id, offset, limit)?;
+    let total = falkor::count_callers(ctx, &symbol.id)?;
+    let results = falkor::find_callers(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -313,8 +313,8 @@ pub fn usages(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = neo4j::count_usages(ctx, &symbol.id)?;
-    let results = neo4j::find_usages(ctx, &symbol.id, offset, limit)?;
+    let total = falkor::count_usages(ctx, &symbol.id)?;
+    let results = falkor::find_usages(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -354,7 +354,7 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
-    let results = neo4j::get_imports(ctx, file)?;
+    let results = falkor::get_imports(ctx, file)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -389,7 +389,7 @@ pub fn blast_radius(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let results = neo4j::blast_radius(ctx, &symbol.id, depth)?;
+    let results = falkor::blast_radius(ctx, &symbol.id, depth)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {

@@ -6,7 +6,6 @@ mod freshness;
 mod git;
 mod index;
 mod models;
-mod neo4j;
 mod output;
 mod progress;
 mod project;
@@ -76,7 +75,7 @@ enum Command {
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
-    /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (Neo4j)
+    /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
     Search {
         query: String,
         #[arg(long, default_value = "10")]

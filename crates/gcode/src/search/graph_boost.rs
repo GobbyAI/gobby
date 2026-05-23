@@ -1,4 +1,4 @@
-//! Neo4j graph boost: find related symbols to boost in search ranking.
+//! FalkorDB graph boost: find related symbols to boost in search ranking.
 //!
 //! Uses callers + usages as the boost set — symbols that are connected
 //! to the resolved query symbol in the call graph get a ranking boost via RRF.
@@ -9,15 +9,15 @@ use std::collections::HashSet;
 
 use crate::config::Context;
 use crate::db;
-use crate::neo4j;
+use crate::falkor;
 use crate::search::fts;
 
 /// Get symbol IDs related to query via the call/import graph.
 ///
 /// Returns a ranked list of symbol IDs for use as an RRF source.
-/// Returns empty vec when Neo4j is unavailable (graceful degradation).
+/// Returns empty vec when FalkorDB is unavailable (graceful degradation).
 pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
-    if ctx.neo4j.is_none() {
+    if ctx.falkordb.is_none() {
         return vec![];
     }
 
@@ -30,8 +30,8 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
         return vec![];
     };
 
-    let callers = neo4j::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
-    let usages = neo4j::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let callers = falkor::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let usages = falkor::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -45,7 +45,7 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
 
 /// Expand the graph neighborhood of seed symbols found by FTS/semantic search.
 ///
-/// Takes symbol IDs from the top search results and queries Neo4j for their
+/// Takes symbol IDs from the top search results and queries FalkorDB for their
 /// callees (what they call) and callers (who calls them). Callees are ranked
 /// first since they represent implementation details more useful for conceptual
 /// queries. Returns deduplicated symbol IDs for use as an RRF source.
@@ -55,9 +55,9 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
     }
 
     // Callees first — "what do these symbols call?" surfaces implementation details
-    let callees = neo4j::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
+    let callees = falkor::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
     // Callers second — "who calls these symbols?" surfaces broader context
-    let callers = neo4j::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
+    let callers = falkor::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -74,14 +74,13 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn make_ctx_no_neo4j() -> Context {
+    fn make_ctx_no_falkordb() -> Context {
         Context {
             database_url: "postgresql://localhost/nonexistent".to_string(),
             project_root: PathBuf::from("/nonexistent"),
             project_id: "test".to_string(),
             quiet: true,
             falkordb: None,
-            neo4j: None,
             qdrant: None,
             embedding: None,
             daemon_url: None,
@@ -89,22 +88,22 @@ mod tests {
     }
 
     #[test]
-    fn test_graph_boost_no_neo4j() {
-        let ctx = make_ctx_no_neo4j();
+    fn test_graph_boost_no_falkordb() {
+        let ctx = make_ctx_no_falkordb();
         let result = graph_boost(&ctx, "some_function");
         assert!(result.is_empty());
     }
 
     #[test]
-    fn test_graph_expand_no_neo4j() {
-        let ctx = make_ctx_no_neo4j();
+    fn test_graph_expand_no_falkordb() {
+        let ctx = make_ctx_no_falkordb();
         let result = graph_expand(&ctx, &["some_function".to_string()]);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_graph_expand_empty_seeds() {
-        let ctx = make_ctx_no_neo4j();
+        let ctx = make_ctx_no_falkordb();
         let result = graph_expand(&ctx, &[]);
         assert!(result.is_empty());
     }

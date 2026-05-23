@@ -1,7 +1,7 @@
 //! Full and incremental indexing orchestrator.
 //!
 //! Writes symbols, files, and content chunks to the PostgreSQL hub. External sync
-//! (Qdrant vectors, Neo4j graph) is handled by the Gobby daemon's sync worker,
+//! (Qdrant vectors, FalkorDB graph) is handled by the Gobby daemon's sync worker,
 //! which polls for files with `vectors_synced=false` / `graph_synced=false`.
 
 use std::collections::HashMap;
@@ -68,7 +68,7 @@ pub fn index_directory(
         None
     };
 
-    // Clean orphans from the hub; daemon handles Neo4j/Qdrant cleanup.
+    // Clean orphans from the hub; daemon handles FalkorDB/Qdrant cleanup.
     let orphans = get_orphan_files(conn, project_id, &current_hashes);
     for orphan in &orphans {
         delete_file_postgres_data(conn, project_id, orphan);
@@ -321,7 +321,7 @@ pub fn invalidate(
     daemon_url: Option<&str>,
 ) -> anyhow::Result<()> {
     // Notify daemon FIRST — it reads project stats from the same hub
-    // to know what to clean from Neo4j/Qdrant.
+    // to know what to clean from FalkorDB/Qdrant.
     if let Some(url) = daemon_url {
         notify_daemon_invalidate(url, project_id);
     }
@@ -355,7 +355,7 @@ pub fn invalidate(
     Ok(())
 }
 
-/// POST to the Gobby daemon requesting Neo4j/Qdrant cleanup for a project.
+/// POST to the Gobby daemon requesting FalkorDB/Qdrant cleanup for a project.
 /// Fire-and-forget: warns on failure, never errors.
 fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
     let client = match reqwest::blocking::Client::builder()
