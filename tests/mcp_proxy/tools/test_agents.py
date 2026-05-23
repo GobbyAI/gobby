@@ -128,6 +128,16 @@ class TestCreateAgentsRegistry:
 
         assert registry.get_schema("list_agents") is None
 
+    def test_kill_agent_schema_accepts_stop(self) -> None:
+        """Regression: CLI kill -s sends stop through MCP validation."""
+        runner = MagicMock()
+        registry = create_agents_registry(runner)
+
+        schema = registry.get_schema("kill_agent")
+
+        assert schema is not None
+        assert schema["inputSchema"]["properties"]["stop"]["type"] == "boolean"
+
     def test_accepts_running_registry_for_backward_compat(self) -> None:
         """Test that running_registry param is accepted but ignored."""
         runner = MagicMock()
@@ -871,6 +881,43 @@ class TestKillAgent:
             result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
+        assert result["workflow_stopped"] is True
+        runner.cancel_run.assert_called_once_with("run-123")
+
+    @pytest.mark.asyncio
+    async def test_stop_false_kills_without_terminalizing_workflow(self):
+        """CLI kill without --stop should not cancel workflow state."""
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as kill_process,
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ) as cleanup,
+        ):
+            result = await kill_agent(run_id="run-123", stop=False)
+
+        assert result["success"] is True
+        assert result["workflow_stopped"] is False
+        assert kill_process.call_args.kwargs["close_terminal"] is True
+        cleanup.assert_not_awaited()
+        runner.cancel_run.assert_not_called()
+        runner.complete_run.assert_not_called()
+        runner.run_storage.fail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_debug_preserves_state(self):

@@ -84,3 +84,48 @@ async def terminalize_cancelled_agent_run(
             message=message,
         )
     return True
+
+
+async def terminalize_killed_agent_run(
+    *,
+    runner: Any,
+    run_id: str,
+    effective_status: str,
+    lifecycle_monitor: Any | None,
+    completion_registry: Any | None,
+    task_manager: Any | None,
+) -> dict[str, Any]:
+    """Apply workflow terminal state after an explicit parent-side kill."""
+    if effective_status == "error":
+        failed_run = runner.run_storage.fail(run_id, error="Agent self-reported error")
+        if failed_run is None:
+            current = runner.get_run(run_id)
+            logger.debug(
+                "Error terminalization no-op for run %s; current status=%s",
+                run_id,
+                current.status if current else "missing",
+            )
+        return {"status": "error", "workflow_stopped": True}
+
+    log_prefix = "Cancelled" if effective_status == "cancelled" else "Fallback cancelled"
+    transitioned = await terminalize_cancelled_agent_run(
+        runner=runner,
+        run_id=run_id,
+        terminal_reason="user_cancelled",
+        lifecycle_monitor=lifecycle_monitor,
+        completion_registry=completion_registry,
+        task_manager=task_manager,
+    )
+    if not transitioned:
+        current = runner.get_run(run_id)
+        logger.debug(
+            "%s terminalization no-op for run %s; current status=%s",
+            log_prefix,
+            run_id,
+            current.status if current else "missing",
+        )
+    return {
+        "status": "cancelled",
+        "terminal_reason": "user_cancelled",
+        "workflow_stopped": True,
+    }

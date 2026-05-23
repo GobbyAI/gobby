@@ -22,7 +22,10 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
-from gobby.mcp_proxy.tools.agent_cancellation import terminalize_cancelled_agent_run
+from gobby.mcp_proxy.tools.agent_cancellation import (
+    terminalize_cancelled_agent_run,
+    terminalize_killed_agent_run,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 
@@ -504,6 +507,7 @@ def create_agents_registry(
         session_id: str | None = None,
         signal: str = "TERM",
         force: bool = False,
+        stop: bool = True,
         debug: bool = False,
         status: str | None = None,
     ) -> dict[str, Any]:
@@ -519,6 +523,7 @@ def create_agents_registry(
                        Falls back to SessionContext if not provided and run_id is None.
             signal: Signal to send (TERM, KILL, INT, HUP, QUIT). Default: TERM
             force: Use SIGKILL immediately (equivalent to signal="KILL")
+            stop: Also terminalize workflow state. Defaults true for direct MCP compatibility.
             debug: If True, kill agent process but preserve workflow state and leave
                 terminal open for inspection. Default: False (full cleanup).
             status: Completion status for the agent run. Self-termination defaults
@@ -610,53 +615,20 @@ def create_agents_registry(
         if not result.get("success"):
             return result
 
-        if effective_status == "cancelled":
-            transitioned = await terminalize_cancelled_agent_run(
+        if not stop:
+            result["workflow_stopped"] = False
+            return result
+
+        result.update(
+            await terminalize_killed_agent_run(
                 runner=runner,
                 run_id=run_id,
-                terminal_reason="user_cancelled",
+                effective_status=effective_status,
                 lifecycle_monitor=lifecycle_monitor,
                 completion_registry=completion_registry,
                 task_manager=task_manager,
             )
-            if not transitioned:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Cancelled terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            result["status"] = "cancelled"
-            result["terminal_reason"] = "user_cancelled"
-        elif effective_status == "error":
-            failed_run = runner.run_storage.fail(run_id, error="Agent self-reported error")
-            if failed_run is None:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Error terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            result["status"] = "error"
-        else:
-            transitioned = await terminalize_cancelled_agent_run(
-                runner=runner,
-                run_id=run_id,
-                terminal_reason="user_cancelled",
-                lifecycle_monitor=lifecycle_monitor,
-                completion_registry=completion_registry,
-                task_manager=task_manager,
-            )
-            if not transitioned:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Fallback cancelled terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            effective_status = "cancelled"
-            result["status"] = "cancelled"
-            result["terminal_reason"] = "user_cancelled"
+        )
 
         await _cleanup_terminal_artifacts(
             run_id=run_id,

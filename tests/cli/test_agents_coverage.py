@@ -587,6 +587,11 @@ class TestKillAgent:
         result = runner.invoke(agents, ["kill", "run-1", "--yes"])
         assert result.exit_code == 0
         assert "Killed agent" in result.output
+        mock_client_cls.return_value.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="kill_agent",
+            arguments={"run_id": "run-1", "force": False, "stop": False},
+        )
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
     @patch("gobby.utils.daemon_client.DaemonClient")
@@ -606,6 +611,11 @@ class TestKillAgent:
         assert "pgrep" in result.output
         assert "already terminated" in result.output
         assert "workflow ended" in result.output
+        mock_client_cls.return_value.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="kill_agent",
+            arguments={"run_id": "run-1", "force": False, "stop": True},
+        )
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
     @patch("gobby.utils.daemon_client.DaemonClient")
