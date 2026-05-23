@@ -41,6 +41,12 @@ _MOCK_FACTORY_NAMES = {
     "mock_open",
     "patch",
 }
+_PYTHON_SUFFIX = ".py"
+_SCRIPT_TEST_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
+_SCRIPT_TEST_CALL_RE = re.compile(r"\b(?P<name>it|test)(?P<modifier>\.\w+)?\s*\(")
+_SCRIPT_TEST_NAME_RE = re.compile(r"""\(\s*(['"`])(?P<name>(?:\\.|(?!\1).)*?)\1""")
+_SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
+_SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,14 +91,18 @@ def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) 
 def analyze_file(
     path: str | Path, *, root: str | Path | None = None
 ) -> tuple[list[AuditIssue], int]:
-    """Audit one Python test file."""
+    """Audit one test file."""
 
     file_path = Path(path)
     root_path = Path.cwd() if root is None else Path(root)
     source = file_path.read_text(encoding="utf-8")
+    relative_path = _relative_path(file_path, root_path)
+
+    if file_path.suffix in _SCRIPT_TEST_SUFFIXES:
+        return _analyze_script_file(source, relative_path)
+
     tree = ast.parse(source, filename=str(file_path))
     comments = _collect_comments(source)
-    relative_path = _relative_path(file_path, root_path)
 
     issues: list[AuditIssue] = []
     test_nodes = list(_iter_test_nodes(tree))
@@ -108,11 +118,11 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> tuple[Path, .
         path = Path(raw_path)
         if not path.is_absolute():
             path = root / path
-        if path.is_file() and path.suffix == ".py":
+        if path.is_file() and _is_analyzable_file(path):
             files.add(path.resolve())
             continue
         if path.is_dir():
-            for candidate in path.rglob("*.py"):
+            for candidate in path.rglob("*"):
                 if _is_analyzable_file(candidate):
                     files.add(candidate.resolve())
     return tuple(sorted(files))
@@ -122,7 +132,11 @@ def _is_analyzable_file(path: Path) -> bool:
     parts = set(path.parts)
     if "__pycache__" in parts or ".venv" in parts or ".mypy_cache" in parts:
         return False
-    return True
+    if path.suffix == _PYTHON_SUFFIX:
+        return True
+    if path.suffix in _SCRIPT_TEST_SUFFIXES:
+        return ".test." in path.name or ".spec." in path.name or "__tests__" in parts
+    return False
 
 
 def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
@@ -397,3 +411,108 @@ def _deduplicate_issues(issues: Iterable[AuditIssue]) -> list[AuditIssue]:
     ):
         by_fingerprint.setdefault(issue.fingerprint, issue)
     return list(by_fingerprint.values())
+
+
+def _analyze_script_file(source: str, relative_path: str) -> tuple[list[AuditIssue], int]:
+    issues: list[AuditIssue] = []
+    tests_scanned = 0
+
+    for test_name, modifier, call_source, line in _iter_script_tests(source):
+        tests_scanned += 1
+        suppressions = _script_suppressed_codes(call_source)
+
+        if modifier == ".skip":
+            _append_issue(
+                issues, relative_path, test_name, "UNCONDITIONAL_SKIP", line, suppressions
+            )
+
+        if _SCRIPT_SLEEP_RE.search(call_source):
+            _append_issue(issues, relative_path, test_name, "SLEEP_IN_TEST", line, suppressions)
+
+        if _TODO_RE.search(call_source) and "test-quality:" not in call_source:
+            _append_issue(issues, relative_path, test_name, "TODO_IN_TEST", line, suppressions)
+
+        if not _SCRIPT_ASSERTION_RE.search(call_source):
+            _append_issue(issues, relative_path, test_name, "NO_ASSERTION", line, suppressions)
+
+    return issues, tests_scanned
+
+
+def _iter_script_tests(source: str) -> Iterable[tuple[str, str | None, str, int]]:
+    offset = 0
+    while match := _SCRIPT_TEST_CALL_RE.search(source, offset):
+        open_paren = source.find("(", match.start())
+        close_paren = _find_matching_delimiter(source, open_paren, "(", ")")
+        if close_paren is None:
+            offset = match.end()
+            continue
+
+        final_close_paren = close_paren
+        if match.group("modifier") == ".each":
+            next_open_paren = _next_non_whitespace_index(source, close_paren + 1)
+            if next_open_paren is not None and source[next_open_paren] == "(":
+                each_close_paren = _find_matching_delimiter(source, next_open_paren, "(", ")")
+                if each_close_paren is not None:
+                    final_close_paren = each_close_paren
+
+        call_source = source[match.start() : final_close_paren + 1]
+        name_match = _SCRIPT_TEST_NAME_RE.search(call_source)
+        test_name = name_match.group("name") if name_match else f"{match.group('name')}_at_line"
+        line = source.count("\n", 0, match.start()) + 1
+        yield test_name, match.group("modifier"), call_source, line
+        offset = final_close_paren + 1
+
+
+def _find_matching_delimiter(
+    source: str, open_index: int, open_char: str, close_char: str
+) -> int | None:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    index = open_index
+
+    while index < len(source):
+        char = source[index]
+
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+
+        if char in {"'", '"', "`"}:
+            quote = char
+        elif char == open_char:
+            depth += 1
+        elif char == close_char:
+            depth -= 1
+            if depth == 0:
+                return index
+
+        index += 1
+
+    return None
+
+
+def _next_non_whitespace_index(source: str, start: int) -> int | None:
+    for index in range(start, len(source)):
+        if not source[index].isspace():
+            return index
+    return None
+
+
+def _script_suppressed_codes(source: str) -> set[str]:
+    codes: set[str] = set()
+    for match in _SUPPRESSION_RE.finditer(source):
+        reason = match.group(2).strip()
+        if not reason:
+            continue
+        for code in re.split(r"[,\s]+", match.group(1).strip()):
+            normalized = code.strip().upper()
+            if normalized in ISSUE_DEFINITIONS:
+                codes.add(normalized)
+    return codes

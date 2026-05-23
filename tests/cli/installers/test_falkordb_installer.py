@@ -133,7 +133,9 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
-            patch("gobby.cli.installers.falkor._generate_falkordb_password", return_value="generated"),
+            patch(
+                "gobby.cli.installers.falkor._generate_falkordb_password", return_value="generated"
+            ),
         ):
             mock_run.side_effect = _docker_run_side_effect
             result = module.install_falkordb(gobby_home=tmp_path, password=None)
