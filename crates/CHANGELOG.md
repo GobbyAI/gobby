@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] — gcode
+
 ### Changed
 
 #### gcode
@@ -17,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gcode search-text`, and `gcode search-content` now accept one or more
   positional path filters after the query. Bare paths match exact files and
   descendants; glob paths stay verbatim; multiple paths use OR semantics.
+
+- **Broker-first PostgreSQL DSN resolution** — `gcode` now asks the local
+  daemon broker for the PostgreSQL hub DSN before consulting any daemonless
+  fallback. If the broker is unavailable, explicit fallback sources resolve in
+  this order: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
+  `~/.gobby/gcode.yaml` `database_url`, then bootstrap inline `database_url`.
+
+- **Bootstrap `database_url_ref` rejected** — `~/.gobby/bootstrap.yaml`
+  `database_url_ref` values are no longer accepted by `gcode`. Daemonless
+  setups must provide an inline `database_url` or one of the explicit fallback
+  sources above; broker-managed secrets stay behind the daemon broker.
 
 ### Removed
 

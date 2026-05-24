@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

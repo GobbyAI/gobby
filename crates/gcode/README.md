@@ -100,7 +100,7 @@ asks the local daemon broker for the hub DSN first. If the daemon is
 unavailable, it falls back to explicit fallback sources:
 `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`
 `database_url`, then bootstrap `database_url`. Bootstrap fallback requires
-`hub_backend: postgres`.
+`hub_backend: postgres`; bootstrap `database_url_ref` is rejected.
 
 ### With Gobby
 
@@ -202,7 +202,7 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 **PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
 ask the daemon broker first. Operators who need daemonless access can opt into
 `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`, or inline
-bootstrap `database_url`.
+bootstrap `database_url`. Bootstrap `database_url_ref` is rejected.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 
