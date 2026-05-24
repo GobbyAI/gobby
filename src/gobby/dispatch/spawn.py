@@ -157,11 +157,9 @@ async def spawn_agent(
         clone_id=clone_id,
         worktree_id=worktree_id,
         worktree_storage=getattr(services, "worktree_storage", None),
-        git_manager=getattr(services, "git_manager", None)
-        or _service_git_manager(services, project_id),
+        git_manager=_project_git_manager(services, project_id),
         clone_storage=getattr(services, "clone_storage", None),
-        clone_manager=getattr(services, "clone_manager", None)
-        or _service_clone_manager(services, project_id),
+        clone_manager=_project_clone_manager(services, project_id),
         workflow=workflow,
         provider=None,
         model=action.model_override,
@@ -506,6 +504,10 @@ def _service_git_manager(services: object | None, project_id: str) -> object | N
     return None
 
 
+def _project_git_manager(services: object | None, project_id: str) -> object | None:
+    return _service_git_manager(services, project_id) or getattr(services, "git_manager", None)
+
+
 def _service_clone_manager(services: object | None, project_id: str) -> object | None:
     git_manager = _service_git_manager(services, project_id)
     repo_path = getattr(git_manager, "repo_path", None)
@@ -517,6 +519,10 @@ def _service_clone_manager(services: object | None, project_id: str) -> object |
         return cast(object, CloneGitManager(repo_path))
     except (TypeError, ValueError, OSError, RuntimeError):
         return None
+
+
+def _project_clone_manager(services: object | None, project_id: str) -> object | None:
+    return _service_clone_manager(services, project_id) or getattr(services, "clone_manager", None)
 
 
 def _persist_spawn_artifacts(

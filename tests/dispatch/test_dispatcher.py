@@ -1231,6 +1231,62 @@ async def test_third_spawn_failure_escalates(
     assert updated.escalation_reason.startswith("dispatch_spawn_max_attempts:broken")
 
 
+async def test_spawn_prefers_project_scoped_git_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, isolation="worktree")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="dev")
+
+    default_repo = tmp_path / "default-repo"
+    project_repo = tmp_path / "project-repo"
+    default_repo.mkdir()
+    project_repo.mkdir()
+    default_git = SimpleNamespace(repo_path=str(default_repo))
+    project_git = SimpleNamespace(repo_path=str(project_repo))
+    default_clone = object()
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs):
+        captured.update(kwargs)
+        return {"success": True, "run_id": "run-project-git"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+        git_manager=default_git,
+        clone_manager=default_clone,
+        get_git_manager=lambda project_id: project_git,
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "run-project-git"
+    assert captured["git_manager"] is project_git
+    assert captured["clone_manager"] is not default_clone
+    clone_manager = captured["clone_manager"]
+    assert str(clone_manager.repo_path) == project_git.repo_path
+    assert captured["base_branch"] == "dev"
+
+
 async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
