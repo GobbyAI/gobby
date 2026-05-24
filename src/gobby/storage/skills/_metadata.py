@@ -661,7 +661,10 @@ class SkillMetadataMixin:
         Returns:
             List of core skills (always-apply skills)
         """
-        query = "SELECT * FROM skills WHERE always_apply = 1 AND enabled = 1 AND deleted_at IS NULL"
+        query = (
+            "SELECT * FROM skills "
+            "WHERE always_apply IS TRUE AND enabled IS TRUE AND deleted_at IS NULL"
+        )
         params: list[Any] = []
 
         if project_id:

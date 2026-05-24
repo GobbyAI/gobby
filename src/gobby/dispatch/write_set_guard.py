@@ -80,7 +80,7 @@ class DispatchWriteSetGuard:
                )
              WHERE t.closed_at IS NULL
                AND t.escalated_at IS NULL
-               AND COALESCE(t.is_escalated, 0) = 0
+               AND COALESCE(t.is_escalated, FALSE) IS FALSE
                {project_filter}
                AND (
                     t.claimed_by_session_id IS NOT NULL

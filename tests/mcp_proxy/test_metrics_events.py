@@ -234,7 +234,7 @@ class TestArchive:
                 """INSERT INTO metrics_events
                    (event_type, name, server_name, success, latency_ms, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                ("tool_call", "Read", "gobby-tasks", 1, 10.0 + i, old_date),
+                ("tool_call", "Read", "gobby-tasks", True, 10.0 + i, old_date),
             )
         # Insert a recent event that should survive
         event_store.record_event(event_type="tool_call", name="Edit", latency_ms=5.0)
@@ -265,7 +265,7 @@ class TestArchive:
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            ("tool_call", "Read", "gobby-tasks", 1, 10.0, old_date1),
+            ("tool_call", "Read", "gobby-tasks", True, 10.0, old_date1),
         )
         event_store.archive_old_events(retention_days=30)
 
@@ -273,7 +273,7 @@ class TestArchive:
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            ("tool_call", "Read", "gobby-tasks", 1, 20.0, old_date2),
+            ("tool_call", "Read", "gobby-tasks", True, 20.0, old_date2),
         )
         event_store.archive_old_events(retention_days=30)
 

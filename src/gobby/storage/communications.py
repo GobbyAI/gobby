@@ -48,7 +48,7 @@ class LocalCommunicationsStore:
                     channel.id,
                     channel.channel_type,
                     channel.name,
-                    1 if channel.enabled else 0,
+                    bool(channel.enabled),
                     json.dumps(channel.config_json),
                     channel.webhook_secret,
                     channel.created_at,
@@ -72,7 +72,7 @@ class LocalCommunicationsStore:
         sql = "SELECT * FROM comms_channels"
         params: list[Any] = []
         if enabled_only:
-            sql += " WHERE enabled = 1"
+            sql += " WHERE enabled IS TRUE"
 
         rows = self.db.fetchall(sql, tuple(params))
         return [ChannelConfig.from_row(dict(row)) for row in rows]
@@ -94,7 +94,7 @@ class LocalCommunicationsStore:
                 (
                     channel.channel_type,
                     channel.name,
-                    1 if channel.enabled else 0,
+                    bool(channel.enabled),
                     json.dumps(channel.config_json),
                     channel.webhook_secret,
                     channel.updated_at,
@@ -350,7 +350,7 @@ class LocalCommunicationsStore:
                     rule.project_id,
                     rule.session_id,
                     rule.priority,
-                    1 if rule.enabled else 0,
+                    bool(rule.enabled),
                     json.dumps(rule.config_json),
                     rule.created_at,
                     rule.updated_at,
@@ -371,7 +371,7 @@ class LocalCommunicationsStore:
         params: list[Any] = []
 
         if enabled_only:
-            sql += " AND enabled = 1"
+            sql += " AND enabled IS TRUE"
         if channel_id:
             sql += " AND (channel_id = ? OR channel_id IS NULL)"
             params.append(channel_id)
@@ -405,7 +405,7 @@ class LocalCommunicationsStore:
                     rule.project_id,
                     rule.session_id,
                     rule.priority,
-                    1 if rule.enabled else 0,
+                    bool(rule.enabled),
                     json.dumps(rule.config_json),
                     rule.updated_at,
                     rule.id,

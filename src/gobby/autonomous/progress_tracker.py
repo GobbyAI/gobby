@@ -267,7 +267,7 @@ class ProgressTracker:
             """
             SELECT COUNT(*) as count
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value = 1
+            WHERE session_id = ? AND is_high_value IS TRUE
             """,
             (session_id,),
         )
@@ -278,7 +278,7 @@ class ProgressTracker:
             """
             SELECT recorded_at
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value = 1
+            WHERE session_id = ? AND is_high_value IS TRUE
             ORDER BY recorded_at DESC
             LIMIT 1
             """,

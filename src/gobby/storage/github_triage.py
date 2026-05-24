@@ -217,8 +217,8 @@ class GitHubTriageStore:
                 """,
                 (
                     config.project_id,
-                    int(config.enabled),
-                    int(config.webhook_enabled),
+                    bool(config.enabled),
+                    bool(config.webhook_enabled),
                     _json_dumps(list(config.repositories)),
                     config.reconcile_interval_seconds,
                     config.webhook_secret_ref,

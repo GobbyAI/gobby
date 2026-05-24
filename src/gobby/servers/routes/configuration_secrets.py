@@ -37,7 +37,7 @@ def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
         return
     placeholders = ",".join("?" for _ in keys)
     config_store.db.execute(
-        f"UPDATE config_store SET is_secret = 1 WHERE key IN ({placeholders})",
+        f"UPDATE config_store SET is_secret = TRUE WHERE key IN ({placeholders})",
         tuple(sorted(keys)),
     )
 

@@ -112,11 +112,11 @@ def _claimed_automation_candidates(
                 WHERE stage_scan.task_id = tasks.id
                   AND stage_scan.state != 'done'
            )
-         WHERE tasks.allow_automation = 1
+         WHERE tasks.allow_automation IS TRUE
            AND tasks.claimed_by_session_id IS NOT NULL
            AND tasks.closed_at IS NULL
            AND tasks.escalated_at IS NULL
-           AND COALESCE(tasks.is_escalated, 0) = 0
+           AND COALESCE(tasks.is_escalated, FALSE) IS FALSE
            AND current_stage.state IN ({state_placeholders})
            {project_filter}
          ORDER BY tasks.priority ASC, tasks.seq_num ASC, tasks.created_at ASC

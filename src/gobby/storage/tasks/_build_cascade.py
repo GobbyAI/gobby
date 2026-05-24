@@ -70,15 +70,15 @@ def cascade_build_state_to_subtree(
         if not rows:
             raise ValueError(f"Task {epic_id} not found")
 
-        update_params: list[tuple[int, int, str, str, str]] = []
+        update_params: list[tuple[bool, bool, str, str, str]] = []
         for row in rows:
             task_id = cast(str, row["id"])
             if task_id != epic_id and row["closed_at"] is not None:
                 continue
             update_params.append(
                 (
-                    int(allow_automation),
-                    int(unattended),
+                    bool(allow_automation),
+                    bool(unattended),
                     normalized_isolation,
                     now,
                     task_id,

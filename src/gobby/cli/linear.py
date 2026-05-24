@@ -145,7 +145,7 @@ def _enable_linear_auto_sync(
             existing.id,
             interval_seconds=interval,
             action_config={"handler": handler_name},
-            enabled=1,
+            enabled=True,
         )
         return existing.id
 
@@ -611,7 +611,7 @@ def linear_auto_sync(interval: int, disable: bool) -> None:
         if disable:
             if not existing:
                 raise click.ClickException("No auto-sync job found to disable.")
-            cron_storage.update_job(existing.id, enabled=0)
+            cron_storage.update_job(existing.id, enabled=False)
             click.echo("✓ Disabled Linear auto-sync job")
             return
 

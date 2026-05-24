@@ -88,7 +88,7 @@ class _TerminalMixin:
         if agent_run_id is not None:
             values["agent_run_id"] = agent_run_id
         if context_injected is not None:
-            values["context_injected"] = 1 if context_injected else 0
+            values["context_injected"] = bool(context_injected)
         if original_prompt is not None:
             values["original_prompt"] = original_prompt
 

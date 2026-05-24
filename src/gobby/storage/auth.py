@@ -38,7 +38,7 @@ class AuthStore:
 
         self.db.execute(
             "INSERT INTO auth_sessions (token_hash, expires_at, remember_me) VALUES (?, ?, ?)",
-            (_hash_token(token), expires_at.isoformat(), 1 if remember_me else 0),
+            (_hash_token(token), expires_at.isoformat(), bool(remember_me)),
         )
 
         # Opportunistically clean up expired sessions

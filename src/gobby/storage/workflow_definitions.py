@@ -159,7 +159,7 @@ class LocalWorkflowDefinitionManager:
                     description,
                     workflow_type,
                     version,
-                    1 if enabled else 0,
+                    bool(enabled),
                     priority,
                     json.dumps(sources) if sources else None,
                     definition_json,
@@ -213,7 +213,7 @@ class LocalWorkflowDefinitionManager:
             if key in json_fields and val is not None:
                 values[key] = json.dumps(val)
             elif key == "enabled" and isinstance(val, bool):
-                values[key] = 1 if val else 0
+                values[key] = val
             else:
                 values[key] = val
 

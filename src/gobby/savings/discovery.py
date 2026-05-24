@@ -22,7 +22,7 @@ def record_discovery_savings(
     try:
         # 1. Skills Calculation
         skills_rows = db.fetchall(
-            "SELECT name, content FROM skills WHERE enabled = 1 AND source != 'template'"
+            "SELECT name, content FROM skills WHERE enabled IS TRUE AND source != 'template'"
         )
         all_skills_chars = sum(len(row["content"] or "") for row in skills_rows)
 

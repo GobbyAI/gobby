@@ -139,12 +139,12 @@ def update_task(
         params.append(validation_override_reason)
     if allow_automation is not UNSET:
         updates.append("allow_automation = ?")
-        params.append(int(bool(allow_automation)))
+        params.append(bool(allow_automation))
     if unattended is UNSET and yolo is not UNSET:
         unattended = yolo
     if unattended is not UNSET:
         updates.append("unattended = ?")
-        params.append(int(bool(unattended)))
+        params.append(bool(unattended))
     if isolation is not UNSET:
         if isolation is None:
             raise ValueError("isolation cannot be None")

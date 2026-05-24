@@ -234,7 +234,7 @@ class TaskDeliveryStateManager:
             if value is None:
                 cleaned[column] = None
             elif column == "pr_required":
-                cleaned[column] = 1 if bool(value) else 0
+                cleaned[column] = bool(value)
             elif column in UNIT_JSON_COLUMNS:
                 cleaned[column] = _encode_json(value)
             else:
