@@ -59,11 +59,12 @@ class TestWakeDispatcherSdkResume:
         agent_run_mgr = MagicMock()
         agent_run_mgr.get_sdk_session_id_for_session.return_value = "sdk-abc123"
 
+        ism_mgr = MagicMock()
         sdk_resumer = AsyncMock()
 
         dispatcher = WakeDispatcher(
             session_manager=session_mgr,
-            ism_manager=MagicMock(),
+            ism_manager=ism_mgr,
             sdk_resumer=sdk_resumer,
             agent_run_manager=agent_run_mgr,
         )
@@ -71,6 +72,9 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
+        assert "Task completed" not in sdk_resumer.await_args.args[1]
+        ism_mgr.create_message.assert_called_once()
+        assert ism_mgr.create_message.call_args.kwargs["content"] == "Pipeline done"
         assert sdk_resumer.await_count == 1
         assert sdk_resumer.await_args is not None
 

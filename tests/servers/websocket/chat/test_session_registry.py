@@ -28,6 +28,11 @@ async def _done_stream():
     yield DoneEvent(tool_calls_count=0)
 
 
+def test_web_chat_wake_prompt_is_neutral() -> None:
+    assert "Task completed" not in WEB_CHAT_WAKE_PROMPT
+    assert WEB_CHAT_WAKE_PROMPT == "Message from Gobby daemon: New activity available."
+
+
 @pytest.mark.unit
 class TestWebChatSessionRegistry:
     def test_lookup_by_conversation_id_and_db_session_id(self) -> None:
@@ -81,6 +86,7 @@ class TestWebChatSessionRegistry:
             "queued": False,
         }
         session.send_message.assert_called_once_with(WEB_CHAT_WAKE_PROMPT)
+        assert "Task completed" not in session.send_message.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_wake_session_missing_live_session_returns_explicit_failure(self) -> None:

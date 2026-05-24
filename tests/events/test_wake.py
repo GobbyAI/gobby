@@ -11,6 +11,11 @@ import pytest
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 
 
+def test_live_wake_signal_is_neutral() -> None:
+    assert "Task completed" not in CONTINUE_WAKE_SIGNAL
+    assert CONTINUE_WAKE_SIGNAL == "Message from Gobby daemon: New activity available.\n"
+
+
 @dataclass
 class FakeSession:
     id: str
@@ -87,6 +92,9 @@ class TestWakeDispatch:
         args = tmux_sender.call_args[0]
         assert args[0] == "gobby-agent-abc"  # tmux session name
         assert args[1] == CONTINUE_WAKE_SIGNAL
+        assert "Task completed" not in args[1]
+        call_kwargs = ism_manager.create_message.call_args.kwargs
+        assert call_kwargs["content"] == "Agent completed"
 
     @pytest.mark.asyncio
     async def test_terminal_agent_accepts_mapping_terminal_context(
@@ -147,6 +155,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_SIGNAL,
             "/tmp/tmux-501/gobby",
         )
+        assert "Task completed" not in tmux_pane_sender.await_args.args[1]
 
     @pytest.mark.asyncio
     async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
@@ -294,6 +303,9 @@ class TestWakeDispatch:
         assert ism_manager.create_message.call_count == 1
         assert ism_manager.create_message.call_args is not None
         tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        assert "Task completed" not in tmux_pane_sender.await_args.args[1]
+        call_kwargs = ism_manager.create_message.call_args.kwargs
+        assert call_kwargs["content"] == "Done"
         assert tmux_pane_sender.await_count == 1
         assert tmux_pane_sender.await_args is not None
 
