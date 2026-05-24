@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -20,6 +22,8 @@ from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
+
+logger = logging.getLogger(__name__)
 
 
 def _operation_response(ctx: RegistryContext, task_id: str, stage_name: str) -> dict[str, Any]:
@@ -75,6 +79,71 @@ def _auto_link_session_commits(
             )
     except Exception:
         pass  # nosec B110 # best-effort, SESSION_END is the backstop
+
+
+def _relay_signoff_to_build_coordinator(
+    ctx: RegistryContext,
+    *,
+    task: Any,
+    task_id: str,
+    stage_name: str,
+    action: str,
+    from_session_id: str,
+    signoff_message: str,
+) -> None:
+    """Persist a direct P2P signoff for the coordinator of the newest build run."""
+    try:
+        from gobby.storage.build_history import BuildHistoryStorage
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+
+        run = BuildHistoryStorage(ctx.task_manager.db).latest_coordinated_run_for_task(
+            str(task.project_id),
+            task_id,
+        )
+        if run is None or not run.summary:
+            return
+        coordinator_session_id = run.summary.get("coordinator_session_id")
+        if not isinstance(coordinator_session_id, str) or not coordinator_session_id:
+            return
+
+        coordinator = ctx.session_manager.get(coordinator_session_id)
+        if coordinator is None:
+            return
+        if getattr(coordinator, "project_id", None) != task.project_id:
+            logger.warning(
+                "Skipping cross-project build coordinator signoff relay",
+                extra={
+                    "task_id": task_id,
+                    "build_run_id": run.id,
+                    "coordinator_session_id": coordinator_session_id,
+                },
+            )
+            return
+
+        metadata = {
+            "task_id": task_id,
+            "task_ref": f"#{task.seq_num}" if getattr(task, "seq_num", None) else None,
+            "stage_name": stage_name,
+            "action": action,
+            "signoff_message": signoff_message,
+            "build_run_id": run.id,
+            "root_task_id": run.root_task_id,
+            "from_session_id": from_session_id,
+        }
+        InterSessionMessageManager(ctx.task_manager.db).create_message(
+            from_session=from_session_id,
+            to_session=coordinator_session_id,
+            content=signoff_message,
+            priority="high",
+            message_type="message",
+            metadata_json=json.dumps(metadata, default=str, sort_keys=True),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to relay review signoff to build coordinator",
+            extra={"task_id": task_id, "stage_name": stage_name, "action": action},
+            exc_info=True,
+        )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -230,6 +299,15 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
+        _relay_signoff_to_build_coordinator(
+            ctx,
+            task=task,
+            task_id=resolved_id,
+            stage_name=stage_name,
+            action="approve_review",
+            from_session_id=resolved_session_id,
+            signoff_message=verdict,
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -329,6 +407,15 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
+        _relay_signoff_to_build_coordinator(
+            ctx,
+            task=task,
+            task_id=resolved_id,
+            stage_name=stage_name,
+            action="reject_review",
+            from_session_id=resolved_session_id,
+            signoff_message=verdict,
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
