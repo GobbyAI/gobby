@@ -36,7 +36,7 @@ pub fn run(
                 (target_root, identity.project_id, conn)
             } else {
                 let conn = db::connect_readwrite(&ctx.database_url)?;
-                (target, ctx.project_id.clone(), conn)
+                (target_root, ctx.project_id.clone(), conn)
             }
         }
         None => {
