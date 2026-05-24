@@ -1,6 +1,7 @@
 """Tests for detection functions in observers module."""
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -320,6 +321,43 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
+
+    def test_close_task_prefers_claimed_ref_before_project_resolution(
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_task_manager.get_task.side_effect = ValueError(
+            "Task #15126 not found in project [other-project]"
+        )
+        variables["task_claimed"] = True
+        variables["claimed_tasks"] = {"task-uuid-15126": "#15126"}
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#15126"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_task_claim(
+                event,
+                variables,
+                SESSION_ID,
+                task_manager=mock_task_manager,
+                project_id="other-project",
+            )
+
+        assert variables.get("task_claimed") is False
+        assert variables.get("claimed_tasks") == {}
+        mock_task_manager.get_task.assert_not_called()
+        assert "Cannot resolve closed task ref" not in caplog.text
 
     def test_failed_close_task_with_error(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True

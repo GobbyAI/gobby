@@ -95,6 +95,23 @@ def compute_mode_level(chat_mode: str) -> int:
     return _MODE_LEVEL_MAP.get(chat_mode, 2)
 
 
+def _claimed_task_id_for_ref(variables: dict[str, Any], task_ref: object) -> str | None:
+    """Return a claimed task UUID already tracked for *task_ref*, if any."""
+    raw_ref = str(task_ref)
+    aliases = {raw_ref}
+    if raw_ref.isdigit():
+        aliases.add(f"#{raw_ref}")
+    claimed_tasks = variables.get("claimed_tasks") or {}
+    if not isinstance(claimed_tasks, dict):
+        return None
+    if raw_ref in claimed_tasks:
+        return raw_ref
+    for task_id, display_ref in claimed_tasks.items():
+        if str(display_ref) in aliases:
+            return str(task_id)
+    return None
+
+
 # =============================================================================
 # Detection functions — operate on plain dict variables
 # =============================================================================
@@ -150,7 +167,9 @@ def detect_task_claim(
         arguments = tool_input.get("arguments", {}) or {}
         closed_task_id: str | None = None
         raw_close_id = arguments.get("task_id")
-        if raw_close_id and task_manager:
+        if raw_close_id:
+            closed_task_id = _claimed_task_id_for_ref(variables, raw_close_id)
+        if raw_close_id and not closed_task_id and task_manager:
             from gobby.storage.tasks import TaskNotFoundError
 
             try:
@@ -158,8 +177,7 @@ def detect_task_claim(
                 if closed_task:
                     closed_task_id = closed_task.id
             except (ValueError, KeyError, TaskNotFoundError) as e:
-                logger.warning(f"Cannot resolve closed task ref '{raw_close_id}': {e}")
-                return
+                logger.debug(f"Skipping unresolved closed task ref '{raw_close_id}': {e}")
 
         if closed_task_id:
             from gobby.workflows.task_claim_state import remove_claimed_task
@@ -171,7 +189,7 @@ def detect_task_claim(
                 f"(task_claimed={merge['task_claimed']})"
             )
         else:
-            logger.warning(
+            logger.debug(
                 f"Session {session_id}: could not resolve closed task ref — "
                 f"skipping claimed_tasks update"
             )
