@@ -178,19 +178,20 @@ def _spawn_restart_helper(
     )
 
 
-def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> None:
+def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bool:
     """Set the in-process runner shutdown state when this server owns one."""
     runner = getattr(server, "_runner", None)
     if runner is None:
         get_runner = getattr(server, "get_runner", None)
         runner = get_runner() if callable(get_runner) else None
     if runner is None:
-        return
+        return False
     if callable(getattr(type(runner), "request_shutdown", None)):
         runner.request_shutdown(intent)
-        return
+        return True
     runner._shutdown_intent = intent
     runner._shutdown_requested = True
+    return True
 
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -210,13 +211,12 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             from gobby.runner_maintenance import write_shutdown_source
 
             write_shutdown_source("http_shutdown", intent="stop")
-            _request_runner_shutdown(server, ShutdownIntent.STOP)
+            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.STOP)
 
-            # Create background task for shutdown
-            task = asyncio.create_task(server._process_shutdown())
-
-            server._background_tasks.add(task)
-            task.add_done_callback(server._background_tasks.discard)
+            if not runner_shutdown_requested:
+                task = asyncio.create_task(server._process_shutdown())
+                server._background_tasks.add(task)
+                task.add_done_callback(server._background_tasks.discard)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -267,12 +267,12 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             from gobby.runner_maintenance import write_shutdown_source
 
             write_shutdown_source("http_restart", intent="restart")
-            _request_runner_shutdown(server, ShutdownIntent.RESTART)
+            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.RESTART)
 
-            # Schedule shutdown of the current daemon
-            task = asyncio.create_task(server._process_shutdown())
-            server._background_tasks.add(task)
-            task.add_done_callback(server._background_tasks.discard)
+            if not runner_shutdown_requested:
+                task = asyncio.create_task(server._process_shutdown())
+                server._background_tasks.add(task)
+                task.add_done_callback(server._background_tasks.discard)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 

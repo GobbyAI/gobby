@@ -48,8 +48,8 @@ class PendingInteractionManager:
     """Coordinates durable pending interactions with in-memory waiters.
 
     Lifecycle:
-    - create() inserts a DB row, creates an asyncio.Event, starts a timeout task
-    - wait() blocks until the Event is set (resolve or expire)
+    - create() inserts a DB row, creates an asyncio.Future, starts a timeout task
+    - wait() blocks until the Future is resolved (resolve, expire, or cleanup)
     - resolve() sets the decision, wakes the waiter, updates DB
     - expire() marks expired in DB, wakes waiter with timeout decision
     - cleanup() cancels all timeout tasks (called on daemon shutdown)
@@ -63,7 +63,7 @@ class PendingInteractionManager:
     ) -> None:
         self._db = db
         self._run_db = run_db
-        self._waiters: dict[str, asyncio.Event] = {}
+        self._waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._results: dict[str, dict[str, Any]] = {}
         self._timeouts: dict[str, asyncio.Task[None]] = {}
 
@@ -117,8 +117,8 @@ class PendingInteractionManager:
                 raise
 
         # Create in-memory waiter
-        event = asyncio.Event()
-        self._waiters[interaction_id] = event
+        future = asyncio.get_running_loop().create_future()
+        self._waiters[interaction_id] = future
 
         # Start timeout task
         timeout_task = asyncio.create_task(self._timeout_handler(interaction_id, timeout_seconds))
@@ -155,16 +155,15 @@ class PendingInteractionManager:
 
     async def wait(self, interaction_id: str) -> dict[str, Any]:
         """Block until resolved or timeout. Returns decision + response."""
-        event = self._waiters.get(interaction_id)
-        if not event:
+        future = self._waiters.get(interaction_id)
+        if not future:
             return {"decision": "deny", "reason": "unknown_interaction"}
 
-        await event.wait()
-
-        # Pop results and waiter
-        result = self._results.pop(interaction_id, {"decision": "deny", "reason": "no_result"})
-        self._waiters.pop(interaction_id, None)
-        return result
+        try:
+            return await future
+        finally:
+            self._waiters.pop(interaction_id, None)
+            self._results.pop(interaction_id, None)
 
     async def resolve(
         self,
@@ -189,10 +188,7 @@ class PendingInteractionManager:
             timeout_task.cancel()
 
         # Set result and wake waiter
-        self._results[interaction_id] = {"decision": decision, "response": response}
-        event = self._waiters.get(interaction_id)
-        if event:
-            event.set()
+        self._wake_waiter(interaction_id, {"decision": decision, "response": response})
 
         return True
 
@@ -222,10 +218,14 @@ class PendingInteractionManager:
             timeout_task.cancel()
 
         # Set result and wake waiter
-        self._results[interaction_id] = {"decision": "timeout"}
-        event = self._waiters.get(interaction_id)
-        if event:
-            event.set()
+        self._wake_waiter(interaction_id, {"decision": "timeout"})
+
+    def _wake_waiter(self, interaction_id: str, result: dict[str, Any]) -> None:
+        """Resolve an in-memory waiter with a durable result."""
+        self._results[interaction_id] = result
+        future = self._waiters.get(interaction_id)
+        if future and not future.done():
+            future.set_result(result)
 
     def _expire_pending(self, interaction_id: str) -> None:
         with self._db.transaction() as conn:
@@ -281,7 +281,13 @@ class PendingInteractionManager:
         return row["cnt"] if row else 0
 
     async def cleanup(self) -> None:
-        """Cancel all timeout tasks. Called on daemon shutdown."""
+        """Wake waiters and cancel timeout tasks. Called on daemon shutdown."""
+        for interaction_id in list(self._waiters):
+            self._wake_waiter(
+                interaction_id,
+                {"decision": "deny", "reason": "daemon_shutdown"},
+            )
+
         for task in self._timeouts.values():
             task.cancel()
         # Await all cancelled tasks to suppress warnings
@@ -306,12 +312,14 @@ class PendingInteractionManager:
         await self._run_database(self._expire_all_pending)
 
         # Clear any orphaned in-memory state
-        for event in self._waiters.values():
-            event.set()
+        for interaction_id in list(self._waiters):
+            self._wake_waiter(interaction_id, {"decision": "timeout"})
         self._waiters.clear()
         self._results.clear()
         for task in self._timeouts.values():
             task.cancel()
+        if self._timeouts:
+            await asyncio.gather(*self._timeouts.values(), return_exceptions=True)
         self._timeouts.clear()
 
     def _expire_all_pending(self) -> None:

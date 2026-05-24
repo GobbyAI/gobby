@@ -551,6 +551,44 @@ class TestShutdownDaemonServices:
         assert marker.exists() is False
 
     @pytest.mark.asyncio
+    async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        events: list[str] = []
+
+        async def grace_window() -> None:
+            events.append("grace")
+            assert server.should_exit is False
+
+        async def cleanup_pending() -> None:
+            events.append("pending")
+            assert server.should_exit is False
+
+        async def terminate_sessions() -> None:
+            events.append("terminate")
+            assert server.should_exit is False
+
+        runner.http_server._cleanup_pending_interactions = AsyncMock(side_effect=cleanup_pending)
+        runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            server_task,
+            1,
+            await_critical_stop_hook_grace_window=grace_window,
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert events[:3] == ["grace", "pending", "terminate"]
+        assert server.should_exit is True
+
+    @pytest.mark.asyncio
     async def test_restart_lifecycle_manager_timeout_logs_info(
         self,
         caplog: pytest.LogCaptureFixture,

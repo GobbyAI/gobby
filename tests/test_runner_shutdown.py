@@ -244,11 +244,18 @@ class TestGobbyRunnerShutdown:
                 events.append("grace")
                 assert mock_server.should_exit is False
 
+            async def cleanup_pending() -> None:
+                events.append("pending")
+                assert mock_server.should_exit is False
+
             async def terminate_sessions() -> None:
                 events.append("terminate")
-                assert mock_server.should_exit is True
+                assert mock_server.should_exit is False
 
             fast_stop_hook_grace_window.side_effect = note_grace_wait
+            runner.http_server._cleanup_pending_interactions = AsyncMock(
+                side_effect=cleanup_pending
+            )
             runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
@@ -265,8 +272,9 @@ class TestGobbyRunnerShutdown:
                     await asyncio.wait_for(runner.run(), timeout=10.0)
 
             fast_stop_hook_grace_window.assert_awaited_once()
+            runner.http_server._cleanup_pending_interactions.assert_awaited_once()
             runner.http_server._terminate_streamable_http_sessions.assert_awaited_once()
-            assert events[:2] == ["grace", "terminate"]
+            assert events[:3] == ["grace", "pending", "terminate"]
             assert events[-1] == "serve-exit"
 
     @pytest.mark.asyncio

@@ -475,6 +475,13 @@ class HTTPServer:
             "Run 'gobby init' to initialize a project."
         )
 
+    async def _cleanup_pending_interactions(self) -> None:
+        """Wake request handlers blocked on pending web-chat interactions."""
+        manager = getattr(getattr(self.app, "state", None), "pending_interaction_manager", None)
+        if manager is None:
+            return
+        await manager.cleanup()
+
     async def _process_shutdown(self) -> None:
         """
         Background task to perform graceful daemon shutdown.
@@ -485,7 +492,9 @@ class HTTPServer:
             logger.debug("Processing graceful shutdown")
 
             # Cancel pending background tasks immediately instead of polling
-            pending_tasks_count = len(self._background_tasks)
+            current_task = asyncio.current_task()
+            background_tasks = {task for task in self._background_tasks if task is not current_task}
+            pending_tasks_count = len(background_tasks)
             if pending_tasks_count > 0:
                 logger.debug(
                     "Cancelling pending background tasks",
@@ -493,13 +502,13 @@ class HTTPServer:
                 )
 
                 # Cancel all tasks
-                for task in self._background_tasks:
+                for task in background_tasks:
                     task.cancel()
 
                 # Wait for cancellation to complete with a short timeout
-                if self._background_tasks:
+                if background_tasks:
                     done, pending = await asyncio.wait(
-                        self._background_tasks,
+                        background_tasks,
                         timeout=5.0,
                         return_when=asyncio.ALL_COMPLETED,
                     )
@@ -520,6 +529,15 @@ class HTTPServer:
                             "All background tasks cancelled",
                             extra={"completed": completed_count},
                         )
+
+            try:
+                await self._cleanup_pending_interactions()
+            except Exception as exc:
+                logger.warning(
+                    "Error cleaning up pending interactions during shutdown: %s",
+                    exc,
+                    exc_info=True,
+                )
 
             try:
                 await self._terminate_streamable_http_sessions()

@@ -7,6 +7,7 @@ expire_all_pending.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -176,9 +177,40 @@ class TestRebroadcast:
 
 class TestCleanup:
     @pytest.mark.asyncio
+    async def test_cleanup_wakes_existing_waiter_without_database(self) -> None:
+        manager = PendingInteractionManager(MagicMock())
+        manager._waiters["interaction-1"] = asyncio.get_running_loop().create_future()
+
+        task = asyncio.create_task(manager.wait("interaction-1"))
+        await drain_asyncio_tasks()
+        await manager.cleanup()
+
+        result = await asyncio.wait_for(task, timeout=1.0)
+        assert result == {"decision": "deny", "reason": "daemon_shutdown"}
+        assert len(manager._waiters) == 0
+        assert len(manager._timeouts) == 0
+        assert len(manager._results) == 0
+
+    @pytest.mark.asyncio
     async def test_cleanup_clears_state(self, manager: PendingInteractionManager) -> None:
         await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.cleanup()
+        assert len(manager._waiters) == 0
+        assert len(manager._timeouts) == 0
+        assert len(manager._results) == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_wakes_waiter_with_shutdown_denial(
+        self, manager: PendingInteractionManager
+    ) -> None:
+        iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
+
+        task = asyncio.create_task(manager.wait(iid))
+        await drain_asyncio_tasks()
+        await manager.cleanup()
+
+        result = await asyncio.wait_for(task, timeout=1.0)
+        assert result == {"decision": "deny", "reason": "daemon_shutdown"}
         assert len(manager._waiters) == 0
         assert len(manager._timeouts) == 0
         assert len(manager._results) == 0

@@ -351,11 +351,24 @@ async def shutdown_daemon_services(
         services.shutdown_in_progress = True
     await await_critical_stop_hook_grace_window()
     logger.debug("Shutdown requested; beginning graceful shutdown")
-    server.should_exit = True
+
+    cleanup_pending_interactions = getattr(
+        getattr(runner, "http_server", None),
+        "_cleanup_pending_interactions",
+        None,
+    )
+    if cleanup_pending_interactions is not None:
+        try:
+            await cleanup_pending_interactions()
+        except Exception as e:
+            logger.warning(f"Failed to clean up pending interactions: {e}")
+
     try:
         await runner.http_server._terminate_streamable_http_sessions()
     except Exception as e:
         logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
+
+    server.should_exit = True
 
     await _cancel_runner_task(runner, "_subsystem_init_task")
     await _cancel_runner_task(runner, "_provider_model_refresh_task")
