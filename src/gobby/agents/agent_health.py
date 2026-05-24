@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class AgentHealthMonitor:
     def __init__(
         self,
         agent_run_manager: LocalAgentRunManager,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         tmux: TmuxSessionManager,
         get_session_manager: Callable[[], SessionManager | None],
         stall_classifier: StallClassifier,
@@ -45,16 +45,16 @@ class AgentHealthMonitor:
         self._stall_classifier = stall_classifier
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
-        self._run_db = run_db
+        self._run_db_callback = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     async def _clear_tmux_session_name(self, run: AgentRun) -> None:
         if run.tmux_session_name:
-            await self._run_sqlite(
+            await self._run_db(
                 self._agent_run_manager.clear_tmux_session_name,
                 run.id,
                 run.tmux_session_name,
@@ -62,7 +62,7 @@ class AgentHealthMonitor:
 
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
-        runs = await self._run_sqlite(self._agent_run_manager.list_active)
+        runs = await self._run_db(self._agent_run_manager.list_active)
         now = datetime.now(UTC)
         cleaned = 0
 
@@ -154,7 +154,7 @@ class AgentHealthMonitor:
 
     async def check_initialization_timeout(self) -> int:
         """Detect agents that never initialized (provider hung on connect)."""
-        runs = await self._run_sqlite(self._agent_run_manager.list_active)
+        runs = await self._run_db(self._agent_run_manager.list_active)
         now = datetime.now(UTC)
         killed = 0
         session_manager = self._get_session_manager()
@@ -174,7 +174,7 @@ class AgentHealthMonitor:
                 if not session_id or not session_manager:
                     continue
 
-                session = await self._run_sqlite(session_manager.get, session_id)
+                session = await self._run_db(session_manager.get, session_id)
                 if not session or not session.updated_at or not session.created_at:
                     continue
 
@@ -217,7 +217,7 @@ class AgentHealthMonitor:
 
     async def check_provider_stalls(self) -> int:
         """Check tmux agents for provider-side stalls (rate limits, outages)."""
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
 
         stalled = 0
         for run in runs:

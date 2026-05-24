@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
     from gobby.storage.checkpoints import LocalCheckpointManager
     from gobby.storage.clones import LocalCloneManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
@@ -59,7 +59,7 @@ class AgentLifecycleMonitor:
     def __init__(
         self,
         agent_run_manager: LocalAgentRunManager,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         session_manager: SessionManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         clone_storage: LocalCloneManager | None = None,
@@ -74,7 +74,7 @@ class AgentLifecycleMonitor:
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
-        self._run_db = run_db
+        self._run_db_callback = run_db
         self._session_manager = session_manager
         self._session_coordinator = session_coordinator
         self._clone_storage = clone_storage
@@ -151,10 +151,10 @@ class AgentLifecycleMonitor:
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     def set_session_coordinator(self, coordinator: SessionCoordinator) -> None:
         """Inject session coordinator after construction (avoids circular init ordering)."""
@@ -253,7 +253,7 @@ class AgentLifecycleMonitor:
 
                 if iteration > 0 and iteration % 10 == 0:
                     try:
-                        cleaned = await self._run_sqlite(self._agent_run_manager.cleanup_stale_runs)
+                        cleaned = await self._run_db(self._agent_run_manager.cleanup_stale_runs)
                         if cleaned:
                             logger.info(f"Cleaned up {cleaned} stale agent runs")
                     except Exception as e:
@@ -275,7 +275,12 @@ class AgentLifecycleMonitor:
 
     async def expire_terminal_run_sessions(self) -> int:
         """Expire sessions whose agent run is already in a terminal state."""
+        await self.recover_tasks_from_terminal_agents()
         return await self._cleanup_handler.expire_terminal_run_sessions()
+
+    async def recover_tasks_from_terminal_agents(self) -> int:
+        """Recover task ownership for already-terminal non-success agent runs."""
+        return await self._task_recovery.recover_tasks_from_terminal_agents()
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them."""
@@ -332,7 +337,7 @@ class AgentLifecycleMonitor:
 
         if run.tmux_session_name:
             await self._tmux.kill_session(run.tmux_session_name)
-            await self._run_sqlite(
+            await self._run_db(
                 self._agent_run_manager.clear_tmux_session_name,
                 run.id,
                 run.tmux_session_name,
@@ -348,7 +353,7 @@ class AgentLifecycleMonitor:
         """Resolve the working directory for an agent run."""
         if run.worktree_id and self._worktree_storage:
             try:
-                wt = await self._run_sqlite(self._worktree_storage.get, run.worktree_id)
+                wt = await self._run_db(self._worktree_storage.get, run.worktree_id)
                 if wt and wt.worktree_path:
                     return cast(str, wt.worktree_path)
             except Exception:
@@ -358,7 +363,7 @@ class AgentLifecycleMonitor:
 
         if run.clone_id and self._clone_storage:
             try:
-                clone = await self._run_sqlite(self._clone_storage.get, run.clone_id)
+                clone = await self._run_db(self._clone_storage.get, run.clone_id)
                 if clone and clone.clone_path:
                     return cast(str, clone.clone_path)
             except Exception:
@@ -368,7 +373,7 @@ class AgentLifecycleMonitor:
 
         if run.child_session_id and self._session_manager:
             try:
-                session = await self._run_sqlite(self._session_manager.get, run.child_session_id)
+                session = await self._run_db(self._session_manager.get, run.child_session_id)
                 if session and session.project_id:
                     pm = self._project_manager
                     if pm is None:
@@ -376,7 +381,7 @@ class AgentLifecycleMonitor:
 
                         pm = LocalProjectManager(self._db)
                         self._project_manager = pm
-                    project = await self._run_sqlite(pm.get, session.project_id)
+                    project = await self._run_db(pm.get, session.project_id)
                     if project and project.repo_path:
                         return str(project.repo_path)
             except Exception:

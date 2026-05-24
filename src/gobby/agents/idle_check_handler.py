@@ -49,16 +49,16 @@ class IdleCheckHandler:
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
         self._task_manager = task_manager
-        self._run_db = run_db
+        self._run_db_callback = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     async def _clear_tmux_session_name(self, run: AgentRun) -> None:
         if run.tmux_session_name:
-            await self._run_sqlite(
+            await self._run_db(
                 self._agent_run_manager.clear_tmux_session_name,
                 run.id,
                 run.tmux_session_name,
@@ -69,7 +69,7 @@ class IdleCheckHandler:
         if not self._tmux_config.idle_check_enabled:
             return 0
 
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -94,7 +94,7 @@ class IdleCheckHandler:
 
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent."""
-        latest_run = await self._run_sqlite(self._agent_run_manager.get, run.id)
+        latest_run = await self._run_db(self._agent_run_manager.get, run.id)
         if latest_run is None or latest_run.status not in ("pending", "running"):
             self._idle_detector.reset_idle(run.id)
             return 0
@@ -113,7 +113,7 @@ class IdleCheckHandler:
         session: Any | None = None
 
         if session_id and session_manager:
-            session = await self._run_sqlite(session_manager.get, session_id)
+            session = await self._run_db(session_manager.get, session_id)
             if session and session.updated_at:
                 try:
                     last_update = parse_stored_datetime(session.updated_at)
@@ -260,7 +260,7 @@ class IdleCheckHandler:
             return
 
         try:
-            task = await self._run_sqlite(self._task_manager.get_task, run.task_id)
+            task = await self._run_db(self._task_manager.get_task, run.task_id)
         except Exception:
             logger.warning(
                 "Failed to load task %s for idle watchdog audit on run %s",
@@ -285,7 +285,7 @@ class IdleCheckHandler:
         reason = f"{reason} {detail}"
 
         try:
-            await self._run_sqlite(
+            await self._run_db(
                 self._task_manager.lifecycle_events.record_lifecycle_event,
                 run.task_id,
                 from_state=state,
@@ -353,7 +353,7 @@ class IdleCheckHandler:
             return
 
         try:
-            session = await self._run_sqlite(session_manager.get, session_id)
+            session = await self._run_db(session_manager.get, session_id)
         except Exception as exc:
             logger.warning(
                 "Failed to load session %s for Codex idle diagnostics on run %s: %s",

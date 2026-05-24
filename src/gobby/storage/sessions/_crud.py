@@ -212,8 +212,8 @@ class _SessionCRUDMixin:
                             terminal_context_json,
                             workflow_name,
                             session_type,
-                            int(is_local),
-                            None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                            bool(is_local),
+                            None if sandbox_enabled is None else bool(sandbox_enabled),
                             sandbox_policy_hash,
                             now,
                             now,
@@ -337,7 +337,7 @@ class _SessionCRUDMixin:
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, int(is_local), chat_mode, now, session.id),
+                (model, bool(is_local), chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:

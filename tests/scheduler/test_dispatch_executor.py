@@ -8,16 +8,16 @@ import pytest
 
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
-def _seed_project(temp_db: DatabaseProtocol) -> None:
+def _seed_project(temp_db: HubDatabase) -> None:
+    now = datetime.now(UTC).isoformat()
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
-        ("project-1", "Test Project"),
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        ("project-1", "Test Project", now, now),
     )
 
 
@@ -96,7 +96,11 @@ async def test_dispatcher_cron_run_with_work_does_not_park(
 ) -> None:
     from gobby.dispatch import dispatcher
 
+    calls = 0
+
     async def run_heartbeat(**_kwargs):
+        nonlocal calls
+        calls += 1
         return dispatcher.HeartbeatResult(scanned=1, executed=1, skipped=0)
 
     monkeypatch.setattr(dispatcher, "run_heartbeat", run_heartbeat)
@@ -119,9 +123,64 @@ async def test_dispatcher_cron_run_with_work_does_not_park(
     result = await CronExecutor(storage).execute(job, run)
 
     assert result.status == "completed"
+    assert calls == 3
+    assert result.output is not None
+    assert "ticks=3" in result.output
+    assert "scanned=3" in result.output
+    assert "executed=3" in result.output
     scheduled = storage.get_job(job.id)
     assert scheduled is not None
     assert scheduled.next_run_at == future
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_cron_burst_aggregates_reason_and_cap(
+    temp_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    results = [
+        dispatcher.HeartbeatResult(scanned=2, executed=1, skipped=1),
+        dispatcher.HeartbeatResult(
+            scanned=3,
+            executed=1,
+            skipped=0,
+            cap_reached=True,
+            reason="spawn_unavailable",
+        ),
+        dispatcher.HeartbeatResult(scanned=99, executed=99, skipped=99),
+    ]
+
+    async def run_heartbeat(**_kwargs):
+        return results.pop(0)
+
+    monkeypatch.setattr(dispatcher, "run_heartbeat", run_heartbeat)
+
+    _seed_project(temp_db)
+    storage = CronJobStorage(temp_db)
+    job = storage.create_job(
+        project_id="project-1",
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="dispatcher",
+        action_config={"project_id": "project-1"},
+        interval_seconds=60,
+        is_system=True,
+    )
+    run = storage.create_run(job.id)
+
+    result = await CronExecutor(storage).execute(job, run)
+
+    assert result.status == "completed"
+    assert result.output is not None
+    assert "ticks=2" in result.output
+    assert "scanned=5" in result.output
+    assert "executed=2" in result.output
+    assert "skipped=1" in result.output
+    assert "cap_reached=True" in result.output
+    assert "reason=spawn_unavailable" in result.output
+    assert len(results) == 1
 
 
 async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:

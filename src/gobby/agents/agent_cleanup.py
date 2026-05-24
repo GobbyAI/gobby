@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         LocalAgentRunManager,
     )
     from gobby.storage.clones import LocalCloneManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 def cleanup_merged_task_artifacts_after_agent_exit(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
 ) -> list[Any]:
     """Retry merge artifact cleanup once the owning agent is no longer active."""
@@ -52,7 +52,7 @@ class AgentCleanupHandler:
     def __init__(
         self,
         agent_run_manager: LocalAgentRunManager,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         get_session_manager: Callable[[], SessionManager | None],
         get_session_coordinator: Callable[[], SessionCoordinator | None],
         clone_storage: LocalCloneManager | None,
@@ -79,12 +79,12 @@ class AgentCleanupHandler:
         self._loop_tracker = loop_tracker
         self._master_fds = master_fds
         self._kill_tmux_session = kill_tmux_session
-        self._run_db = run_db
+        self._run_db_callback = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     async def notify_terminal_completion(
         self,
@@ -140,18 +140,18 @@ class AgentCleanupHandler:
 
         if self._clone_storage and run.clone_id:
             try:
-                await self._run_sqlite(self._clone_storage.release, run.clone_id)
+                await self._run_db(self._clone_storage.release, run.clone_id)
             except Exception as e:
                 logger.warning(f"Failed to release clone for agent {run.id}: {e}")
 
         if session_manager and session_id:
             try:
-                await self._run_sqlite(session_manager.update_status, session_id, "expired")
+                await self._run_db(session_manager.update_status, session_id, "expired")
                 logger.debug(f"Expired session {session_id} for agent {run.id}")
             except Exception as e:
                 logger.warning(f"Failed to expire session for agent {run.id}: {e}")
 
-        cleanup = await self._run_sqlite(
+        cleanup = await self._run_db(
             cleanup_agent_runtime_state,
             self._db,
             run_id=run.id,
@@ -166,7 +166,7 @@ class AgentCleanupHandler:
             )
         if run.task_id:
             try:
-                artifacts = await self._run_sqlite(
+                artifacts = await self._run_db(
                     cleanup_merged_task_artifacts_after_agent_exit,
                     self._db,
                     run.task_id,
@@ -193,7 +193,7 @@ class AgentCleanupHandler:
         if not tmux_session_name or self._kill_tmux_session is None:
             return False
 
-        latest = await self._run_sqlite(self._agent_run_manager.get, run.id)
+        latest = await self._run_db(self._agent_run_manager.get, run.id)
         if latest is None or latest.tmux_session_name != tmux_session_name:
             return False
 
@@ -216,7 +216,7 @@ class AgentCleanupHandler:
             )
             return False
 
-        cleared = await self._run_sqlite(
+        cleared = await self._run_db(
             self._agent_run_manager.clear_tmux_session_name,
             run.id,
             tmux_session_name,
@@ -231,7 +231,7 @@ class AgentCleanupHandler:
 
     async def cleanup_terminal_tmux_sessions(self) -> int:
         """Close tmux sessions left behind for already-terminal agent runs."""
-        runs = await self._run_sqlite(self._agent_run_manager.list_terminal_with_tmux)
+        runs = await self._run_db(self._agent_run_manager.list_terminal_with_tmux)
         closed = 0
         for run in runs:
             if await self._close_tmux_session(run):
@@ -250,7 +250,7 @@ class AgentCleanupHandler:
 
         try:
             session = await asyncio.wait_for(
-                self._run_sqlite(session_manager.get, run.child_session_id),
+                self._run_db(session_manager.get, run.child_session_id),
                 timeout=SESSION_STATS_LOOKUP_TIMEOUT_SECONDS,
             )
         except TimeoutError:
@@ -299,13 +299,13 @@ class AgentCleanupHandler:
             True when the run transitioned to complete; False when the run was
             already terminal or missing after cleanup reconciliation.
         """
-        current = await self._run_sqlite(self._agent_run_manager.get, run_id)
+        current = await self._run_db(self._agent_run_manager.get, run_id)
         if current is None:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)
             return False
 
         tool_calls_count, turns_used = await self._completion_stats_for_run(current)
-        db_run = await self._run_sqlite(
+        db_run = await self._run_db(
             self._agent_run_manager.complete,
             run_id,
             result=completion_result,
@@ -313,7 +313,7 @@ class AgentCleanupHandler:
             turns_used=turns_used,
         )
         if db_run is None:
-            latest = await self._run_sqlite(self._agent_run_manager.get, run_id)
+            latest = await self._run_db(self._agent_run_manager.get, run_id)
             logger.debug(
                 "Successful terminalization no-op for run %s; current status=%s",
                 run_id,
@@ -342,13 +342,13 @@ class AgentCleanupHandler:
         terminal_reason: AgentRunTerminalReason,
     ) -> bool:
         """Mark an active run cancelled, recover ownership, and notify waiters."""
-        db_run = await self._run_sqlite(
+        db_run = await self._run_db(
             self._agent_run_manager.cancel,
             run_id,
             terminal_reason=terminal_reason,
         )
         if db_run is None:
-            current = await self._run_sqlite(self._agent_run_manager.get, run_id)
+            current = await self._run_db(self._agent_run_manager.get, run_id)
             logger.debug(
                 "Cancelled terminalization no-op for run %s; current status=%s",
                 run_id,
@@ -371,7 +371,7 @@ class AgentCleanupHandler:
 
     async def expire_terminal_run_sessions(self) -> int:
         """Expire sessions whose agent run is already in a terminal state."""
-        expired = await self._run_sqlite(self._agent_run_manager.expire_sessions_for_terminal_runs)
+        expired = await self._run_db(self._agent_run_manager.expire_sessions_for_terminal_runs)
         if expired:
             logger.info("Expired %s session(s) for terminal agent runs", expired)
         closed = await self.cleanup_terminal_tmux_sessions()
@@ -383,7 +383,7 @@ class AgentCleanupHandler:
         """Clean up agent runs stuck in pending status after daemon restart."""
         return cast(
             int,
-            await self._run_sqlite(self._agent_run_manager.cleanup_stale_pending_runs),
+            await self._run_db(self._agent_run_manager.cleanup_stale_pending_runs),
         )
 
     async def cleanup_agent(
@@ -403,7 +403,7 @@ class AgentCleanupHandler:
 
         if run.status in ("pending", "running"):
             if is_success:
-                updated = await self._run_sqlite(
+                updated = await self._run_db(
                     self._agent_run_manager.complete,
                     run.id,
                     result=terminal_payload,
@@ -412,7 +412,7 @@ class AgentCleanupHandler:
                     terminal_run = updated
                     transitioned = True
             elif is_timeout:
-                updated = await self._run_sqlite(
+                updated = await self._run_db(
                     self._agent_run_manager.timeout,
                     run.id,
                     error=terminal_payload,
@@ -426,7 +426,7 @@ class AgentCleanupHandler:
                         terminal_payload,
                     )
             else:
-                updated = await self._run_sqlite(
+                updated = await self._run_db(
                     self._agent_run_manager.fail,
                     run.id,
                     error=terminal_payload,
@@ -457,7 +457,7 @@ class AgentCleanupHandler:
                 message=f"Agent {run.id} {'completed' if is_success else 'failed'}",
             )
         else:
-            current = await self._run_sqlite(self._agent_run_manager.get, run.id)
+            current = await self._run_db(self._agent_run_manager.get, run.id)
             logger.debug(
                 "Terminal cleanup no-op for run %s; current status=%s",
                 run.id,

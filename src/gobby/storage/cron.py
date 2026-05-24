@@ -202,8 +202,8 @@ class CronJobStorage:
                 job.timezone,
                 job.action_type,
                 json.dumps(job.action_config),
-                1 if job.enabled else 0,
-                1 if job.is_system else 0,
+                bool(job.enabled),
+                bool(job.is_system),
                 job.next_run_at,
                 job.last_run_at,
                 job.last_status,
@@ -234,7 +234,7 @@ class CronJobStorage:
 
     def mark_as_system_job(self, job_id: str) -> None:
         """Mark an existing cron row as gobby-managed system infrastructure."""
-        self.db.execute("UPDATE cron_jobs SET is_system = 1 WHERE id = ?", (job_id,))
+        self.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = ?", (job_id,))
 
     def list_jobs(
         self,
@@ -252,10 +252,10 @@ class CronJobStorage:
             params.append(project_id)
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(bool(enabled))
         if is_system is not None:
             conditions.append("is_system = ?")
-            params.append(1 if is_system else 0)
+            params.append(bool(is_system))
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -509,7 +509,7 @@ class CronJobStorage:
             return None
 
         new_enabled = not job.enabled
-        updates: dict[str, Any] = {"enabled": 1 if new_enabled else 0}
+        updates: dict[str, Any] = {"enabled": bool(new_enabled)}
 
         # Recompute next_run when enabling
         if new_enabled:
@@ -542,7 +542,7 @@ class CronJobStorage:
         rows = self.db.fetchall(
             """
             SELECT * FROM cron_jobs
-            WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+            WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ?
             ORDER BY next_run_at ASC, created_at ASC
             """,
             (now,),
