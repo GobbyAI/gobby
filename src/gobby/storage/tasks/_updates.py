@@ -172,7 +172,7 @@ def update_task(
         params.append(next_escalated_at)
         if "is_escalated" in task_columns:
             updates.append("is_escalated = ?")
-            params.append(1 if next_escalated_at else 0)
+            params.append(bool(next_escalated_at))
 
     if closed_reason is not UNSET:
         updates.append("closed_reason = ?")

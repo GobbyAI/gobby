@@ -669,7 +669,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
                closed_commit_sha = 'abc123',
                escalated_at = '2026-05-04T00:00:00+00:00',
                escalation_reason = 'stale escalation',
-               is_escalated = 1,
+               is_escalated = TRUE,
                assignee = 'stale-agent',
                claimed_by_session_id = NULL,
                validation_fail_count = 4,
@@ -687,7 +687,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
     assert reopened["closed_commit_sha"] is None
     assert reopened["escalated_at"] is None
     assert reopened["escalation_reason"] is None
-    assert reopened["is_escalated"] == 0
+    assert reopened["is_escalated"] is False
     assert reopened["assignee"] is None
     assert reopened["validation_fail_count"] == 0
     assert reopened["dispatch_failure_count"] == 0

@@ -1047,7 +1047,7 @@ class TestLocalMCPManager:
                         "--no-usage-statistics",
                     ]
                 ),
-                1,
+                True,
             ),
         )
         temp_db.execute(
@@ -1108,7 +1108,7 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]),
-                1,
+                True,
             ),
         )
 
@@ -1140,7 +1140,7 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "@upstash/context7-mcp"]),
-                1,
+                True,
             ),
         )
         temp_db.execute(
@@ -1171,7 +1171,7 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "@upstash/context7-mcp"]),
-                1,
+                True,
             ),
         )
         temp_db.execute(

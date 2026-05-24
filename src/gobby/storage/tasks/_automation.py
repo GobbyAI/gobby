@@ -50,11 +50,11 @@ def list_automation_candidates(
                 AND stage_scan.state != 'done'
          )
         LEFT JOIN task_dispatch_mutex mutex ON mutex.task_id = tasks.id
-        WHERE tasks.allow_automation = 1
+        WHERE tasks.allow_automation IS TRUE
           AND tasks.claimed_by_session_id IS NULL
           AND tasks.closed_at IS NULL
           AND tasks.escalated_at IS NULL
-          AND COALESCE(tasks.is_escalated, 0) = 0
+          AND COALESCE(tasks.is_escalated, FALSE) IS FALSE
           AND current_stage.state IN ('ready', 'in_progress', 'needs_review', 'review_approved')
           AND (
               mutex.task_id IS NULL
@@ -92,10 +92,10 @@ def sweep_stale_claims(
                SET claimed_by_session_id = NULL,
                    assignee = NULL,
                    updated_at = ?
-             WHERE allow_automation = 1
+             WHERE allow_automation IS TRUE
                AND closed_at IS NULL
                AND escalated_at IS NULL
-               AND COALESCE(is_escalated, 0) = 0
+               AND COALESCE(is_escalated, FALSE) IS FALSE
                AND claimed_by_session_id IS NOT NULL
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s

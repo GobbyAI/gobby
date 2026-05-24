@@ -78,7 +78,7 @@ def _close_task_in_txn(
                validation_override_reason = ?,
                escalated_at = NULL,
                escalation_reason = NULL,
-               is_escalated = 0,
+               is_escalated = FALSE,
                assignee = NULL,
                claimed_by_session_id = NULL,
                updated_at = ?

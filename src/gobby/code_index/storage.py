@@ -211,9 +211,9 @@ class CodeIndexStorage:
                     content_hash=excluded.content_hash,
                     symbol_count=excluded.symbol_count,
                     byte_size=excluded.byte_size,
-                    graph_synced=0,
+                    graph_synced=FALSE,
                     graph_sync_attempted_at=NULL,
-                    vectors_synced=0,
+                    vectors_synced=FALSE,
                     indexed_at=excluded.indexed_at
                 """,
                 (
@@ -224,8 +224,8 @@ class CodeIndexStorage:
                     file.content_hash,
                     file.symbol_count,
                     file.byte_size,
-                    file.graph_synced,
-                    file.vectors_synced,
+                    bool(file.graph_synced),
+                    bool(file.vectors_synced),
                     file.graph_sync_attempted_at,
                     file.indexed_at,
                 ),
@@ -311,10 +311,10 @@ class CodeIndexStorage:
         return [row["file_path"] for row in rows if row["file_path"] not in current_paths]
 
     def get_unsynced_files(self, project_id: str, limit: int = 100) -> list[IndexedFile]:
-        """Get files where graph/vector sync is incomplete (graph_synced=0)."""
+        """Get files where graph/vector sync is incomplete."""
         rows = self.db.fetchall(
             """SELECT * FROM code_indexed_files
-               WHERE project_id = ? AND graph_synced = 0
+               WHERE project_id = ? AND graph_synced IS FALSE
                ORDER BY indexed_at LIMIT ?""",
             (project_id, limit),
         )
@@ -328,7 +328,7 @@ class CodeIndexStorage:
         vectors: bool = True,
         graph: bool = True,
     ) -> list[IndexedFile]:
-        """Get files needing external sync (vectors_synced=0 or graph_synced=0).
+        """Get files needing external sync.
 
         Args:
             project_id: Project to query.
@@ -338,9 +338,9 @@ class CodeIndexStorage:
         """
         conditions = []
         if vectors:
-            conditions.append("vectors_synced = 0")
+            conditions.append("vectors_synced IS FALSE")
         if graph:
-            conditions.append("graph_synced = 0")
+            conditions.append("graph_synced IS FALSE")
         if not conditions:
             return []
         where = " OR ".join(conditions)
@@ -356,7 +356,7 @@ class CodeIndexStorage:
         """Mark a file's vectors as synced. Returns True if updated."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = ?",
+                "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = ?",
                 (file_id,),
             )
             return cursor.rowcount > 0
@@ -367,7 +367,7 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
-                   SET graph_synced = 1, graph_sync_attempted_at = ?
+                   SET graph_synced = TRUE, graph_sync_attempted_at = ?
                    WHERE id = ?""",
                 (now, file_id),
             )
@@ -379,7 +379,7 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
-                   SET graph_synced = 0, graph_sync_attempted_at = ?
+                   SET graph_synced = FALSE, graph_sync_attempted_at = ?
                    WHERE id = ?""",
                 (now, file_id),
             )
@@ -390,7 +390,7 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
-                   SET graph_synced = 0, graph_sync_attempted_at = NULL
+                   SET graph_synced = FALSE, graph_sync_attempted_at = NULL
                    WHERE project_id = ?""",
                 (project_id,),
             )
@@ -554,7 +554,7 @@ class CodeIndexStorage:
                     project.root_path,
                     project.total_files,
                     project.total_symbols,
-                    project.last_indexed_at,
+                    project.last_indexed_at or None,
                     project.index_duration_ms,
                 ),
             )

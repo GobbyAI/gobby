@@ -46,7 +46,7 @@ def _claimed_task(temp_db, sample_project, *, claimed_by: str, stage_state: str 
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = 1, isolation = ?, claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET allow_automation = TRUE, isolation = ?, claimed_by_session_id = ? WHERE id = ?",
         (Isolation.none.value, claimed_by, task.id),
     )
     return task
@@ -102,7 +102,7 @@ def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None
     now = datetime.now(UTC).isoformat()
     temp_db.execute("UPDATE tasks SET closed_at = ? WHERE id = ?", (now, closed.id))
     temp_db.execute(
-        "UPDATE tasks SET escalated_at = ?, is_escalated = 1 WHERE id = ?",
+        "UPDATE tasks SET escalated_at = ?, is_escalated = TRUE WHERE id = ?",
         (now, escalated.id),
     )
 

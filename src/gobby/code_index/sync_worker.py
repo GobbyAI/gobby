@@ -1,6 +1,6 @@
 """Background sync worker for code index external stores.
 
-Polls hub-indexed files with vectors_synced=0 or graph_synced=0 and syncs them
+Polls hub-indexed files with unsynced vector or graph flags and syncs them
 to Qdrant (embeddings) and FalkorDB (graph edges) in-process. Replaces the old
 subprocess-based retry mechanism in maintenance.py.
 """

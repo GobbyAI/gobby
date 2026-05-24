@@ -2,7 +2,8 @@
 
 These settings are needed before the PostgreSQL hub is available:
 daemon_port, bind_host, websocket_port, ui_port, falkordb_password, hub_backend,
-database_url, and postgres_install_mode.
+database_url, and postgres_install_mode. Legacy database_url_ref values are
+accepted only as migration input.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -10,6 +11,7 @@ Pydantic defaults.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from .bootstrap_io import bootstrap_path as default_bootstrap_path
-from .bootstrap_io import read_bootstrap_yaml
+from .bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,10 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 POSTGRES_DATABASE_URL_REF_SERVICE = "gobby"
 POSTGRES_DATABASE_URL_REF_USERNAME = "postgres_database_url"
+POSTGRES_DATABASE_URL_KEYRING_REF = (
+    f"keyring:{POSTGRES_DATABASE_URL_REF_SERVICE}:{POSTGRES_DATABASE_URL_REF_USERNAME}"
+)
+POSTGRES_DATABASE_URL_REF = POSTGRES_DATABASE_URL_KEYRING_REF
 POSTGRES_DATABASE_URL_DAEMON_REF = (
     f"daemon:{POSTGRES_DATABASE_URL_REF_SERVICE}:{POSTGRES_DATABASE_URL_REF_USERNAME}"
 )
@@ -44,11 +50,16 @@ HUB_BACKEND_POSTGRES_REQUIRED = (
     "Enforcement: _parse_hub_backend() raises BootstrapConfigError."
 )
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
-    "hub_backend=postgres requires database_url in bootstrap.yaml. Run "
-    f"`gobby postgres install` to write the PostgreSQL DSN; see {HUB_BACKEND_MIGRATION_DOCS}. "
+    "hub_backend=postgres requires database_url in bootstrap.yaml. Legacy database_url_ref "
+    f"entries must be migratable. Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}. "
     'Config type: hub_backend (Literal["postgres"]); enforcement is kept with '
     "_parse_hub_backend() and BootstrapConfigError."
 )
+
+try:
+    keyring: Any | None = importlib.import_module("keyring")
+except ImportError:
+    keyring = None
 
 
 class BootstrapConfigError(Exception):
@@ -127,10 +138,18 @@ def load_bootstrap(
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
         database_url_ref = _parse_optional_str(data.get("database_url_ref"), "database_url_ref")
         if database_url_ref:
-            raise BootstrapConfigError(
-                "database_url_ref is no longer supported in bootstrap.yaml; "
-                "store the local PostgreSQL DSN in database_url."
-            )
+            _parse_supported_database_url_ref(database_url_ref)
+            if not database_url and resolve_database_url:
+                database_url = _resolve_legacy_database_url_ref(database_url_ref)
+                data["database_url"] = database_url
+                data.pop("database_url_ref", None)
+                try:
+                    write_bootstrap_yaml(bootstrap_path, data)
+                except Exception as exc:
+                    raise BootstrapConfigError(
+                        "failed to migrate legacy database_url_ref to database_url "
+                        "in bootstrap.yaml"
+                    ) from exc
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
         if explicit_hub_backend and resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
@@ -196,3 +215,63 @@ def _validate_bootstrap_file_permissions(path: Path) -> None:
             f"bootstrap.yaml permissions must be 0600 (owner read/write only): "
             f"{path} has {mode:#04o}"
         )
+
+
+def _parse_supported_database_url_ref(database_url_ref: str) -> None:
+    if database_url_ref in {POSTGRES_DATABASE_URL_KEYRING_REF, POSTGRES_DATABASE_URL_DAEMON_REF}:
+        return
+    raise BootstrapConfigError(
+        "database_url_ref must be "
+        f"{POSTGRES_DATABASE_URL_KEYRING_REF} or {POSTGRES_DATABASE_URL_DAEMON_REF}"
+    )
+
+
+def _resolve_legacy_database_url_ref(database_url_ref: str) -> str:
+    if database_url_ref == POSTGRES_DATABASE_URL_DAEMON_REF:
+        raise BootstrapConfigError(
+            f"database_url_ref {POSTGRES_DATABASE_URL_DAEMON_REF} is broker-only and "
+            "cannot be resolved while starting the daemon"
+        )
+    service, username = _parse_legacy_keyring_database_url_ref(database_url_ref)
+    if keyring is None:
+        raise BootstrapConfigError(
+            "legacy database_url_ref requires the keyring package to migrate to "
+            "database_url. Run `gobby postgres install` to rewrite bootstrap.yaml."
+        )
+    get_password = getattr(keyring, "get_password", None)
+    if not callable(get_password):
+        raise BootstrapConfigError(
+            "legacy database_url_ref could not be migrated because the keyring backend "
+            "does not expose get_password(). Run `gobby postgres install` to rewrite "
+            "bootstrap.yaml."
+        )
+    try:
+        database_url = get_password(service, username)
+    except Exception as exc:
+        raise BootstrapConfigError(
+            "failed to read legacy database_url_ref from OS keyring while migrating "
+            "bootstrap.yaml. Run `gobby postgres install` to rewrite bootstrap.yaml."
+        ) from exc
+    if not database_url:
+        raise BootstrapConfigError(
+            "legacy database_url_ref keyring entry is missing. Run `gobby postgres install` "
+            "to rewrite bootstrap.yaml with database_url."
+        )
+    return str(database_url)
+
+
+def _parse_legacy_keyring_database_url_ref(database_url_ref: str) -> tuple[str, str]:
+    parts = database_url_ref.split(":", 2)
+    if len(parts) != 3 or parts[0] != "keyring" or not parts[1] or not parts[2]:
+        raise BootstrapConfigError(
+            f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}"
+        )
+    service, username = parts[1], parts[2]
+    if (
+        service != POSTGRES_DATABASE_URL_REF_SERVICE
+        or username != POSTGRES_DATABASE_URL_REF_USERNAME
+    ):
+        raise BootstrapConfigError(
+            f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}"
+        )
+    return service, username

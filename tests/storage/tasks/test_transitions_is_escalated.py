@@ -18,7 +18,7 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
         "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = ?",
         (task.id,),
     )
-    assert row["is_escalated"] == 1
+    assert row["is_escalated"] is True
     assert row["escalated_at"] is not None
     assert row["escalation_reason"] == "blocked by operator"
     assert escalated.is_escalated is True
@@ -28,7 +28,7 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
         "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = ?",
         (task.id,),
     )
-    assert row["is_escalated"] == 0
+    assert row["is_escalated"] is False
     assert row["escalated_at"] is None
     assert row["escalation_reason"] is None
     assert de_escalated.is_escalated is False

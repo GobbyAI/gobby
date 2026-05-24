@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS bin_update_state (
     checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     installed_at TEXT,
     source_url TEXT,
-    is_dev INTEGER NOT NULL DEFAULT 0 CHECK (is_dev IN (0, 1)),
-    floor_drift INTEGER NOT NULL DEFAULT 0 CHECK (floor_drift IN (0, 1)),
+    is_dev BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_dev IN (FALSE, TRUE)),
+    floor_drift BOOLEAN NOT NULL DEFAULT FALSE CHECK (floor_drift IN (FALSE, TRUE)),
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -169,8 +169,8 @@ class BinUpdateStateStore:
                 last_error,
                 installed_at,
                 source_url,
-                int(is_dev),
-                int(floor_drift),
+                bool(is_dev),
+                bool(floor_drift),
             ),
         )
         record = self.get(tool_name)

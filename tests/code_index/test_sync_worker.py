@@ -77,8 +77,8 @@ def _indexed_project(root: Path) -> IndexedProject:
 
 def _indexed_file(
     *,
-    vectors_synced: int = 0,
-    graph_synced: int = 0,
+    vectors_synced: bool = False,
+    graph_synced: bool = False,
 ) -> IndexedFile:
     return IndexedFile(
         id=IndexedFile.make_id("proj-1", "src/app.py"),
@@ -113,7 +113,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
 
     monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
     _write_source(tmp_path)
-    pending_file = _indexed_file(vectors_synced=0, graph_synced=0)
+    pending_file = _indexed_file(vectors_synced=False, graph_synced=False)
     old_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
     context = SimpleNamespace(graph=None)
     shutdown_flag = asyncio.Event()
@@ -172,7 +172,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
 async def test_sync_worker_uses_restored_graph_client_on_next_iteration(tmp_path: Path) -> None:
     """The loop re-reads CodeIndexContext.graph and resumes graph writes."""
     _write_source(tmp_path)
-    pending_file = _indexed_file(vectors_synced=1, graph_synced=0)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
     new_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
     context = SimpleNamespace(graph=None)
     shutdown_flag = asyncio.Event()
@@ -241,8 +241,8 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
         language="python",
         content_hash="abc123",
         symbol_count=len(sample_symbols),
-        graph_synced=1,
-        vectors_synced=0,
+        graph_synced=True,
+        vectors_synced=False,
     )
     code_storage.upsert_project_stats(
         IndexedProject(
@@ -281,7 +281,7 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
 
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
-    assert synced_file.vectors_synced == 1
+    assert synced_file.vectors_synced is True
 
 
 @pytest.mark.asyncio
@@ -327,8 +327,8 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
         language="python",
         content_hash="abc123",
         symbol_count=len(sample_symbols),
-        graph_synced=1,
-        vectors_synced=0,
+        graph_synced=True,
+        vectors_synced=False,
     )
     code_storage.upsert_project_stats(
         IndexedProject(
@@ -374,8 +374,8 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
         file_path=file_path,
         language="python",
         content_hash="old",
-        vectors_synced=0,
-        graph_synced=0,
+        vectors_synced=False,
+        graph_synced=False,
     )
     current_file = IndexedFile(
         id="current-file-id",
@@ -383,8 +383,8 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
         file_path=file_path,
         language="python",
         content_hash="new",
-        vectors_synced=1,
-        graph_synced=0,
+        vectors_synced=True,
+        graph_synced=False,
     )
     storage = MagicMock()
     storage.get_file.return_value = current_file

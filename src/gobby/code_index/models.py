@@ -142,8 +142,8 @@ class IndexedFile:
     content_hash: str
     symbol_count: int = 0
     byte_size: int = 0
-    graph_synced: int = 0
-    vectors_synced: int = 0
+    graph_synced: bool = False
+    vectors_synced: bool = False
     graph_sync_attempted_at: str | None = None
     indexed_at: str = ""
 
@@ -166,8 +166,8 @@ class IndexedFile:
             content_hash=row["content_hash"],
             symbol_count=row["symbol_count"],
             byte_size=row["byte_size"],
-            graph_synced=row["graph_synced"] if "graph_synced" in row.keys() else 0,
-            vectors_synced=row["vectors_synced"] if "vectors_synced" in row.keys() else 0,
+            graph_synced=bool(row["graph_synced"]) if "graph_synced" in row.keys() else False,
+            vectors_synced=bool(row["vectors_synced"]) if "vectors_synced" in row.keys() else False,
             graph_sync_attempted_at=(
                 row["graph_sync_attempted_at"] if "graph_sync_attempted_at" in row.keys() else None
             ),
