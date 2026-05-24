@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -445,6 +446,62 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
         "holistic_qa",
         "merge",
     ]
+
+
+@pytest.mark.asyncio
+async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_build(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.service import build
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=str(kwargs["task_id"]),
+            run_id="run-build-planner",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    result = await build(
+        str(plan_file),
+        _options(quick=True, isolation="worktree", target_branch="main"),
+        db=temp_db,
+        project_id=project_id,
+        services=SimpleNamespace(
+            database=temp_db,
+            task_manager=task_manager,
+            session_manager=session_manager,
+            agent_runner=SimpleNamespace(),
+        ),
+    )
+    task = task_manager.get_task(result.task_id)
+
+    assert task.isolation == "worktree"
+    assert spawn_kwargs["agent_lookup_name"] == "planner"
+    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["worktree_id"] is None
+    assert spawn_kwargs["clone_id"] is None
 
 
 @pytest.mark.asyncio

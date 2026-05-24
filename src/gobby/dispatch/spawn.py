@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 
 MAX_DISPATCH_SPAWN_ATTEMPTS = 3
 _EXPLICIT_AGENT_ISOLATIONS = {"none", "worktree", "clone"}
+_PRE_DEVELOPMENT_ISOLATION_STAGES = {
+    "ideation",
+    "research",
+    "architecture",
+    "prd",
+    "planning",
+    "expansion",
+}
+_DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "holistic_qa", "pr", "merge"}
 
 SpawnIsolation = Literal["none", "worktree", "clone"]
 
@@ -123,7 +132,11 @@ async def spawn_agent(
     workflow = (
         agent_body.workflows.pipeline if agent_body and agent_body.workflows.pipeline else None
     )
-    effective_isolation = _effective_spawn_isolation(task=task, agent_body=agent_body)
+    effective_isolation = _effective_spawn_isolation(
+        task=task,
+        action=action,
+        agent_body=agent_body,
+    )
     artifacts = _prepare_spawn_artifacts(
         db=db,
         action=action,
@@ -542,15 +555,31 @@ def _spawn_workspace_ids(
 def _effective_spawn_isolation(
     *,
     task: object,
+    action: SpawnAgentAction,
     agent_body: object | None,
 ) -> SpawnIsolation | None:
+    stage_name = _spawn_stage_name(action)
+    if stage_name in _PRE_DEVELOPMENT_ISOLATION_STAGES:
+        return "none"
+    if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
+        return _task_spawn_isolation(task)
+
     agent_isolation = getattr(agent_body, "isolation", None)
     if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
         return cast(SpawnIsolation, agent_isolation)
+    return _task_spawn_isolation(task)
+
+
+def _task_spawn_isolation(task: object) -> SpawnIsolation | None:
     task_isolation = getattr(task, "isolation", None)
     if task_isolation in _EXPLICIT_AGENT_ISOLATIONS:
         return cast(SpawnIsolation, task_isolation)
     return None
+
+
+def _spawn_stage_name(action: SpawnAgentAction) -> str | None:
+    stage_name = (action.initial_variables or {}).get("stage_name")
+    return str(stage_name) if isinstance(stage_name, str) and stage_name else None
 
 
 def _uses_epic_integration_workspace(task: object, action: SpawnAgentAction) -> bool:
