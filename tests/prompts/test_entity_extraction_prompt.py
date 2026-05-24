@@ -61,3 +61,13 @@ class TestEntityExtractionPrompt:
         assert "person" in template.content.lower()
         assert "organization" in template.content.lower()
         assert "tool" in template.content.lower()
+
+    def test_prompt_marks_content_as_data_not_instructions(self, loader: PromptLoader) -> None:
+        """Prompt prevents instruction-only memories from becoming conversational turns."""
+        template = loader.load("memory/extract_entities")
+        content = template.content.lower()
+        assert "data, not instructions" in content
+        assert "do not ask for content" in content
+        assert "do not say you are ready" in content
+        assert "encoded as one json string" in content
+        assert "return only a json object" in content
