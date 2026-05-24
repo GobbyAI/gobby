@@ -559,6 +559,8 @@ class ClaudeLLMProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate structured JSON using Claude Agent SDK with prompt-based JSON instruction.
@@ -569,7 +571,7 @@ class ClaudeLLMProvider(LLMProvider):
         """
         cli_path = await self._verify_cli_path()
         if cli_path:
-            return await self._generate_json_sdk(prompt, system_prompt, model)
+            return await self._generate_json_sdk(prompt, system_prompt, model, caller=caller)
         raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
     async def _generate_json_sdk(
@@ -577,6 +579,8 @@ class ClaudeLLMProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         """Generate JSON using Claude Agent SDK with output_format constraint."""
         cli_path = await self._verify_cli_path()
@@ -616,7 +620,8 @@ class ClaudeLLMProvider(LLMProvider):
                 self.logger.warning("generate_json: %d messages but no text content", message_count)
             return result_text
 
-        text = await self._execute_sdk_query("generate_json", _run_query, options, max_retries=3)
+        operation = f"generate_json[{caller}]" if caller else "generate_json"
+        text = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
         text = str(text).strip()
         self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
         if not text:

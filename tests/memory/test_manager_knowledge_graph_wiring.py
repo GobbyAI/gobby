@@ -100,6 +100,8 @@ class TestKnowledgeGraphServiceInitialization:
         call_kwargs = mock_kg_service.call_args.kwargs
         assert call_kwargs["llm_provider"] is provider
         assert call_kwargs["model"] == "haiku"
+        assert call_kwargs["llm_service"] is llm_service
+        assert call_kwargs["feature_config"] is manager.config.kg
 
     def test_kg_service_none_when_no_FalkorDB(self) -> None:
         """KnowledgeGraphService is None when FalkorDB is not configured."""

@@ -283,6 +283,44 @@ class LLMService:
                 caller=caller,
             )
 
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        """Call generate_json for a feature config with tier-based fallback."""
+        provider, model, _ = self.get_provider_for_feature(feature_config)
+        try:
+            return await provider.generate_json(
+                prompt,
+                system_prompt,
+                model,
+                caller=caller,
+            )
+        except Exception as e:
+            if provider.provider_name != "local":
+                raise
+
+            from gobby.config.feature_base import TIER_FALLBACK_MODEL, ModelTier
+
+            tier = getattr(feature_config, "tier", ModelTier.LOW)
+            fallback_model = TIER_FALLBACK_MODEL[tier]
+            logger.warning(
+                "Local provider JSON call failed (%s), falling back to claude/%s",
+                e,
+                fallback_model,
+            )
+            fallback = self.get_provider("claude")
+            return await fallback.generate_json(
+                prompt,
+                system_prompt,
+                fallback_model,
+                caller=caller,
+            )
+
     @property
     def enabled_providers(self) -> list[str]:
         """Get list of enabled provider names."""

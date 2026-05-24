@@ -15,7 +15,7 @@ class TestLLMProviderBaseGenerateJson:
         assert hasattr(LLMProvider, "generate_json")
 
     def test_generate_json_signature(self) -> None:
-        """generate_json accepts prompt, system_prompt, and model params."""
+        """generate_json accepts prompt, system_prompt, model, and caller params."""
         import inspect
 
         from gobby.llm.base import LLMProvider
@@ -25,3 +25,4 @@ class TestLLMProviderBaseGenerateJson:
         assert "prompt" in params
         assert "system_prompt" in params
         assert "model" in params
+        assert "caller" in params

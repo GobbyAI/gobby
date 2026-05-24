@@ -48,6 +48,8 @@ class MockToolUseBlock:
 class MockClaudeAgentOptions:
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
         self.settings: str | None = None
         self.setting_sources: list[str] | None = None
         self.stderr: object = None
@@ -446,6 +448,46 @@ class TestGenerateJson:
 
         assert result == {"isolated": True}
         assert captured_sources == [[]]
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_passes_system_prompt_output_format_and_caller(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """Feature JSON calls should make their instruction contract visible to Claude."""
+        captured: dict[str, object] = {}
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured["prompt"] = prompt
+            captured["system_prompt"] = options.system_prompt
+            captured["output_format"] = options.output_format
+            yield MockAssistantMessage([MockTextBlock('{"entities": []}')])
+
+        async def execute_sdk_query(
+            operation: str,
+            query_fn: Any,
+            options: object,
+            **kwargs: object,
+        ) -> str:
+            captured["operation"] = operation
+            return await query_fn()
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with patch.object(provider, "_execute_sdk_query", side_effect=execute_sdk_query):
+                result = await provider._generate_json_sdk(
+                    "rendered entity extraction prompt",
+                    "strict entity extraction system prompt",
+                    "haiku",
+                    caller="memory.kg.extract_entities",
+                )
+
+        assert result == {"entities": []}
+        assert captured["prompt"] == "rendered entity extraction prompt"
+        assert captured["system_prompt"] == "strict entity extraction system prompt"
+        assert captured["output_format"] == {"type": "json_object"}
+        assert captured["operation"] == "generate_json[memory.kg.extract_entities]"
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:

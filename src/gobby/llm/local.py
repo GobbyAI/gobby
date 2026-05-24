@@ -154,6 +154,8 @@ class LocalLLMProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")

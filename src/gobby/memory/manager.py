@@ -141,6 +141,8 @@ class MemoryManager:
                     code_symbol_collection_prefix=collection_prefix,
                     embedding_dim=embedding_dim,
                     model=model,
+                    llm_service=llm_service,
+                    feature_config=config.kg,
                 )
                 logger.debug("KnowledgeGraphService initialized")
             except Exception as e:

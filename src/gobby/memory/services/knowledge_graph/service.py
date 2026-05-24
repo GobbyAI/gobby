@@ -55,6 +55,8 @@ class KnowledgeGraphService:
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
         model: str | None = None,
+        llm_service: Any | None = None,
+        feature_config: Any | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._llm = llm_provider
@@ -67,7 +69,13 @@ class KnowledgeGraphService:
         self._model = model
 
         self._writer = KnowledgeGraphWriter(falkor_client)
-        self._extractor = KnowledgeGraphExtractor(llm_provider, prompt_loader, model=model)
+        self._extractor = KnowledgeGraphExtractor(
+            llm_provider,
+            prompt_loader,
+            model=model,
+            llm_service=llm_service,
+            feature_config=feature_config,
+        )
         self._maintenance = KnowledgeGraphMaintenance(falkor_client)
         self._reader = KnowledgeGraphReader(falkor_client, embed_fn, embedding_dim=embedding_dim)
         self._code_linker = KnowledgeGraphCodeLinker(

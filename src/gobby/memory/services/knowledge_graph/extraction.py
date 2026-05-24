@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .models import Entity, Relationship, _GraphEntity
 
@@ -59,10 +59,37 @@ class KnowledgeGraphExtractor:
         llm_provider: LLMProvider,
         prompt_loader: PromptLoader,
         model: str | None = None,
+        llm_service: Any | None = None,
+        feature_config: Any | None = None,
     ) -> None:
         self._llm = llm_provider
         self._prompt_loader = prompt_loader
         self._model = model
+        self._llm_service = llm_service
+        self._feature_config = feature_config
+
+    async def _generate_json(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        caller: str,
+    ) -> dict[str, Any]:
+        call_json_feature = getattr(self._llm_service, "call_json_feature", None)
+        if self._feature_config is not None and callable(call_json_feature):
+            response = await call_json_feature(
+                self._feature_config,
+                prompt,
+                system_prompt=system_prompt,
+                caller=caller,
+            )
+            return cast(dict[str, Any], response)
+        return await self._llm.generate_json(
+            prompt,
+            system_prompt=system_prompt,
+            model=self._model,
+            caller=caller,
+        )
 
     async def extract_entities(self, content: str) -> list[Entity]:
         """Extract entities from content using LLM."""
@@ -71,10 +98,10 @@ class KnowledgeGraphExtractor:
             {"content": json.dumps(content)},
         )
         try:
-            response = await self._llm.generate_json(
+            response = await self._generate_json(
                 prompt,
                 system_prompt=ENTITY_EXTRACTION_SYSTEM_PROMPT,
-                model=self._model,
+                caller="memory.kg.extract_entities",
             )
         except ValueError as error:
             if not _is_non_actionable_json_response_error(error):
@@ -117,7 +144,7 @@ class KnowledgeGraphExtractor:
             "memory/extract_relations",
             {"content": content, "entities": entities_json},
         )
-        response = await self._llm.generate_json(prompt, model=self._model)
+        response = await self._generate_json(prompt, caller="memory.kg.extract_relationships")
         raw_relations = response.get("relations", [])
         if not isinstance(raw_relations, list):
             logger.warning(
@@ -189,6 +216,6 @@ class KnowledgeGraphExtractor:
             "memory/delete_relations",
             {"existing_relations": existing_json, "new_relations": new_relations_json},
         )
-        response = await self._llm.generate_json(prompt, model=self._model)
+        response = await self._generate_json(prompt, caller="memory.kg.select_outdated_relations")
         to_delete = response.get("relations_to_delete", [])
         return [rel for rel in to_delete if isinstance(rel, dict)]

@@ -234,6 +234,7 @@ class TestAddToGraph:
         first_call = mock_llm.generate_json.await_args_list[0]
         assert first_call.kwargs["system_prompt"] == ENTITY_EXTRACTION_SYSTEM_PROMPT
         assert first_call.kwargs["model"] is None
+        assert first_call.kwargs["caller"] == "memory.kg.extract_entities"
 
     async def test_add_to_graph_instructs_entity_extraction_as_data_contract(
         self,
@@ -257,6 +258,44 @@ class TestAddToGraph:
         assert "Never say you are ready" in system_prompt
         assert "never ask for content" in system_prompt
         assert 'return {"entities":[]}' in system_prompt
+        assert first_call.kwargs["caller"] == "memory.kg.extract_entities"
+
+    async def test_add_to_graph_routes_entity_extraction_through_feature_json_call(
+        self,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_embed_fn: AsyncMock,
+        mock_prompt_loader: MagicMock,
+    ) -> None:
+        """KG extraction should expose the same feature/caller boundary as title synthesis."""
+        feature_config = object()
+        llm_service = MagicMock()
+        llm_service.call_json_feature = AsyncMock(
+            side_effect=[
+                {"entities": [{"entity": "Josh", "entity_type": "person"}]},
+                {"relations": []},
+                {"relations_to_delete": []},
+            ]
+        )
+        mock_llm.generate_json = AsyncMock()
+        service = KnowledgeGraphService(
+            falkor_client=mock_falkor,
+            llm_provider=mock_llm,
+            embed_fn=mock_embed_fn,
+            prompt_loader=mock_prompt_loader,
+            llm_service=llm_service,
+            feature_config=feature_config,
+        )
+
+        await service.add_to_graph("Josh works on Gobby")
+
+        calls = llm_service.call_json_feature.await_args_list
+        assert calls[0].args == (feature_config, "rendered prompt")
+        assert calls[0].kwargs["system_prompt"] == ENTITY_EXTRACTION_SYSTEM_PROMPT
+        assert calls[0].kwargs["caller"] == "memory.kg.extract_entities"
+        assert calls[1].kwargs["caller"] == "memory.kg.extract_relationships"
+        assert len(calls) == 2
+        mock_llm.generate_json.assert_not_awaited()
 
     async def test_add_to_graph_extracts_relationships(
         self,
@@ -441,6 +480,10 @@ class TestAddToGraph:
         # Should have called query to delete the outdated relation
         delete_calls = [c for c in mock_falkor.query.call_args_list if "DELETE" in str(c)]
         assert len(delete_calls) >= 1
+        assert (
+            mock_llm.generate_json.await_args_list[2].kwargs["caller"]
+            == "memory.kg.select_outdated_relations"
+        )
 
     async def test_add_to_graph_no_entities_returns_early(
         self,

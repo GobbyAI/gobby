@@ -96,6 +96,8 @@ class LLMProvider(ABC):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate a JSON response from a prompt.
@@ -108,6 +110,7 @@ class LLMProvider(ABC):
             prompt: User prompt (should instruct the model to return JSON)
             system_prompt: Optional system prompt
             model: Optional model override
+            caller: Optional feature slug for provider-side logging
 
         Returns:
             Parsed JSON response as a dictionary

@@ -365,6 +365,66 @@ class TestLLMServiceCallFeature:
         assert local_provider.generate_text.await_args.kwargs["caller"] == "memory.title_synthesis"
 
     @pytest.mark.asyncio
+    @patch("openai.AsyncOpenAI")
+    async def test_call_json_feature_success(
+        self, mock_openai: MagicMock, llm_config_with_local: DaemonConfig
+    ) -> None:
+        """call_json_feature routes prompt, system prompt, model, and caller."""
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_json = AsyncMock(return_value={"entities": []})
+
+        config = DigestConfig(provider="local", model="test-model")
+        result = await service.call_json_feature(
+            config,
+            "rendered prompt",
+            system_prompt="strict JSON system prompt",
+            caller="memory.kg.extract_entities",
+        )
+
+        assert result == {"entities": []}
+        local_provider.generate_json.assert_awaited_once_with(
+            "rendered prompt",
+            "strict JSON system prompt",
+            "test-model",
+            caller="memory.kg.extract_entities",
+        )
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    @patch("openai.AsyncOpenAI")
+    async def test_call_json_feature_fallback_on_local_failure(
+        self,
+        mock_openai: MagicMock,
+        mock_claude_cls: MagicMock,
+        llm_config_with_local: DaemonConfig,
+    ) -> None:
+        """Local JSON feature failures fall back with the same instruction contract."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_json = AsyncMock(return_value={"entities": []})
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_json = AsyncMock(side_effect=ConnectionError("local down"))
+
+        config = DigestConfig(provider="local", model="test-model")
+        result = await service.call_json_feature(
+            config,
+            "rendered prompt",
+            system_prompt="strict JSON system prompt",
+            caller="memory.kg.extract_entities",
+        )
+
+        assert result == {"entities": []}
+        mock_claude_instance.generate_json.assert_awaited_once_with(
+            "rendered prompt",
+            "strict JSON system prompt",
+            "haiku",
+            caller="memory.kg.extract_entities",
+        )
+
+    @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")
     @patch("openai.AsyncOpenAI")
     async def test_call_feature_fallback_on_local_failure(
