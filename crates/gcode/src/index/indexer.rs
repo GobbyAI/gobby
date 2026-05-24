@@ -240,10 +240,7 @@ fn index_file(
     let count = parse_result.symbols.len();
 
     // PostgreSQL hub writes (transactional).
-    let mut tx = match conn.transaction() {
-        Ok(tx) => tx,
-        Err(_) => return Ok(None),
-    };
+    let mut tx = conn.transaction()?;
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
     upsert_symbols(&mut tx, &parse_result.symbols)?;

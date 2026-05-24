@@ -1,10 +1,15 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
+
+const CLANGD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub(crate) struct SemanticCallRequest<'a> {
@@ -205,6 +210,14 @@ fn resolve_clangd_command() -> Option<String> {
     find_executable_in_path("clangd").map(|path| path.to_string_lossy().to_string())
 }
 
+fn parse_clangd_command(command: &str) -> anyhow::Result<Vec<String>> {
+    let parts = shlex::split(command).ok_or_else(|| anyhow!("empty clangd command"))?;
+    if parts.is_empty() {
+        bail!("empty clangd command");
+    }
+    Ok(parts)
+}
+
 fn find_executable_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
@@ -276,7 +289,8 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
 struct ClangdResolver {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    response_rx: Receiver<anyhow::Result<Value>>,
+    reader_handle: Option<JoinHandle<()>>,
     next_id: u64,
     root_path: PathBuf,
     open_files: HashSet<PathBuf>,
@@ -284,12 +298,12 @@ struct ClangdResolver {
 
 impl ClangdResolver {
     fn start(root_path: &Path, compile_commands_dir: &Path, clangd: &str) -> anyhow::Result<Self> {
-        let mut parts = clangd.split_whitespace();
-        let program = parts
-            .next()
+        let parts = parse_clangd_command(clangd)?;
+        let (program, args) = parts
+            .split_first()
             .ok_or_else(|| anyhow!("empty clangd command"))?;
         let mut command = Command::new(program);
-        command.args(parts);
+        command.args(args);
         command.arg(format!(
             "--compile-commands-dir={}",
             compile_commands_dir.display()
@@ -301,10 +315,12 @@ impl ClangdResolver {
         let mut child = command.spawn().context("start clangd")?;
         let stdin = child.stdin.take().context("open clangd stdin")?;
         let stdout = child.stdout.take().context("open clangd stdout")?;
+        let (response_rx, reader_handle) = spawn_clangd_stdout_reader(stdout);
         let mut resolver = Self {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            response_rx,
+            reader_handle: Some(reader_handle),
             next_id: 1,
             root_path: root_path.to_path_buf(),
             open_files: HashSet::new(),
@@ -347,6 +363,36 @@ impl ClangdResolver {
         Ok(())
     }
 
+    fn close_open_files(&mut self) -> anyhow::Result<()> {
+        let paths: Vec<PathBuf> = self.open_files.iter().cloned().collect();
+        let mut first_error = None;
+
+        for path in paths {
+            let result = self.send_notification(
+                "textDocument/didClose",
+                json!({
+                    "textDocument": {
+                        "uri": path_to_uri(&path)
+                    }
+                }),
+            );
+            match result {
+                Ok(()) => {
+                    self.open_files.remove(&path);
+                }
+                Err(err) if first_error.is_none() => {
+                    first_error = Some(err);
+                }
+                Err(_) => {}
+            }
+        }
+
+        match first_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     fn send_request(&mut self, method: &str, params: Value) -> anyhow::Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
@@ -375,31 +421,7 @@ impl ClangdResolver {
     }
 
     fn read_response(&mut self, id: u64) -> anyhow::Result<Value> {
-        loop {
-            let mut content_length = None;
-            loop {
-                let mut header = String::new();
-                let read = self.stdout.read_line(&mut header)?;
-                if read == 0 {
-                    bail!("clangd closed stdout");
-                }
-                let header = header.trim_end_matches(['\r', '\n']);
-                if header.is_empty() {
-                    break;
-                }
-                if let Some(value) = header.strip_prefix("Content-Length:") {
-                    content_length = Some(value.trim().parse::<usize>()?);
-                }
-            }
-
-            let len = content_length.context("missing clangd Content-Length header")?;
-            let mut body = vec![0u8; len];
-            std::io::Read::read_exact(&mut self.stdout, &mut body)?;
-            let response: Value = serde_json::from_slice(&body)?;
-            if response.get("id").and_then(|value| value.as_u64()) == Some(id) {
-                return Ok(response);
-            }
-        }
+        read_response_from_channel(&self.response_rx, id, CLANGD_RESPONSE_TIMEOUT)
     }
 }
 
@@ -407,6 +429,9 @@ impl Drop for ClangdResolver {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -415,9 +440,9 @@ impl SemanticCallResolver for ClangdResolver {
         if !matches!(request.language, "c" | "cpp") {
             return None;
         }
-        self.ensure_open(request).ok()?;
-        let id = self
-            .send_request(
+        let result = (|| -> anyhow::Result<Option<SemanticCallTarget>> {
+            self.ensure_open(request)?;
+            let id = self.send_request(
                 "textDocument/definition",
                 json!({
                     "textDocument": { "uri": path_to_uri(request.file_path) },
@@ -426,16 +451,114 @@ impl SemanticCallResolver for ClangdResolver {
                         "character": request.column,
                     }
                 }),
-            )
-            .ok()?;
-        let response = self.read_response(id).ok()?;
-        let locations = locations_from_lsp_response(&response);
-        classify_definition(
-            request.root_path,
-            request.source,
-            request.callee_name,
-            &locations,
-        )
+            )?;
+            let response = self.read_response(id)?;
+            let locations = locations_from_lsp_response(&response);
+            Ok(classify_definition(
+                request.root_path,
+                request.source,
+                request.callee_name,
+                &locations,
+            ))
+        })();
+        let _ = self.close_open_files();
+        result.ok().flatten()
+    }
+}
+
+fn spawn_clangd_stdout_reader(
+    stdout: std::process::ChildStdout,
+) -> (Receiver<anyhow::Result<Value>>, JoinHandle<()>) {
+    let (tx, rx) = mpsc::channel();
+    let handle = thread::spawn(move || read_clangd_stdout(BufReader::new(stdout), tx));
+    (rx, handle)
+}
+
+fn read_clangd_stdout(mut reader: impl BufRead, tx: Sender<anyhow::Result<Value>>) {
+    loop {
+        match read_json_rpc_message(&mut reader) {
+            Ok(Some(response)) => {
+                if tx.send(Ok(response)).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {
+                let _ = tx.send(Err(anyhow!("clangd closed stdout")));
+                break;
+            }
+            Err(err) => {
+                let _ = tx.send(Err(err));
+                break;
+            }
+        }
+    }
+}
+
+fn read_json_rpc_message(reader: &mut impl BufRead) -> anyhow::Result<Option<Value>> {
+    let mut content_length = None;
+    loop {
+        let mut header = String::new();
+        let read = reader.read_line(&mut header)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        let header = header.trim_end_matches(['\r', '\n']);
+        if header.is_empty() {
+            break;
+        }
+        if let Some(value) = header.strip_prefix("Content-Length:") {
+            content_length = Some(value.trim().parse::<usize>()?);
+        }
+    }
+
+    let len = content_length.context("missing clangd Content-Length header")?;
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body)?;
+    let response = serde_json::from_slice(&body)?;
+    Ok(Some(response))
+}
+
+fn read_response_from_channel(
+    rx: &Receiver<anyhow::Result<Value>>,
+    id: u64,
+    timeout: Duration,
+) -> anyhow::Result<Value> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            bail!(
+                "clangd response timeout after {}",
+                format_clangd_timeout(timeout)
+            );
+        }
+        match rx.recv_timeout(deadline.saturating_duration_since(now)) {
+            Ok(Ok(response)) => {
+                if response.get("id").and_then(|value| value.as_u64()) == Some(id) {
+                    return Ok(response);
+                }
+            }
+            Ok(Err(err)) => return Err(err),
+            Err(RecvTimeoutError::Timeout) => {
+                bail!(
+                    "clangd response timeout after {}",
+                    format_clangd_timeout(timeout)
+                );
+            }
+            Err(RecvTimeoutError::Disconnected) => bail!("clangd closed stdout"),
+        }
+    }
+}
+
+fn format_clangd_timeout(timeout: Duration) -> String {
+    if timeout.as_nanos().is_multiple_of(1_000_000_000) {
+        format!("{}s", timeout.as_secs())
+    } else if timeout.as_nanos().is_multiple_of(1_000_000) {
+        format!("{}ms", timeout.as_millis())
+    } else {
+        format!("{timeout:?}")
     }
 }
 
@@ -470,6 +593,35 @@ mod tests {
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[0].path, PathBuf::from("/usr/include/stdio.h"));
         assert_eq!(locations[1].path, PathBuf::from("/opt/pkg/include/foo.hpp"));
+    }
+
+    #[test]
+    fn parses_quoted_clangd_command_arguments() {
+        let parts =
+            parse_clangd_command(r#""/tmp/tool dir/clangd" --query-driver="/usr/bin/cc *""#)
+                .expect("clangd argv");
+
+        assert_eq!(
+            parts,
+            vec!["/tmp/tool dir/clangd", "--query-driver=/usr/bin/cc *"]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_invalid_clangd_commands() {
+        for command in ["", "   ", "clangd \"unterminated"] {
+            let err = parse_clangd_command(command).expect_err("invalid clangd command");
+            assert_eq!(err.to_string(), "empty clangd command");
+        }
+    }
+
+    #[test]
+    fn channel_response_wait_times_out() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let err = read_response_from_channel(&rx, 42, Duration::from_millis(1))
+            .expect_err("clangd response timeout");
+
+        assert_eq!(err.to_string(), "clangd response timeout after 1ms");
     }
 
     #[test]

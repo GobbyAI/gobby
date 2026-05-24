@@ -66,6 +66,7 @@ streaming-iterator = "0.1"
 
 # Utilities
 glob = "0.3"
+shlex = "1"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v5"] }
 ignore = "0.4"

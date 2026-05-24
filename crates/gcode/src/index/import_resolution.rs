@@ -878,11 +878,57 @@ fn parse_rust_import_statement(
         module_name: rest.to_string(),
     });
 
-    if rest.contains('*') || rest.contains('{') || rest.contains('}') {
+    if let Some((prefix, group)) = split_rust_use_group(rest) {
+        register_rust_group_imports(prefix, group, import_context, extracted);
         return;
     }
 
-    let (path, alias) = split_alias(rest);
+    if rest.contains('*') {
+        // Glob imports are intentionally not expanded because exported names are unknown here.
+        return;
+    }
+
+    register_rust_path_import(rest, import_context, extracted);
+}
+
+fn register_rust_group_imports(
+    prefix: &str,
+    group: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    for item in split_top_level(group, ',') {
+        if item.is_empty() {
+            continue;
+        }
+        if let Some((nested_prefix, nested_group)) = split_rust_use_group(item) {
+            let Some(full_prefix) = rust_join_use_path(prefix, nested_prefix) else {
+                continue;
+            };
+            register_rust_group_imports(&full_prefix, nested_group, import_context, extracted);
+            continue;
+        }
+        if item.contains('*') {
+            // Glob imports are intentionally not expanded because exported names are unknown here.
+            continue;
+        }
+        let Some(path) = rust_join_use_path(prefix, item) else {
+            continue;
+        };
+        register_rust_path_import(&path, import_context, extracted);
+    }
+}
+
+fn register_rust_path_import(
+    path_and_alias: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = path_and_alias.trim();
+    if normalized.is_empty() {
+        return;
+    }
+    let (path, alias) = split_alias(normalized);
     let segments: Vec<&str> = path.split("::").filter(|part| !part.is_empty()).collect();
     let Some(root) = segments.first().copied() else {
         return;
@@ -1313,6 +1359,65 @@ fn split_alias(text: &str) -> (&str, Option<&str>) {
     }
 }
 
+fn split_rust_use_group(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut start = None;
+
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let start = start?;
+                    if text[idx + ch.len_utf8()..].trim().is_empty() {
+                        return Some((text[..start].trim(), text[start + 1..idx].trim()));
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn rust_join_use_path(prefix: &str, item: &str) -> Option<String> {
+    let prefix = prefix.trim().trim_end_matches("::").trim();
+    let item = item.trim();
+    if item.is_empty() {
+        return None;
+    }
+
+    let (item_path, alias) = split_alias(item);
+    let item_path = item_path.trim();
+    if item_path.is_empty() {
+        return None;
+    }
+
+    let path = if item_path == "self" {
+        if prefix.is_empty() {
+            return None;
+        }
+        prefix.to_string()
+    } else if prefix.is_empty() {
+        item_path.to_string()
+    } else {
+        format!("{prefix}::{item_path}")
+    };
+
+    Some(match alias {
+        Some(alias) if !alias.is_empty() => format!("{path} as {alias}"),
+        _ => path,
+    })
+}
+
 fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
@@ -1628,6 +1733,51 @@ serde = { version = "1.0" }
 
         assert!(crates.contains("serde"));
         assert!(crates.contains("tokio_util"));
+    }
+
+    #[test]
+    fn rust_grouped_imports_register_named_bare_bindings() {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "rust",
+            "use std::collections::{HashMap, HashSet as Set};",
+            "src/lib.rs",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
+
+        let hash_map = extracted
+            .bindings
+            .bare
+            .get("HashMap")
+            .expect("HashMap binding");
+        assert_eq!(hash_map.module, "std::collections");
+        assert_eq!(hash_map.callee_name, "HashMap");
+        let set = extracted.bindings.bare.get("Set").expect("Set binding");
+        assert_eq!(set.module, "std::collections");
+        assert_eq!(set.callee_name, "HashSet");
+        assert_eq!(
+            extracted.bindings.member.get("Set").map(String::as_str),
+            Some("std::collections::HashSet")
+        );
+        assert!(extracted.bindings.external_roots.contains_key("std"));
+    }
+
+    #[test]
+    fn rust_glob_imports_do_not_register_individual_bare_bindings() {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "rust",
+            "use std::collections::*;",
+            "src/lib.rs",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
+
+        assert!(extracted.bindings.bare.is_empty());
+        assert!(extracted.bindings.member.is_empty());
     }
 
     #[test]
