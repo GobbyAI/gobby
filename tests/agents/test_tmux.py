@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -158,17 +159,17 @@ class TestTmuxSessionManager:
         assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby", "-f", "/dev/null"]
 
     @patch("shutil.which", return_value="/usr/bin/tmux")
-    def test_is_available_true(self, mock_which) -> None:
+    def test_is_available_true(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         assert mgr.is_available() is True
 
     @patch("shutil.which", return_value=None)
-    def test_is_available_false(self, mock_which) -> None:
+    def test_is_available_false(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         assert mgr.is_available() is False
 
     @patch("shutil.which", return_value=None)
-    def test_require_available_raises(self, mock_which) -> None:
+    def test_require_available_raises(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         with pytest.raises(TmuxNotFoundError):
             mgr.require_available()
@@ -213,7 +214,10 @@ class TestTmuxSessionManager:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_run_timeout_handles_already_exited_process(self, caplog) -> None:
+    async def test_run_timeout_handles_already_exited_process(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         mgr = TmuxSessionManager()
         proc = MagicMock()
         proc.pid = 12345
@@ -355,11 +359,30 @@ class TestTmuxSessionManager:
             )
 
     @pytest.mark.asyncio
-    async def test_rename_window_failure(self) -> None:
+    async def test_rename_window_missing_pane_logs_debug(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "can't find pane: %53")
+
+            with caplog.at_level("DEBUG", logger="gobby.agents.tmux.session_manager"):
+                assert await mgr.rename_window("%53", "Title") is False
+
+        assert "Skipping tmux window rename for missing target '%53'" in caplog.text
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
+
+    @pytest.mark.asyncio
+    async def test_rename_window_failure(self, caplog: pytest.LogCaptureFixture) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (1, "", "no such window")
-            assert await mgr.rename_window("%99", "Title") is False
+
+            with caplog.at_level("WARNING", logger="gobby.agents.tmux.session_manager"):
+                assert await mgr.rename_window("%99", "Title") is False
+
+        assert "Failed to rename tmux window for '%99': no such window" in caplog.text
 
     @pytest.mark.asyncio
     async def test_send_keys(self) -> None:
@@ -424,9 +447,8 @@ class TestTmuxOutputReader:
     @pytest.mark.asyncio
     async def test_stop_all_empty(self) -> None:
         reader = TmuxOutputReader()
-        result = await reader.stop_all()
+        await reader.stop_all()
 
-        assert result is None
         assert reader._reader_tasks == {}
 
 
@@ -454,7 +476,7 @@ class TestSingletons:
     """Tests for module-level singleton getters."""
 
     @pytest.fixture(autouse=True)
-    def reset_singletons(self) -> None:
+    def reset_singletons(self) -> Generator[None]:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 
@@ -547,17 +569,15 @@ class TestTmuxPTYBridge:
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
-        result = await bridge.detach("nonexistent")
+        await bridge.detach("nonexistent")
 
-        assert result is None
         assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
     async def test_detach_all_empty(self) -> None:
         bridge = TmuxPTYBridge()
-        result = await bridge.detach_all()
+        await bridge.detach_all()
 
-        assert result is None
         assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
@@ -780,6 +800,7 @@ class TestTmuxSpawner:
             )
 
             assert result.success is False
+            assert result.error is not None
             assert "tmux not found" in result.error
 
     @pytest.mark.asyncio

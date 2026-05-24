@@ -21,7 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 _MISSING_SESSION_ERRORS = ("can't find session", "no such session", "no server running")
+_MISSING_TARGET_ERRORS = (
+    *_MISSING_SESSION_ERRORS,
+    "can't find pane",
+    "no such pane",
+)
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+
+
+def _is_missing_tmux_target_error(stderr: str) -> bool:
+    """Return True for tmux errors that mean the target disappeared."""
+    message = stderr.lower()
+    return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
 
 
 @dataclass
@@ -495,7 +506,13 @@ class TmuxSessionManager:
             "off",
         )
         if rc != 0:
-            logger.warning(f"Failed to rename tmux window for '{target}': {stderr.strip()}")
+            message = stderr.strip()
+            if _is_missing_tmux_target_error(message):
+                logger.debug(
+                    "Skipping tmux window rename for missing target '%s': %s", target, message
+                )
+            else:
+                logger.warning("Failed to rename tmux window for '%s': %s", target, message)
             return False
         return True
 
