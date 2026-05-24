@@ -12,3 +12,9 @@ pub fn print_json<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
+
+/// Print a JSON payload to stdout as compact text.
+pub fn print_text(value: &serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
+}

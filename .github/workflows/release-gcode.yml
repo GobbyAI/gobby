@@ -45,6 +45,9 @@ jobs:
       - name: Run tests
         run: cargo test -p gobby-code
 
+      - name: Run tests without default features
+        run: cargo test -p gobby-code --no-default-features
+
   build:
     needs: test
     strategy:

@@ -120,6 +120,20 @@ mod tests {
     }
 
     #[test]
+    fn plugin_json_is_valid() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(PLUGIN_JSON).expect("plugin json parses");
+
+        assert_eq!(manifest["name"], "gcode");
+        assert_eq!(manifest["version"], "0.1.0");
+        assert!(
+            manifest["description"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+    }
+
+    #[test]
     fn supported_targets_are_stable_and_include_deprecated_gemini() {
         let names: Vec<_> = supported_targets()
             .iter()

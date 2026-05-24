@@ -6,7 +6,7 @@ use crate::output::{self, Format};
 use crate::savings;
 
 pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let file = scope::normalize_file_arg(ctx, file);
     let columns = db::symbol_select_columns("");
     let symbols: Vec<Symbol> = conn
@@ -119,7 +119,7 @@ fn short_id(id: &str) -> &str {
 }
 
 pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let columns = db::symbol_select_columns("");
     let sym: Option<Symbol> = conn
         .query_opt(
@@ -179,7 +179,7 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
 }
 
 pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<()> {
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     if ids.is_empty() {
         return match format {
             Format::Json => output::print_json(&Vec::<Symbol>::new()),

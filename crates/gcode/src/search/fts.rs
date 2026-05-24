@@ -830,7 +830,6 @@ fn search_content_like(
 }
 
 fn make_snippet(content: &str, query: &str) -> String {
-    let lowered = content.to_lowercase();
     let tokens: Vec<String> = query
         .split_whitespace()
         .map(str::to_lowercase)
@@ -838,17 +837,25 @@ fn make_snippet(content: &str, query: &str) -> String {
         .collect();
     let mut match_at = None;
     for token in tokens {
-        if let Some(index) = lowered.find(&token) {
+        if let Some(index) =
+            content
+                .char_indices()
+                .enumerate()
+                .find_map(|(char_index, (byte_index, _))| {
+                    content[byte_index..]
+                        .to_lowercase()
+                        .starts_with(&token)
+                        .then_some(char_index)
+                })
+        {
             match_at = Some(index);
             break;
         }
     }
-    let start = match_at.unwrap_or(0).saturating_sub(60);
-    let end = (match_at.unwrap_or(0) + 120).min(content.len());
-    content
-        .get(start..end)
-        .unwrap_or_else(|| content.get(..content.len().min(120)).unwrap_or(""))
-        .to_string()
+    let match_at = match_at.unwrap_or(0);
+    let start = match_at.saturating_sub(60);
+    let end = (match_at + 120).min(content.chars().count());
+    content.chars().skip(start).take(end - start).collect()
 }
 
 #[cfg(test)]
@@ -923,5 +930,20 @@ mod tests {
 
         assert!(snippet.contains("target call here"));
         assert!(snippet.len() <= 180);
+    }
+
+    #[test]
+    fn snippet_handles_unicode_before_match() {
+        let content = "é".repeat(80) + " target call here";
+        let snippet = make_snippet(&content, "target");
+
+        assert!(snippet.contains("target call here"));
+        assert!(snippet.chars().count() <= 180);
+
+        let content = "\u{0130}".repeat(80) + " target call here";
+        let snippet = make_snippet(&content, "target");
+
+        assert!(snippet.contains("target call here"));
+        assert!(snippet.chars().count() <= 180);
     }
 }
