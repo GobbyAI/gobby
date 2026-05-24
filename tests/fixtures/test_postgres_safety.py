@@ -59,7 +59,7 @@ def test_configured_postgres_database_url_reads_bootstrap_under_test_protect(
     monkeypatch.setattr(
         bootstrap,
         "load_bootstrap",
-        lambda: SimpleNamespace(database_url=database_url),
+        lambda **_kwargs: SimpleNamespace(database_url=database_url),
     )
 
     assert _configured_postgres_database_url() == database_url

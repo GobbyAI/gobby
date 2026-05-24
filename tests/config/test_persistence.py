@@ -129,12 +129,13 @@ class TestMemoryConfigBackendValidator:
             MemoryConfig(backend="invalid_backend")
         assert "invalid_backend" in str(exc_info.value).lower()
 
-    def test_backend_postgres_alias(self) -> None:
-        """Test that 'postgres' is accepted as alias for 'local'."""
+    def test_backend_rejects_postgres(self) -> None:
+        """PostgreSQL is configured as the hub, not as a memory backend."""
         from gobby.config.persistence import MemoryConfig
 
-        config = MemoryConfig(backend="postgres")
-        assert config.backend == "local"
+        with pytest.raises(ValidationError) as exc_info:
+            MemoryConfig(backend="postgres")
+        assert "postgres" in str(exc_info.value).lower()
 
 
 # =============================================================================

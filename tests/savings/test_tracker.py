@@ -7,27 +7,9 @@ from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def db(tmp_path) -> HubDatabase:
-    """Create a temporary database with savings tables."""
-    db_path = str(tmp_path / "test.db")
-    db = HubDatabase(db_path)
-    db.execute("""CREATE TABLE savings_ledger (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT,
-        project_id TEXT,
-        category TEXT NOT NULL,
-        original_tokens INTEGER NOT NULL,
-        actual_tokens INTEGER NOT NULL,
-        tokens_saved INTEGER NOT NULL,
-        model TEXT,
-        metadata TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )""")
-    db.execute("CREATE INDEX idx_savings_ledger_created ON savings_ledger(created_at)")
-    db.execute(
-        "CREATE INDEX idx_savings_ledger_project_cat ON savings_ledger(project_id, category)"
-    )
-    return db
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
 
 
 @pytest.fixture

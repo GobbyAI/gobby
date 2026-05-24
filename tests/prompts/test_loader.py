@@ -6,18 +6,14 @@ from gobby.prompts import PromptLoader, PromptTemplate
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager, PromptChangeNotifier
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a fresh database with migrations applied."""
-    database = HubDatabase(tmp_path / "test.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
 
 
 @pytest.fixture

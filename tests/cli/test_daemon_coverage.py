@@ -64,7 +64,8 @@ class TestServicesStart:
         )
         mock_run.return_value = MagicMock(returncode=0)
 
-        _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -87,7 +88,8 @@ class TestServicesStart:
         )
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
-        _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -108,7 +110,8 @@ class TestServicesStart:
             qdrant_url="http://localhost:6333",
         )
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
-        result = _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            result = _services_start(tmp_path)
         assert result is None
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
@@ -121,12 +124,13 @@ class TestServicesStart:
         compose.write_text("version: '3'")
 
         mock_config.side_effect = RuntimeError("config error")
-        # Should still try to run docker compose even on config error
+        # Without resolved service config there are no profiles to start.
         with patch("gobby.cli.daemon.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            result = _services_start(tmp_path)
+            with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+                result = _services_start(tmp_path)
             assert result is None
-            mock_run.assert_called_once()
+            mock_run.assert_not_called()
 
 
 class TestServicesStop:
@@ -170,9 +174,14 @@ class TestServicesStop:
 # stop command
 # ---------------------------------------------------------------------------
 class TestStopCommand:
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": False, "running": False},
+    )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
-    def test_stop_success(self, _stop: MagicMock, runner: CliRunner) -> None:
+    def test_stop_success(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
+        config.daemon_port = 60887
         result = runner.invoke(stop, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
 
@@ -188,11 +197,21 @@ class TestStopCommand:
 
     @patch("gobby.cli.daemon._services_stop")
     @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": False, "running": False},
+    )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
     def test_stop_with_docker(
-        self, _stop: MagicMock, _home: MagicMock, mock_services: MagicMock, runner: CliRunner
+        self,
+        _stop: MagicMock,
+        _svc: MagicMock,
+        _home: MagicMock,
+        mock_services: MagicMock,
+        runner: CliRunner,
     ) -> None:
         config = MagicMock()
+        config.daemon_port = 60887
         result = runner.invoke(stop, ["--docker"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         mock_services.assert_called_once()

@@ -16,7 +16,6 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -51,13 +50,14 @@ def _step(agent: dict, name: str) -> dict:
 
 def _create_session(db: HubDatabase, session_id: str = "merge-worker-session") -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, NOW()) "
+        "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions "
+        "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, ?, ?, ?, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
         (session_id, "ext-1", "machine-1", "claude", "project-1"),
     )
 
@@ -131,12 +131,6 @@ def _mcp_event(
         data=data,
         metadata={"is_failure": is_error},
     )
-
-
-def _test_db(tmp_path: Path) -> HubDatabase:
-    db = HubDatabase(tmp_path / "merge-worker.db")
-    run_migrations(db)
-    return db
 
 
 def test_merge_orchestrator_uses_stage_native_merge_result_tool() -> None:
@@ -274,8 +268,8 @@ def test_merge_worker_preserves_guarded_verification_commands() -> None:
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_allows_verify_before_recording_result(tmp_path: Path) -> None:
-    db = _test_db(tmp_path)
+async def test_merge_worker_allows_verify_before_recording_result(temp_db: HubDatabase) -> None:
+    db = temp_db
     instance_manager = _install_merge_worker_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -309,8 +303,8 @@ def test_merge_worker_allows_end_agent_run_only_in_terminate_step() -> None:
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_failure_result_transitions_to_terminate(tmp_path: Path) -> None:
-    db = _test_db(tmp_path)
+async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: HubDatabase) -> None:
+    db = temp_db
     instance_manager = _install_merge_worker_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -338,9 +332,9 @@ async def test_merge_worker_failure_result_transitions_to_terminate(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_merge_worker_success_waits_for_issue_close_before_terminate(
-    tmp_path: Path,
+    temp_db: HubDatabase,
 ) -> None:
-    db = _test_db(tmp_path)
+    db = temp_db
     instance_manager = _install_merge_worker_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -375,8 +369,8 @@ async def test_merge_worker_success_waits_for_issue_close_before_terminate(
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_blocks_premature_end_agent_run(tmp_path: Path) -> None:
-    db = _test_db(tmp_path)
+async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase) -> None:
+    db = temp_db
     _install_merge_worker_workflow(db)
     engine = RuleEngine(db)
 

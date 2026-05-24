@@ -803,15 +803,15 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
             """
             SELECT * FROM agent_runs
             WHERE status = 'running'
-            AND datetime(started_at) < datetime('now', 'utc', ? || ' minutes')
+            AND started_at < NOW() - (? * INTERVAL '1 minute')
             """,
-            (f"-{timeout}",),
+            (timeout,),
         )
         stale_pending = db.fetchall(
             """
             SELECT * FROM agent_runs
             WHERE status = 'pending'
-            AND datetime(created_at) < datetime('now', 'utc', '-60 minutes')
+            AND created_at < NOW() - INTERVAL '60 minutes'
             """
         )
 

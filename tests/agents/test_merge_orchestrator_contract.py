@@ -75,10 +75,8 @@ FORBIDDEN_EXECUTE_TOOLS = {
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> HubDatabase:
-    database = HubDatabase(tmp_path / "test_merge_orchestrator_contract.db")
-    _create_contract_schema(database)
-    return database
+def db(temp_db: HubDatabase) -> HubDatabase:
+    return temp_db
 
 
 def _create_contract_schema(db: HubDatabase) -> None:
@@ -202,14 +200,15 @@ def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _create_session(db: HubDatabase, session_id: str = "agent-session") -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, NOW()) "
+        "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions "
+        "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        "VALUES (?, ?, ?, ?, ?, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
+        (session_id, f"ext-{session_id}", "machine-1", "claude", "project-1"),
     )
 
 
@@ -229,13 +228,24 @@ def _install_workflow(
         "steps": agent["steps"],
         "exit_condition": agent["exit_condition"],
     }
-    LocalWorkflowDefinitionManager(db).create(
-        name=agent["name"],
-        definition_json=json.dumps(definition),
-        workflow_type="workflow",
-        priority=100,
-        enabled=True,
-    )
+    definition_manager = LocalWorkflowDefinitionManager(db)
+    existing = definition_manager.get_by_name(agent["name"])
+    if existing is None:
+        definition_manager.create(
+            name=agent["name"],
+            definition_json=json.dumps(definition),
+            workflow_type="workflow",
+            priority=100,
+            enabled=True,
+        )
+    else:
+        definition_manager.update(
+            existing.id,
+            definition_json=json.dumps(definition),
+            workflow_type="workflow",
+            priority=100,
+            enabled=True,
+        )
     manager = WorkflowInstanceManager(db)
     manager.save_instance(
         WorkflowInstance(

@@ -1,28 +1,60 @@
 """Tests for skill search functionality."""
 
+import json
+from datetime import UTC, datetime
+
 import pytest
 
+from gobby.search import SearchConfig
 from gobby.skills.search import SearchFilters, SkillSearch, SkillSearchResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import Skill
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary HubDatabase fixture."""
-    database = HubDatabase(tmp_path / "test.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
+
+
+def _seed_skills(db: HubDatabase, skills: list[Skill]) -> None:
+    now = datetime.now(UTC).isoformat()
+    for skill in skills:
+        db.execute(
+            """
+            INSERT INTO skills (
+                id, name, description, content, metadata,
+                enabled, always_apply, injection_format, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                content = EXCLUDED.content,
+                metadata = EXCLUDED.metadata,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                skill.id,
+                skill.name,
+                skill.description,
+                skill.content,
+                json.dumps(skill.metadata) if skill.metadata else None,
+                skill.enabled,
+                skill.always_apply,
+                skill.injection_format,
+                skill.source,
+                now,
+                now,
+            ),
+        )
 
 
 @pytest.fixture
-def sample_skills():
+def sample_skills(db: HubDatabase) -> list[Skill]:
     """Create sample skills for testing."""
-    return [
+    skills = [
         Skill(
             id="skl-commit",
             name="commit-message",
@@ -72,6 +104,8 @@ def sample_skills():
             },
         ),
     ]
+    _seed_skills(db, skills)
+    return skills
 
 
 class TestSkillSearchResult:
@@ -108,7 +142,7 @@ class TestSkillSearch:
 
     def test_index_empty_skills(self, db) -> None:
         """Test indexing empty skill list."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills([])
 
         assert not search._indexed
@@ -116,7 +150,7 @@ class TestSkillSearch:
 
     def test_index_skills(self, db, sample_skills) -> None:
         """Test indexing skills."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         assert search._indexed
@@ -124,7 +158,7 @@ class TestSkillSearch:
 
     def test_search_by_name(self, db, sample_skills) -> None:
         """Test searching by skill name."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("commit", top_k=5)
@@ -135,7 +169,7 @@ class TestSkillSearch:
 
     def test_search_by_description(self, db, sample_skills) -> None:
         """Test searching by description content."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("unit tests", top_k=5)
@@ -147,7 +181,7 @@ class TestSkillSearch:
 
     def test_search_by_tags(self, db, sample_skills) -> None:
         """Test searching by tag content."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("workflow", top_k=5)
@@ -159,7 +193,7 @@ class TestSkillSearch:
 
     def test_search_by_category(self, db, sample_skills) -> None:
         """Test searching by category."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("git", top_k=5)
@@ -171,7 +205,7 @@ class TestSkillSearch:
 
     def test_search_returns_top_k(self, db, sample_skills) -> None:
         """Test that search respects top_k limit."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("quality", top_k=2)
@@ -180,7 +214,7 @@ class TestSkillSearch:
 
     def test_search_results_ranked_by_similarity(self, db, sample_skills) -> None:
         """Test that results are sorted by similarity descending."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("code review quality", top_k=5)
@@ -191,7 +225,7 @@ class TestSkillSearch:
 
     def test_search_no_results(self, db, sample_skills) -> None:
         """Test search with no matching results."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         results = search.search("xyznonexistent123", top_k=5)
@@ -201,14 +235,14 @@ class TestSkillSearch:
 
     def test_search_before_index(self, db) -> None:
         """Test searching before indexing returns empty."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         results = search.search("test")
 
         assert results == []
 
     def test_add_skill_marks_update(self, db, sample_skills) -> None:
         """Test that add_skill increments pending updates."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
         assert search._pending_updates == 0
 
@@ -227,7 +261,7 @@ class TestSkillSearch:
         """Test that update_skill increments pending updates."""
         import copy
 
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         updated_skill = copy.deepcopy(sample_skills[0])
@@ -238,7 +272,7 @@ class TestSkillSearch:
 
     def test_remove_skill_marks_update(self, db, sample_skills) -> None:
         """Test that remove_skill increments pending updates."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         search.remove_skill("skl-commit")
@@ -248,7 +282,7 @@ class TestSkillSearch:
 
     def test_needs_reindex_after_threshold(self, db, sample_skills) -> None:
         """Test that needs_reindex returns True after threshold updates."""
-        search = SkillSearch(db=db, refit_threshold=3)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"), refit_threshold=3)
         search.index_skills(sample_skills)
 
         assert not search.needs_reindex()
@@ -265,12 +299,12 @@ class TestSkillSearch:
 
     def test_needs_reindex_before_indexing(self, db) -> None:
         """Test that needs_reindex returns True before any indexing."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         assert search.needs_reindex()
 
     def test_get_stats(self, db, sample_skills) -> None:
         """Test getting search statistics."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         stats = search.get_stats()
@@ -282,7 +316,7 @@ class TestSkillSearch:
 
     def test_clear(self, db, sample_skills) -> None:
         """Test clearing the search index."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
         assert search._indexed
 
@@ -294,8 +328,6 @@ class TestSkillSearch:
 
     def test_custom_parameters(self, db, sample_skills) -> None:
         """Test creating search with custom parameters."""
-        from gobby.search import SearchConfig
-
         config = SearchConfig(mode="keyword", keyword_weight=0.5, embedding_weight=0.5)
         search = SkillSearch(
             db=db,
@@ -314,7 +346,7 @@ class TestSkillSearchIntegration:
 
     def test_search_multiple_fields_combined(self, db, sample_skills) -> None:
         """Test that search considers all indexed fields."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # Query that matches different fields in same skill
@@ -326,7 +358,7 @@ class TestSkillSearchIntegration:
 
     def test_reindex_after_updates(self, db, sample_skills) -> None:
         """Test reindexing after multiple updates."""
-        search = SkillSearch(db=db, refit_threshold=2)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"), refit_threshold=2)
         search.index_skills(sample_skills)
 
         # Add skills to trigger reindex threshold
@@ -350,6 +382,7 @@ class TestSkillSearchIntegration:
                 content="Content",
             )
         ]
+        _seed_skills(db, updated_skills)
         search.index_skills(updated_skills)
 
         # Should find the new skill
@@ -400,7 +433,7 @@ class TestSkillSearchFiltering:
 
     def test_filter_by_category(self, db, sample_skills) -> None:
         """Test filtering search results by category."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # Search for general term that would match multiple skills
@@ -414,7 +447,7 @@ class TestSkillSearchFiltering:
 
     def test_filter_by_category_no_matches(self, db, sample_skills) -> None:
         """Test filtering by category with no matches."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         filters = SearchFilters(category="nonexistent")
@@ -424,7 +457,7 @@ class TestSkillSearchFiltering:
 
     def test_filter_by_tags_any(self, db, sample_skills) -> None:
         """Test filtering by any of the specified tags."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # "quality" tag exists in code-review and test-writing
@@ -438,7 +471,7 @@ class TestSkillSearchFiltering:
 
     def test_filter_by_tags_all(self, db, sample_skills) -> None:
         """Test filtering by all of the specified tags."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # Only commit-message has both "git" AND "workflow" tags
@@ -452,7 +485,7 @@ class TestSkillSearchFiltering:
 
     def test_filter_combined_category_and_tags(self, db, sample_skills) -> None:
         """Test filtering by both category and tags."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # category="git" AND has tag "commits"
@@ -466,7 +499,7 @@ class TestSkillSearchFiltering:
 
     def test_filters_applied_after_ranking(self, db, sample_skills) -> None:
         """Test that filters are applied after similarity ranking."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # Get unfiltered results for comparison
@@ -488,7 +521,7 @@ class TestSkillSearchFiltering:
 
     def test_search_without_filters(self, db, sample_skills) -> None:
         """Test that search without filters returns all matching results."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         # No filters - should work as before
@@ -497,7 +530,7 @@ class TestSkillSearchFiltering:
 
     def test_empty_filters_same_as_no_filters(self, db, sample_skills) -> None:
         """Test that empty filters behave same as no filters."""
-        search = SkillSearch(db=db)
+        search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
         no_filter_results = search.search("git", top_k=10)

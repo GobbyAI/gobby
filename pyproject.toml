@@ -22,7 +22,7 @@ dependencies = [
     "aiohttp>=3.11.0",
     "anthropic>=0.75.0",
     "click>=8.1.0",
-    "fastapi>=0.115.0",
+    "fastapi>=0.136.3",
     # fastmcp <3.2.0 has CVE-2025-64340, CVE-2026-27124
     "fastmcp>=3.2.0",
     "httpx>=0.27.0",
@@ -88,6 +88,12 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 # (missing project.version in pyproject.toml). Force >=0.21.
 constraint-dependencies = [
     "tokenizers>=0.21",
+    # idna <3.15 has CVE-2026-6695 (transitive via HTTP clients)
+    "idna>=3.15",
+    # starlette <1.0.1 has CVE-2026-53713; keep the ASGI stack on compatible floors.
+    "mcp>=1.27.1",
+    "sse-starlette>=3.4.4",
+    "starlette>=1.0.1",
     # authlib <=1.6.11 has GHSA-r95x-qfjj-fjj2 (medium); <1.6.11 also had
     # GHSA-jj8c-mmj3-mmgv. Transitive via fastmcp.
     "authlib>=1.6.12",
@@ -110,6 +116,10 @@ override-dependencies = [
     "torchaudio==2.11.0",
     # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
     "diffusers>=0.38.0",
+    # chatterbox-tts==0.1.7 pins gradio==6.8.0, which keeps Starlette below
+    # the audit-safe floor. Voice extra is opt-in; force the current compatible
+    # Gradio line until chatterbox relaxes its pin.
+    "gradio>=6.14.0",
     # Temporary chatterbox-tts==0.1.7 override; keep until the checklist above passes.
     "safetensors>=0.8.0rc0",
 ]

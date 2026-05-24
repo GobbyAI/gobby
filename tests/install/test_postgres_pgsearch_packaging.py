@@ -90,7 +90,7 @@ def test_dockerfile_uses_manifest_build_args_and_initdb_seed(repo_root: Path) ->
     dockerfile = _read_source_asset(repo_root, "Dockerfile")
 
     assert (
-        "FROM postgres:18-trixie@sha256:8ff36f3c66371cba71d20ceedccfc3de9669a68737607888c4ef0af93abe8e39"
+        "FROM postgres:18-trixie@sha256:41da01536bc3ae26308cefb0c57235e7488001360bdb15191eb0b7955b570299"
         in dockerfile
     )
     assert "ARG PG_SEARCH_VERSION" in dockerfile
@@ -98,7 +98,7 @@ def test_dockerfile_uses_manifest_build_args_and_initdb_seed(repo_root: Path) ->
     assert 'test -n "$PG_SEARCH_VERSION"' in dockerfile
     assert 'test -n "$PG_SEARCH_SHA256"' in dockerfile
     assert "sha256sum -c -" in dockerfile
-    assert "postgresql-18-pgaudit=18.0-3.pgdg13+1" in dockerfile
+    assert "postgresql-18-pgaudit=18.0-2.pgdg13+1" in dockerfile
     assert "postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" in dockerfile
     assert "COPY initdb.d/ /docker-entrypoint-initdb.d/" in dockerfile
 

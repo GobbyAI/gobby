@@ -6,18 +6,14 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> HubDatabase:
-    """Create a fresh in-memory database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = HubDatabase(db_path)
-    run_migrations(database)
-    return database
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
 
 
 @pytest.fixture

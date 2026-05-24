@@ -306,11 +306,11 @@ class SkillSearch:
         # Get more results than top_k if filtering
         search_limit = top_k * 3 if filters else top_k
         if self._config.mode == "keyword":
-            raw_results = [
-                (hit.id, hit.score) for hit in self._keyword_backend.search(query, search_limit)
-            ]
+            raw_results = self._local_keyword_search(query, search_limit)
         else:
             raw_results = await self._searcher.search_async(query, top_k=search_limit)
+            if not raw_results and self._searcher.is_using_fallback():
+                raw_results = self._local_keyword_search(query, search_limit)
 
         # Pre-compute allowed_names set to avoid rebuilding per result
         allowed_set: set[str] | None = None
@@ -337,6 +337,29 @@ class SkillSearch:
                 break
 
         return results
+
+    def _local_keyword_search(self, query: str, limit: int) -> list[tuple[str, float]]:
+        terms = [term for term in query.lower().replace("-", " ").split() if term]
+        if not terms:
+            return []
+
+        results: list[tuple[str, float]] = []
+        for skill_id, content in self._skill_items:
+            content_text = content.lower()
+            name_text = self._skill_names.get(skill_id, "").lower().replace("-", " ")
+            content_matches = sum(1 for term in terms if term in content_text)
+            if content_matches == 0:
+                continue
+
+            name_matches = sum(1 for term in terms if term in name_text)
+            coverage = content_matches / len(terms)
+            name_coverage = name_matches / len(terms)
+            phrase_bonus = 0.1 if query.lower() in content_text else 0.0
+            score = min(1.0, (0.75 * coverage) + (0.15 * name_coverage) + phrase_bonus)
+            results.append((skill_id, score))
+
+        results.sort(key=lambda item: (-item[1], self._skill_names.get(item[0], item[0])))
+        return results[:limit]
 
     def search(
         self,

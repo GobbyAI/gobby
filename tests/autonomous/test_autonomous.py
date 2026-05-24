@@ -9,7 +9,6 @@ Tests cover:
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -29,7 +28,6 @@ from gobby.autonomous.stuck_detector import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -39,13 +37,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def test_db(temp_dir: Path) -> Iterator[HubDatabase]:
-    """Create a test database with migrations applied."""
-    db_path = temp_dir / "test_autonomous.db"
-    db = HubDatabase(db_path)
-    run_migrations(db)
-    yield db
-    db.close()
+def test_db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    """Use the migrated PostgreSQL hub database fixture."""
+    yield temp_db
 
 
 @pytest.fixture
@@ -508,8 +502,8 @@ class TestProgressTrackerSummary:
         # Record high-value
         progress_tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         progress_tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record another low-value
@@ -586,8 +580,8 @@ class TestProgressTrackerStagnation:
         # Record a high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record low-value events
@@ -947,10 +941,10 @@ class TestStopRegistryCleanup:
         test_db.execute(
             """
             UPDATE session_stop_signals
-            SET acknowledged_at = datetime('now', '-48 hours')
+            SET acknowledged_at = ?
             WHERE session_id = ?
             """,
-            (session_id,),
+            ((datetime.now(UTC) - timedelta(hours=48)).isoformat(), session_id),
         )
 
         count = stop_registry.cleanup_stale(max_age_hours=24)
@@ -1200,8 +1194,8 @@ class TestStuckDetectorProgressStagnation:
         # Record high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record low-value event to update last_event_at

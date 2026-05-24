@@ -235,8 +235,10 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_approval_required(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -260,8 +262,10 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_generic_error(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -278,8 +282,10 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_output(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -304,8 +310,10 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_bad_outputs(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,

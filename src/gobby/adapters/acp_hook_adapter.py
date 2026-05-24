@@ -144,6 +144,10 @@ class ACPHookAdapter(BaseAdapter):
         """
         self._hook_manager = hook_manager
 
+    def _event_logger(self) -> logging.Logger:
+        """Return the concrete adapter logger for boundary telemetry."""
+        return logging.getLogger(self.__class__.__module__)
+
     def normalize_tool_name(self, gemini_tool_name: str) -> str:
         """Normalize Gemini tool name to standard format.
 
@@ -319,18 +323,19 @@ class ACPHookAdapter(BaseAdapter):
         should_continue = response.decision != "deny"
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
+        event_logger = self._event_logger()
         record_unsupported_response_fields(
             response,
             provider=self.source,
             hook_type=hook_type,
             capability=capability,
-            event_logger=logger,
+            event_logger=event_logger,
         )
         normalized_reason = normalize_adapter_response_reason(
             response,
             adapter_name=self.__class__.__name__,
             hook_type=hook_type,
-            logger=logger,
+            logger=event_logger,
         )
         result: dict[str, Any] = {
             "decision": response.decision,
@@ -408,7 +413,7 @@ class ACPHookAdapter(BaseAdapter):
                 hook_type=hook_type,
                 destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
                 contributor_sizes={label: len(part) for label, part in context_parts},
-                event_logger=logger,
+                event_logger=event_logger,
             )
 
         # Only add hookSpecificOutput if there's content
