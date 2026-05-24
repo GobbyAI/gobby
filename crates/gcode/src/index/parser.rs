@@ -673,6 +673,10 @@ mod tests {
         parse_source("src/main/java/app/Sample.java", source, extra_files)
     }
 
+    fn parse_csharp(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/Sample.cs", source, extra_files)
+    }
+
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         let mut stack = vec![root.to_path_buf()];
@@ -1196,5 +1200,85 @@ class Helper {
 
         let call = parsed.calls.first().expect("call");
         assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_csharp_alias_static_and_qualified_calls() {
+        let parsed = parse_csharp(
+            r#"
+using Json = Newtonsoft.Json.JsonConvert;
+using static System.Math;
+using System;
+
+class Sample {
+    void Run() {
+        Json.SerializeObject(this);
+        Sqrt(4);
+        System.Console.WriteLine("x");
+    }
+}
+"#,
+            &[],
+        );
+
+        let alias_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "SerializeObject")
+            .expect("alias call");
+        assert_eq!(alias_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            alias_call.callee_external_module.as_deref(),
+            Some("Newtonsoft.Json.JsonConvert")
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Sqrt")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("System.Math")
+        );
+
+        let qualified_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "WriteLine")
+            .expect("qualified call");
+        assert_eq!(qualified_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            qualified_call.callee_external_module.as_deref(),
+            Some("System.Console")
+        );
+    }
+
+    #[test]
+    fn leaves_csharp_instance_and_local_namespace_calls_unresolved() {
+        let parsed = parse_csharp(
+            r#"
+namespace App;
+
+using App.Helpers;
+
+class Sample {
+    void Run(Client client) {
+        client.Send();
+        App.Helpers.Tool.Render();
+    }
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
     }
 }

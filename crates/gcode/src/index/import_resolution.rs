@@ -12,6 +12,7 @@ pub struct ImportResolutionContext {
     rust_external_crates: HashSet<String>,
     rust_self_crate_name: Option<String>,
     java_local_classes: HashSet<String>,
+    csharp_local_roots: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,7 @@ pub(crate) struct ExternalImportBinding {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ImportBindings {
     pub(crate) bare: HashMap<String, ExternalImportBinding>,
+    pub(crate) bare_wildcard_modules: Vec<String>,
     pub(crate) member: HashMap<String, String>,
     pub(crate) external_roots: HashMap<String, ExternalRootBinding>,
 }
@@ -93,6 +95,7 @@ pub fn build_import_resolution_context(
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
         java_local_classes: build_java_local_class_index(candidate_files),
+        csharp_local_roots: build_csharp_local_roots(candidate_files),
     }
 }
 
@@ -111,6 +114,7 @@ pub(crate) fn parse_import_statement(
         "go" => parse_go_import_statement(text, rel_path, import_context, extracted),
         "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
         "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
+        "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -147,14 +151,22 @@ pub(crate) fn resolve_external_callee(
     is_bare_call: bool,
 ) -> Option<ExternalCallTarget> {
     if is_bare_call {
-        let binding = import_bindings.bare.get(callee_name)?;
         if symbols.iter().any(|symbol| symbol.name == callee_name) {
             return None;
         }
-        return Some(ExternalCallTarget {
-            module: binding.module.clone(),
-            callee_name: binding.callee_name.clone(),
-        });
+        if let Some(binding) = import_bindings.bare.get(callee_name) {
+            return Some(ExternalCallTarget {
+                module: binding.module.clone(),
+                callee_name: binding.callee_name.clone(),
+            });
+        }
+        if import_bindings.bare_wildcard_modules.len() == 1 {
+            return Some(ExternalCallTarget {
+                module: import_bindings.bare_wildcard_modules[0].clone(),
+                callee_name: callee_name.to_string(),
+            });
+        }
+        return None;
     }
 
     let root_alias = root_alias?;
@@ -351,6 +363,42 @@ fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashSet<String> 
         }
     }
     classes
+}
+
+fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
+    let mut roots = HashSet::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if ext != "cs" {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("namespace ") {
+                let namespace = rest
+                    .trim()
+                    .trim_end_matches([';', '{'])
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default();
+                if let Some(root) = namespace.split('.').next()
+                    && !root.is_empty()
+                {
+                    roots.insert(root.to_string());
+                }
+            }
+        }
+        for type_name in java_declared_types(&contents) {
+            roots.insert(type_name);
+        }
+    }
+    roots
 }
 
 fn parse_python_import_statement(
@@ -704,6 +752,73 @@ fn parse_java_import_statement(
         .insert(class_alias.to_string(), target.to_string());
 }
 
+fn parse_csharp_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = text.trim().trim_end_matches(';').trim();
+    let Some(rest) = normalized.strip_prefix("using ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized.to_string(),
+        });
+        return;
+    };
+
+    if let Some(target) = rest.strip_prefix("static ") {
+        let target = target.trim();
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: target.to_string(),
+        });
+        if is_external_csharp_path(target, import_context) {
+            extracted
+                .bindings
+                .bare_wildcard_modules
+                .push(target.to_string());
+        }
+        return;
+    }
+
+    if let Some((alias, target)) = rest.split_once('=') {
+        let alias = alias.trim();
+        let target = target.trim();
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: target.to_string(),
+        });
+        if !alias.is_empty() && is_external_csharp_path(target, import_context) {
+            extracted
+                .bindings
+                .member
+                .insert(alias.to_string(), target.to_string());
+        }
+        return;
+    }
+
+    let namespace = rest.trim();
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: namespace.to_string(),
+    });
+    if !is_external_csharp_path(namespace, import_context) {
+        return;
+    }
+    if let Some(root) = namespace.split('.').next()
+        && !root.is_empty()
+    {
+        extracted.bindings.external_roots.insert(
+            root.to_string(),
+            ExternalRootBinding {
+                module: root.to_string(),
+                module_from_qualifier: true,
+            },
+        );
+    }
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -872,6 +987,12 @@ fn is_external_java_class(class_path: &str, import_context: &ImportResolutionCon
             .rsplit('.')
             .next()
             .is_none_or(|class_name| !import_context.java_local_classes.contains(class_name))
+}
+
+fn is_external_csharp_path(path: &str, import_context: &ImportResolutionContext) -> bool {
+    path.split('.')
+        .next()
+        .is_some_and(|root| !import_context.csharp_local_roots.contains(root))
 }
 
 fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {
