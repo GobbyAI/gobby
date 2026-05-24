@@ -64,7 +64,7 @@ have are missing.
 ## What Gobby is
 
 A Python 3.13+ daemon you run locally. PostgreSQL is the runtime hub database,
-configured from bootstrap/keyring `database_url` settings. HTTP and the
+configured from bootstrap `database_url` settings. HTTP and the
 installed web UI run on `:60887`, WebSocket on `:60888`, dev web UI on
 `:60889`, with a stdio MCP server that your coding CLIs talk to.
 
@@ -234,7 +234,7 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 ## Architecture
 
 - Python 3.13+ daemon (`uv` for everything)
-- PostgreSQL runtime hub configured from bootstrap/keyring `database_url`
+- PostgreSQL runtime hub configured from bootstrap `database_url`
 - HTTP API and installed web UI on `localhost:60887`, WebSocket on `:60888`,
   dev web UI on `:60889`
 - stdio MCP server for coding assistants

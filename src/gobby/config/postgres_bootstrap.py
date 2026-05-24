@@ -79,10 +79,7 @@ def _require_postgres_runtime_bootstrap(data: dict[str, Any]) -> None:
         raise BootstrapConfigError(
             "PostgreSQL uninstall requires hub_backend=postgres with database_url."
         )
-    if not (
-        _has_bootstrap_string(data, "database_url")
-        or _has_bootstrap_string(data, "database_url_ref")
-    ):
+    if not _has_bootstrap_string(data, "database_url"):
         raise BootstrapConfigError(
             "PostgreSQL uninstall requires database_url so the PostgreSQL-only runtime can start."
         )

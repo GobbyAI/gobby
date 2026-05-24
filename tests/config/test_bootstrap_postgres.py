@@ -9,25 +9,7 @@ import yaml
 
 pytestmark = pytest.mark.unit
 
-KEYRING_SERVICE = "gobby"
-DATABASE_URL_KEY = "postgres_database_url"
-DATABASE_URL_REF = f"keyring:{KEYRING_SERVICE}:{DATABASE_URL_KEY}"
-
-
-class _FakeKeyring:
-    def __init__(self, initial: dict[tuple[str, str], str] | None = None) -> None:
-        self.passwords = dict(initial or {})
-        self.get_calls: list[tuple[str, str]] = []
-
-    def get_password(self, service: str, username: str) -> str | None:
-        self.get_calls.append((service, username))
-        return self.passwords.get((service, username))
-
-
-def _install_fake_keyring(monkeypatch: pytest.MonkeyPatch, fake_keyring: _FakeKeyring) -> None:
-    from gobby.config import bootstrap as bootstrap_module
-
-    monkeypatch.setattr(bootstrap_module, "keyring", fake_keyring, raising=False)
+KEYRING_DATABASE_URL_REF = "keyring:gobby:postgres_database_url"
 
 
 def _write_bootstrap(path: Path, content: str, mode: int = 0o600) -> None:
@@ -52,9 +34,7 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: postgres\n"
-        f"database_url: {database_url}\n"
-        "postgres_install_mode: docker\n"
+        f"hub_backend: postgres\ndatabase_url: {database_url}\npostgres_install_mode: docker\n",
     )
 
     bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
@@ -149,21 +129,23 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
     assert persisted["postgres_install_mode"] == "docker"
 
 
-def test_clear_postgres_fields_preserves_legacy_database_url_ref(temp_dir: Path) -> None:
+def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError
     from gobby.config.postgres_bootstrap import clear_postgres_fields
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        f"hub_backend: postgres\ndatabase_url_ref: {DATABASE_URL_REF}\n"
+        f"hub_backend: postgres\ndatabase_url_ref: {KEYRING_DATABASE_URL_REF}\n"
         "postgres_install_mode: docker\n",
     )
 
-    clear_postgres_fields(temp_dir)
+    with pytest.raises(BootstrapConfigError, match="requires database_url"):
+        clear_postgres_fields(temp_dir)
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["hub_backend"] == "postgres"
-    assert persisted["database_url_ref"] == DATABASE_URL_REF
+    assert persisted["database_url_ref"] == KEYRING_DATABASE_URL_REF
     assert persisted["postgres_install_mode"] == "docker"
 
 
@@ -187,59 +169,34 @@ def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -
     assert persisted["database_url"] == "postgresql://gobby:secret@localhost:60891/gobby"
 
 
-def test_legacy_keyring_database_url_ref_migrates_to_plaintext(
-    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.config.bootstrap import load_bootstrap
+def test_keyring_database_url_ref_is_rejected_for_runtime(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
-    fake_keyring = _FakeKeyring({(KEYRING_SERVICE, DATABASE_URL_KEY): database_url})
-    _install_fake_keyring(monkeypatch, fake_keyring)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
         "hub_backend: postgres\n"
-        f"database_url_ref: {DATABASE_URL_REF}\n"
+        f"database_url_ref: {KEYRING_DATABASE_URL_REF}\n"
         "postgres_install_mode: docker\n",
     )
 
-    bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
-
-    assert bootstrap.database_url == database_url
-    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
-    persisted = yaml.safe_load(bootstrap_file.read_text())
-    assert persisted["database_url"] == database_url
-    assert "database_url_ref" not in persisted
-    assert bootstrap_file.stat().st_mode & 0o777 == 0o600
-
-    second_bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
-
-    assert second_bootstrap.database_url == database_url
-    assert fake_keyring.get_calls == [(KEYRING_SERVICE, DATABASE_URL_KEY)]
+    with pytest.raises(BootstrapConfigError, match="OS keyring/keychain.*database_url"):
+        load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
 
-def test_legacy_keyring_database_url_ref_is_not_resolved_for_metadata_only(
-    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.config.bootstrap import load_bootstrap
+def test_keyring_database_url_ref_is_rejected_for_metadata_only(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
-    fake_keyring = _FakeKeyring(
-        {(KEYRING_SERVICE, DATABASE_URL_KEY): "postgresql://gobby:secret@localhost/gobby"}
-    )
-    _install_fake_keyring(monkeypatch, fake_keyring)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
         "hub_backend: postgres\n"
-        f"database_url_ref: {DATABASE_URL_REF}\n"
+        f"database_url_ref: {KEYRING_DATABASE_URL_REF}\n"
         "daemon_port: 61234\n",
     )
 
-    bootstrap = load_bootstrap(str(bootstrap_file))
-
-    assert bootstrap.daemon_port == 61234
-    assert bootstrap.database_url is None
-    assert fake_keyring.get_calls == []
+    with pytest.raises(BootstrapConfigError, match="OS keyring/keychain.*database_url"):
+        load_bootstrap(str(bootstrap_file))
 
 
 def test_daemon_database_url_ref_is_accepted_for_metadata_only(temp_dir: Path) -> None:
