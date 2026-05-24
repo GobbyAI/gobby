@@ -16,3 +16,4 @@ rules:
         reason: >-
           Step workflow not complete. Continue with your current step
           before stopping. Current step: {{ variables.get('current_step', 'unknown') }}.
+          {{ variables.get('current_step_status_message', '') }}

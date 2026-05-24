@@ -1,5 +1,6 @@
 """Additional tests for AgentLifecycleMonitor."""
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -626,10 +627,12 @@ class TestPeriodicAgentTerminalEnter:
         run_id: str = "run-periodic",
         tmux_session_name: str | None = "gobby-periodic",
         provider: str = "codex",
+        child_session_id: str | None = None,
     ) -> AgentRun:
         return AgentRun(
             id=run_id,
             parent_session_id="p",
+            child_session_id=child_session_id,
             provider=provider,
             prompt="p",
             status="running",
@@ -646,12 +649,13 @@ class TestPeriodicAgentTerminalEnter:
         *,
         enabled: bool = True,
         interval: int = 30,
+        db: HubDatabase | None = None,
     ) -> AgentLifecycleMonitor:
         from gobby.config.tmux import TmuxConfig
 
         monitor = AgentLifecycleMonitor(
             agent_run_manager=mock_run_mgr,
-            db=MagicMock(),
+            db=db or MagicMock(),
             tmux_config=TmuxConfig(
                 auto_enter_agent_terminals=enabled,
                 auto_enter_agent_interval_seconds=interval,
@@ -681,6 +685,56 @@ class TestPeriodicAgentTerminalEnter:
             call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
             call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
         ]
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_skips_active_step_workflow_agents(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, object],
+    ) -> None:
+        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+        child = session_manager.register(
+            external_id="child-step-workflow",
+            machine_id="machine-1",
+            source="codex",
+            project_id=str(sample_project["id"]),
+        )
+        LocalWorkflowDefinitionManager(temp_db).create(
+            name="planner-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "planner-steps",
+                    "version": "1.0",
+                    "enabled": True,
+                    "steps": [{"name": "plan", "status_message": "submit_for_review"}],
+                    "exit_condition": "current_step == 'terminate'",
+                }
+            ),
+            workflow_type="workflow",
+            enabled=True,
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="wf-step",
+                session_id=child.id,
+                workflow_name="planner-steps",
+                current_step="plan",
+            )
+        )
+
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, db=temp_db)
+        mock_run_mgr.list_active.return_value = [
+            self._run(child_session_id=child.id),
+        ]
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 0
+        mock_tmux.send_keys.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_periodic_enter_respects_interval_per_run(self) -> None:

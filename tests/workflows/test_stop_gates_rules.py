@@ -364,6 +364,25 @@ class TestRequireStepCompletion:
         assert response.decision == "allow"
         assert variables["stop_attempts"] == 1
 
+    @pytest.mark.asyncio
+    async def test_turn_end_block_includes_current_step_status_message(self, db) -> None:
+        _sync_bundled(db)
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "plan",
+            "current_step_status_message": 'Call submit_for_review(stage_name="planning").',
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+        }
+
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "block"
+        assert 'submit_for_review(stage_name="planning")' in (response.reason or "")
+
 
 class TestCompactPreservesTriagedState:
     """Regression: compact must NOT reset errors_resolved.

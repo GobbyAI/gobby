@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.agents import LocalAgentRunManager
@@ -15,6 +20,9 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.agent_resolver import resolve_agent
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from tests._timing import wait_for_async_condition
 from tests.storage.tasks._stage_test_helpers import stage_row
 
@@ -119,3 +127,104 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     assert reviewer.task_id == task.id
     assert mutex is not None
     assert mutex.run_id == "run-autonomous-reviewer"
+
+
+@pytest.mark.asyncio
+async def test_idle_planner_stage_agent_gets_handoff_reprompt_without_blank_enter(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A stalled planner step must get a semantic handoff prompt, not a blank Enter."""
+    from gobby.agents.sync import sync_bundled_agents
+
+    sync_bundled_agents(temp_db)
+    planner = resolve_agent("planner", temp_db, project_id=sample_project["id"])
+    assert planner is not None
+    workflow_name = register_agent_step_workflow(planner, temp_db)
+
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    run_manager = LocalAgentRunManager(temp_db)
+    parent = session_manager.register(
+        external_id="build-coordinator",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = session_manager.register(
+        external_id="planner-worker",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        agent_depth=1,
+    )
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Build plan",
+        task_type="epic",
+        category="planning",
+        claimed_by_session_id=child.id,
+    )
+    task_manager.update_task(task.id, allow_automation=True)
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        [StageManifestSpec("planning", 0, max_review_rounds=99)],
+        by_session_id=None,
+    )
+    task_manager.stage_states.start_stage(task.id, "planning", by_session_id=child.id)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        claimed_session_id=child.id,
+        provider="codex",
+        prompt="Revise the plan",
+        agent_name="planner",
+        task_id=task.id,
+        run_id="run-idle-planner",
+    )
+    run_manager.start(run.id)
+    run_manager.update_runtime(run.id, tmux_session_name="gobby-idle-planner", pid=12345)
+    stored_run = run_manager.get(run.id)
+    assert stored_run is not None
+
+    WorkflowInstanceManager(temp_db).save_instance(
+        WorkflowInstance(
+            id="wf-idle-planner",
+            session_id=child.id,
+            workflow_name=workflow_name,
+            current_step="plan",
+            variables={
+                "task_claimed": True,
+                "skill_loaded": True,
+                "plan_handoff_complete": False,
+            },
+        )
+    )
+    SessionVariableManager(temp_db).set_variable(child.id, "step_workflow_complete", False)
+    temp_db.execute(
+        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
+    )
+
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=run_manager,
+        db=temp_db,
+        session_manager=session_manager,
+    )
+    mock_tmux = AsyncMock()
+    mock_tmux.capture_pane.return_value = "❯\n"
+    mock_tmux.send_keys.return_value = True
+    monitor._tmux = mock_tmux
+    monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
+    monitor._idle_check_handler._tmux = mock_tmux
+    monitor._idle_detector.get_state(stored_run.id).first_idle_at = time.monotonic() - 120
+
+    assert await monitor.check_periodic_enters() == 0
+    assert mock_tmux.send_keys.call_count == 0
+
+    assert await monitor.check_idle_agents() == 1
+    sent_prompt = mock_tmux.send_keys.call_args.args[1]
+    assert "Workflow: planner-steps. Current step: plan." in sent_prompt
+    assert 'submit_for_review(stage_name="planning")' in sent_prompt
+    assert "end_agent_run" in sent_prompt
+    assert stage_row(temp_db, task.id, "planning")["state"] == "in_progress"

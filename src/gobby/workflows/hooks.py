@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.workflows.step_context import get_active_step_workflow_context
 
 if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
@@ -534,19 +535,23 @@ class WorkflowHookHandler:
                             )
                         logger.debug(f"Could not load session variables for rules: {e}")
 
-                # Inject current_step from active workflow instance so rule templates
-                # can display it (e.g., require-step-completion block message).
-                if variables.get("is_spawned_agent") and not variables.get("current_step"):
+                # Inject active step details so stop gates can give actionable
+                # lifecycle instructions.
+                if variables.get("is_spawned_agent"):
                     try:
-                        from gobby.workflows.state_manager import WorkflowInstanceManager
-
-                        instances = WorkflowInstanceManager(
-                            self.rule_engine.db
-                        ).get_active_instances(session_id)
-                        for inst in instances:
-                            if inst.current_step:
-                                variables["current_step"] = inst.current_step
-                                break
+                        step_context = get_active_step_workflow_context(
+                            self.rule_engine.db,
+                            session_id,
+                        )
+                        if step_context is not None:
+                            variables["current_step"] = step_context.current_step
+                            variables.setdefault("_step_workflow_name", step_context.workflow_name)
+                            if step_context.status_message:
+                                variables["current_step_status_message"] = (
+                                    step_context.status_message
+                                )
+                            if step_context.description:
+                                variables["current_step_description"] = step_context.description
                     except Exception as e:
                         logger.debug(f"Could not inject current_step from workflow instance: {e}")
 

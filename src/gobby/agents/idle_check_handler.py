@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.workflows.step_context import get_active_step_workflow_context
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -173,12 +174,37 @@ class IdleCheckHandler:
                 run,
                 reason="reprompting apparently idle agent",
             )
-            sent = await self._tmux.send_keys(tmux_name, IdleDetector.REPROMPT_MESSAGE + "\n")
+            reprompt_message = await self._idle_reprompt_message(run)
+            sent = await self._tmux.send_keys(tmux_name, reprompt_message + "\n")
             if sent:
                 self._idle_detector.record_reprompt(run.id)
             return 1
 
         return 0
+
+    async def _idle_reprompt_message(self, run: AgentRun) -> str:
+        """Return an idle continuation prompt tuned to active step workflows."""
+        db = getattr(self._agent_run_manager, "db", None)
+        if db is None:
+            return IdleDetector.REPROMPT_MESSAGE
+
+        step_context = await self._run_db(
+            get_active_step_workflow_context,
+            db,
+            run.child_session_id,
+        )
+        if step_context is None:
+            return IdleDetector.REPROMPT_MESSAGE
+
+        message = (
+            "Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            f"Workflow: {step_context.workflow_name}. Current step: {step_context.current_step}.\n"
+        )
+        if step_context.status_message:
+            message = f"{message}{step_context.status_message.strip()}\n"
+        return (
+            f"{message}Finish the required Gobby lifecycle MCP transition, then call end_agent_run."
+        )
 
     @staticmethod
     def _latest_response_payload_type(items: list[dict[str, object]]) -> str | None:

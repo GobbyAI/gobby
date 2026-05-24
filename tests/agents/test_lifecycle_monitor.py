@@ -9,6 +9,7 @@ All tests are DB-driven — no in-memory RunningAgentRegistry.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,9 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
@@ -681,6 +685,92 @@ class TestCheckIdleAgents:
         # Pane capture SHOULD have been called since session was stale
         mock_capture.assert_called_once()
         mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_idle_step_workflow_agent_gets_actionable_handoff_reprompt(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-planner-step",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_session.get("project_id"),
+        )
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
+        )
+        LocalWorkflowDefinitionManager(temp_db).create(
+            name="planner-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "planner-steps",
+                    "version": "1.0",
+                    "enabled": True,
+                    "steps": [
+                        {
+                            "name": "plan",
+                            "status_message": (
+                                'submit_for_review(stage_name="planning"), then end_agent_run'
+                            ),
+                        },
+                        {"name": "terminate"},
+                    ],
+                    "exit_condition": "current_step == 'terminate'",
+                }
+            ),
+            workflow_type="workflow",
+            enabled=True,
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="wf-planner-step",
+                session_id=child.id,
+                workflow_name="planner-steps",
+                current_step="plan",
+            )
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-planner-step-idle",
+            tmux_session_name="gobby-planner-step-idle",
+            child_session_id=child.id,
+        )
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+            patch.object(
+                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
+        prompt = mock_send.call_args.args[1]
+        assert "Workflow: planner-steps. Current step: plan." in prompt
+        assert 'submit_for_review(stage_name="planning")' in prompt
+        assert "end_agent_run" in prompt
 
     @pytest.mark.asyncio
     async def test_naive_legacy_session_timestamp_is_treated_as_utc(
