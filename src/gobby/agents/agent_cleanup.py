@@ -367,6 +367,13 @@ class AgentCleanupHandler:
             message=f"Agent {db_run.id} cancelled",
         )
         await self.post_terminal_cleanup(db_run)
+        from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_task
+
+        schedule_dispatcher_tick_for_task(
+            self._db,
+            task_id=db_run.task_id,
+            reason="agent_cancelled",
+        )
         return True
 
     async def expire_terminal_run_sessions(self) -> int:
