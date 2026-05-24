@@ -55,8 +55,7 @@ pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<()> {
             &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
             &[&id, &ctx.project_id],
         )?
-        .as_ref()
-        .and_then(|row| Symbol::from_row(row).ok());
+        .and_then(|row| Symbol::from_row(&row).ok());
     drop(conn);
 
     let Some(sym) = sym else {

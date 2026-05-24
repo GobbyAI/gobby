@@ -509,6 +509,8 @@ pub fn count_text(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
+    // Intentional fallback: when BM25 sanitization empties the query, use
+    // count_symbols_by_name_like, which may count LIKE matches BM25 filtered out.
     if bm25_query.is_empty() {
         return count_symbols_by_name_like(conn, query, project_id, language, paths);
     }

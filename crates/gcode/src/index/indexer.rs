@@ -105,7 +105,7 @@ pub fn index_directory(
             &excludes,
             &import_context,
             semantic_resolver.as_deref_mut(),
-        ) {
+        )? {
             Some(count) => {
                 result.files_indexed += 1;
                 result.symbols_found += count;
@@ -194,7 +194,7 @@ pub fn index_files(
             &excludes,
             &import_context,
             semantic_resolver.as_deref_mut(),
-        ) {
+        )? {
             result.files_indexed += 1;
             result.symbols_found += count;
         }
@@ -220,25 +220,33 @@ fn index_file(
     exclude_patterns: &[String],
     import_context: &parser::ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
-) -> Option<usize> {
-    let rel = relative_path(file_path, root_path).ok()?;
+) -> anyhow::Result<Option<usize>> {
+    let rel = match relative_path(file_path, root_path) {
+        Ok(rel) => rel,
+        Err(_) => return Ok(None),
+    };
 
-    let parse_result = parser::parse_file_with_semantic(
+    let Some(parse_result) = parser::parse_file_with_semantic(
         file_path,
         project_id,
         root_path,
         exclude_patterns,
         import_context,
         semantic_resolver,
-    )?;
+    ) else {
+        return Ok(None);
+    };
 
     let count = parse_result.symbols.len();
 
     // PostgreSQL hub writes (transactional).
-    let mut tx = conn.transaction().ok()?;
+    let mut tx = match conn.transaction() {
+        Ok(tx) => tx,
+        Err(_) => return Ok(None),
+    };
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
-    upsert_symbols(&mut tx, &parse_result.symbols);
+    upsert_symbols(&mut tx, &parse_result.symbols)?;
 
     let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
     let h = hasher::file_content_hash(file_path).unwrap_or_default();
@@ -267,9 +275,11 @@ fn index_file(
         upsert_content_chunks(&mut tx, &chunks);
     }
 
-    tx.commit().ok()?;
+    if tx.commit().is_err() {
+        return Ok(None);
+    }
 
-    Some(count)
+    Ok(Some(count))
 }
 
 fn create_semantic_resolver_if_needed(
@@ -413,9 +423,12 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
 
 // ── PostgreSQL helpers ─────────────────────────────────────────────────
 
-fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[crate::models::Symbol]) {
+fn upsert_symbols(
+    conn: &mut impl GenericClient,
+    symbols: &[crate::models::Symbol],
+) -> anyhow::Result<()> {
     for sym in symbols {
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO code_symbols (
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
@@ -451,8 +464,9 @@ fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[crate::models::Symbo
                 &sym.content_hash,
                 &sym.summary,
             ],
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) {

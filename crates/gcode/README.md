@@ -39,7 +39,7 @@ One search call instead of reading 50 files. 90%+ token savings.
 
 ## How It Works
 
-```
+```text
 codebase → tree-sitter AST → PostgreSQL hub → search / retrieve / navigate
                 │                   │
      ┌──────────┼──────────┐        │
@@ -185,7 +185,7 @@ source of truth for code-index rows.
 
 ### With Gobby
 
-```
+```text
 codebase → tree-sitter → PostgreSQL hub + pg_search BM25
                           FalkorDB              → call graphs, blast radius, imports
                           Qdrant + embeddings   → semantic vector search

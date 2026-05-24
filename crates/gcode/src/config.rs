@@ -359,6 +359,9 @@ fn read_config_value(conn: &mut Client, key: &str) -> Option<String> {
 fn decode_config_value(raw: &str) -> Option<String> {
     match serde_json::from_str::<serde_json::Value>(raw) {
         Ok(serde_json::Value::String(text)) => Some(text),
+        Ok(value @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => {
+            Some(serde_json::to_string(&value).unwrap_or_else(|_| raw.to_string()))
+        }
         Ok(value) => Some(value.to_string()),
         Err(_) => Some(raw.to_string()),
     }
@@ -625,6 +628,14 @@ mod tests {
         assert_eq!(
             decode_config_value("http://legacy:7474"),
             Some("http://legacy:7474".to_string())
+        );
+        assert_eq!(
+            decode_config_value(r#"["alpha",1,true]"#),
+            Some(r#"["alpha",1,true]"#.to_string())
+        );
+        assert_eq!(
+            decode_config_value(r#"{"host":"falkor.local","port":16379}"#),
+            Some(r#"{"host":"falkor.local","port":16379}"#.to_string())
         );
     }
 
