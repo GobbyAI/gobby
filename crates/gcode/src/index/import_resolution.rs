@@ -9,6 +9,8 @@ pub struct ImportResolutionContext {
     js_external_packages: HashSet<String>,
     js_self_package_name: Option<String>,
     go_module_path: Option<String>,
+    rust_external_crates: HashSet<String>,
+    rust_self_crate_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +89,8 @@ pub fn build_import_resolution_context(
         js_external_packages: load_js_external_packages(root_path),
         js_self_package_name: load_js_self_package_name(root_path),
         go_module_path: load_go_module_path(root_path),
+        rust_external_crates: load_rust_external_crates(root_path),
+        rust_self_crate_name: load_rust_self_crate_name(root_path),
     }
 }
 
@@ -103,10 +107,31 @@ pub(crate) fn parse_import_statement(
             parse_js_import_statement(text, rel_path, import_context, extracted)
         }
         "go" => parse_go_import_statement(text, rel_path, import_context, extracted),
+        "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
         }),
+    }
+}
+
+pub(crate) fn seed_import_bindings(
+    language: &str,
+    import_context: &ImportResolutionContext,
+    bindings: &mut ImportBindings,
+) {
+    if language != "rust" {
+        return;
+    }
+
+    for root in rust_external_roots(import_context) {
+        bindings.external_roots.insert(
+            root.clone(),
+            ExternalRootBinding {
+                module: root,
+                module_from_qualifier: true,
+            },
+        );
     }
 }
 
@@ -231,6 +256,68 @@ fn load_go_module_path(root_path: &Path) -> Option<String> {
             .filter(|module| !module.is_empty())
             .map(ToOwned::to_owned)
     })
+}
+
+fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {
+    let contents = std::fs::read_to_string(root_path.join("Cargo.toml")).unwrap_or_default();
+    let mut crates = HashSet::new();
+    let mut in_dependency_section = false;
+
+    for line in contents.lines() {
+        let line = line.split('#').next().unwrap_or(line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = line.trim_matches(['[', ']']);
+            in_dependency_section = matches!(
+                section,
+                "dependencies" | "dev-dependencies" | "build-dependencies"
+            ) || section.ends_with(".dependencies")
+                || section.ends_with(".dev-dependencies")
+                || section.ends_with(".build-dependencies");
+            continue;
+        }
+        if !in_dependency_section {
+            continue;
+        }
+        let Some((name, _)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim().trim_matches('"').replace('-', "_");
+        if !name.is_empty() {
+            crates.insert(name);
+        }
+    }
+
+    crates
+}
+
+fn load_rust_self_crate_name(root_path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(root_path.join("Cargo.toml")).ok()?;
+    let mut in_package_section = false;
+
+    for line in contents.lines() {
+        let line = line.split('#').next().unwrap_or(line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_package_section = line == "[package]";
+            continue;
+        }
+        if !in_package_section {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        if name.trim() == "name" {
+            return Some(value.trim().trim_matches('"').replace('-', "_"));
+        }
+    }
+
+    None
 }
 
 fn parse_python_import_statement(
@@ -463,6 +550,72 @@ fn parse_go_import_spec(
     }
 }
 
+fn parse_rust_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let Some(rest) = text.trim().strip_prefix("use ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: text.to_string(),
+        });
+        return;
+    };
+    let rest = rest.trim().trim_end_matches(';').trim();
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: rest.to_string(),
+    });
+
+    if rest.contains('*') || rest.contains('{') || rest.contains('}') {
+        return;
+    }
+
+    let (path, alias) = split_alias(rest);
+    let segments: Vec<&str> = path.split("::").filter(|part| !part.is_empty()).collect();
+    let Some(root) = segments.first().copied() else {
+        return;
+    };
+    if !is_external_rust_root(root, import_context) {
+        return;
+    }
+
+    extracted.bindings.external_roots.insert(
+        root.to_string(),
+        ExternalRootBinding {
+            module: root.to_string(),
+            module_from_qualifier: true,
+        },
+    );
+
+    let Some(imported_name) = segments.last().copied() else {
+        return;
+    };
+    let local_alias = alias.unwrap_or(imported_name);
+    if local_alias.is_empty() {
+        return;
+    }
+
+    let module = if segments.len() > 1 {
+        segments[..segments.len() - 1].join("::")
+    } else {
+        root.to_string()
+    };
+    extracted.bindings.bare.insert(
+        local_alias.to_string(),
+        ExternalImportBinding {
+            module: module.clone(),
+            callee_name: imported_name.to_string(),
+        },
+    );
+    extracted
+        .bindings
+        .member
+        .insert(local_alias.to_string(), path.to_string());
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -596,6 +749,30 @@ fn is_external_go_module(module: &str, import_context: &ImportResolutionContext)
         return false;
     }
     true
+}
+
+fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<String> {
+    let mut roots = import_context.rust_external_crates.clone();
+    roots.extend(
+        ["std", "core", "alloc", "proc_macro", "test"]
+            .into_iter()
+            .map(ToOwned::to_owned),
+    );
+    if let Some(self_crate) = import_context.rust_self_crate_name.as_deref() {
+        roots.remove(self_crate);
+    }
+    roots
+}
+
+fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {
+    if matches!(root, "crate" | "self" | "super") {
+        return false;
+    }
+    if import_context.rust_self_crate_name.as_deref() == Some(root) {
+        return false;
+    }
+    import_context.rust_external_crates.contains(root)
+        || matches!(root, "std" | "core" | "alloc" | "proc_macro" | "test")
 }
 
 fn js_package_name(module: &str) -> Option<&str> {

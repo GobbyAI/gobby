@@ -359,6 +359,7 @@ fn extract_imports(
         }
     }
 
+    import_resolution::seed_import_bindings(language, import_context, &mut extracted.bindings);
     extracted
 }
 
@@ -657,6 +658,10 @@ mod tests {
 
     fn parse_go(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
         parse_source("cmd/sample.go", source, extra_files)
+    }
+
+    fn parse_rust(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/main.rs", source, extra_files)
     }
 
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
@@ -982,6 +987,103 @@ func run(client Client) {
 }
 "#,
             &[("go.mod", "module example.com/app\n")],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_rust_use_alias_and_path_calls() {
+        let parsed = parse_rust(
+            r#"
+use serde_json::from_str as parse_json;
+use std::fs;
+
+fn run() {
+    parse_json("{}");
+    serde_json::from_str("{}");
+    fs::read("Cargo.toml");
+    std::fs::read("Cargo.toml");
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+
+[dependencies]
+serde_json = "1"
+"#,
+            )],
+        );
+
+        let parse_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "from_str")
+            .expect("from_str call");
+        assert_eq!(parse_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            parse_call.callee_external_module.as_deref(),
+            Some("serde_json")
+        );
+
+        let read_modules: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter(|call| call.callee_name == "read")
+            .map(|call| call.callee_external_module.as_deref())
+            .collect();
+        assert_eq!(read_modules, vec![Some("std::fs"), Some("std::fs")]);
+    }
+
+    #[test]
+    fn leaves_rust_self_crate_and_glob_imports_unresolved() {
+        let parsed = parse_rust(
+            r#"
+use app::helper;
+use serde_json::*;
+
+fn run() {
+    helper();
+    from_str("{}");
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+
+[dependencies]
+serde_json = "1"
+"#,
+            )],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn leaves_rust_receiver_method_calls_unresolved() {
+        let parsed = parse_rust(
+            r#"
+fn run(value: Parser) {
+    value.parse();
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+"#,
+            )],
         );
 
         let call = parsed.calls.first().expect("call");
