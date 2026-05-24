@@ -8,6 +8,7 @@ pub struct ImportResolutionContext {
     python_modules: HashSet<String>,
     js_external_packages: HashSet<String>,
     js_self_package_name: Option<String>,
+    go_module_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,13 @@ pub(crate) struct ExternalImportBinding {
 pub(crate) struct ImportBindings {
     pub(crate) bare: HashMap<String, ExternalImportBinding>,
     pub(crate) member: HashMap<String, String>,
+    pub(crate) external_roots: HashMap<String, ExternalRootBinding>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExternalRootBinding {
+    pub(crate) module: String,
+    pub(crate) module_from_qualifier: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,6 +86,7 @@ pub fn build_import_resolution_context(
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
         js_self_package_name: load_js_self_package_name(root_path),
+        go_module_path: load_go_module_path(root_path),
     }
 }
 
@@ -93,6 +102,7 @@ pub(crate) fn parse_import_statement(
         "javascript" | "typescript" => {
             parse_js_import_statement(text, rel_path, import_context, extracted)
         }
+        "go" => parse_go_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -105,6 +115,7 @@ pub(crate) fn resolve_external_callee(
     symbols: &[Symbol],
     callee_name: &str,
     root_alias: Option<&str>,
+    qualifier_path: Option<&str>,
     is_bare_call: bool,
 ) -> Option<ExternalCallTarget> {
     if is_bare_call {
@@ -122,9 +133,22 @@ pub(crate) fn resolve_external_callee(
     if symbols.iter().any(|symbol| symbol.name == root_alias) {
         return None;
     }
-    let module = import_bindings.member.get(root_alias)?;
+    if let Some(module) = import_bindings.member.get(root_alias) {
+        return Some(ExternalCallTarget {
+            module: module.clone(),
+            callee_name: callee_name.to_string(),
+        });
+    }
+
+    let qualifier_path = qualifier_path?;
+    let root_binding = import_bindings.external_roots.get(root_alias)?;
+    let module = if root_binding.module_from_qualifier {
+        qualifier_path.to_string()
+    } else {
+        root_binding.module.clone()
+    };
     Some(ExternalCallTarget {
-        module: module.clone(),
+        module,
         callee_name: callee_name.to_string(),
     })
 }
@@ -196,6 +220,17 @@ fn load_js_self_package_name(root_path: &Path) -> Option<String> {
     json.get("name")
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
+}
+
+fn load_go_module_path(root_path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(root_path.join("go.mod")).ok()?;
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("module ")
+            .map(str::trim)
+            .filter(|module| !module.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn parse_python_import_statement(
@@ -366,6 +401,68 @@ fn parse_js_import_statement(
     }
 }
 
+fn parse_go_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let Some(rest) = text.trim().strip_prefix("import") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: text.to_string(),
+        });
+        return;
+    };
+
+    let rest = rest.trim();
+    if rest.starts_with('(') {
+        let block = rest.trim_start_matches('(').trim_end_matches(')');
+        for line in block.lines() {
+            parse_go_import_spec(line.trim(), rel_path, import_context, extracted);
+        }
+    } else {
+        parse_go_import_spec(rest, rel_path, import_context, extracted);
+    }
+}
+
+fn parse_go_import_spec(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let text = text.split("//").next().unwrap_or(text).trim();
+    if text.is_empty() {
+        return;
+    }
+    let Some(module) = extract_quoted_string(text) else {
+        return;
+    };
+
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: module.clone(),
+    });
+
+    if !is_external_go_module(&module, import_context) {
+        return;
+    }
+
+    let alias = text[..text.find(['"', '`']).unwrap_or(0)].trim();
+    if matches!(alias, "_" | ".") {
+        return;
+    }
+    let local_alias = if alias.is_empty() {
+        go_default_package_alias(&module)
+    } else {
+        alias.to_string()
+    };
+    if !local_alias.is_empty() {
+        extracted.bindings.member.insert(local_alias, module);
+    }
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -390,6 +487,18 @@ fn extract_quoted_string(text: &str) -> Option<String> {
     let after_quote = &text[quote + quote_char.len_utf8()..];
     let end = after_quote.find(quote_char)?;
     Some(after_quote[..end].to_string())
+}
+
+fn go_default_package_alias(module: &str) -> String {
+    module
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(module)
+        .split_once(".v")
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| module.rsplit('/').next().unwrap_or(module))
+        .replace('-', "_")
 }
 
 fn split_alias(text: &str) -> (&str, Option<&str>) {
@@ -475,6 +584,18 @@ fn is_external_js_module(module: &str, import_context: &ImportResolutionContext)
 
     import_context.js_external_packages.contains(package_name)
         || JS_BUILTIN_MODULES.contains(&package_name)
+}
+
+fn is_external_go_module(module: &str, import_context: &ImportResolutionContext) -> bool {
+    if module.starts_with('.') {
+        return false;
+    }
+    if let Some(self_module) = import_context.go_module_path.as_deref()
+        && (module == self_module || module.starts_with(&format!("{self_module}/")))
+    {
+        return false;
+    }
+    true
 }
 
 fn js_package_name(module: &str) -> Option<&str> {

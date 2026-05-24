@@ -407,19 +407,26 @@ fn extract_calls(
             None => continue,
         };
 
-        let callee_name =
+        let raw_callee =
             String::from_utf8_lossy(&source[name_n.start_byte()..name_n.end_byte()]).to_string();
+        let (callee_name, qualifier_from_name) = split_qualified_callee(&raw_callee);
 
         let target = call_node.unwrap_or(name_n);
         let caller_symbol = enclosing_symbol(symbols, target.start_byte());
         let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
         let syntax = call_syntax_kind(name_n, target);
         let local_target = resolve_same_file_callee(symbols, caller_symbol, &callee_name, syntax);
+        let qualifier_path = member_qualifier_path(source, target, name_n).or(qualifier_from_name);
+        let root_alias = qualifier_path
+            .as_deref()
+            .and_then(qualifier_root_alias)
+            .map(ToOwned::to_owned);
         let external_target = import_resolution::resolve_external_callee(
             import_bindings,
             symbols,
             &callee_name,
-            member_root_alias(source, target, name_n).as_deref(),
+            root_alias.as_deref(),
+            qualifier_path.as_deref(),
             syntax == CallSyntaxKind::Bare,
         );
 
@@ -482,6 +489,8 @@ fn is_memberish_kind(kind: &str) -> bool {
             | "field_expression"
             | "member_access_expression"
             | "member_call_expression"
+            | "navigation_expression"
+            | "scoped_call_expression"
     )
 }
 
@@ -524,28 +533,76 @@ fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<Str
     }
 }
 
-fn member_root_alias(
+fn member_qualifier_path(
     source: &[u8],
     call_node: tree_sitter::Node,
     name_node: tree_sitter::Node,
 ) -> Option<String> {
     let prefix = String::from_utf8_lossy(&source[call_node.start_byte()..name_node.start_byte()]);
-    let mut chars = prefix.chars().skip_while(|c| !is_identifier_start(*c));
+    let prefix = prefix.trim();
+    if prefix.starts_with('$') || prefix.contains("->") || prefix.contains("?->") {
+        return None;
+    }
+
+    let mut chars = prefix
+        .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())
+        .chars()
+        .skip_while(|c| !is_identifier_start(*c));
     let first = chars.next()?;
     if !is_identifier_start(first) {
         return None;
     }
 
-    let mut alias = String::from(first);
+    let mut qualifier = String::from(first);
+    let mut last_was_separator = false;
     for ch in chars {
         if is_identifier_continue(ch) {
-            alias.push(ch);
+            qualifier.push(ch);
+            last_was_separator = false;
+        } else if matches!(ch, '.' | '\\') {
+            qualifier.push(ch);
+            last_was_separator = true;
+        } else if ch == ':' && !last_was_separator {
+            qualifier.push(ch);
+            last_was_separator = true;
+        } else if ch == ':' && last_was_separator {
+            qualifier.push(ch);
         } else {
             break;
         }
     }
 
-    Some(alias)
+    let qualifier = qualifier
+        .trim_end_matches(|ch| matches!(ch, '.' | ':' | '\\'))
+        .to_string();
+    if qualifier.is_empty() {
+        None
+    } else {
+        Some(qualifier)
+    }
+}
+
+fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
+    let raw = raw.trim();
+    for separator in ["::", "\\", "."] {
+        if let Some((qualifier, name)) = raw.rsplit_once(separator)
+            && !qualifier.is_empty()
+            && !name.is_empty()
+        {
+            return (
+                name.to_string(),
+                Some(qualifier.trim_start_matches('\\').to_string()),
+            );
+        }
+    }
+    (raw.to_string(), None)
+}
+
+fn qualifier_root_alias(qualifier: &str) -> Option<&str> {
+    qualifier
+        .trim_start_matches('\\')
+        .split(['.', ':', '\\'])
+        .find(|part| !part.is_empty())
 }
 
 fn is_identifier_start(ch: char) -> bool {
@@ -596,6 +653,10 @@ mod tests {
 
     fn parse_typescript(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
         parse_source("src/sample.ts", source, extra_files)
+    }
+
+    fn parse_go(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("cmd/sample.go", source, extra_files)
     }
 
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
@@ -846,6 +907,81 @@ function run() {
                 "package.json",
                 r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
             )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_go_import_alias_selector_calls() {
+        let parsed = parse_go(
+            r#"
+package main
+
+import (
+    "fmt"
+    cli "github.com/acme/client"
+)
+
+func run() {
+    fmt.Println("hello")
+    cli.Connect()
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
+        );
+
+        let fmt_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Println")
+            .expect("fmt call");
+        assert_eq!(fmt_call.callee_target_kind.as_str(), "external");
+        assert_eq!(fmt_call.callee_external_module.as_deref(), Some("fmt"));
+
+        let alias_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Connect")
+            .expect("alias call");
+        assert_eq!(alias_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            alias_call.callee_external_module.as_deref(),
+            Some("github.com/acme/client")
+        );
+    }
+
+    #[test]
+    fn leaves_self_module_go_imports_unresolved() {
+        let parsed = parse_go(
+            r#"
+package main
+
+import "example.com/app/pkg/tool"
+
+func run() {
+    tool.Run()
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn leaves_unimported_go_selector_calls_unresolved() {
+        let parsed = parse_go(
+            r#"
+package main
+
+func run(client Client) {
+    client.Do()
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
         );
 
         let call = parsed.calls.first().expect("call");
