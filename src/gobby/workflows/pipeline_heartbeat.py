@@ -261,9 +261,7 @@ class PipelineHeartbeat:
             if owner_session_id is None:
                 continue
             try:
-                has_active = await self._run_db(
-                    agent_run_manager.has_active_run_for_task, task.id
-                )
+                has_active = await self._run_db(agent_run_manager.has_active_run_for_task, task.id)
                 if has_active:
                     continue
 

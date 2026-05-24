@@ -263,15 +263,11 @@ def _resolve_legacy_database_url_ref(database_url_ref: str) -> str:
 def _parse_legacy_keyring_database_url_ref(database_url_ref: str) -> tuple[str, str]:
     parts = database_url_ref.split(":", 2)
     if len(parts) != 3 or parts[0] != "keyring" or not parts[1] or not parts[2]:
-        raise BootstrapConfigError(
-            f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}"
-        )
+        raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}")
     service, username = parts[1], parts[2]
     if (
         service != POSTGRES_DATABASE_URL_REF_SERVICE
         or username != POSTGRES_DATABASE_URL_REF_USERNAME
     ):
-        raise BootstrapConfigError(
-            f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}"
-        )
+        raise BootstrapConfigError(f"database_url_ref must be {POSTGRES_DATABASE_URL_KEYRING_REF}")
     return service, username

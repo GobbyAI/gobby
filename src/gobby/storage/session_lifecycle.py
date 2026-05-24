@@ -46,6 +46,7 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
 
     return tuple(guards)
 
+
 def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.

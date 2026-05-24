@@ -150,11 +150,7 @@ def create_task(
 
         except (psycopg.IntegrityError, UniqueViolation) as e:
             error_msg = str(e)
-            if (
-                "tasks.id" in error_msg
-                or "tasks_pkey" in error_msg
-                or "Key (id)=" in error_msg
-            ):
+            if "tasks.id" in error_msg or "tasks_pkey" in error_msg or "Key (id)=" in error_msg:
                 if attempt == max_retries:
                     raise TaskIDCollisionError(
                         f"Failed to generate unique task ID after {max_retries} retries"

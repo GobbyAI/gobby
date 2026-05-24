@@ -379,10 +379,7 @@ class _PostgresTransaction:
             first,
         )
         permuted_rows = [first_permuted]
-        permuted_rows.extend(
-            _params_from_indexes(row, permutation)
-            for row in materialized[1:]
-        )
+        permuted_rows.extend(_params_from_indexes(row, permutation) for row in materialized[1:])
         driver_executemany = getattr(self._conn, "executemany", None)
         if callable(driver_executemany):
             driver_executemany(new_sql, permuted_rows)
