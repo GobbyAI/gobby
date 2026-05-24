@@ -8,6 +8,11 @@ rules:
     priority: 23
     when: >
       not skill_loaded('build-coordinator')
+      and source != 'pipeline'
+      and (
+        variables.get('is_spawned_agent')
+        or event.metadata.get('session_type') == 'web_chat'
+      )
       and event.data.get('canonical_tool_kind') == 'execute'
       and is_gobby_build_command(tool_input.get('command') or tool_input.get('cmd'))
     effects:

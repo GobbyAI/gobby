@@ -29,13 +29,19 @@ def _sync_bundled(db: HubDatabase) -> None:
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 
-def _event(data: dict[str, object]) -> HookEvent:
+def _event(
+    data: dict[str, object],
+    *,
+    source: SessionSource = SessionSource.CODEX,
+    metadata: dict[str, object] | None = None,
+) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
-        source=SessionSource.CODEX,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
+        metadata=metadata or {},
     )
 
 
@@ -99,6 +105,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "not skill_loaded('build-coordinator')" in body.when
+        assert "source != 'pipeline'" in body.when
+        assert "is_spawned_agent" in body.when
+        assert "session_type" in body.when
         assert "is_gobby_build_command" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
@@ -108,7 +117,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         )
 
     @pytest.mark.asyncio
-    async def test_blocks_gobby_build_before_skill_load(self, temp_db) -> None:
+    async def test_blocks_tmux_agent_gobby_build_before_skill_load(self, temp_db) -> None:
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -118,7 +127,11 @@ class TestRequireBuildCoordinatorForGobbyBuild:
             }
         )
 
-        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(
+            event,
+            session_id="sid",
+            variables={"is_spawned_agent": True},
+        )
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -126,7 +139,25 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert 'Call get_skill(name="build-coordinator") on gobby-skills' in response.reason
 
     @pytest.mark.asyncio
-    async def test_allows_gobby_build_after_skill_load(self, temp_db) -> None:
+    async def test_blocks_web_chat_gobby_build_before_skill_load(self, temp_db) -> None:
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "gobby build #15117"},
+            },
+            metadata={"session_type": "web_chat"},
+        )
+
+        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "require-build-coordinator-for-gobby-build" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_allows_tmux_agent_gobby_build_after_skill_load(self, temp_db) -> None:
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -139,7 +170,42 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         response = await RuleEngine(temp_db).evaluate(
             event,
             session_id="sid",
-            variables={"loaded_skills": ["build-coordinator"]},
+            variables={"is_spawned_agent": True, "loaded_skills": ["build-coordinator"]},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_allows_operator_gobby_build_without_skill_load(self, temp_db) -> None:
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "gobby build #15117"},
+            }
+        )
+
+        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_allows_dispatcher_gobby_build_without_skill_load(self, temp_db) -> None:
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "gobby build #15117"},
+            },
+            source=SessionSource.PIPELINE,
+        )
+
+        response = await RuleEngine(temp_db).evaluate(
+            event,
+            session_id="sid",
+            variables={"is_spawned_agent": True},
         )
 
         assert response.decision == "allow"

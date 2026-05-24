@@ -204,7 +204,7 @@
     "workflows/rules/auto-task/notify-task-tree-complete.yaml": "baf80d53cb1e1388a733e11b100c245c453fc1d92315104d7bf63b72dd98e68f",
     "workflows/rules/brevity/detect-brevity-drift.yaml": "e8e64088efa9f72b3777d0d39bacf8adb7ce69d22b971af1fdb664241fb76790",
     "workflows/rules/brevity/reinforce-brevity.yaml": "28eb304aee9193755a1caf84723e4da4b449b13771a7e7e618aa1c25af3f7f07",
-    "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "dc129ab59b99a9535e7322c0cb770e553808da978ca2951ba3db635c87e40f64",
+    "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "b642761a711e93cd54117825f1b4626f60fee039ac27d2a8c6cd7ad469860d8c",
     "workflows/rules/code-index/require-code-index-skill.yaml": "3230debbd106921a15c05d3c12c33987e2480224bdab885437249f05a16cb8aa",
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "f010538239da75fe21185f23626eb054ceceacc162aa92c32baf0aa4e66765c6",
     "workflows/rules/context-handoff/capture-baseline-dirty-files-on-start.yaml": "ec8a02d9c1da20bb78acdfc058f300d273fc15f45e4b6991e4cf5a19f79cb824",
