@@ -92,16 +92,19 @@ These tests cover the local hook binary contract:
 | Web chat | Qwen | Same ACP caveat as Gemini | ACP startup remains reliable on macOS |
 | Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
 | Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
-| Spawned agents | Codex | `--sandbox <mode>` plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Codex | `--sandbox <mode>`, `sandbox_workspace_write.network_access`, plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root and loopback services stay reachable when network is enabled |
 | Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Qwen | Same Gemini-compatible `-s`, `SEATBELT_PROFILE`, and `--include-directories` contract | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
 
 Claude's sandbox payload is intentionally conservative: Gobby enables the
 sandbox, uses managed permission rules only, disables unsandboxed command
-fallback, and does not invent undocumented outbound-network wildcard settings.
+fallback, allows loopback domains for local Gobby services, and does not invent
+undocumented outbound-network wildcard settings.
 Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
-`read-only`. Gemini and Qwen share the Seatbelt profile naming contract:
+`read-only`; spawned Codex agents also force workspace-write network access from
+daemon policy so local Gobby services, including Postgres, are reachable when
+network is enabled. Gemini and Qwen share the Seatbelt profile naming contract:
 `permissive-open`, `permissive-proxied`, `restrictive-open`, or
 `restrictive-proxied`. That Seatbelt contract applies to spawned Gemini/Qwen
 agents and hook-binary diagnostics; daemon-owned Gemini/Qwen web chat does not

@@ -32,8 +32,9 @@ class SandboxConfig(BaseModel):
         mode: Sandbox strictness level.
             - "permissive": Allow more operations (easier debugging)
             - "restrictive": Stricter isolation (more secure)
-        allow_network: Whether to allow network access (except localhost:60887
-            which is always allowed for Gobby daemon communication).
+        allow_network: Whether to allow network access. Daemon-owned spawned
+            agents keep this enabled so local Gobby services on loopback remain
+            reachable.
         extra_read_paths: Additional paths to allow read access.
         extra_write_paths: Additional paths to allow write access
             (worktree paths are always allowed).
@@ -54,6 +55,7 @@ _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
 )
 logger = logging.getLogger(__name__)
 _GEMINI_INCLUDE_DIRECTORY_LIMIT = 5
+_CLAUDE_LOOPBACK_DOMAINS = ["localhost", "127.0.0.1", "::1"]
 
 
 def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
@@ -240,7 +242,9 @@ class ClaudeSandboxResolver(SandboxResolver):
                 "allowUnixSockets": [],
                 "allowAllUnixSockets": False,
                 "allowLocalBinding": False,
-                "allowedDomains": [],
+                "allowedDomains": list(_CLAUDE_LOOPBACK_DOMAINS)
+                if config.allow_network
+                else [],
             },
             "enableWeakerNestedSandbox": False,
         }
@@ -300,7 +304,11 @@ class CodexSandboxResolver(SandboxResolver):
 
         args: list[str] = []
 
-        args.extend(["--sandbox", self.sandbox_policy(config)])
+        policy = self.sandbox_policy(config)
+        args.extend(["--sandbox", policy])
+        if policy == "workspace-write":
+            network_access = str(config.allow_network).lower()
+            args.extend(["-c", f"sandbox_workspace_write.network_access={network_access}"])
 
         # Add extra write paths (workspace is implicit in workspace-write mode)
         for path in paths.write_paths:

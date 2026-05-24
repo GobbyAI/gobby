@@ -530,6 +530,8 @@ class TestExecuteSpawn:
             assert command[command.index("--disable") + 1] == "guardian_approval"
             assert "--sandbox" in command
             assert "workspace-write" in command
+            assert "-c" in command
+            assert "sandbox_workspace_write.network_access=true" in command
             assert "--add-dir" in command
             assert command[command.index("--add-dir") + 1] == "/tmp/gobby/uv-cache/gobby-sess-123"
             assert "--full-auto" not in command
@@ -540,6 +542,9 @@ class TestExecuteSpawn:
             assert request.prompt in prompt_arg
             assert command.index("--ask-for-approval") < command.index("--sandbox")
             assert command.index("--disable") < command.index("--sandbox")
+            assert command.index("sandbox_workspace_write.network_access=true") < command.index(
+                prompt_arg
+            )
             assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 

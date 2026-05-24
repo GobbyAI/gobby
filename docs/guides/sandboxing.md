@@ -22,6 +22,9 @@ keeps `~/.gobby` readable so the runtime can resolve daemon state such as
 `machine_id`. Worktree launches also add the resolved Git metadata directories
 to the writable set so commits from a sandboxed worktree can update the real
 repository metadata.
+Daemon-owned spawned agents also permit local Gobby services on loopback,
+including the HTTP daemon, WebSocket daemon, and local Postgres hub, while
+still using each provider's filesystem sandbox.
 
 Web chat stores a `sandbox_policy_hash` with each conversation. If the daemon
 policy changes after a chat was created, Gobby blocks resume and asks the user
@@ -89,7 +92,7 @@ passed to the Claude SDK.
       "allowUnixSockets": [],
       "allowAllUnixSockets": false,
       "allowLocalBinding": false,
-      "allowedDomains": []
+      "allowedDomains": ["localhost", "127.0.0.1", "::1"]
     },
     "enableWeakerNestedSandbox": false
   }
@@ -97,8 +100,8 @@ passed to the Claude SDK.
 ```
 
 Gobby enables the sandbox, uses managed permission rules only, disables
-unsandboxed command fallback, and leaves undocumented outbound-network wildcard
-settings unset.
+unsandboxed command fallback, allows loopback domains for local Gobby services,
+and leaves undocumented outbound-network wildcard settings unset.
 
 ### Codex
 
@@ -107,13 +110,17 @@ Spawned Codex agents use the CLI sandbox flag:
 ```bash
 codex --sandbox workspace-write
 codex --sandbox read-only
-codex --sandbox workspace-write --add-dir /extra/path
+codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true
+codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir /extra/path
 ```
 
 Daemon-owned permissive mode maps to `workspace-write`; restrictive mode in the
-lower-level resolver maps to `read-only`. Gobby does not emit
-`danger-full-access` for daemon-owned sandboxes. Extra writable paths become
-additional `--add-dir` arguments.
+lower-level resolver maps to `read-only`. For `workspace-write`, Gobby also
+passes `sandbox_workspace_write.network_access=true` or `false` explicitly so
+spawned agents can reach local Gobby services when daemon policy allows network
+access and user-level Codex config cannot override the daemon policy. Gobby does
+not emit `danger-full-access` for daemon-owned sandboxes. Extra writable paths
+become additional `--add-dir` arguments.
 
 Codex web chat is different because it uses the app server. Gobby starts the
 thread with the app-server sandbox policy string derived from the same daemon

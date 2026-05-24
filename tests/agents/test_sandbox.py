@@ -449,9 +449,47 @@ class TestClaudeSandboxResolver:
         assert settings["sandbox"]["allowUnsandboxedCommands"] is False
         assert "network" in settings["sandbox"]
         assert settings["sandbox"]["network"]["allowLocalBinding"] is False
-        assert settings["sandbox"]["network"]["allowedDomains"] == []
+        assert settings["sandbox"]["network"]["allowedDomains"] == [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        ]
         assert "httpProxyPort" not in settings["sandbox"]["network"]
         assert "socksProxyPort" not in settings["sandbox"]["network"]
+
+    def test_network_enabled_allows_loopback_domains(self) -> None:
+        """Enabled network grants spawned agents access to local Gobby services."""
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=True,
+        )
+
+        settings = ClaudeSandboxResolver().build_settings(SandboxConfig(enabled=True), paths)
+
+        assert settings["sandbox"]["network"]["allowLocalBinding"] is False
+        assert settings["sandbox"]["network"]["allowedDomains"] == [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        ]
+
+    def test_network_disabled_omits_loopback_domains(self) -> None:
+        """Explicit network disable keeps Claude's domain allowlist empty."""
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=False,
+        )
+
+        settings = ClaudeSandboxResolver().build_settings(
+            SandboxConfig(enabled=True, allow_network=False),
+            paths,
+        )
+
+        assert settings["sandbox"]["network"]["allowedDomains"] == []
 
     def test_external_write_paths_grant_filesystem_allow_write(self, tmp_path: Path) -> None:
         """Worktree git-metadata dirs (outside the workspace) must be granted
@@ -595,9 +633,32 @@ class TestCodexSandboxResolver:
             allow_external_network=True,
         )
 
-        args, env = resolver.resolve(config, paths)
-        assert "--sandbox" in args
-        assert "workspace-write" in args
+        args, _env = resolver.resolve(config, paths)
+        assert args == [
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            "sandbox_workspace_write.network_access=true",
+        ]
+
+    def test_enabled_permissive_mode_disables_network_when_configured(self) -> None:
+        """Explicit network disable is passed through to Codex workspace-write."""
+        resolver = CodexSandboxResolver()
+        config = SandboxConfig(enabled=True, mode="permissive", allow_network=False)
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=False,
+        )
+
+        args, _env = resolver.resolve(config, paths)
+        assert args == [
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            "sandbox_workspace_write.network_access=false",
+        ]
 
     def test_enabled_restrictive_mode(self) -> None:
         """Test restrictive mode returns read-only."""
