@@ -246,8 +246,7 @@ The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
 is the git-native sync projection — checked in, diffable in PRs, and reconciled
 with the DB so task-linked commits stay auditable across machines. Linear is
 supported as an optional external sync target for teams that already track work
-there. Legacy SQLite import tooling has been removed; PostgreSQL is the only
-runtime hub.
+there. PostgreSQL is the only runtime hub.
 
 The guides set is the source of truth for behavior:
 
@@ -349,56 +348,53 @@ For agent operating instructions in this repository, read [CLAUDE.md](CLAUDE.md)
 
 ## Where it's going
 
-0.4.x is the platform baseline. The next chunk of work is hardening that
-baseline, then porting the hot path to Rust, then opening up multi-machine and
-team surfaces.
+0.5.0 is the new baseline release after the PostgreSQL and FalkorDB data
+cutover. The next work is UI hardening, the Rust port, and then multi-machine
+Gobby Pro.
 
-### Post-0.4.x: hardening
+### 0.5.0: new baseline
 
-- **PostgreSQL hub hardening** (`#12761`) — keep the local PostgreSQL runtime
-  hub, `psycopg` v3, and `pg_search` solid as the daemon moves toward the Rust
-  hot-path port.
-- **FalkorDB graph migration** (`#12746`) — standardize graph storage on
-  FalkorDB across daemon writes, Rust read clients, web UI, admin payloads, and
-  the setup wizard.
-- **Memory recall helper** (`#12898`) — bounded background helper agent that
-  searches memory per turn and injects fresh results once into the parent
-  session.
-- **Plan registry APIs and UI editors** (`#14140`) — expose stage and build-
-  profile registries through APIs and editing surfaces so lifecycle shape can
-  evolve without hand-editing storage.
-- **Attached-session UX parity** with first-class web chat: context-usage
-  indicator, mode/model sync, attachments relay, persona switching, STT/TTS.
-- **Logging cleanup** before enforcing logging-format rules: config reset,
-  runtime-vs-app log separation, normalized handlers, automation logs for
-  cron and dispatch.
+0.5.0 locks in the post-data-migration platform: PostgreSQL as the runtime hub,
+FalkorDB as the graph backend, `.gobby/tasks.jsonl` as the git-native task
+projection, and the current Python daemon as the supported local-first control
+plane.
 
-### 0.5.0: Rust migration
+### 0.5.0+: UI hardening and Rust port work
 
-Strangler migration, not a rewrite. Python remains the public daemon and
-behavioral reference until each boundary passes parity, observability, and
-rollback gates. Rust sidecars run on internal ports, with Python delegating
-selected route families behind explicit flags. Compare mode runs both and
-returns the Python response until parity is proven.
+- **UI hardening** — keep tightening chat, sessions, tasks, workflows, cron,
+  projects, compact layouts, and shared design tokens until the web UI is solid
+  enough for daily Gobby Pro workflows.
+- **Attached-session parity** — close remaining gaps in context usage,
+  mode/model sync, attachments, persona switching, and voice surfaces.
+- **Rust port preparation** — freeze route contracts, add compare/delegation
+  plumbing, and keep extracting shared primitives in
+  [gobby-cli](https://github.com/GobbyAI/gobby-cli).
 
-The bridgehead already exists in [gobby-cli](https://github.com/GobbyAI/gobby-cli):
-`gcode`, `gsqz`, `gloc`, `ghook`, plus `gobby-core` shared primitives. 0.5.0
-extends that into the daemon itself.
+### 0.6.0: Rust port release
 
-### Later
+0.6.0 is the Rust port release. Python remains the behavioral reference until
+each boundary passes parity, observability, and rollback gates. Rust sidecars
+take over selected route families behind explicit delegation, with compare mode
+available while parity is proven.
 
-- **Pro sync and multi-daemon** — encrypted sync for tasks, memories, and
-  session metadata; multi-daemon discovery and handshake; fleet inventory,
-  health, and remote command; shared task boards, team workflows, audit, and
-  enterprise controls. This is the commercial layer.
-- **Native apps** — desktop app with tray lifecycle and a bundled daemon;
-  mobile companion for observing sessions, reviewing tasks, and approving
-  gates remotely.
-- **Ecosystem** — public plugin registry, stack-specific starter packs (hooks,
-  workflows, skills, task templates), additional CLI integrations.
-- **SWE-bench evaluation** (`docs/plans/SWE-BENCH.md`) — eval run/result
-  storage, `gobby eval` CLI, Docker-backed harness, trajectory capture,
-  Gobby-enabled vs baseline A/B tests.
+### 0.6.0+: Gobby Pro sync
+
+Gobby Pro starts with remote sync from multiple Gobby-controlled machines:
+multi-daemon discovery and handshake, encrypted task/memory/session sync, and
+operator controls for machines you own.
+
+### 0.7.0+: Gobby Pro beta
+
+The Pro beta adds fleet management and a shared dashboard for all Gobby
+machines: health, inventory, remote command, shared task boards, team workflows,
+audit, and enterprise controls.
+
+### Later: 1.0.0 prep
+
+Once the Pro beta stabilizes, the focus moves to 1.0.0 readiness: API and
+workflow stability, release polish, and SWE-bench evaluation
+(`docs/plans/SWE-BENCH.md`) with run/result storage, `gobby eval`, trajectory
+capture, and Gobby-enabled vs baseline A/B tests.
 
 Full plan: [ROADMAP.md](ROADMAP.md).
 
