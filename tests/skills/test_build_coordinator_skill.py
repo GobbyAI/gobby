@@ -56,8 +56,12 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
     assert "without `--quick`" in body
     assert "manual-ticking the dispatcher" in body
     assert "daemon-owned automation" in body
-    assert "Prefer `gobby-sessions:compact_self` over `wait_for_agent`" in body
-    assert "If useful work exists, fix discovered build bugs" in normalized
+    assert "Monitor dispatch directly" in body
+    assert "Check target build state, dispatch eligibility, stage state" in body
+    assert "Check the coordination epic's child tasks" in body
+    assert "Work the highest-priority actionable coordination bug" in body
+    assert "When agents are running and there are no actionable coordination bugs" in body
+    assert "gobby-agents:wait_for_agent" in body
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
@@ -89,6 +93,7 @@ def test_build_coordinator_forbids_stop_hook_goal_closure_shortcut() -> None:
 
     assert "The coordination epic is the active goal record" in body
     assert "Do not close, unclaim, or move work out of it just to satisfy a stop hook" in normalized
+    assert "continue the coordinator loop above" in normalized
     assert "A stop hook is a reminder to finish or hand off the goal" in normalized
     assert "do not detach or reparent them to make the coordinator task closable" in body
     assert "Do not close the coordination epic to clear a stop hook" in normalized
