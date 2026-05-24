@@ -13,12 +13,12 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 
 ## Search
 
-- `gcode search "query"` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
+- `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name"` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
-- `gcode search-text "query"` — pg_search BM25 search on symbol names, signatures, and docstrings
-- `gcode search-content "query"` — full-text search across file bodies (source, comments, config files, CSS, SQL)
+- `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
+- `gcode search-content "query" [PATH ...]` — full-text search across file bodies (source, comments, config files, CSS, SQL)
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--path <glob>`, `--limit N`, and `--offset N` for scoped or paginated results.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. `search`, `search-text`, and `search-content` accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `search-symbol` accepts `--path <glob>` for path scoping.
 
 ## Retrieval
 
@@ -34,7 +34,7 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 - `gcode tree` — whole-project file tree with symbol counts per file; it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
-For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with `--path <glob>`.
+For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
 
 ## Impact Analysis
 
