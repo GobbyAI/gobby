@@ -10,6 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.workflows import observers as observers_module
 from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
@@ -419,6 +420,32 @@ class TestDetectTaskClaimCloseTaskBehavior:
         detect_task_claim(event, variables, SESSION_ID)
 
         assert variables.get("task_claimed") is True
+
+    def test_unresolved_close_refs_emit_thresholded_info(
+        self,
+        variables,
+        make_after_tool_event,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(observers_module, "_unresolved_close_ref_count", 0)
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#404"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+            for _ in range(10):
+                detect_task_claim(event, variables, SESSION_ID)
+
+        assert "Unresolved close_task refs reached 10" in caplog.text
+        assert "latest_ref='#404'" in caplog.text
+        assert f"session={SESSION_ID}" in caplog.text
 
 
 # =============================================================================

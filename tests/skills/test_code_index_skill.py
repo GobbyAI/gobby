@@ -10,6 +10,7 @@ SKILL_PATH = Path("src/gobby/install/shared/skills/code-index/SKILL.md")
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:
+    """Document supported path filter syntax for gcode search commands."""
     body = SKILL_PATH.read_text(encoding="utf-8")
 
     assert 'gcode search "query" [PATH ...]' in body

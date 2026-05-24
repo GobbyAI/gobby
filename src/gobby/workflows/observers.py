@@ -26,6 +26,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_UNRESOLVED_CLOSE_REF_LOG_THRESHOLD = 10
+_unresolved_close_ref_count = 0
+
+
+def _record_unresolved_close_ref(session_id: str, task_ref: object) -> None:
+    """Track unresolved close_task refs without logging every occurrence at info level."""
+    global _unresolved_close_ref_count
+
+    _unresolved_close_ref_count += 1
+    if _unresolved_close_ref_count % _UNRESOLVED_CLOSE_REF_LOG_THRESHOLD == 0:
+        logger.info(
+            "Unresolved close_task refs reached %s; latest_ref=%r session=%s",
+            _unresolved_close_ref_count,
+            task_ref,
+            session_id,
+        )
+
 
 def _json_safe(value: Any) -> Any:
     """Convert observer-tracked values into JSON-safe session-variable data."""
@@ -189,6 +206,7 @@ def detect_task_claim(
                 f"(task_claimed={merge['task_claimed']})"
             )
         else:
+            _record_unresolved_close_ref(session_id, raw_close_id)
             logger.debug(
                 f"Session {session_id}: could not resolve closed task ref — "
                 f"skipping claimed_tasks update"

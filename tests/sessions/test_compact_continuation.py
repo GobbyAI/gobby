@@ -33,6 +33,7 @@ class _FakeTmux:
 async def test_fallback_consumes_pending_marker_and_sends_prompt(
     hub_db: HubDatabase,
 ) -> None:
+    """Send one continuation prompt and clear the pending marker."""
     db = hub_db
     session = SimpleNamespace(
         id="sess-1",
@@ -63,6 +64,7 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(
 async def test_fallback_noops_when_marker_was_already_consumed(
     hub_db: HubDatabase,
 ) -> None:
+    """Skip prompt delivery when the pending marker is already absent."""
     db = hub_db
     session = SimpleNamespace(
         id="sess-1",

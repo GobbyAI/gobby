@@ -235,6 +235,7 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
     @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_approval_required(
         self,
@@ -262,6 +263,7 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
     @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_generic_error(
         self,
@@ -282,6 +284,7 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
     @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_output(
         self,
@@ -310,6 +313,7 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
     @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_bad_outputs(
         self,

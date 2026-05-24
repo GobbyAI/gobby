@@ -75,7 +75,7 @@ def _init_git_repo(path: Path) -> None:
 @pytest.mark.asyncio
 async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.build.service import DispatcherTickSummary
@@ -127,7 +127,10 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_coordinator_from_another_project(temp_db, tmp_path: Path) -> None:
+async def test_build_rejects_coordinator_from_another_project(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
     from gobby.storage.sessions import SessionManager
 
     project_id, _repo_path = _project(temp_db, tmp_path)
