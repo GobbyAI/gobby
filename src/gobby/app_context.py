@@ -35,7 +35,7 @@ class ServiceContainer:
     """Container for daemon services."""
 
     # Core Infrastructure
-    config: DaemonConfig
+    config: DaemonConfig | None
     database: HubDatabase
 
     # Core Managers

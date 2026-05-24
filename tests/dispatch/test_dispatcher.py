@@ -1895,6 +1895,85 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
     assert clone_artifacts.base_commit_sha == "clone-base"
 
 
+def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    """A spawn result may only refresh the base SHA for an existing workspace."""
+    from gobby.dispatch.spawn import _persist_spawn_artifacts
+
+    task = _task(temp_db, sample_project, isolation="worktree")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_id="wt-1",
+        worktree_path="/tmp/worktree",
+        base_commit_sha="old-base",
+    )
+
+    _persist_spawn_artifacts(temp_db, task.id, {"base_commit_sha": "new-base"})
+
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_path == "/tmp/worktree"
+    assert artifacts.base_commit_sha == "new-base"
+
+
+async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Agent spawn succeeds even when best-effort coordinator subscription fails."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, isolation="none")
+    sessions = SessionManager(temp_db)
+    coordinator = sessions.register(
+        external_id="coordinator-subscribe-failure",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+
+    async def fake_spawn_agent_impl(**_kwargs):
+        return {"success": True, "run_id": "run-subscribe-failure"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.subscribe_agent_completion",
+        MagicMock(side_effect=RuntimeError("subscriber store unavailable")),
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "run-subscribe-failure"
+
+
 async def test_create_isolation_action_missing_target_branch_escalates(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

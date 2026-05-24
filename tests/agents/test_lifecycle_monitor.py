@@ -64,6 +64,14 @@ def monitor(
     )
 
 
+def test_idle_check_handler_receives_monitor_database(
+    monitor: AgentLifecycleMonitor,
+    temp_db: HubDatabase,
+) -> None:
+    """IdleCheckHandler uses the monitor DB instead of inferring storage internals."""
+    assert monitor._idle_check_handler.db is temp_db
+
+
 def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict,

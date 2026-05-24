@@ -259,3 +259,64 @@ def test_append_to_set_variable_noop_on_empty(db: Any) -> None:
 
     result = mgr.get_variables("no-row")
     assert result == {}
+
+
+def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:
+    """Edited-file tracking and verification reset happen in one atomic update."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        "s1",
+        {
+            "session_edited_files": ["b.py"],
+            "verification_evidence_recorded": True,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+            "kept": "value",
+        },
+    )
+
+    result = mgr.append_to_set_variable_and_conditional_merge(
+        "s1",
+        "session_edited_files",
+        ["a.py", "b.py"],
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    assert result is True
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["a.py", "b.py"]
+    assert variables["verification_evidence_recorded"] is False
+    assert variables["verification_evidence"] == []
+    assert variables["kept"] == "value"
+
+
+def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evidence(
+    db: Any,
+) -> None:
+    """Conditional updates are skipped when the guard variable is false."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        "s1",
+        {
+            "verification_evidence_recorded": False,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+        },
+    )
+
+    mgr.append_to_set_variable_and_conditional_merge(
+        "s1",
+        "session_edited_files",
+        ["a.py"],
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["a.py"]
+    assert variables["verification_evidence"] == [
+        {"command": "uv run pytest old.py", "success": True}
+    ]

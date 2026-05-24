@@ -136,6 +136,7 @@ class AgentLifecycleMonitor:
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
+            db=db,
             get_session_manager=lambda: self._session_manager,
             tmux=self._tmux,
             idle_detector=self._idle_detector,

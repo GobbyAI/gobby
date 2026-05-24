@@ -181,13 +181,20 @@ async def spawn_agent(
         raise DispatchSpawnFailed("missing run_id")
 
     _persist_spawn_artifacts(db, action.task_id, result)
-    _subscribe_build_coordinator_completion(
-        db=db,
-        project_id=project_id,
-        task_id=action.task_id,
-        run_id=str(run_id),
-        services=services,
-    )
+    try:
+        _subscribe_build_coordinator_completion(
+            db=db,
+            project_id=project_id,
+            task_id=action.task_id,
+            run_id=str(run_id),
+            services=services,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to subscribe build coordinator to dispatcher-spawned agent completion",
+            extra={"task_id": action.task_id, "run_id": str(run_id), "project_id": project_id},
+            exc_info=True,
+        )
     return str(run_id)
 
 
@@ -199,6 +206,7 @@ def _subscribe_build_coordinator_completion(
     run_id: str,
     services: object | None,
 ) -> None:
+    """Subscribe the active build coordinator, if any, to agent completion."""
     run = BuildHistoryStorage(db).latest_coordinated_run_for_task(project_id, task_id)
     if run is None or not run.summary:
         return
@@ -537,6 +545,7 @@ def _service_git_manager(services: object | None, project_id: str) -> object | N
 
 
 def _project_git_manager(services: object | None, project_id: str) -> object | None:
+    """Return the project-scoped git manager, falling back to the container default."""
     return _service_git_manager(services, project_id) or getattr(services, "git_manager", None)
 
 
@@ -554,6 +563,7 @@ def _service_clone_manager(services: object | None, project_id: str) -> object |
 
 
 def _project_clone_manager(services: object | None, project_id: str) -> object | None:
+    """Return the project-scoped clone manager, falling back to the container default."""
     return _service_clone_manager(services, project_id) or getattr(services, "clone_manager", None)
 
 
@@ -584,6 +594,13 @@ def _persist_spawn_artifacts(
         fields["clone_id"] = clone_id
         fields["clone_path"] = clone_path
     if fields and isinstance(base_commit_sha, str) and base_commit_sha:
+        fields["base_commit_sha"] = base_commit_sha
+    elif (
+        not fields
+        and isinstance(base_commit_sha, str)
+        and base_commit_sha
+        and (artifacts.worktree_path or artifacts.clone_path)
+    ):
         fields["base_commit_sha"] = base_commit_sha
     if fields:
         try:

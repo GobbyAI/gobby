@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig, WorktreeIsolationHandler
+from gobby.agents.isolation import (
+    CloneIsolationHandler,
+    SpawnConfig,
+    WorktreeIsolationHandler,
+    repair_isolation_environment,
+)
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 pytestmark = pytest.mark.unit
@@ -84,6 +91,35 @@ async def test_base_captured_before_first_agent_run(
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.worktree_id == "wt-123"
+
+
+@pytest.mark.asyncio
+async def test_repair_isolation_environment_logs_git_hygiene_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Git hygiene failures are logged before the original exception propagates."""
+    with (
+        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
+        patch(
+            "gobby.agents.isolation.preseed_isolated_python_environment",
+            new=AsyncMock(return_value=SimpleNamespace(attempted=False, success=True)),
+        ),
+        patch(
+            "gobby.agents.isolation.apply_isolation_git_hygiene",
+            side_effect=RuntimeError("git hygiene failed"),
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
+    ):
+        with pytest.raises(RuntimeError, match="git hygiene failed"):
+            await repair_isolation_environment(
+                main_repo_path="/tmp/main",
+                isolated_path="/tmp/isolated",
+                provider="codex",
+            )
+
+    assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
 
 
 async def _prepare_with_git_head(

@@ -282,16 +282,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
             db = getattr(self._session_manager, "db", None)
             if db:
                 manager = SessionVariableManager(db)
-                manager.append_to_set_variable(session_id, "session_edited_files", [rel_path])
-                variables = manager.get_variables(session_id)
-                if variables.get("verification_evidence_recorded"):
-                    manager.merge_variables(
-                        session_id,
-                        {
-                            "verification_evidence_recorded": False,
-                            "verification_evidence": [],
-                        },
-                    )
+                manager.append_to_set_variable_and_conditional_merge(
+                    session_id,
+                    "session_edited_files",
+                    [rel_path],
+                    condition_name="verification_evidence_recorded",
+                    updates={
+                        "verification_evidence_recorded": False,
+                        "verification_evidence": [],
+                    },
+                )
         except Exception as e:
             logger.debug(f"Failed to track session edited file: {e}")
 

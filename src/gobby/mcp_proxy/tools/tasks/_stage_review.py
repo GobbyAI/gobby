@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -25,6 +25,9 @@ from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import Task
 
 
 def _operation_response(ctx: RegistryContext, task_id: str, stage_name: str) -> dict[str, Any]:
@@ -85,7 +88,7 @@ def _auto_link_session_commits(
 def _relay_signoff_to_build_coordinator(
     ctx: RegistryContext,
     *,
-    task: Any,
+    task: Task,
     task_id: str,
     stage_name: str,
     action: str,

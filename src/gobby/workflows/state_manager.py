@@ -275,6 +275,56 @@ class SessionVariableManager:
                 )
         return True
 
+    def append_to_set_variable_and_conditional_merge(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+        *,
+        condition_name: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Append set values and conditionally merge updates in one transaction.
+
+        The condition is evaluated against the same row snapshot that receives
+        the append, so edit tracking and evidence reset cannot interleave.
+        """
+        if not values and not updates:
+            return True
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate() as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+
+            if values:
+                stored = current_vars.get(name, [])
+                if not isinstance(stored, list):
+                    stored = [stored] if stored else []
+                existing = set(stored)
+                existing.update(values)
+                current_vars[name] = sorted(existing)
+
+            if current_vars.get(condition_name):
+                current_vars.update(updates)
+
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = ?, updated_at = ? "
+                    "WHERE session_id = ?",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return True
+
     def delete_variables(self, session_id: str) -> None:
         """Delete all session variables for a session."""
         self.db.execute(

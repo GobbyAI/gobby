@@ -628,11 +628,19 @@ async def repair_isolation_environment(
         isolated_path=isolated_path,
         provider=provider,
     )
-    await asyncio.to_thread(
-        apply_isolation_git_hygiene,
-        isolated_path,
-        main_repo_path=main_repo_path,
-    )
+    try:
+        await asyncio.to_thread(
+            apply_isolation_git_hygiene,
+            isolated_path,
+            main_repo_path=main_repo_path,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to apply isolation git hygiene for %s",
+            isolated_path,
+            exc_info=True,
+        )
+        raise
 
 
 async def ensure_isolation_code_index(

@@ -5,6 +5,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.mcp_proxy.tools.sessions._verification import register_verification_tools
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.storage.session_models import Session
@@ -48,6 +49,25 @@ def test_create_session_messages_registry_returns_registry(renderer_registry) ->
     """Test that create_session_messages_registry returns an InternalToolRegistry."""
     assert isinstance(renderer_registry, InternalToolRegistry)
     assert renderer_registry.name == "gobby-sessions"
+
+
+@pytest.mark.asyncio
+async def test_record_verification_evidence_dependency_guard_accepts_optional_inputs() -> None:
+    """Verification tools register with optional dependencies and fail cleanly at runtime."""
+    registry = InternalToolRegistry(name="test-sessions", description="test")
+    register_verification_tools(registry, None, None)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": "session-1",
+            "summary": "Reviewed diff",
+            "evidence_type": "manual",
+            "supports": "completion readiness",
+        },
+    )
+
+    assert result == {"success": False, "error": "Session manager and database are required"}
 
 
 @pytest.mark.asyncio

@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 def register_verification_tools(
     registry: InternalToolRegistry,
-    session_manager: SessionManager,
-    db: HubDatabase,
+    session_manager: SessionManager | None,
+    db: HubDatabase | None,
 ) -> None:
     """Register manual verification evidence tools."""
 

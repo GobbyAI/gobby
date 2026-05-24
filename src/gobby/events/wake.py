@@ -115,10 +115,7 @@ class WakeDispatcher:
         session: Any | None = None,
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
-        lock = self._live_wake_locks.get(session_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._live_wake_locks[session_id] = lock
+        lock = self._live_wake_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             return await self._dispatch_live_wake_unlocked(session_id, session=session)
 

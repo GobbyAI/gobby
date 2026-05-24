@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _FAILURE_FEEDBACK_FLAGS = re.IGNORECASE | re.DOTALL
+_VALIDATION_GATE_WORDS = (
+    r"(?:"
+    r"(?:required\s+)?(?:validation|verification|quality)\s+(?:gate|check|step)s?|"
+    r"(?:required\s+)?checks?|"
+    r"(?:test|build|compil(?:e|ation|er)|lint|format|coverage|static\s+analysis)"
+    r"(?:\s+(?:gate|check|step))?s?|"
+    r"ci(?:\s+(?:gate|check|step))?"
+    r")"
+)
+_VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
 _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"\b(?:acceptance\s+)?criteri(?:on|a)\b.{0,80}"
@@ -34,13 +44,21 @@ _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
         _FAILURE_FEEDBACK_FLAGS,
     ),
     re.compile(
-        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate)\b.{0,100}"
-        r"\b(?:failed|failing|not\s+clean)\b",
+        rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\b{_VALIDATION_FAILURE_WORDS}\b",
         _FAILURE_FEEDBACK_FLAGS,
     ),
     re.compile(
-        r"\b(?:failed|failing|not\s+clean)\b.{0,100}"
-        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate)\b",
+        rf"\b{_VALIDATION_FAILURE_WORDS}\b.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\berrors?\b.{{0,40}}"
+        r"\b(?:remain|remaining|unresolved)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
+        rf"\b{_VALIDATION_GATE_WORDS}\b",
         _FAILURE_FEEDBACK_FLAGS,
     ),
     re.compile(
@@ -49,7 +67,7 @@ _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(
         r"\b(?:only|remaining)\s+gap\s+(?:is|remains)\b.{0,120}"
-        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate|criteri(?:on|a))\b",
+        rf"\b(?:{_VALIDATION_GATE_WORDS}|criteri(?:on|a))\b",
         _FAILURE_FEEDBACK_FLAGS,
     ),
     re.compile(

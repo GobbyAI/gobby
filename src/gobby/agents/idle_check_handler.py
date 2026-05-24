@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
 
@@ -35,6 +36,7 @@ class IdleCheckHandler:
     def __init__(
         self,
         agent_run_manager: LocalAgentRunManager,
+        db: HubDatabase,
         get_session_manager: Callable[[], SessionManager | None],
         tmux: TmuxSessionManager,
         idle_detector: IdleDetector,
@@ -44,6 +46,7 @@ class IdleCheckHandler:
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
+        self.db = db
         self._get_session_manager = get_session_manager
         self._tmux = tmux
         self._idle_detector = idle_detector
@@ -184,14 +187,10 @@ class IdleCheckHandler:
 
     async def _idle_reprompt_message(self, run: AgentRun) -> str:
         """Return an idle continuation prompt tuned to active step workflows."""
-        db = getattr(self._agent_run_manager, "db", None)
-        if db is None:
-            return IdleDetector.REPROMPT_MESSAGE
-
         try:
             step_context = await self._run_db(
                 get_active_step_workflow_context,
-                db,
+                self.db,
                 run.child_session_id,
             )
         except Exception:

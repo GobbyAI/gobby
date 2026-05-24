@@ -19,7 +19,11 @@ def completion_subscriber_lineage(
     session_id: str,
     session_manager: SessionManager | None,
 ) -> list[str]:
-    """Return root-to-session subscriber ids, falling back to the given session."""
+    """Return root-to-session subscriber ids for wake delivery.
+
+    If lineage support or session lookup is unavailable, the requested session
+    remains the only subscriber so completion wakeup remains best-effort.
+    """
     lineage_ids = [session_id]
     if session_manager is None:
         return lineage_ids
@@ -47,7 +51,7 @@ def subscribe_agent_completion(
     session_manager: SessionManager | None = None,
     db: HubDatabase | None = None,
 ) -> list[str]:
-    """Register an agent run completion event and persist its subscriber lineage."""
+    """Register in-memory and durable subscribers for an agent completion event."""
     subscribers = completion_subscriber_lineage(subscriber_session_id, session_manager)
     if completion_registry is not None:
         try:
@@ -76,6 +80,7 @@ def subscribe_agent_completion(
 
 
 def _dedupe(values: list[str]) -> list[str]:
+    """Return values with duplicates removed while preserving order."""
     seen: set[str] = set()
     deduped: list[str] = []
     for value in values:
