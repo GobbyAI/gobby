@@ -14,6 +14,11 @@ pub struct ImportResolutionContext {
     java_local_classes: HashSet<String>,
     csharp_local_roots: HashSet<String>,
     php_local_symbols: HashSet<String>,
+    ruby_local_constant_roots: HashSet<String>,
+    dart_external_packages: HashSet<String>,
+    dart_self_package_name: Option<String>,
+    elixir_external_roots: HashMap<String, String>,
+    elixir_local_module_roots: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +103,11 @@ pub fn build_import_resolution_context(
         java_local_classes: build_java_local_class_index(candidate_files),
         csharp_local_roots: build_csharp_local_roots(candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),
+        ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
+        dart_external_packages: load_dart_external_packages(root_path),
+        dart_self_package_name: load_dart_self_package_name(root_path),
+        elixir_external_roots: load_elixir_external_roots(root_path),
+        elixir_local_module_roots: build_elixir_local_module_roots(candidate_files),
     }
 }
 
@@ -119,6 +129,9 @@ pub(crate) fn parse_import_statement(
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
         "swift" => parse_swift_import_statement(text, rel_path, extracted),
+        "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
+        "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),
+        "elixir" => parse_elixir_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -131,18 +144,33 @@ pub(crate) fn seed_import_bindings(
     import_context: &ImportResolutionContext,
     bindings: &mut ImportBindings,
 ) {
-    if language != "rust" {
-        return;
-    }
-
-    for root in rust_external_roots(import_context) {
-        bindings.external_roots.insert(
-            root.clone(),
-            ExternalRootBinding {
-                module: root,
-                module_from_qualifier: true,
-            },
-        );
+    match language {
+        "rust" => {
+            for root in rust_external_roots(import_context) {
+                bindings.external_roots.insert(
+                    root.clone(),
+                    ExternalRootBinding {
+                        module: root,
+                        module_from_qualifier: true,
+                    },
+                );
+            }
+        }
+        "elixir" => {
+            for (root, module) in &import_context.elixir_external_roots {
+                if import_context.elixir_local_module_roots.contains(root) {
+                    continue;
+                }
+                bindings.external_roots.insert(
+                    root.clone(),
+                    ExternalRootBinding {
+                        module: module.clone(),
+                        module_from_qualifier: true,
+                    },
+                );
+            }
+        }
+        _ => {}
     }
 }
 
@@ -439,6 +467,148 @@ fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> 
         }
     }
     symbols
+}
+
+fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
+    let mut roots = HashSet::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if !matches!(ext, "rb" | "rake" | "gemspec") {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line
+                .strip_prefix("class ")
+                .or_else(|| line.strip_prefix("module "))
+            else {
+                continue;
+            };
+            let name = rest
+                .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '(' | ';' | '#'))
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches("::");
+            if let Some(root) = name.split("::").next()
+                && is_ruby_constant_name(root)
+            {
+                roots.insert(root.to_string());
+            }
+        }
+    }
+    roots
+}
+
+fn load_dart_external_packages(root_path: &Path) -> HashSet<String> {
+    let contents = std::fs::read_to_string(root_path.join("pubspec.yaml")).unwrap_or_default();
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents) else {
+        return HashSet::new();
+    };
+
+    let mut packages = HashSet::new();
+    for field in ["dependencies", "dev_dependencies", "dependency_overrides"] {
+        if let Some(map) = yaml.get(field).and_then(|value| value.as_mapping()) {
+            for key in map.keys().filter_map(|key| key.as_str()) {
+                if !key.is_empty() && key != "sdk" {
+                    packages.insert(key.to_string());
+                }
+            }
+        }
+    }
+    packages
+}
+
+fn load_dart_self_package_name(root_path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(root_path.join("pubspec.yaml")).ok()?;
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(&contents).ok()?;
+    yaml.get("name")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
+    let mut roots = HashSet::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if !matches!(ext, "ex" | "exs") {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("defmodule ") else {
+                continue;
+            };
+            let module = rest
+                .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
+                .next()
+                .unwrap_or_default();
+            if let Some(root) = module.split('.').next()
+                && is_elixir_alias(root)
+            {
+                roots.insert(root.to_string());
+            }
+        }
+    }
+    roots
+}
+
+fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {
+    let deps = load_elixir_dependency_names(root_path);
+    let mut roots = HashMap::new();
+    for dep in deps {
+        for root in elixir_dependency_roots(&dep) {
+            roots.insert(root.to_string(), root.to_string());
+        }
+    }
+    roots
+}
+
+fn load_elixir_dependency_names(root_path: &Path) -> HashSet<String> {
+    let mut deps = HashSet::new();
+    if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.exs")) {
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("{:") {
+                let dep = rest
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .next()
+                    .unwrap_or_default();
+                if !dep.is_empty() {
+                    deps.insert(dep.to_string());
+                }
+            }
+        }
+    }
+    if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.lock")) {
+        let mut rest = contents.as_str();
+        while let Some(start) = rest.find('"') {
+            rest = &rest[start + 1..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let dep = &rest[..end];
+            if dep
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                deps.insert(dep.to_string());
+            }
+            rest = &rest[end + 1..];
+        }
+    }
+    deps
 }
 
 fn parse_python_import_statement(
@@ -963,6 +1133,124 @@ fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut Extr
     );
 }
 
+fn parse_ruby_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = text.trim();
+    let Some(method) = normalized.split_whitespace().next() else {
+        return;
+    };
+
+    let literal = extract_quoted_string(normalized);
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: literal.clone().unwrap_or_else(|| normalized.to_string()),
+    });
+
+    if method != "require" {
+        return;
+    }
+    let Some(required) = literal else {
+        return;
+    };
+    let Some(root) = ruby_require_root(&required) else {
+        return;
+    };
+    if import_context.ruby_local_constant_roots.contains(root) {
+        return;
+    }
+    extracted.bindings.external_roots.insert(
+        root.to_string(),
+        ExternalRootBinding {
+            module: required,
+            module_from_qualifier: false,
+        },
+    );
+}
+
+fn parse_dart_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = collapse_whitespace(text);
+    let Some(uri) = extract_quoted_string(&normalized) else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized,
+        });
+        return;
+    };
+
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: uri.clone(),
+    });
+
+    if !normalized.starts_with("import ") || !is_external_dart_uri(&uri, import_context) {
+        return;
+    }
+    let Some(alias) = dart_import_alias(&normalized) else {
+        return;
+    };
+    extracted.bindings.member.insert(alias, uri);
+}
+
+fn parse_elixir_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = collapse_whitespace(text);
+    let Some((keyword, rest)) = normalized.split_once(' ') else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized,
+        });
+        return;
+    };
+    let target = rest.split([',', ' ']).next().unwrap_or_default().trim();
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: if target.is_empty() {
+            normalized.clone()
+        } else {
+            target.to_string()
+        },
+    });
+
+    if !matches!(keyword, "alias" | "require") || !is_elixir_alias_path(target) {
+        return;
+    }
+    let Some(root) = target.split('.').next() else {
+        return;
+    };
+    if import_context.elixir_local_module_roots.contains(root) {
+        return;
+    }
+    let Some(module) = import_context.elixir_external_roots.get(root) else {
+        return;
+    };
+
+    if keyword == "alias" {
+        let alias = elixir_alias_as(&normalized)
+            .unwrap_or_else(|| target.rsplit('.').next().unwrap_or(target).to_string());
+        extracted.bindings.member.insert(alias, target.to_string());
+    }
+    extracted.bindings.external_roots.insert(
+        root.to_string(),
+        ExternalRootBinding {
+            module: module.clone(),
+            module_from_qualifier: true,
+        },
+    );
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1173,6 +1461,104 @@ fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -
     }
     import_context.rust_external_crates.contains(root)
         || matches!(root, "std" | "core" | "alloc" | "proc_macro" | "test")
+}
+
+fn ruby_require_root(required: &str) -> Option<&'static str> {
+    match required {
+        "json" => Some("JSON"),
+        "fileutils" => Some("FileUtils"),
+        "net/http" | "net/https" => Some("Net"),
+        "faraday" => Some("Faraday"),
+        "nokogiri" => Some("Nokogiri"),
+        "rspec" | "rspec/expectations" | "rspec/core" | "rspec/mocks" => Some("RSpec"),
+        _ => None,
+    }
+}
+
+fn is_ruby_constant_name(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn dart_import_alias(text: &str) -> Option<String> {
+    let after_as = text.split_once(" as ")?.1;
+    let alias = after_as
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(';');
+    if alias.is_empty() {
+        None
+    } else {
+        Some(alias.to_string())
+    }
+}
+
+fn is_external_dart_uri(uri: &str, import_context: &ImportResolutionContext) -> bool {
+    if uri.starts_with("dart:") {
+        return true;
+    }
+    let Some(package) = uri
+        .strip_prefix("package:")
+        .and_then(|rest| rest.split('/').next())
+    else {
+        return false;
+    };
+    import_context.dart_self_package_name.as_deref() != Some(package)
+        && import_context.dart_external_packages.contains(package)
+}
+
+fn elixir_dependency_roots(dep: &str) -> &'static [&'static str] {
+    match dep {
+        "jason" => &["Jason"],
+        "httpoison" => &["HTTPoison"],
+        "tesla" => &["Tesla"],
+        "req" => &["Req"],
+        "finch" => &["Finch"],
+        "mint" => &["Mint"],
+        "ecto" => &["Ecto"],
+        "phoenix" => &["Phoenix"],
+        "plug" => &["Plug"],
+        "oban" => &["Oban"],
+        "broadway" => &["Broadway"],
+        "nimble_options" => &["NimbleOptions"],
+        "nimble_parsec" => &["NimbleParsec"],
+        "telemetry" => &["Telemetry"],
+        "benchee" => &["Benchee"],
+        "ex_doc" => &["ExDoc"],
+        _ => &[],
+    }
+}
+
+fn is_elixir_alias(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn is_elixir_alias_path(path: &str) -> bool {
+    path.split('.').all(is_elixir_alias)
+}
+
+fn elixir_alias_as(text: &str) -> Option<String> {
+    let after = text.split_once(" as: ")?.1;
+    let alias = after
+        .split([',', ' ', ')', ']'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if is_elixir_alias(alias) {
+        Some(alias.to_string())
+    } else {
+        None
+    }
 }
 
 fn js_package_name(module: &str) -> Option<&str> {

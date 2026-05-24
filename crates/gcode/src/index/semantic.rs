@@ -1,0 +1,489 @@
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+use anyhow::{Context, anyhow, bail};
+use serde_json::{Value, json};
+
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticCallRequest<'a> {
+    pub(crate) language: &'a str,
+    pub(crate) file_path: &'a Path,
+    pub(crate) root_path: &'a Path,
+    pub(crate) source: &'a [u8],
+    pub(crate) callee_name: &'a str,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SemanticCallTarget {
+    pub(crate) callee_name: String,
+    pub(crate) external_module: String,
+}
+
+pub(crate) trait SemanticCallResolver {
+    fn resolve(&mut self, request: &SemanticCallRequest<'_>) -> Option<SemanticCallTarget>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DefinitionLocation {
+    pub(crate) path: PathBuf,
+}
+
+pub(crate) fn create_cpp_semantic_resolver(
+    root_path: &Path,
+    require_cpp_semantics: bool,
+) -> anyhow::Result<Option<Box<dyn SemanticCallResolver>>> {
+    let strict = require_cpp_semantics || env_flag("GCODE_REQUIRE_CPP_SEMANTICS");
+    let compile_commands_dir = discover_compile_commands_dir(root_path);
+    let Some(compile_commands_dir) = compile_commands_dir else {
+        if strict {
+            bail!(
+                "C/C++ semantic indexing requires compile_commands.json; set GCODE_COMPILE_COMMANDS_DIR or generate one"
+            );
+        }
+        return Ok(None);
+    };
+
+    let clangd = resolve_clangd_command();
+    let Some(clangd) = clangd else {
+        if strict {
+            bail!("C/C++ semantic indexing requires clangd; set GCODE_CLANGD or install clangd");
+        }
+        return Ok(None);
+    };
+
+    match ClangdResolver::start(root_path, &compile_commands_dir, &clangd) {
+        Ok(resolver) => Ok(Some(Box::new(resolver))),
+        Err(err) if strict => Err(err),
+        Err(_) => Ok(None),
+    }
+}
+
+pub(crate) fn discover_compile_commands_dir(root_path: &Path) -> Option<PathBuf> {
+    if let Ok(override_dir) = std::env::var("GCODE_COMPILE_COMMANDS_DIR") {
+        let dir = PathBuf::from(override_dir);
+        if dir.join("compile_commands.json").is_file() {
+            return Some(dir);
+        }
+        return None;
+    }
+
+    [
+        root_path.to_path_buf(),
+        root_path.join("build"),
+        root_path.join("cmake-build-debug"),
+        root_path.join("cmake-build-release"),
+        root_path.join("out").join("build"),
+    ]
+    .into_iter()
+    .find(|dir| dir.join("compile_commands.json").is_file())
+}
+
+pub(crate) fn classify_definition(
+    root_path: &Path,
+    source: &[u8],
+    callee_name: &str,
+    locations: &[DefinitionLocation],
+) -> Option<SemanticCallTarget> {
+    if locations.len() != 1 || source_defines_macro(source, callee_name) {
+        return None;
+    }
+    let declaration_path = &locations[0].path;
+    if path_is_inside_root(declaration_path, root_path) {
+        return None;
+    }
+    Some(SemanticCallTarget {
+        callee_name: callee_name.to_string(),
+        external_module: declaration_path.to_string_lossy().to_string(),
+    })
+}
+
+pub(crate) fn locations_from_lsp_response(response: &Value) -> Vec<DefinitionLocation> {
+    let Some(result) = response.get("result") else {
+        return Vec::new();
+    };
+    if result.is_null() {
+        return Vec::new();
+    }
+    if let Some(items) = result.as_array() {
+        return items.iter().filter_map(location_from_lsp_value).collect();
+    }
+    location_from_lsp_value(result).into_iter().collect()
+}
+
+fn location_from_lsp_value(value: &Value) -> Option<DefinitionLocation> {
+    let uri = value
+        .get("uri")
+        .or_else(|| value.get("targetUri"))
+        .and_then(|value| value.as_str())?;
+    Some(DefinitionLocation {
+        path: file_uri_to_path(uri)?,
+    })
+}
+
+fn source_defines_macro(source: &[u8], callee_name: &str) -> bool {
+    let text = String::from_utf8_lossy(source);
+    text.lines().any(|line| {
+        let line = line.trim_start();
+        let Some(rest) = line.strip_prefix("#define") else {
+            return false;
+        };
+        let macro_name = rest
+            .trim_start()
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .next()
+            .unwrap_or_default();
+        macro_name == callee_name
+    })
+}
+
+fn path_is_inside_root(path: &Path, root_path: &Path) -> bool {
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical_root = root_path
+        .canonicalize()
+        .unwrap_or_else(|_| root_path.to_path_buf());
+    canonical_path.starts_with(canonical_root)
+}
+
+fn resolve_clangd_command() -> Option<String> {
+    if let Ok(command) = std::env::var("GCODE_CLANGD")
+        && !command.trim().is_empty()
+    {
+        return Some(command);
+    }
+    find_executable_in_path("clangd").map(|path| path.to_string_lossy().to_string())
+}
+
+fn find_executable_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn path_to_uri(path: &Path) -> String {
+    let encoded = path
+        .to_string_lossy()
+        .split('/')
+        .map(|part| urlencoding::encode(part).into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("file://{encoded}")
+}
+
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let decoded = urlencoding::decode(rest).ok()?;
+    Some(PathBuf::from(decoded.into_owned()))
+}
+
+struct ClangdResolver {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    next_id: u64,
+    root_path: PathBuf,
+    open_files: HashSet<PathBuf>,
+}
+
+impl ClangdResolver {
+    fn start(root_path: &Path, compile_commands_dir: &Path, clangd: &str) -> anyhow::Result<Self> {
+        let mut parts = clangd.split_whitespace();
+        let program = parts
+            .next()
+            .ok_or_else(|| anyhow!("empty clangd command"))?;
+        let mut command = Command::new(program);
+        command.args(parts);
+        command.arg(format!(
+            "--compile-commands-dir={}",
+            compile_commands_dir.display()
+        ));
+        command.arg("--background-index=false");
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
+        let mut child = command.spawn().context("start clangd")?;
+        let stdin = child.stdin.take().context("open clangd stdin")?;
+        let stdout = child.stdout.take().context("open clangd stdout")?;
+        let mut resolver = Self {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_id: 1,
+            root_path: root_path.to_path_buf(),
+            open_files: HashSet::new(),
+        };
+        resolver.initialize()?;
+        Ok(resolver)
+    }
+
+    fn initialize(&mut self) -> anyhow::Result<()> {
+        let id = self.send_request(
+            "initialize",
+            json!({
+                "processId": Value::Null,
+                "rootUri": path_to_uri(&self.root_path),
+                "capabilities": {}
+            }),
+        )?;
+        self.read_response(id)?;
+        self.send_notification("initialized", json!({}))?;
+        Ok(())
+    }
+
+    fn ensure_open(&mut self, request: &SemanticCallRequest<'_>) -> anyhow::Result<()> {
+        if self.open_files.contains(request.file_path) {
+            return Ok(());
+        }
+        let text = String::from_utf8_lossy(request.source).to_string();
+        self.send_notification(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": path_to_uri(request.file_path),
+                    "languageId": request.language,
+                    "version": 1,
+                    "text": text
+                }
+            }),
+        )?;
+        self.open_files.insert(request.file_path.to_path_buf());
+        Ok(())
+    }
+
+    fn send_request(&mut self, method: &str, params: Value) -> anyhow::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.write_message(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }))?;
+        Ok(id)
+    }
+
+    fn send_notification(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
+        self.write_message(json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        }))
+    }
+
+    fn write_message(&mut self, value: Value) -> anyhow::Result<()> {
+        let body = value.to_string();
+        write!(self.stdin, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
+        self.stdin.flush()?;
+        Ok(())
+    }
+
+    fn read_response(&mut self, id: u64) -> anyhow::Result<Value> {
+        loop {
+            let mut content_length = None;
+            loop {
+                let mut header = String::new();
+                let read = self.stdout.read_line(&mut header)?;
+                if read == 0 {
+                    bail!("clangd closed stdout");
+                }
+                let header = header.trim_end_matches(['\r', '\n']);
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(value) = header.strip_prefix("Content-Length:") {
+                    content_length = Some(value.trim().parse::<usize>()?);
+                }
+            }
+
+            let len = content_length.context("missing clangd Content-Length header")?;
+            let mut body = vec![0u8; len];
+            std::io::Read::read_exact(&mut self.stdout, &mut body)?;
+            let response: Value = serde_json::from_slice(&body)?;
+            if response.get("id").and_then(|value| value.as_u64()) == Some(id) {
+                return Ok(response);
+            }
+        }
+    }
+}
+
+impl Drop for ClangdResolver {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl SemanticCallResolver for ClangdResolver {
+    fn resolve(&mut self, request: &SemanticCallRequest<'_>) -> Option<SemanticCallTarget> {
+        if !matches!(request.language, "c" | "cpp") {
+            return None;
+        }
+        self.ensure_open(request).ok()?;
+        let id = self
+            .send_request(
+                "textDocument/definition",
+                json!({
+                    "textDocument": { "uri": path_to_uri(request.file_path) },
+                    "position": {
+                        "line": request.line.saturating_sub(1),
+                        "character": request.column,
+                    }
+                }),
+            )
+            .ok()?;
+        let response = self.read_response(id).ok()?;
+        let locations = locations_from_lsp_response(&response);
+        classify_definition(
+            request.root_path,
+            request.source,
+            request.callee_name,
+            &locations,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn discovers_compile_commands_in_root_and_build_dirs() {
+        let tempdir = TempDir::new().expect("tempdir");
+        assert!(discover_compile_commands_dir(tempdir.path()).is_none());
+        let build = tempdir.path().join("build");
+        fs::create_dir_all(&build).expect("build dir");
+        fs::write(build.join("compile_commands.json"), "[]").expect("compile db");
+        assert_eq!(discover_compile_commands_dir(tempdir.path()), Some(build));
+    }
+
+    #[test]
+    fn parses_lsp_location_and_location_link_results() {
+        let response = json!({
+            "id": 1,
+            "result": [
+                { "uri": "file:///usr/include/stdio.h", "range": {} },
+                { "targetUri": "file:///opt/pkg/include/foo.hpp", "targetRange": {} }
+            ]
+        });
+        let locations = locations_from_lsp_response(&response);
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].path, PathBuf::from("/usr/include/stdio.h"));
+        assert_eq!(locations[1].path, PathBuf::from("/opt/pkg/include/foo.hpp"));
+    }
+
+    #[test]
+    fn classifies_single_definition_outside_project_as_external() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let external = TempDir::new().expect("external tempdir");
+        let header = external.path().join("vendor.h");
+        fs::write(&header, "void vendor_call();").expect("header");
+        let target = classify_definition(
+            tempdir.path(),
+            b"void run() { vendor_call(); }",
+            "vendor_call",
+            &[DefinitionLocation { path: header }],
+        )
+        .expect("external target");
+
+        assert_eq!(target.callee_name, "vendor_call");
+        assert!(target.external_module.ends_with("vendor.h"));
+    }
+
+    #[test]
+    fn leaves_local_empty_multiple_and_macro_definitions_unresolved() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let local = tempdir.path().join("local.h");
+        fs::write(&local, "void local_call();").expect("local header");
+        let external = TempDir::new()
+            .expect("external tempdir")
+            .path()
+            .join("vendor.h");
+
+        assert!(
+            classify_definition(
+                tempdir.path(),
+                b"void run() { local_call(); }",
+                "local_call",
+                &[DefinitionLocation { path: local }]
+            )
+            .is_none()
+        );
+        assert!(classify_definition(tempdir.path(), b"", "missing", &[]).is_none());
+        assert!(
+            classify_definition(
+                tempdir.path(),
+                b"",
+                "ambiguous",
+                &[
+                    DefinitionLocation {
+                        path: PathBuf::from("/usr/include/a.h")
+                    },
+                    DefinitionLocation {
+                        path: PathBuf::from("/usr/include/b.h")
+                    }
+                ]
+            )
+            .is_none()
+        );
+        assert!(
+            classify_definition(
+                tempdir.path(),
+                b"#define printf my_printf\nvoid run() { printf(\"x\"); }",
+                "printf",
+                &[DefinitionLocation { path: external }]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn optional_clangd_integration_resolves_external_definition() {
+        if std::env::var("GCODE_TEST_CLANGD").ok().as_deref() != Some("1") {
+            return;
+        }
+        let Some(clangd) = resolve_clangd_command() else {
+            panic!("GCODE_TEST_CLANGD=1 requires clangd");
+        };
+        let tempdir = TempDir::new().expect("tempdir");
+        let source_dir = tempdir.path().join("src");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        let source_path = source_dir.join("main.c");
+        let source = b"#include <stdio.h>\nvoid run(void) {\n    printf(\"x\");\n}\n";
+        fs::write(&source_path, source).expect("source");
+        let compile_db = format!(
+            r#"[{{"directory":"{}","command":"cc -c {}","file":"{}"}}]"#,
+            tempdir.path().display(),
+            source_path.display(),
+            source_path.display()
+        );
+        fs::write(tempdir.path().join("compile_commands.json"), compile_db).expect("compile db");
+
+        let mut resolver =
+            ClangdResolver::start(tempdir.path(), tempdir.path(), &clangd).expect("clangd");
+        let target = resolver.resolve(&SemanticCallRequest {
+            language: "c",
+            file_path: &source_path,
+            root_path: tempdir.path(),
+            source,
+            callee_name: "printf",
+            line: 3,
+            column: 4,
+        });
+        assert!(target.is_some());
+    }
+}

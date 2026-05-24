@@ -14,6 +14,7 @@ use crate::index::chunker;
 use crate::index::hasher;
 use crate::index::languages;
 use crate::index::parser;
+use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::walker;
 use crate::models::{IndexResult, IndexedFile, IndexedProject};
 use crate::progress::ProgressBar;
@@ -45,6 +46,7 @@ pub fn index_directory(
     project_id: &str,
     incremental: bool,
     quiet: bool,
+    require_cpp_semantics: bool,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -59,6 +61,8 @@ pub fn index_directory(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
+    let mut semantic_resolver =
+        create_semantic_resolver_if_needed(root_path, &candidates, require_cpp_semantics)?;
 
     // Build current hash map for incremental detection and orphan cleanup.
     let current_hashes = current_file_hashes(root_path, &candidates, &content_only);
@@ -100,6 +104,7 @@ pub fn index_directory(
             root_path,
             &excludes,
             &import_context,
+            semantic_resolver.as_deref_mut(),
         ) {
             Some(count) => {
                 result.files_indexed += 1;
@@ -150,6 +155,7 @@ pub fn index_files(
     root_path: &Path,
     project_id: &str,
     file_paths: &[String],
+    require_cpp_semantics: bool,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -164,6 +170,8 @@ pub fn index_files(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
+    let mut semantic_resolver =
+        create_semantic_resolver_if_needed(root_path, &candidates, require_cpp_semantics)?;
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -185,6 +193,7 @@ pub fn index_files(
             root_path,
             &excludes,
             &import_context,
+            semantic_resolver.as_deref_mut(),
         ) {
             result.files_indexed += 1;
             result.symbols_found += count;
@@ -210,15 +219,17 @@ fn index_file(
     root_path: &Path,
     exclude_patterns: &[String],
     import_context: &parser::ImportResolutionContext,
+    semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> Option<usize> {
     let rel = relative_path(file_path, root_path).ok()?;
 
-    let parse_result = parser::parse_file(
+    let parse_result = parser::parse_file_with_semantic(
         file_path,
         project_id,
         root_path,
         exclude_patterns,
         import_context,
+        semantic_resolver,
     )?;
 
     let count = parse_result.symbols.len();
@@ -259,6 +270,23 @@ fn index_file(
     tx.commit().ok()?;
 
     Some(count)
+}
+
+fn create_semantic_resolver_if_needed(
+    root_path: &Path,
+    candidates: &[std::path::PathBuf],
+    require_cpp_semantics: bool,
+) -> anyhow::Result<Option<Box<dyn SemanticCallResolver>>> {
+    let has_cpp_candidate = candidates.iter().any(|path| {
+        matches!(
+            languages::detect_language(&path.to_string_lossy()),
+            Some("c" | "cpp")
+        )
+    });
+    if !has_cpp_candidate {
+        return Ok(None);
+    }
+    semantic::create_cpp_semantic_resolver(root_path, require_cpp_semantics)
 }
 
 /// Index content-only file (no AST, just chunks).

@@ -52,7 +52,7 @@ tree-sitter-c-sharp = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-php = "0.23"
 tree-sitter-swift = "0.7"
-tree-sitter-kotlin = "0.3"
+tree-sitter-kotlin-ng = "1.1"
 # Tier 2: Additional languages
 tree-sitter-dart = "0.1"
 tree-sitter-elixir = "0.3"

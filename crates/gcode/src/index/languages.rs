@@ -159,6 +159,8 @@ const DART: LanguageSpec = LanguageSpec {
     import_query: r#"
         (import_or_export) @import
     "#,
+    // Dart calls are extracted by parser.rs because this grammar models calls as
+    // selector chains rather than a stable call-expression node.
     call_query: "",
 };
 
@@ -223,7 +225,10 @@ const ELIXIR: LanguageSpec = LanguageSpec {
     import_query: r#"
         (call target: (identifier) @_keyword (#any-of? @_keyword "import" "alias" "use" "require")) @import
     "#,
-    call_query: "",
+    call_query: r#"
+        (call target: (identifier) @name) @call
+        (call target: (dot right: (identifier) @name)) @call
+    "#,
 };
 
 const RUBY: LanguageSpec = LanguageSpec {
@@ -235,10 +240,26 @@ const RUBY: LanguageSpec = LanguageSpec {
         (module name: (constant) @name) @definition.class
     "#,
     import_query: r#"
-        (call method: (identifier) @_m (#any-of? @_m "require" "require_relative" "include")) @import
+        (call method: (identifier) @_m (#any-of? @_m "require" "require_relative" "load" "include" "extend" "prepend")) @import
     "#,
     call_query: r#"
         (call method: (identifier) @name) @call
+    "#,
+};
+
+const KOTLIN: LanguageSpec = LanguageSpec {
+    extensions: &[".kt", ".kts"],
+    symbol_query: r#"
+        (function_declaration name: (identifier) @name) @definition.function
+        (class_declaration name: (identifier) @name) @definition.class
+        (object_declaration name: (identifier) @name) @definition.class
+    "#,
+    import_query: r#"
+        (import) @import
+    "#,
+    call_query: r#"
+        (call_expression (identifier) @name) @call
+        (call_expression (navigation_expression (identifier) (identifier) @name)) @call
     "#,
 };
 
@@ -305,6 +326,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("cpp", &CPP),
     ("elixir", &ELIXIR),
     ("ruby", &RUBY),
+    ("kotlin", &KOTLIN),
     ("swift", &SWIFT),
     ("markdown", &MARKDOWN),
     ("yaml", &YAML),
@@ -349,9 +371,7 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "ruby" => tree_sitter_ruby::LANGUAGE,
         "php" => tree_sitter_php::LANGUAGE_PHP,
         "swift" => tree_sitter_swift::LANGUAGE,
-        // kotlin 0.3 is built against tree-sitter 0.20, incompatible with 0.24
-        // TODO: update when tree-sitter-kotlin publishes a 0.24-compatible release
-        "kotlin" => return None,
+        "kotlin" => tree_sitter_kotlin_ng::LANGUAGE,
         "dart" => tree_sitter_dart::LANGUAGE,
         "elixir" => tree_sitter_elixir::LANGUAGE,
         "json" => tree_sitter_json::LANGUAGE,

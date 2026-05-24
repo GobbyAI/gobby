@@ -59,6 +59,9 @@ enum Command {
         /// Force full reindex (skip incremental hash check)
         #[arg(long)]
         full: bool,
+        /// Fail C/C++ indexing when clangd or compile_commands.json semantics are unavailable
+        #[arg(long)]
+        require_cpp_semantics: bool,
     },
     /// Show project index status
     Status,
@@ -254,7 +257,12 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
-        Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
+        Command::Index {
+            path,
+            files,
+            full,
+            require_cpp_semantics,
+        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, cli.format)
@@ -432,6 +440,20 @@ mod tests {
                 command: GraphCommand::Rebuild
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_index_require_cpp_semantics() {
+        let cli = Cli::try_parse_from(["gcode", "index", "--require-cpp-semantics"])
+            .expect("index parses");
+
+        match cli.command {
+            Command::Index {
+                require_cpp_semantics,
+                ..
+            } => assert!(require_cpp_semantics),
+            _ => panic!("expected index command"),
+        }
     }
 
     #[test]
