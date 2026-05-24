@@ -24,13 +24,17 @@ class TestGobbyRouterSkill:
         body = SKILL_PATH.read_text(encoding="utf-8")
 
         for text in (
-            "/gobby` and `/gobby help",
+            "$gobby`, `$gobby help",
+            "/gobby`, `/gobby help",
+            "$gobby <skill>",
             "/gobby <skill> [args]",
+            "$gobby skill <skill> [args]",
             "/gobby skill <skill> [args]",
             "/gobby:<skill> [args]",
             'get_skill(name="<skill>")',
             "does not inline skill bodies",
             "Preserve",
+            "Do not present `/gobby` as universal syntax.",
         ):
             assert text in body
 

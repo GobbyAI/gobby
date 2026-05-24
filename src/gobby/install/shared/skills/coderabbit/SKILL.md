@@ -27,15 +27,26 @@ Before any CodeRabbit triage, first check whether the session is already in
 native Plan Mode. If it is not, you MUST enter native Plan Mode before reading
 reports, verifying findings, creating or claiming tasks, or editing files. Native
 Plan Mode is the runtime-provided planning state; session-level planning is the
-assistant's internal planning posture and does not satisfy this gate. Use
-`EnterPlanMode` when the runtime provides it; otherwise respond with a
-planning-focused triage message and wait for plan approval before continuing.
+assistant's internal planning posture and does not satisfy this gate.
+
+Use `EnterPlanMode` when the runtime provides it. When no direct Plan Mode tool
+is exposed, use `gobby-sessions.send_keys(session_id, keys, literal=true)` to
+send the provider's native Gobby plan command:
+
+- Codex: `$gobby plan\n`
+- Claude, Gemini, or Qwen sessions whose installed router is slash-based:
+  `/gobby plan\n`
+- Unsupported or unknown provider: stop with a blocker instead of guessing.
+
+After sending keys, verify that the target session is actually in native Plan
+Mode before triage. Loading the `plan` skill or composing a plan in normal chat
+does not satisfy this gate.
 
 Plan Mode triage is read-only: ingest supplied findings and
 `./reports/coderabbit-*.md`, verify the current code, decide `fixed` or
-`no-fix`, and present the implementation plan before editing files. If native
-Plan Mode blocks task creation, create or claim the `gobby-tasks` task
-immediately after plan approval and before the first edit.
+`no-fix`, and present the implementation plan; wait for plan approval before continuing
+to implementation. If native Plan Mode blocks task creation, create or claim the
+`gobby-tasks` task immediately after plan approval and before the first edit.
 
 ## Contract
 
@@ -54,8 +65,9 @@ behavior. Do not silently drop stale comments.
 
 ## Workflow
 
-1. If not already in native Plan Mode, enter Plan Mode before any triage; then
-   complete read-only triage before implementation.
+1. If not already in native Plan Mode, enter Plan Mode with `EnterPlanMode` or
+   the provider-aware `gobby-sessions.send_keys` fallback; verify native Plan
+   Mode is active, then complete read-only triage before implementation.
 2. Create or claim a `gobby-tasks` task before edits.
 3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
 4. For each report, identify whether it contains actionable findings or only a
@@ -67,9 +79,8 @@ behavior. Do not silently drop stale comments.
    fixed or documented. Leave unrelated report artifacts alone.
 9. Run focused validation for the touched areas, plus scoped lint/type checks
    when available.
-10. Commit as `[gobby-#NNNNN] <type>: <summary>` and close the task with
-    `commit_sha`. Allowed types: `fix`, `feat`, `refactor`, `chore`, `docs`,
-    and `test`.
+10. Commit with the task ref as `[gobby-#NNNNN] <type>: <summary>` and close the task with `commit_sha`.
+    Allowed types: `fix`, `feat`, `refactor`, `chore`, `docs`, and `test`.
 
 ## Verification Discipline
 

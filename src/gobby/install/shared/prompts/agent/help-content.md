@@ -1,13 +1,13 @@
 ---
 name: agent/help-content
-description: Help listing for /gobby command showing available skills
+description: Help listing for the Gobby router command showing available skills
 version: "1.0"
-required_variables: [skills_list]
+required_variables: [skills_list, command_prefix]
 ---
 # Gobby Skills
 
 Installed skills below are generated from `discover_core_skills()`. Invoke one
-with `/gobby <skill>`:
+with `{{ command_prefix }} <skill>`:
 
 {{ skills_list }}
 

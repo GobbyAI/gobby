@@ -222,6 +222,14 @@ class TestInterceptSkillCommand:
             result = handler._intercept_skill_command("/gobby help")
         assert result == "help text"
 
+    def test_codex_gobby_help_uses_codex_prefix(self) -> None:
+        handler = _TestHandler()
+        with patch.object(handler, "_generate_help_content", return_value="help text") as mock_help:
+            result = handler._intercept_skill_command("$gobby help", "sess-1")
+
+        assert result == "help text"
+        mock_help.assert_called_once_with("sess-1", command_prefix="$gobby")
+
     def test_gobby_colon_skill(self) -> None:
         handler = _TestHandler()
         mock_skill = MagicMock()
@@ -242,6 +250,19 @@ class TestInterceptSkillCommand:
         handler._skill_manager.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby expand some args")
+        assert result is not None
+        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
+        assert "some args" in result
+
+    def test_codex_gobby_space_skill(self) -> None:
+        handler = _TestHandler()
+        mock_skill = MagicMock()
+        mock_skill.name = "expand"
+        mock_skill.content = "# Expand"
+        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+
+        result = handler._intercept_skill_command("$gobby expand some args")
+
         assert result is not None
         assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
         assert "some args" in result
@@ -269,6 +290,18 @@ class TestInterceptSkillCommand:
         with patch.object(handler, "_skill_not_found_context", return_value="not found text"):
             result = handler._intercept_skill_command("/gobby:nonexistent")
         assert result == "not found text"
+
+    def test_codex_gobby_skill_not_found_uses_codex_prefix(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager.resolve_skill_name.return_value = None
+
+        with patch.object(
+            handler, "_skill_not_found_context", return_value="not found text"
+        ) as mock_not_found:
+            result = handler._intercept_skill_command("$gobby nonexistent")
+
+        assert result == "not found text"
+        mock_not_found.assert_called_once_with("nonexistent", command_prefix="$gobby")
 
     def test_gobby_no_skill_manager(self) -> None:
         handler = _TestHandler()
@@ -340,6 +373,11 @@ class TestSuggestSkills:
     def test_slash_command_skipped(self) -> None:
         handler = _TestHandler()
         result = handler._suggest_skills("/gobby:expand")
+        assert result is None
+
+    def test_codex_command_skipped(self) -> None:
+        handler = _TestHandler()
+        result = handler._suggest_skills("$gobby expand")
         assert result is None
 
     def test_no_matches(self) -> None:
@@ -419,6 +457,24 @@ class TestGenerateHelpContent:
         assert "- `/gobby expand` — Expand tasks" in skills_list
         assert "- `/gobby plan` — Draft plans" in skills_list
         assert skills_list.index("/gobby expand") < skills_list.index("/gobby plan")
+
+    def test_generate_help_uses_command_prefix(self) -> None:
+        handler = _TestHandler()
+        expand_skill = MagicMock()
+        expand_skill.name = "expand"
+        expand_skill.description = "Expand tasks."
+        expand_skill.is_always_apply.return_value = False
+        handler._skill_manager.discover_core_skills.return_value = [expand_skill]
+
+        with patch(
+            "gobby.hooks.event_handlers._agent._load_agent_prompt",
+            return_value="help",
+        ) as mock_load:
+            handler._generate_help_content(command_prefix="$gobby")
+
+        context = mock_load.call_args.args[1]
+        assert context["command_prefix"] == "$gobby"
+        assert "- `$gobby expand` — Expand tasks" in context["skills_list"]
 
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
@@ -500,9 +556,10 @@ class TestSkillNotFoundContext:
         with patch(
             "gobby.hooks.event_handlers._agent._load_agent_prompt",
             return_value="not found msg",
-        ):
-            result = handler._skill_not_found_context("expa")
+        ) as mock_load:
+            result = handler._skill_not_found_context("expa", command_prefix="$gobby")
         assert result == "not found msg"
+        assert mock_load.call_args.args[1]["command_prefix"] == "$gobby"
 
     def test_no_skill_manager(self) -> None:
         handler = _TestHandler()
@@ -768,6 +825,11 @@ class TestGobbyCommandPattern:
         assert m is not None
         assert m.group(1) is None
 
+    def test_bare_codex_gobby(self) -> None:
+        m = _GOBBY_CMD_PATTERN.match("$gobby")
+        assert m is not None
+        assert m.group(1) is None
+
     def test_gobby_colon_skill(self) -> None:
         m = _GOBBY_CMD_PATTERN.match("/gobby:expand")
         assert m is not None
@@ -779,6 +841,16 @@ class TestGobbyCommandPattern:
         assert m.group(1) is None
         assert "expand --tdd" in m.group(2)
 
+    def test_codex_gobby_space_skill(self) -> None:
+        m = _GOBBY_CMD_PATTERN.match("$gobby expand --tdd")
+        assert m is not None
+        assert m.group(1) is None
+        assert "expand --tdd" in m.group(2)
+
     def test_not_gobby(self) -> None:
         m = _GOBBY_CMD_PATTERN.match("/other command")
         assert m is None
+
+    def test_gobby_requires_command_boundary(self) -> None:
+        assert _GOBBY_CMD_PATTERN.match("/gobbyfoo") is None
+        assert _GOBBY_CMD_PATTERN.match("$gobbyfoo") is None
