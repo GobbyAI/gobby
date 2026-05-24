@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
@@ -463,6 +464,76 @@ class TestWakeDispatch:
         assert ism_manager.create_message.call_count == 3
 
     @pytest.mark.asyncio
+    async def test_concurrent_pane_wakes_coalesce_before_sending_text(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Concurrent completions must not interleave duplicate wake prompts in the pane."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=5,
+        )
+
+        async def slow_pane_send(
+            _pane_id: str,
+            _message: str,
+            _socket_path: str | None,
+        ) -> None:
+            await asyncio.sleep(0.01)
+
+        tmux_pane_sender = AsyncMock(side_effect=slow_pane_send)
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        await asyncio.gather(
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
+        )
+
+        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        assert ism_manager.create_message.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_concurrent_terminal_agent_wakes_coalesce_to_one_live_signal(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Terminal agents need one wake signal; durable ISMs carry distinct completions."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=1,
+            terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
+            turn_count=8,
+        )
+
+        async def slow_tmux_send(_tmux_session_name: str, _message: str) -> None:
+            await asyncio.sleep(0.01)
+
+        tmux_sender = AsyncMock(side_effect=slow_tmux_send)
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+        )
+
+        await asyncio.gather(
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
+            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
+        )
+
+        tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        assert ism_manager.create_message.call_count == 3
+
+    @pytest.mark.asyncio
     async def test_pane_wake_resumes_after_turn_advances(
         self,
         session_manager: MagicMock,
@@ -592,6 +663,45 @@ class TestWakeDispatch:
             "queued": False,
         }
         registry.wake_session.assert_awaited_once_with("web-1")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_web_chat_wakes_coalesce_to_one_hidden_turn(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """A web-chat session should not receive duplicate hidden wake prompts at once."""
+        session_manager.get.return_value = FakeSession(
+            id="web-1",
+            session_type="web_chat",
+            turn_count=12,
+        )
+
+        async def slow_web_wake(_session_id: str) -> dict[str, object]:
+            await asyncio.sleep(0.01)
+            return {
+                "session_id": "web-1",
+                "delivered": True,
+                "method": "web_chat",
+                "queued": False,
+            }
+
+        registry = MagicMock()
+        registry.wake_session = AsyncMock(side_effect=slow_web_wake)
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            web_chat_session_registry=registry,
+        )
+
+        results = await asyncio.gather(
+            dispatcher.dispatch_live_wake("web-1"),
+            dispatcher.dispatch_live_wake("web-1"),
+            dispatcher.dispatch_live_wake("web-1"),
+        )
+
+        registry.wake_session.assert_awaited_once_with("web-1")
+        assert [result.get("skipped") for result in results].count("debounced") == 2
 
     @pytest.mark.asyncio
     async def test_web_chat_session_without_live_registry_returns_explicit_failure(
