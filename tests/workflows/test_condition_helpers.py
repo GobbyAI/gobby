@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    is_gobby_build_command,
     is_task_complete,
     task_needs_human_review,
     task_tree_complete,
@@ -36,6 +37,36 @@ def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
 def _seq_ref(task) -> str:
     assert task.seq_num is not None
     return f"#{task.seq_num}"
+
+
+class TestIsGobbyBuildCommand:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gobby build #15117",
+            "/Users/josh/.gobby/bin/gobby build #15117 --clone",
+            "GOBBY_TEST_PROTECT=1 uv run --frozen gobby build #15117",
+            "uv run -- gobby build docs/plan.md --quick",
+            "python -m gobby build #15117",
+            "ruff check src && gobby build #15117",
+        ],
+    )
+    def test_detects_direct_gobby_build_invocations(self, command: str) -> None:
+        assert is_gobby_build_command(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "",
+            None,
+            'rg "gobby build" src tests',
+            "uv run gobby status",
+            "gobby status",
+            "python -m pytest tests/cli/test_build.py",
+        ],
+    )
+    def test_skips_non_build_invocations(self, command: object) -> None:
+        assert is_gobby_build_command(command) is False
 
 
 class TestNormalizeTaskId:

@@ -105,6 +105,27 @@ def is_validation_command(command: Any) -> bool:
     return False
 
 
+def is_gobby_build_command(command: Any) -> bool:
+    """Return whether a shell command directly invokes ``gobby build``."""
+    if not isinstance(command, str) or not command.strip():
+        return False
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    segment: list[str] = []
+    for token in [*tokens, ";"]:
+        if token in _SHELL_SEGMENT_SEPARATORS:
+            if _segment_invokes_gobby_build(segment):
+                return True
+            segment = []
+            continue
+        segment.append(token)
+    return False
+
+
 def _segment_invokes_validation(tokens: list[str]) -> bool:
     tokens = _strip_env_assignments(tokens)
     if not tokens:
@@ -132,6 +153,19 @@ def _segment_invokes_validation(tokens: list[str]) -> bool:
     if executable == "make":
         return len(tokens) > 1 and tokens[1] in {"test", "tests"}
     return False
+
+
+def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
+    tokens = _strip_env_assignments(tokens)
+    if not tokens:
+        return False
+
+    executable = _executable_name(tokens[0])
+    if executable == "uv" and len(tokens) > 1 and tokens[1] == "run":
+        return _segment_invokes_gobby_build(_strip_uv_run_options(tokens[2:]))
+    if executable in {"python", "python3"} or executable.startswith("python3."):
+        return len(tokens) > 3 and tokens[1] == "-m" and tokens[2] == "gobby" and tokens[3] == "build"
+    return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
 
 
 def _strip_env_assignments(tokens: list[str]) -> list[str]:
