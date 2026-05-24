@@ -118,6 +118,7 @@ pub(crate) fn parse_import_statement(
         "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
+        "swift" => parse_swift_import_statement(text, rel_path, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -921,6 +922,45 @@ fn parse_php_import_statement(
                 .insert(local_alias.to_string(), target.to_string());
         }
     }
+}
+
+fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut ExtractedImports) {
+    let normalized = text.trim();
+    let Some(rest) = normalized.strip_prefix("import ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized.to_string(),
+        });
+        return;
+    };
+
+    let module = rest
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .next()
+        .unwrap_or_default();
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: rest.to_string(),
+    });
+    if module.is_empty()
+        || matches!(
+            module,
+            "class" | "struct" | "enum" | "protocol" | "func" | "typealias" | "var" | "let"
+        )
+    {
+        return;
+    }
+
+    extracted.bindings.external_roots.insert(
+        module.to_string(),
+        ExternalRootBinding {
+            module: module.to_string(),
+            module_from_qualifier: false,
+        },
+    );
 }
 
 fn collapse_whitespace(text: &str) -> String {

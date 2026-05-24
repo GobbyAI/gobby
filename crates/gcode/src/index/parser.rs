@@ -684,6 +684,10 @@ mod tests {
         parse_source("src/sample.php", source, extra_files)
     }
 
+    fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("Sources/App/main.swift", source, extra_files)
+    }
+
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         let mut stack = vec![root.to_path_buf()];
@@ -1386,6 +1390,48 @@ class Client {}
             )],
         );
 
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn classifies_external_swift_module_qualified_calls() {
+        let parsed = parse_swift(
+            r#"
+import Foundation
+
+func run() {
+    Foundation.Date()
+}
+"#,
+            &[],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "Date");
+        assert_eq!(call.callee_external_module.as_deref(), Some("Foundation"));
+    }
+
+    #[test]
+    fn leaves_swift_unqualified_and_member_calls_unresolved() {
+        let parsed = parse_swift(
+            r#"
+import Foundation
+
+func run(date: Date) {
+    Date()
+    date.formatted()
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
         assert!(
             parsed
                 .calls

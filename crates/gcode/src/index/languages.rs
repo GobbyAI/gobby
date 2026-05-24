@@ -284,6 +284,7 @@ const SWIFT: LanguageSpec = LanguageSpec {
     "#,
     call_query: r#"
         (call_expression (simple_identifier) @name) @call
+        (call_expression (navigation_expression suffix: (navigation_suffix suffix: (simple_identifier) @name))) @call
     "#,
 };
 
