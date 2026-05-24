@@ -13,17 +13,14 @@ pub struct SearchOptions<'a> {
     pub offset: usize,
     pub kind: Option<&'a str>,
     pub language: Option<&'a str>,
-    pub path: Option<&'a str>,
+    pub paths: &'a [String],
     pub format: Format,
 }
 
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let path_pattern = options
-        .path
-        .map(glob::Pattern::new)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
+    let expanded_paths = fts::expand_paths(options.paths);
+    let path_patterns = fts::compile_patterns(&expanded_paths)?;
 
     // Fetch generously for RRF. Total is a best-effort estimate bounded by fetch_limit
     // per source — exact counts aren't feasible because RRF merges results from BM25,
@@ -36,7 +33,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &ctx.project_id,
         options.kind,
         options.language,
-        options.path,
+        &expanded_paths,
         fetch_limit,
     );
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
@@ -48,7 +45,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &ctx.project_id,
         options.kind,
         options.language,
-        options.path,
+        &expanded_paths,
         fetch_limit,
     );
     if fts_results.is_empty() {
@@ -58,7 +55,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             &ctx.project_id,
             options.kind,
             options.language,
-            options.path,
+            &expanded_paths,
             fetch_limit,
         );
     }
@@ -123,7 +120,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
                 &s,
                 options.kind,
                 options.language,
-                path_pattern.as_ref(),
+                &path_patterns,
             )
         {
             all_resolved.push((s, *score, source_names.clone()));
@@ -178,11 +175,8 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 
 pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let path_pattern = options
-        .path
-        .map(glob::Pattern::new)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
+    let expanded_paths = fts::expand_paths(options.paths);
+    let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
     let all_results: Vec<_> = fts::search_symbols_exact_first(
         &mut conn,
@@ -190,7 +184,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         &ctx.project_id,
         options.kind,
         options.language,
-        options.path,
+        &expanded_paths,
         fetch_limit,
     )
     .into_iter()
@@ -201,7 +195,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
             s,
             options.kind,
             options.language,
-            path_pattern.as_ref(),
+            &path_patterns,
         )
     })
     .collect();
@@ -253,31 +247,37 @@ pub fn search_text(
     limit: usize,
     offset: usize,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     format: Format,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let path_pattern = path
-        .map(glob::Pattern::new)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
-    let fetch_limit = ((offset + limit) * 3).max(200);
+    let expanded_paths = fts::expand_paths(paths);
+    let path_patterns = fts::compile_patterns(&expanded_paths)?;
+    let has_path_filters = !expanded_paths.is_empty();
+    let fetch_limit = if has_path_filters {
+        fts::FILTERED_FETCH_CAP
+    } else {
+        ((offset + limit) * 3).max(200)
+    };
     let all_results = fts::search_text(
         &mut conn,
         query,
         &ctx.project_id,
         language,
-        path,
+        &expanded_paths,
         fetch_limit,
     );
-    let _raw_total = fts::count_text(&mut conn, query, &ctx.project_id, language, path);
+    let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
+        .then(filtered_fetch_cap_hint);
     let all_results: Vec<_> = all_results
         .into_iter()
-        .filter(|r| {
-            search_result_matches_filters(&mut conn, ctx, r, language, path_pattern.as_ref())
-        })
+        .filter(|r| search_result_matches_filters(&mut conn, ctx, r, language, &path_patterns))
         .collect();
-    let total = all_results.len();
+    let total = if has_path_filters {
+        all_results.len()
+    } else {
+        fts::count_text(&mut conn, query, &ctx.project_id, language, &expanded_paths)
+    };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), offset, total);
@@ -289,9 +289,10 @@ pub fn search_text(
             offset,
             limit,
             results,
-            hint: None,
+            hint: cap_hint,
         }),
         Format::Text => {
+            print_filtered_fetch_cap_warning(ctx, cap_hint.as_deref());
             for r in &results {
                 println!(
                     "{}:{} [{}] {}",
@@ -338,35 +339,41 @@ pub fn search_content(
     limit: usize,
     offset: usize,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     format: Format,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let path_pattern = path
-        .map(glob::Pattern::new)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
-    let fetch_limit = ((offset + limit) * 3).max(200);
+    let expanded_paths = fts::expand_paths(paths);
+    let path_patterns = fts::compile_patterns(&expanded_paths)?;
+    let has_path_filters = !expanded_paths.is_empty();
+    let fetch_limit = if has_path_filters {
+        fts::FILTERED_FETCH_CAP
+    } else {
+        ((offset + limit) * 3).max(200)
+    };
     let all_results = fts::search_content(
         &mut conn,
         query,
         &ctx.project_id,
         language,
-        path,
+        &expanded_paths,
         fetch_limit,
     );
-    let _raw_total = fts::count_content(&mut conn, query, &ctx.project_id, language, path);
+    let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
+        .then(filtered_fetch_cap_hint);
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
             language.is_none_or(|lang| r.language.as_deref() == Some(lang))
-                && path_pattern
-                    .as_ref()
-                    .is_none_or(|pat| pat.matches(&r.file_path))
+                && path_matches_filters(&path_patterns, &r.file_path)
                 && scope::current_indexed_path_is_valid(&mut conn, ctx, &r.file_path)
         })
         .collect();
-    let total = all_results.len();
+    let total = if has_path_filters {
+        all_results.len()
+    } else {
+        fts::count_content(&mut conn, query, &ctx.project_id, language, &expanded_paths)
+    };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), offset, total);
@@ -378,9 +385,10 @@ pub fn search_content(
             offset,
             limit,
             results,
-            hint: None,
+            hint: cap_hint,
         }),
         Format::Text => {
+            print_filtered_fetch_cap_warning(ctx, cap_hint.as_deref());
             for r in &results {
                 println!(
                     "{}:{}-{} {}",
@@ -413,11 +421,11 @@ fn symbol_matches_filters(
     symbol: &Symbol,
     kind: Option<&str>,
     language: Option<&str>,
-    path_pattern: Option<&glob::Pattern>,
+    path_patterns: &[glob::Pattern],
 ) -> bool {
     kind.is_none_or(|k| symbol.kind == k)
         && language.is_none_or(|lang| symbol.language == lang)
-        && path_pattern.is_none_or(|pat| pat.matches(&symbol.file_path))
+        && path_matches_filters(path_patterns, &symbol.file_path)
         && scope::current_indexed_path_is_valid(conn, ctx, &symbol.file_path)
 }
 
@@ -426,11 +434,30 @@ fn search_result_matches_filters(
     ctx: &Context,
     result: &SearchResult,
     language: Option<&str>,
-    path_pattern: Option<&glob::Pattern>,
+    path_patterns: &[glob::Pattern],
 ) -> bool {
     language.is_none_or(|lang| result.language == lang)
-        && path_pattern.is_none_or(|pat| pat.matches(&result.file_path))
+        && path_matches_filters(path_patterns, &result.file_path)
         && scope::current_indexed_path_is_valid(conn, ctx, &result.file_path)
+}
+
+fn path_matches_filters(path_patterns: &[glob::Pattern], file_path: &str) -> bool {
+    path_patterns.is_empty() || path_patterns.iter().any(|pat| pat.matches(file_path))
+}
+
+fn filtered_fetch_cap_hint() -> String {
+    format!(
+        "Path-filtered search hit the fetch cap of {}; refine the query or paths for complete totals.",
+        fts::FILTERED_FETCH_CAP
+    )
+}
+
+fn print_filtered_fetch_cap_warning(ctx: &Context, hint: Option<&str>) {
+    if let Some(hint) = hint
+        && !ctx.quiet
+    {
+        eprintln!("warning: {hint}");
+    }
 }
 
 fn format_symbol_lookup_text(symbol: &Symbol) -> String {
