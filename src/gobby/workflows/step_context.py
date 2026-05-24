@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import json
-import logging
-import sqlite3
 from dataclasses import dataclass
 
-import psycopg
 import pydantic
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.state_manager import WorkflowInstanceManager
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,16 +31,7 @@ def get_active_step_workflow_context(
     """Return the first active step-workflow context using synchronous DB reads."""
     if not session_id:
         return None
-
-    try:
-        return _get_active_step_workflow_context(db, session_id)
-    except (sqlite3.DatabaseError, psycopg.Error):
-        logger.warning(
-            "Failed to read active step workflow context for session %s",
-            session_id,
-            exc_info=True,
-        )
-        raise
+    return _get_active_step_workflow_context(db, session_id)
 
 
 def _get_active_step_workflow_context(

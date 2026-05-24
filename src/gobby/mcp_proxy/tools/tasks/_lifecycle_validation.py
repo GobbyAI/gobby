@@ -57,6 +57,11 @@ _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
         _FAILURE_FEEDBACK_FLAGS,
     ),
     re.compile(
+        r"\b(?:validation|verification)\s+errors?\b.{0,40}"
+        r"\b(?:remain|remaining|unresolved)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
         r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
         rf"\b{_VALIDATION_GATE_WORDS}\b",
         _FAILURE_FEEDBACK_FLAGS,
@@ -312,6 +317,12 @@ async def validate_leaf_task_with_llm(
 
     validation_status = result.status
     if result.status == "valid" and feedback_admits_required_validation_failure(result.feedback):
+        logger.warning(
+            "Overriding validation status for task %s: LLM returned 'valid' but feedback "
+            "admits failure. Feedback: %s",
+            resolved_id,
+            result.feedback,
+        )
         validation_status = "invalid"
 
     # Store validation result regardless of pass/fail

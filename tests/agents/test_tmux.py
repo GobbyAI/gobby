@@ -476,7 +476,7 @@ class TestSingletons:
     """Tests for module-level singleton getters."""
 
     @pytest.fixture(autouse=True)
-    def reset_singletons(self) -> Generator[None]:
+    def reset_singletons(self) -> Generator[None, None, None]:  # noqa: UP043
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 

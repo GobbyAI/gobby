@@ -11,6 +11,7 @@ from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.verification_evidence import MAX_VERIFICATION_EVIDENCE_ITEMS
 
 pytestmark = pytest.mark.unit
 
@@ -116,7 +117,8 @@ async def test_record_verification_evidence_keeps_latest_50_items(
         session.id,
         {
             "verification_evidence": [
-                {"summary": f"old evidence {index}", "success": True} for index in range(55)
+                {"summary": f"old evidence {index}", "success": True}
+                for index in range(MAX_VERIFICATION_EVIDENCE_ITEMS + 5)
             ],
         },
     )
@@ -133,11 +135,14 @@ async def test_record_verification_evidence_keeps_latest_50_items(
     )
 
     assert result["success"] is True
-    assert result["evidence_count"] == 50
+    assert result["evidence_count"] == MAX_VERIFICATION_EVIDENCE_ITEMS
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     evidence = variables["verification_evidence"]
-    assert len(evidence) == 50
-    assert evidence[0]["summary"] == "old evidence 6"
+    assert len(evidence) == MAX_VERIFICATION_EVIDENCE_ITEMS
+    expected_first_index = (
+        MAX_VERIFICATION_EVIDENCE_ITEMS + 5 + 1
+    ) - MAX_VERIFICATION_EVIDENCE_ITEMS
+    assert evidence[0]["summary"] == f"old evidence {expected_first_index}"
     assert evidence[-1]["summary"] == "Verified bounded evidence behavior"
 
 

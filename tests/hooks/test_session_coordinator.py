@@ -473,7 +473,10 @@ class TestAgentRunCompletion:
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
-    def test_complete_agent_run_fails_incomplete_step_workflow(self, temp_db: Any) -> None:
+    def test_complete_agent_run_fails_incomplete_step_workflow(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
         """SESSION_END does not mark a live step workflow as successful."""
         from gobby.storage.agents import LocalAgentRunManager
 
@@ -511,7 +514,10 @@ class TestAgentRunCompletion:
         assert "workflow=merge-worker" in updated.error
         assert "current_step=resolve_conflicts" in updated.error
 
-    def test_complete_agent_run_allows_completed_step_workflow(self, temp_db: Any) -> None:
+    def test_complete_agent_run_allows_completed_step_workflow(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
         """A leftover terminal-step workflow instance does not force failure."""
         from gobby.storage.agents import LocalAgentRunManager
 

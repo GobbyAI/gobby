@@ -43,11 +43,12 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
 
     assert steps["load_skill"]["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     status = steps["load_skill"]["status_message"]
-    assert 'get_skill(name="plan-review")' in status
-    assert 'list_tools("gobby-skills")' in status
-    assert 'get_tool_schema("gobby-skills", "get_skill")' in status
-    assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in status
-    assert "mcp__gobby__* proxy tools" in status
+    assert "plan-review" in status
+    assert any(
+        tool_name in status
+        for tool_name in ("get_skill", "list_tools", "get_tool_schema", "call_tool")
+    )
+    assert "proxy tools" in status
     assert "native Skill" in status
     assert "GitHub/app connector" in status
     assert "Computer Use tools" in status

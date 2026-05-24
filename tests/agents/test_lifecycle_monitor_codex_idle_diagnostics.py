@@ -134,6 +134,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     sample_project: dict,
     agent_run_manager: LocalAgentRunManager,
 ) -> None:
+    """Step-context lookup errors fall back to the generic reprompt and log exc_info."""
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
         agent_run_manager=agent_run_manager,

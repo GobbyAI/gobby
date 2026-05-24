@@ -55,9 +55,8 @@ async def prepare_reused_worktree(
         )
 
     extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
-    base_commit_sha = getattr(sync_result, "base_commit_sha", None)
-    if isinstance(base_commit_sha, str) and base_commit_sha:
-        extra["base_commit_sha"] = base_commit_sha
+    if sync_result.base_commit_sha:
+        extra["base_commit_sha"] = sync_result.base_commit_sha
     return (
         IsolationContext(
             cwd=existing_worktree.worktree_path,

@@ -529,6 +529,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert storage.get_mutex(task.id).run_id == "run-services"
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_subscribes_build_coordinator_completion(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

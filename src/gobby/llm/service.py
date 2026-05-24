@@ -291,7 +291,25 @@ class LLMService:
         *,
         caller: str | None = None,
     ) -> dict[str, Any]:
-        """Call generate_json for a feature config with tier-based fallback."""
+        """Call JSON generation for an LLM-backed feature.
+
+        Uses get_provider_for_feature(feature_config) to select provider and model, then calls
+        provider.generate_json(prompt, system_prompt, model, caller=caller). max_tokens is not
+        configurable here because generate_json uses provider-internal token limits.
+
+        Args:
+            feature_config: Feature config used by get_provider_for_feature.
+            prompt: User prompt to send to the selected provider.
+            system_prompt: Optional system prompt for JSON generation.
+            caller: Optional caller identifier for logging/tracing.
+
+        Returns:
+            Parsed JSON object as a dict.
+
+        When the selected provider is "local" and it raises, falls back to claude using
+        TIER_FALLBACK_MODEL[getattr(feature_config, "tier", ModelTier.LOW)] via
+        get_provider("claude").
+        """
         provider, model, _ = self.get_provider_for_feature(feature_config)
         try:
             return await provider.generate_json(

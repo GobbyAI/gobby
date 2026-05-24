@@ -66,9 +66,12 @@ def _definition_json_equal(existing_json: Any, desired_json: str) -> bool:
         existing_payload = (
             json.loads(existing_json) if isinstance(existing_json, str) else existing_json
         )
-        return bool(existing_payload == json.loads(desired_json))
+        desired_payload: object = json.loads(desired_json)
+        existing_payload_obj: object = existing_payload
+        return existing_payload_obj == desired_payload
     except (TypeError, json.JSONDecodeError):
-        return bool(existing_json == desired_json)
+        existing_json_obj: object = existing_json
+        return existing_json_obj == desired_json
 
 
 def _build_agent_update_fields(

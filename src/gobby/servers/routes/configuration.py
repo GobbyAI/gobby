@@ -12,7 +12,7 @@ Provides endpoints for:
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 from fastapi import APIRouter, HTTPException
@@ -163,6 +163,12 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             project_id=server.services.project_id,
         )
 
+    def _current_config_values() -> dict[str, Any]:
+        config = getattr(server.services, "config", None)
+        if config is None:
+            raise HTTPException(status_code=503, detail="Config not available")
+        return cast(dict[str, Any], config.model_dump(mode="json", exclude_none=True))
+
     # =========================================================================
     # Schema + Config values
     # =========================================================================
@@ -176,8 +182,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     @router.get("/values")
     async def get_config_values() -> JSONResponse:
         """Return current config as nested dict with secrets masked."""
-        config = server.services.config
-        values = config.model_dump(mode="json", exclude_none=True)
+        values = _current_config_values()
 
         # Collect secret keys from DB flag + auto-detection
         config_store = _get_config_store()
@@ -239,7 +244,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             validation_flat = {k: v for k, v in validation_flat.items() if v != MASKED_SECRET}
 
             # Load current config, deep merge, validate
-            current = server.services.config.model_dump(mode="json", exclude_none=True)
+            current = _current_config_values()
             deep_merge(current, unflatten_config(validation_flat))
             DaemonConfig(**current)  # Validate merged config
 
@@ -264,7 +269,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             logger.info(f"Config saved to DB ({count} keys)")
 
             # Update in-memory config with actual (decrypted) values
-            resolved = server.services.config.model_dump(mode="json", exclude_none=True)
+            resolved = _current_config_values()
             deep_merge(
                 resolved,
                 unflatten_config({k: v for k, v in flat_updates.items() if v != MASKED_SECRET}),
@@ -279,6 +284,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             response = {"ok": True, "requires_restart": True}
             add_restart_hint(response, set(secret_entries))
             return JSONResponse(content=response)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Config save failed: {e}", exc_info=True)
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -287,10 +294,12 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     async def validate_config(request: SaveConfigRequest) -> JSONResponse:
         """Validate config without saving."""
         try:
-            current = server.services.config.model_dump(mode="json", exclude_none=True)
+            current = _current_config_values()
             deep_merge(current, request.values)
             DaemonConfig(**current)
             return JSONResponse(content={"valid": True, "errors": []})
+        except HTTPException:
+            raise
         except Exception as e:
             return JSONResponse(content={"valid": False, "errors": [str(e)]})
 
@@ -353,9 +362,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             }
 
             validation_flat = dict(parsed_flat)
-            current_flat = flatten_config(
-                server.services.config.model_dump(mode="json", exclude_none=True)
-            )
+            current_flat = flatten_config(_current_config_values())
             for key in masked_secret_keys:
                 if key in current_flat:
                     validation_flat[key] = current_flat[key]
@@ -430,6 +437,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content=response)
         except yaml.YAMLError as e:
             raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from e
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

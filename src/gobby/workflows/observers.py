@@ -7,6 +7,7 @@ They run BEFORE rule evaluation in the hook handler's _evaluate_rules path.
 
 import logging
 import re
+import threading
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -31,20 +32,24 @@ logger = logging.getLogger(__name__)
 
 _UNRESOLVED_CLOSE_REF_LOG_THRESHOLD = 10
 _unresolved_close_ref_count = 0
+_unresolved_close_ref_lock = threading.Lock()
 
 
 def _record_unresolved_close_ref(session_id: str, task_ref: object) -> None:
     """Track unresolved close_task refs without logging every occurrence at info level."""
     global _unresolved_close_ref_count
 
-    _unresolved_close_ref_count += 1
-    if _unresolved_close_ref_count % _UNRESOLVED_CLOSE_REF_LOG_THRESHOLD == 0:
-        logger.info(
-            "Unresolved close_task refs reached %s; latest_ref=%r session=%s",
-            _unresolved_close_ref_count,
-            task_ref,
-            session_id,
-        )
+    with _unresolved_close_ref_lock:
+        _unresolved_close_ref_count += 1
+        if _unresolved_close_ref_count % _UNRESOLVED_CLOSE_REF_LOG_THRESHOLD != 0:
+            return
+        count = _unresolved_close_ref_count
+    logger.info(
+        "Unresolved close_task refs reached %s; latest_ref=%r session=%s",
+        count,
+        task_ref,
+        session_id,
+    )
 
 
 def _json_safe(value: Any) -> Any:
@@ -134,13 +139,6 @@ def _shell_tool_succeeded(event: "HookEvent") -> bool:
         if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
             return False
     return True
-
-
-def _append_verification_evidence(variables: dict[str, Any], evidence: dict[str, Any]) -> None:
-    existing = variables.get("verification_evidence", [])
-    variables["verification_evidence"] = append_verification_evidence(
-        existing, _json_safe(evidence)
-    )
 
 
 def compute_mode_level(chat_mode: str) -> int:
@@ -465,7 +463,10 @@ def detect_verification_evidence(
         "tool_name": tool_name,
         "success": success,
     }
-    _append_verification_evidence(variables, evidence)
+    existing = variables.get("verification_evidence", [])
+    variables["verification_evidence"] = append_verification_evidence(
+        existing, _json_safe(evidence), session_id=session_id
+    )
 
     if success:
         variables["verification_evidence_recorded"] = True

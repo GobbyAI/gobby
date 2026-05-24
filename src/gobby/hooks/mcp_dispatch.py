@@ -14,9 +14,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
+from contextvars import Token
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.utils.session_context import (
+    SessionContext,
+    reset_session_context,
+    set_session_context,
+)
 
 # Type alias for the call_tool function signature used by MCPClientManager
 CallToolFn = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, Any]]
@@ -82,14 +88,8 @@ async def _safe_call(
     logger: logging.Logger,
 ) -> None:
     """Execute a single MCP call, logging errors without propagating."""
-    from gobby.utils.session_context import (
-        SessionContext,
-        reset_session_context,
-        set_session_context,
-    )
-
     session_id = arguments.get("session_id")
-    session_token = (
+    session_token: Token[SessionContext | None] | None = (
         set_session_context(SessionContext(session_id=session_id))
         if isinstance(session_id, str) and session_id
         else None

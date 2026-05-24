@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from .models import Entity, Relationship, _GraphEntity
 
 if TYPE_CHECKING:
+    from gobby.config.persistence import MemoryKnowledgeGraphConfig
     from gobby.llm.base import LLMProvider
+    from gobby.llm.service import LLMService
     from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
@@ -59,8 +61,8 @@ class KnowledgeGraphExtractor:
         llm_provider: LLMProvider,
         prompt_loader: PromptLoader,
         model: str | None = None,
-        llm_service: Any | None = None,
-        feature_config: Any | None = None,
+        llm_service: LLMService | None = None,
+        feature_config: MemoryKnowledgeGraphConfig | None = None,
     ) -> None:
         self._llm = llm_provider
         self._prompt_loader = prompt_loader
@@ -83,7 +85,13 @@ class KnowledgeGraphExtractor:
                 system_prompt=system_prompt,
                 caller=caller,
             )
-            return cast(dict[str, Any], response)
+            if not isinstance(response, dict):
+                feature_id = type(self._feature_config).__name__
+                raise TypeError(
+                    f"{caller} expected call_json_feature to return dict for "
+                    f"{feature_id}, got {type(response).__name__}"
+                )
+            return response
         return await self._llm.generate_json(
             prompt,
             system_prompt=system_prompt,

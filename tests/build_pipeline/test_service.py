@@ -78,6 +78,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """Coordinator session is attached as run root and summary is visible before tick."""
     from gobby.build.service import DispatcherTickSummary
     from gobby.storage.build_history import BuildHistoryStorage
     from gobby.storage.sessions import SessionManager
@@ -131,6 +132,7 @@ async def test_build_rejects_coordinator_from_another_project(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """Coordinator sessions from another project reject the build with ValueError."""
     from gobby.storage.sessions import SessionManager
 
     project_id, _repo_path = _project(temp_db, tmp_path)

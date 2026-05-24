@@ -541,7 +541,8 @@ class WorkflowHookHandler:
                 # lifecycle instructions.
                 if variables.get("is_spawned_agent"):
                     try:
-                        step_context = get_active_step_workflow_context(
+                        step_context = await asyncio.to_thread(
+                            get_active_step_workflow_context,
                             self.rule_engine.db,
                             session_id,
                         )
@@ -695,11 +696,7 @@ class WorkflowHookHandler:
                 return HookResponse(decision="allow")
             except RuntimeError:
                 coroutine = self.evaluate_async(event)
-                try:
-                    return asyncio.run(coroutine)
-                except BaseException:
-                    coroutine.close()
-                    raise
+                return asyncio.run(coroutine)
 
         except concurrent.futures.CancelledError:
             return self._handle_cancelled(event)

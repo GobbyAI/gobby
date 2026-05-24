@@ -11,6 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows import observers as observers_module
 from gobby.workflows.observers import (
     _extract_shell_output_text,
@@ -1333,7 +1334,9 @@ def _make_bash_event_dict(
     )
 
 
-def test_tracking_edited_file_clears_recorded_verification_evidence(temp_db) -> None:
+def test_tracking_edited_file_clears_recorded_verification_evidence(
+    temp_db: HubDatabase,
+) -> None:
     from gobby.hooks.event_handlers._tool import ToolEventHandlerMixin
     from gobby.workflows.state_manager import SessionVariableManager
 

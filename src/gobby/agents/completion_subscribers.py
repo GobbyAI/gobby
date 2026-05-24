@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import TYPE_CHECKING
 
 import psycopg
@@ -38,8 +39,21 @@ def completion_subscriber_lineage(
         lineage_ids = [str(session.id) for session in lineage]
         if session_id not in lineage_ids:
             lineage_ids.append(session_id)
-    except (AttributeError, ValueError, RuntimeError):
-        logger.debug("Could not resolve session lineage for %s", session_id, exc_info=True)
+    except (sqlite3.DatabaseError, psycopg.Error) as e:
+        logger.warning(
+            "Could not resolve session lineage for %s: %s",
+            session_id,
+            e,
+            exc_info=True,
+        )
+    except Exception as e:
+        logger.warning(
+            "Unexpected error resolving session lineage for %s: %s",
+            session_id,
+            e,
+            exc_info=True,
+        )
+        raise
     return _dedupe(lineage_ids)
 
 
@@ -56,8 +70,15 @@ def subscribe_agent_completion(
     if completion_registry is not None:
         try:
             completion_registry.register(run_id, subscribers=subscribers)
-        except TypeError:
-            logger.debug("Failed to register completion event for run %s", run_id, exc_info=True)
+        except Exception as e:
+            # completion_registry.register(run_id, subscribers) is best-effort wake wiring.
+            logger.warning(
+                "Failed to register completion event for run %s with subscribers %s: %s",
+                run_id,
+                subscribers,
+                e,
+                exc_info=True,
+            )
             return subscribers
 
     if db is not None:

@@ -283,6 +283,7 @@ class BuildHistoryStorage:
     def latest_coordinated_run_for_task(self, project_id: str, task_id: str) -> BuildRun | None:
         ancestor_rows = self.db.fetchall(
             """
+            -- Walk the task hierarchy so coordinator sessions on any parent task are considered.
             WITH RECURSIVE ancestors(id, parent_task_id) AS (
                 SELECT id, parent_task_id
                   FROM tasks
@@ -300,6 +301,7 @@ class BuildHistoryStorage:
         ancestor_ids = [str(row["id"]) for row in ancestor_rows]
         if not ancestor_ids:
             return None
+        # Ancestor ids come from the CTE and filter root_task_id for coordinated runs.
         placeholders = ", ".join("?" for _ in ancestor_ids)
         rows = self.db.fetchall(
             f"""
@@ -307,11 +309,13 @@ class BuildHistoryStorage:
               FROM build_runs
              WHERE project_id = ?
                AND root_task_id IN ({placeholders})
+             -- Newest started_at wins, id breaks ties; LIMIT 100 caps the scan pragmatically.
              ORDER BY started_at DESC, id DESC
              LIMIT 100
             """,  # nosec B608 # placeholders are generated from trusted list length only.
             (project_id, *ancestor_ids),
         )
+        # Return the first recent build run whose summary names a coordinator session.
         for row in rows:
             run = BuildRun.from_row(row)
             if run.summary and run.summary.get("coordinator_session_id"):

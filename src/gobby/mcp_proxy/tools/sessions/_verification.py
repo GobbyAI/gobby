@@ -91,7 +91,11 @@ def register_verification_tools(
         manager = SessionVariableManager(db)
         variables = manager.get_variables(resolved_session_id)
         existing = variables.get("verification_evidence", [])
-        evidence_items = append_verification_evidence(existing, evidence)
+        evidence_items = append_verification_evidence(
+            existing,
+            evidence,
+            session_id=resolved_session_id,
+        )
         manager.merge_variables(
             resolved_session_id,
             {

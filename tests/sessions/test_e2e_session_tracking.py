@@ -25,6 +25,7 @@ class MockWebSocketServer:
     async def broadcast(self, message: dict[str, Any]) -> None:
         self.broadcasted_messages.append(message)
 
+    # TODO: Exercise MockWebSocketServer.feed_attached_session_tts in future TTS E2E coverage.
     async def feed_attached_session_tts(
         self,
         session_id: str,

@@ -28,6 +28,23 @@ def test_feedback_admits_required_validation_failure_across_languages(feedback: 
 
 
 @pytest.mark.parametrize(
+    ("feedback", "expected"),
+    [
+        ("Required validation\n\ncheck did not\npass after retry.", True),
+        ("The criteria not satisfied by the delivered implementation.", True),
+        ("Validation errors remain unresolved in the frontend package.", True),
+        ("Mypy found incomplete type hints in the service boundary.", True),
+        ("The implementation mentions criteria and satisfied users.", False),
+        ("Errors were documented and resolved before closure.", False),
+        ("Mypy hints were improved and all work is complete.", False),
+    ],
+)
+def test_multiline_and_specific_pattern_variants(feedback: str, expected: bool) -> None:
+    """Failure feedback detection handles multiline positives without near-miss matches."""
+    assert feedback_admits_required_validation_failure(feedback) is expected
+
+
+@pytest.mark.parametrize(
     "feedback",
     [
         "Tests were added for the new behavior.",

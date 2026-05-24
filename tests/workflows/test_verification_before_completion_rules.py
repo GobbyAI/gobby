@@ -44,7 +44,10 @@ def _rule(manager: LocalWorkflowDefinitionManager, name: str) -> RuleDefinitionB
     return RuleDefinitionBody.model_validate_json(row.definition_json)
 
 
-def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> None:
+def test_schema_lookup_rule_mentions_lifecycle_completion_tools(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
     _sync_bundled(db)
 
     body = _rule(manager, "require-verification-before-completion-on-schema")
@@ -68,7 +71,10 @@ def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> 
         assert tool_name in when
 
 
-def test_lifecycle_call_rule_requires_verification_skill(db, manager) -> None:
+def test_lifecycle_call_rule_requires_verification_skill(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
     _sync_bundled(db)
 
     body = _rule(manager, "require-verification-before-completion-on-lifecycle-call")
@@ -126,7 +132,10 @@ def _ready_variables(**overrides: object) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_completion_readiness_blocks_without_recorded_evidence(db, manager) -> None:
+async def test_completion_readiness_blocks_without_recorded_evidence(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
     """Lifecycle success tools are blocked until fresh verification evidence exists."""
     _sync_bundled(db)
 
@@ -141,7 +150,10 @@ async def test_completion_readiness_blocks_without_recorded_evidence(db, manager
 
 
 @pytest.mark.asyncio
-async def test_completion_readiness_allows_with_all_sibling_gates(db, manager) -> None:
+async def test_completion_readiness_allows_with_all_sibling_gates(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
     """Completion readiness allows close_task when every sibling gate is satisfied."""
     _sync_bundled(db)
 
@@ -155,7 +167,10 @@ async def test_completion_readiness_allows_with_all_sibling_gates(db, manager) -
 
 
 @pytest.mark.asyncio
-async def test_protected_evidence_variables_cannot_be_set_directly(db, manager) -> None:
+async def test_protected_evidence_variables_cannot_be_set_directly(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
     """Agents must record evidence through approved observers or MCP tools."""
     _sync_bundled(db)
 

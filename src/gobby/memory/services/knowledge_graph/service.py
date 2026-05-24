@@ -26,7 +26,9 @@ from .writer import KnowledgeGraphWriter
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from gobby.config.persistence import MemoryKnowledgeGraphConfig
     from gobby.llm.base import LLMProvider
+    from gobby.llm.service import LLMService
     from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
     from gobby.prompts.loader import PromptLoader
@@ -55,8 +57,8 @@ class KnowledgeGraphService:
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
         model: str | None = None,
-        llm_service: Any | None = None,
-        feature_config: Any | None = None,
+        llm_service: LLMService | None = None,
+        feature_config: MemoryKnowledgeGraphConfig | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._llm = llm_provider

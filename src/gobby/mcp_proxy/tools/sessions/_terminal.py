@@ -303,8 +303,6 @@ async def _persist_compact_handoff_fallback(
     try:
         session_manager.update_summary(session_id, summary_markdown=fallback)
         session_manager.update_status(session_id, "handoff_ready")
-        session.summary_markdown = fallback
-        session.status = "handoff_ready"
     except Exception as exc:
         detail = str(exc) or type(exc).__name__
         logger.warning(

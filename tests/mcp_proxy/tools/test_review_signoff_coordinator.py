@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessage, InterSessionMessageManager
+from gobby.storage.session_models import Session
+from gobby.storage.tasks import Task
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
 
-def _coordinated_review_fixture(temp_db, *, name: str):
+def _coordinated_review_fixture(
+    temp_db: HubDatabase,
+    *,
+    name: str,
+) -> tuple[InternalToolRegistry, Session, Session, Task]:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
     from gobby.storage.build_history import BuildHistoryStorage
@@ -65,10 +75,23 @@ def _coordinated_review_fixture(temp_db, *, name: str):
     return registry, coordinator, reviewer, task
 
 
-@pytest.mark.asyncio
-async def test_approve_review_relays_signoff_summary_to_build_coordinator(temp_db) -> None:
-    from gobby.storage.inter_session_messages import InterSessionMessageManager
+async def _wait_for_messages(
+    temp_db: HubDatabase,
+    to_session: str,
+) -> list[InterSessionMessage]:
+    manager = InterSessionMessageManager(temp_db)
+    for _ in range(50):
+        messages = manager.get_messages(to_session)
+        if messages:
+            return messages
+        await asyncio.sleep(0.01)
+    return manager.get_messages(to_session)
 
+
+@pytest.mark.asyncio
+async def test_approve_review_relays_signoff_summary_to_build_coordinator(
+    temp_db: HubDatabase,
+) -> None:
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
         name="approve",
@@ -89,7 +112,7 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(temp_d
         )
 
     assert "error" not in result
-    messages = InterSessionMessageManager(temp_db).get_messages(coordinator.id)
+    messages = await _wait_for_messages(temp_db, coordinator.id)
     assert len(messages) == 1
     message = messages[0]
     assert message.from_session == reviewer.id
@@ -105,9 +128,9 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(temp_d
 
 
 @pytest.mark.asyncio
-async def test_reject_review_relays_signoff_summary_to_build_coordinator(temp_db) -> None:
-    from gobby.storage.inter_session_messages import InterSessionMessageManager
-
+async def test_reject_review_relays_signoff_summary_to_build_coordinator(
+    temp_db: HubDatabase,
+) -> None:
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
         name="reject",
@@ -129,7 +152,7 @@ async def test_reject_review_relays_signoff_summary_to_build_coordinator(temp_db
         )
 
     assert "error" not in result
-    messages = InterSessionMessageManager(temp_db).get_messages(coordinator.id)
+    messages = await _wait_for_messages(temp_db, coordinator.id)
     assert len(messages) == 1
     message = messages[0]
     assert message.from_session == reviewer.id

@@ -4,6 +4,7 @@ Daemon management commands.
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
@@ -238,10 +239,22 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
                         _step(task, scheduled=True)
                 return True
 
-        except (httpx.RequestError, httpx.TimeoutException):
+        except (httpx.ConnectError, httpx.TimeoutException):
             pass
-        except Exception:
-            return False
+        except (
+            httpx.DecodingError,
+            httpx.ProtocolError,
+            httpx.TooManyRedirects,
+            json.JSONDecodeError,
+        ) as e:
+            logger.error("Non-retryable startup progress polling error: %s", e, exc_info=True)
+            raise
+        except httpx.RequestError as e:
+            logger.error("Non-retryable startup progress request error: %s", e, exc_info=True)
+            raise
+        except Exception as e:
+            logger.error("Unexpected startup progress polling error: %s", e, exc_info=True)
+            raise
         time.sleep(0.5)
     return False
 

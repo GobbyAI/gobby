@@ -308,7 +308,7 @@ class SessionVariableManager:
                 existing.update(values)
                 current_vars[name] = sorted(existing)
 
-            if current_vars.get(condition_name):
+            if current_vars.get(condition_name) is True:
                 current_vars.update(updates)
 
             if row:
