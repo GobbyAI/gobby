@@ -123,6 +123,7 @@ gcode search "query" --language rust      # Filter by source language
 gcode search "query" src/**/*.rs          # Filter by path or glob
 gcode search-symbol "outline"             # Exact-first symbol/command lookup
 gcode search-symbol "outline" --kind function --language rust
+gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
 gcode search-content "query"              # BM25 on file content, comments, config, CSS

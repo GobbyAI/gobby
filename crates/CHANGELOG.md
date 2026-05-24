@@ -13,10 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
-- **Positional search paths** — `gcode search`, `gcode search-text`, and
-  `gcode search-content` now accept one or more positional path filters after
-  the query. Bare paths match exact files and descendants; glob paths stay
-  verbatim; multiple paths use OR semantics.
+- **Positional search paths** — `gcode search`, `gcode search-symbol`,
+  `gcode search-text`, and `gcode search-content` now accept one or more
+  positional path filters after the query. Bare paths match exact files and
+  descendants; glob paths stay verbatim; multiple paths use OR semantics.
+
+### Removed
+
+#### gcode
+
+- **`--path` search filters** — breaking CLI cleanup: `gcode search`,
+  `gcode search-symbol`, `gcode search-text`, and `gcode search-content` no
+  longer accept `--path <glob>`. Pass paths and globs positionally after the
+  query instead.
 
 
 ## [0.8.4] — gcode
