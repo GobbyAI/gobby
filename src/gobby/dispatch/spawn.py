@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_DISPATCH_SPAWN_ATTEMPTS = 3
+_EXPLICIT_AGENT_ISOLATIONS = {"none", "worktree", "clone"}
+
+SpawnIsolation = Literal["none", "worktree", "clone"]
 
 
 class DispatchSpawnUnavailable(RuntimeError):
@@ -120,6 +123,7 @@ async def spawn_agent(
     workflow = (
         agent_body.workflows.pipeline if agent_body and agent_body.workflows.pipeline else None
     )
+    effective_isolation = _effective_spawn_isolation(task=task, agent_body=agent_body)
     artifacts = _prepare_spawn_artifacts(
         db=db,
         action=action,
@@ -127,22 +131,30 @@ async def spawn_agent(
         task_manager=task_manager,
         project_id=project_id,
         services=services,
+        isolation=effective_isolation,
     )
     artifacts = _sanitize_reusable_spawn_artifacts(
         db=db,
         task=task,
         artifacts=artifacts,
         services=services,
+        isolation=effective_isolation,
     )
     artifacts = _repair_leaf_target_branch(
         db=db,
         task=task,
         task_manager=task_manager,
         artifacts=artifacts,
+        isolation=effective_isolation,
     )
     project = LocalProjectManager(db).get(project_id)
     project_path = project.repo_path if project is not None else None
-    worktree_id, clone_id = _spawn_workspace_ids(task=task, action=action, artifacts=artifacts)
+    worktree_id, clone_id = _spawn_workspace_ids(
+        task=task,
+        action=action,
+        artifacts=artifacts,
+        isolation=effective_isolation,
+    )
 
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
@@ -153,7 +165,7 @@ async def spawn_agent(
         agent_lookup_name=action.agent_slug,
         task_id=action.task_id,
         task_manager=task_manager,
-        isolation=getattr(task, "isolation", None),
+        isolation=effective_isolation,
         branch_name=None,
         base_branch=artifacts.target_branch,
         clone_id=clone_id,
@@ -230,12 +242,12 @@ def _prepare_spawn_artifacts(
     task_manager: LocalTaskManager,
     project_id: str,
     services: object | None,
+    isolation: SpawnIsolation | None,
 ) -> TaskArtifacts:
     artifacts = TaskArtifactManager(db).get_artifacts(action.task_id)
     if not _uses_epic_integration_workspace(task, action):
         return artifacts
 
-    isolation = getattr(task, "isolation", None)
     if isolation not in {"worktree", "clone"}:
         return artifacts
     if not artifacts.target_branch:
@@ -271,9 +283,9 @@ def _sanitize_reusable_spawn_artifacts(
     task: Task,
     artifacts: TaskArtifacts,
     services: object | None,
+    isolation: SpawnIsolation | None,
 ) -> TaskArtifacts:
     """Clear stale task workspace pointers before passing explicit reuse IDs to spawn."""
-    isolation = getattr(task, "isolation", None)
     fields: dict[str, str | int | None] = {}
     if isolation == "worktree" and artifacts.worktree_id:
         if _worktree_artifact_is_stale(
@@ -316,8 +328,8 @@ def _repair_leaf_target_branch(
     task: Task,
     task_manager: LocalTaskManager,
     artifacts: TaskArtifacts,
+    isolation: SpawnIsolation | None,
 ) -> TaskArtifacts:
-    isolation = getattr(task, "isolation", None)
     if isolation not in {"worktree", "clone"} or not task.parent_task_id:
         return artifacts
     if task.task_type == "epic" or artifacts.worktree_id or artifacts.clone_id:
@@ -513,14 +525,32 @@ def _spawn_workspace_ids(
     task: object,
     action: SpawnAgentAction,
     artifacts: TaskArtifacts,
+    isolation: SpawnIsolation | None,
 ) -> tuple[str | None, str | None]:
     if _uses_epic_integration_workspace(task, action):
-        isolation = getattr(task, "isolation", None)
         if isolation == "worktree" and artifacts.integration_workspace_id:
             return artifacts.integration_workspace_id, None
         if isolation == "clone" and artifacts.integration_clone_id:
             return None, artifacts.integration_clone_id
-    return artifacts.worktree_id, artifacts.clone_id
+    if isolation == "worktree":
+        return artifacts.worktree_id, None
+    if isolation == "clone":
+        return None, artifacts.clone_id
+    return None, None
+
+
+def _effective_spawn_isolation(
+    *,
+    task: object,
+    agent_body: object | None,
+) -> SpawnIsolation | None:
+    agent_isolation = getattr(agent_body, "isolation", None)
+    if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
+        return cast(SpawnIsolation, agent_isolation)
+    task_isolation = getattr(task, "isolation", None)
+    if task_isolation in _EXPLICIT_AGENT_ISOLATIONS:
+        return cast(SpawnIsolation, task_isolation)
+    return None
 
 
 def _uses_epic_integration_workspace(task: object, action: SpawnAgentAction) -> bool:
