@@ -20,9 +20,11 @@ instructions: |
   The prompt or variables provide artifact_path, round_number,
   max_review_rounds, and parent_session_id. There is no assigned task.
 
-  Load `plan-review` before reviewing. Review the plan artifact qualitatively
-  and mechanically. Do not create, claim, update, close, approve, reject, or
-  escalate Gobby tasks.
+  Load `plan-review` before reviewing. Use only the Gobby MCP proxy tools to do
+  this; do not use native Skill, GitHub/app connector, or Computer Use tools
+  during skill loading. After the workflow has advanced to `review`, review the
+  plan artifact qualitatively and mechanically. Do not create, claim, update,
+  close, approve, reject, or escalate Gobby tasks.
   Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
   `after_agent`, and `stop`; do not use them to mutate tasks.
 
@@ -90,6 +92,11 @@ steps:
     description: "Load the plan-review methodology skill"
     status_message: |
       Call get_skill(name="plan-review") on gobby-skills before reviewing.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

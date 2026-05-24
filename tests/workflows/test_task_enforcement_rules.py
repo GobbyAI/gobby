@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -854,10 +855,7 @@ class TestRequireTaskCreationSkillOnSchema:
         assert "not skill_loaded('task-creation')" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-creation")
 
 
 class TestRequireTaskTransitionsSkillOnLifecycle:
@@ -891,10 +889,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
         assert len(block_effects) == 1
-        assert (
-            block_effects[0].reason
-            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-        )
+        assert block_effects[0].reason == skill_fetch_directive("task-transitions")
         assert set_effects == []
 
 
@@ -909,10 +904,7 @@ class TestTaskLifecycleSkillGates:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('task-creation')" in (body.when or "")
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-creation")
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
@@ -923,10 +915,7 @@ class TestTaskLifecycleSkillGates:
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
         assert "skill_loaded('task-transitions')" in (body.when or "")
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-transitions")
 
     @pytest.mark.asyncio
     async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:

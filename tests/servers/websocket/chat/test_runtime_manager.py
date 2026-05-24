@@ -26,14 +26,13 @@ from gobby.servers.websocket.chat.backends import (
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.skills.formatting import skill_fetch_directive
 
 pytestmark = pytest.mark.unit
 
-PYTHON_SKILL_DIRECTIVE = 'Call get_skill(name="python") on gobby-skills, then continue.'
-CODE_INDEX_SKILL_DIRECTIVE = 'Call get_skill(name="code-index") on gobby-skills, then continue.'
-TASK_TRANSITIONS_SKILL_DIRECTIVE = (
-    'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-)
+PYTHON_SKILL_DIRECTIVE = skill_fetch_directive("python")
+CODE_INDEX_SKILL_DIRECTIVE = skill_fetch_directive("code-index")
+TASK_TRANSITIONS_SKILL_DIRECTIVE = skill_fetch_directive("task-transitions")
 
 
 def _async_stream(*items: Any):

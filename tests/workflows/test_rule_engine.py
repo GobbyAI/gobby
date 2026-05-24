@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -1893,7 +1894,7 @@ class TestInlineMcpCallDispatch:
         event = _make_event(data={"tool_name": "Read"})
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert response.context == 'Call get_skill(name="python") on gobby-skills, then continue.'
+        assert response.context == skill_fetch_directive("python")
         assert "# Python skill content" not in (response.context or "")
         # Variable should be set (inline dispatch succeeded)
         assert variables.get("injected") is True
@@ -2902,7 +2903,7 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        assert response.context == skill_fetch_directive("plan")
         assert "You are now in plan mode." not in (response.context or "")
 
     @pytest.mark.asyncio
@@ -2926,9 +2927,7 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert (
-            response.context == 'Call get_skill(name="nonexistent") on gobby-skills, then continue.'
-        )
+        assert response.context == skill_fetch_directive("nonexistent")
 
     @pytest.mark.asyncio
     async def test_load_skill_no_skill_manager_still_emits_directive(
@@ -2950,7 +2949,7 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        assert response.context == skill_fetch_directive("plan")
 
     @pytest.mark.asyncio
     async def test_load_skill_with_per_effect_when(
@@ -3007,7 +3006,7 @@ class TestLoadSkillEffect:
 
         assert response.decision == "allow"
         assert variables["plan_mode"] is True
-        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        assert response.context == skill_fetch_directive("plan")
         assert "Plan skill content" not in (response.context or "")
 
 

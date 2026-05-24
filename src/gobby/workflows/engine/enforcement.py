@@ -25,6 +25,7 @@ from gobby.workflows.enforcement.blocking import (
     is_infrastructure_tool,
     is_operator_tool,
 )
+from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -255,10 +256,11 @@ class EnforcementMixin:
         # Check native tool allow-list
         if step.allowed_tools != "all":
             if tool_name not in step.allowed_tools:
+                guidance = skill_load_block_guidance(step)
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
-                    f"Allowed tools: {', '.join(step.allowed_tools)}"
+                    f"Allowed tools: {', '.join(step.allowed_tools)}{guidance}"
                 )
                 self._audit_step_tool_call(
                     session_id,
@@ -313,10 +315,11 @@ class EnforcementMixin:
 
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
+                        guidance = skill_load_block_guidance(step)
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
-                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}"
+                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
                         )
                         self._audit_step_tool_call(
                             session_id,

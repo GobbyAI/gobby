@@ -18,15 +18,22 @@ pytestmark = pytest.mark.unit
 
 class TestSkillFetchDirectives:
     def test_skill_fetch_directive_is_canonical(self) -> None:
-        assert (
-            skill_fetch_directive("plan")
-            == 'Call get_skill(name="plan") on gobby-skills, then continue.'
-        )
+        rendered = skill_fetch_directive("plan")
+
+        assert rendered.startswith('Call get_skill(name="plan") on gobby-skills, then continue.')
+        assert 'list_tools("gobby-skills")' in rendered
+        assert 'get_tool_schema("gobby-skills", "get_skill")' in rendered
+        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan"})' in rendered
+        assert "mcp__gobby__* proxy tools" in rendered
+        assert "native Skill" in rendered
+        assert "GitHub/app connector" in rendered
+        assert "Computer Use tools" in rendered
 
     def test_format_skill_fetch_context_preserves_args(self) -> None:
         rendered = format_skill_fetch_context("plan", "draft auth flow")
 
         assert 'Call get_skill(name="plan") on gobby-skills, then continue.' in rendered
+        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan"})' in rendered
         assert "User arguments: draft auth flow" in rendered
 
 

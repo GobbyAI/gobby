@@ -211,6 +211,75 @@ class TestStepToolBlocking:
         assert "step-enforcement" in response.reason
         assert "claim" in response.reason
 
+    @pytest.mark.parametrize(
+        "tool_name",
+        [
+            "Skill",
+            "mcp__codex_apps__github_get_profile",
+            "mcp__computer_use__list_apps",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_skill_load_blocks_native_and_app_tools_with_recovery_guidance(
+        self,
+        tool_name: str,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
+        """Blocked load-skill mistakes should tell agents the exact proxy path."""
+        workflow = {
+            "name": "skill-load-feedback",
+            "version": "1.0",
+            "enabled": False,
+            "steps": [
+                {
+                    "name": "load_skill",
+                    "allowed_tools": [
+                        "mcp__gobby__call_tool",
+                        "mcp__gobby__list_mcp_servers",
+                        "mcp__gobby__list_tools",
+                        "mcp__gobby__get_tool_schema",
+                    ],
+                    "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-skills",
+                            "tool": "get_skill",
+                            "when": "tool_input.name == 'plan-review'",
+                            "action": "set_variable",
+                            "variable": "skill_loaded",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="load_skill",
+            workflow_data=workflow,
+        )
+
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": tool_name}),
+            session_id="test-session",
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "gobby-skills:get_skill" in response.reason
+        assert 'list_tools("gobby-skills")' in response.reason
+        assert 'get_tool_schema("gobby-skills", "get_skill")' in response.reason
+        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in response.reason
+        assert "native Skill" in response.reason
+        assert "GitHub/app connector" in response.reason
+        assert "Computer Use tools" in response.reason
+
     @pytest.mark.asyncio
     async def test_all_tools_allowed_when_set(
         self,
@@ -347,6 +416,62 @@ class TestStepMCPToolBlocking:
         assert response.decision == "block"
         assert response.reason is not None
         assert "gobby-tasks:close_task" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_skill_load_blocks_wrong_mcp_tool_with_recovery_guidance(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+    ) -> None:
+        """A wrong proxy call during load_skill should name the get_skill recovery call."""
+        workflow = {
+            "name": "skill-load-mcp-feedback",
+            "version": "1.0",
+            "enabled": False,
+            "steps": [
+                {
+                    "name": "load_skill",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-skills",
+                            "tool": "get_skill",
+                            "when": "tool_input.name == 'plan-review'",
+                            "action": "set_variable",
+                            "variable": "skill_loaded",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="load_skill",
+            workflow_data=workflow,
+        )
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "github",
+                    "tool_name": "get_profile",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id="test-session", variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "github:get_profile" in response.reason
+        assert "gobby-skills:get_skill" in response.reason
+        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in response.reason
 
     @pytest.mark.asyncio
     async def test_blocked_mcp_tool_enforced(

@@ -42,9 +42,18 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
     steps = {step["name"]: step for step in agent["steps"]}
 
     assert steps["load_skill"]["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
-    assert 'get_skill(name="plan-review")' in steps["load_skill"]["status_message"]
+    status = steps["load_skill"]["status_message"]
+    assert 'get_skill(name="plan-review")' in status
+    assert 'list_tools("gobby-skills")' in status
+    assert 'get_tool_schema("gobby-skills", "get_skill")' in status
+    assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in status
+    assert "mcp__gobby__* proxy tools" in status
+    assert "native Skill" in status
+    assert "GitHub/app connector" in status
+    assert "Computer Use tools" in status
     assert "structured" in steps["review"]["description"].lower()
     assert "verdict" in steps["review"]["status_message"].lower()
+    assert "After the workflow has advanced to `review`" in agent["instructions"]
     assert "## V1 Plan Changelog" in agent["instructions"]
     assert "## M1 Task Manifest" in agent["instructions"]
     assert "implementation_domain" in agent["instructions"]

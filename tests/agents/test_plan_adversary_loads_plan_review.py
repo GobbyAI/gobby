@@ -49,6 +49,16 @@ class TestAdversarySkillLoading:
         assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-review" in load_step.status_message
+        assert 'list_tools("gobby-skills")' in load_step.status_message
+        assert 'get_tool_schema("gobby-skills", "get_skill")' in load_step.status_message
+        assert (
+            'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})'
+            in load_step.status_message
+        )
+        assert "mcp__gobby__* proxy tools" in load_step.status_message
+        assert "native Skill" in load_step.status_message
+        assert "GitHub/app connector" in load_step.status_message
+        assert "Computer Use tools" in load_step.status_message
 
     def test_load_skill_only_permits_get_skill(self, agent: AgentDefinitionBody) -> None:
         load_step = find_step(agent.steps or [], "load_skill")
@@ -107,6 +117,10 @@ class TestAdversaryInstructionsPreserveContracts:
         instructions = agent.instructions or ""
         assert "plan-review" in instructions
         assert "get_skill" in instructions
+        assert "native Skill" in instructions
+        assert "GitHub/app connector" in instructions
+        assert "Computer Use tools" in instructions
+        assert "After `plan-review` is loaded" in instructions
 
     def test_review_rejection_and_requirements_contracts_preserved(
         self, agent: AgentDefinitionBody

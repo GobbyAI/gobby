@@ -18,6 +18,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedToolEvent
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
@@ -41,7 +42,7 @@ _REQUIRE_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
     effects=[
         RuleEffect(
             type="block",
-            reason='Call get_skill(name="task-creation") on gobby-skills, then continue.',
+            reason=skill_fetch_directive("task-creation"),
         ),
     ],
 )

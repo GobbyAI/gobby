@@ -73,7 +73,13 @@ step_variables:
 steps:
   - name: load_skill
     description: "Load the nano-banana skill"
-    status_message: "Loading nano-banana skill from gobby-skills..."
+    status_message: |
+      Call get_skill(name="nano-banana") on gobby-skills before generating.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "nano-banana"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

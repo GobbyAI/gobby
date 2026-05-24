@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -50,10 +51,7 @@ def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> 
 
     assert body.event.value == "before_tool"
     assert body.effects[0].type == "block"
-    assert (
-        body.effects[0].reason
-        == 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
-    )
+    assert body.effects[0].reason == skill_fetch_directive("verification-before-completion")
     assert "not skill_loaded('verification-before-completion')" in (body.when or "")
     when = body.when or ""
     for tool_name in (
@@ -79,10 +77,7 @@ def test_lifecycle_call_rule_requires_verification_skill(db, manager) -> None:
     assert body.event.value == "before_tool"
     assert "not skill_loaded('verification-before-completion')" in (body.when or "")
     assert len(block_effects) == 1
-    assert (
-        block_effects[0].reason
-        == 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
-    )
+    assert block_effects[0].reason == skill_fetch_directive("verification-before-completion")
 
 
 def _close_task_event() -> HookEvent:

@@ -18,6 +18,7 @@ from gobby.llm.claude_models import (
 )
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
+from gobby.skills.formatting import skill_fetch_directive
 
 pytestmark = pytest.mark.unit
 
@@ -505,7 +506,7 @@ class TestStreamChatResponse:
             )
 
         session.send_message = lambda content: mock_stream(content)
-        directive = 'Call get_skill(name="python") on gobby-skills, then continue.'
+        directive = skill_fetch_directive("python")
 
         await mixin._stream_chat_response(ws, "c1", "hi", None, inject_context=directive)
 

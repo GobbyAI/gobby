@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -111,10 +112,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert "is_gobby_build_command" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("build-coordinator")
 
     @pytest.mark.asyncio
     async def test_blocks_tmux_agent_gobby_build_before_skill_load(self, temp_db) -> None:

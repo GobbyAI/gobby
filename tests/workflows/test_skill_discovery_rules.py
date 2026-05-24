@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -388,10 +389,7 @@ class TestRequirePythonSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="python") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("python")
 
 
 # --- require-python-skill condition evaluation ---
@@ -482,9 +480,7 @@ class TestRequireRustSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason == 'Call get_skill(name="rust") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("rust")
 
 
 # --- require-rust-skill condition evaluation ---
@@ -630,10 +626,7 @@ class TestRequireCodeIndexSkillStructure:
         assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="code-index") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("code-index")
 
 
 class TestContext7RuleCondition:

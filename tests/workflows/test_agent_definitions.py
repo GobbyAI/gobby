@@ -53,7 +53,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "doc-reviewer": ("claude", "opus", "xhigh"),
         "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
         "merge-orchestrator": ("claude", "opus", "xhigh"),
-        "merge-worker": ("gemini", "gemini-3.1-pro-preview", "high"),
+        "merge-worker": ("claude", "sonnet", "high"),
     }
 
     for agent_name, (provider, model, reasoning_effort) in expected.items():
@@ -63,6 +63,30 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
+
+
+def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
+    for path in AGENTS_DIR.glob("*.yaml"):
+        agent = _load_yaml(path)
+        for step in agent.get("steps") or []:
+            allowed_mcp_tools = step.get("allowed_mcp_tools")
+            allowed_tools = step.get("allowed_tools")
+            if not (
+                isinstance(allowed_mcp_tools, list)
+                and "gobby-skills:get_skill" in allowed_mcp_tools
+                and allowed_tools != "all"
+            ):
+                continue
+
+            status = step.get("status_message") or ""
+            label = f"{path.name}:{step.get('name')}"
+            assert "mcp__gobby__* proxy tools" in status, label
+            assert 'list_tools("gobby-skills")' in status, label
+            assert 'get_tool_schema("gobby-skills", "get_skill")' in status, label
+            assert 'call_tool("gobby-skills", "get_skill"' in status, label
+            assert "native Skill" in status, label
+            assert "GitHub/app connector" in status, label
+            assert "Computer Use tools" in status, label
 
 
 def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:

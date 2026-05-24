@@ -20,7 +20,16 @@ logger = logging.getLogger(__name__)
 
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
-    return f"Call get_skill(name={json.dumps(name)}) on gobby-skills, then continue."
+    name_json = json.dumps(name)
+    return (
+        f"Call get_skill(name={name_json}) on gobby-skills, then continue. "
+        "Use the Gobby MCP proxy path exactly: list_mcp_servers -> "
+        'list_tools("gobby-skills") -> '
+        'get_tool_schema("gobby-skills", "get_skill") -> '
+        f'call_tool("gobby-skills", "get_skill", {{"name": {name_json}}}). '
+        "Use only mcp__gobby__* proxy tools while loading the skill; do not use "
+        "native Skill, GitHub/app connector, or Computer Use tools."
+    )
 
 
 def format_skill_fetch_context(name: str, args: str | None = None) -> str:

@@ -120,6 +120,11 @@ steps:
       1. get_skill(name="development-discipline") on gobby-skills
       2. get_skill(name="task-transitions") on gobby-skills
       3. get_skill(name="verification-before-completion") on gobby-skills
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -144,6 +149,11 @@ steps:
     status_message: |
       For each prompt additional_skills entry, call get_skill(name=<skill>) on
       gobby-skills. If the list is empty, proceed to implementation.
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
