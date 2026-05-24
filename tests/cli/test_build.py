@@ -276,6 +276,21 @@ def test_build_payload_includes_dry_run() -> None:
     assert payload["dry_run"] is True
 
 
+def test_build_payload_includes_project_context() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(
+        BuildOptions(),
+        "plan.md",
+        project_id="project-2",
+        cwd="/tmp/project-2",
+    )
+
+    assert payload["project_id"] == "project-2"
+    assert payload["cwd"] == "/tmp/project-2"
+
+
 def test_daemon_profile_error_detection_prefers_structured_type() -> None:
     from gobby.cli.build import _is_profile_error
 
@@ -458,12 +473,15 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
         result = CliRunner().invoke(cli, ["build", "resume", "#12761"])
 
     assert result.exit_code == 0
+    cwd = str(Path.cwd())
     assert calls == [
         (
             "/api/build/resume",
             "POST",
             {
                 "input_ref": "#12761",
+                "project_id": "project-1",
+                "cwd": cwd,
                 "dry_run": False,
                 "force": False,
                 "yes": False,

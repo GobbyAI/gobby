@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import click
@@ -142,9 +143,17 @@ def _echo_build_result(result: BuildResult) -> None:
         click.echo("Dispatcher cron is disabled. Run `gobby build resume` to re-enable it.")
 
 
-def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
+def _build_payload(
+    opts: BuildOptions,
+    input_ref: str,
+    *,
+    project_id: str | None = None,
+    cwd: str | None = None,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "input_ref": input_ref,
+        "project_id": project_id,
+        "cwd": cwd,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
         "no_merge": opts.no_merge,
@@ -215,7 +224,13 @@ def _payload_string_list(value: object) -> list[str]:
     return []
 
 
-def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
+def _try_daemon_build(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    project_id: str | None = None,
+    cwd: str | None = None,
+) -> BuildResult | None:
     try:
         import httpx
 
@@ -230,7 +245,7 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         response = client.call_http_api(
             "/api/build",
             method="POST",
-            json_data=_build_payload(opts, input_ref),
+            json_data=_build_payload(opts, input_ref, project_id=project_id, cwd=cwd),
             timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code == 200:
@@ -260,6 +275,8 @@ def _try_daemon_build_control(
     action: str,
     *,
     input_ref: str | None = None,
+    project_id: str | None = None,
+    cwd: str | None = None,
     dry_run: bool = False,
     force: bool = False,
     yes: bool = False,
@@ -281,6 +298,8 @@ def _try_daemon_build_control(
             method="POST",
             json_data={
                 "input_ref": input_ref,
+                "project_id": project_id,
+                "cwd": cwd,
                 "dry_run": dry_run,
                 "force": force,
                 "yes": yes,
@@ -565,7 +584,8 @@ def build_command(
         dry_run=dry_run,
     )
     project_id = resolve_project_id()
-    result = _try_daemon_build(input_ref, opts)
+    cwd = str(Path.cwd())
+    result = _try_daemon_build(input_ref, opts, project_id=project_id, cwd=cwd)
     if result is None:
         db = _open_database()
         try:
@@ -596,8 +616,11 @@ def build_resume_command(input_ref: str | None) -> None:
 
 def _run_build_stop(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
     if input_ref is not None:
-        daemon_payload = _try_daemon_build_control("stop", input_ref=input_ref)
+        daemon_payload = _try_daemon_build_control(
+            "stop", input_ref=input_ref, project_id=project_id, cwd=cwd
+        )
         if daemon_payload is not None:
             _echo_target_control_result(daemon_payload)
             return
@@ -623,8 +646,11 @@ def _run_build_stop(input_ref: str | None = None) -> None:
 
 def _run_build_resume(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
     if input_ref is not None:
-        daemon_payload = _try_daemon_build_control("resume", input_ref=input_ref)
+        daemon_payload = _try_daemon_build_control(
+            "resume", input_ref=input_ref, project_id=project_id, cwd=cwd
+        )
         if daemon_payload is not None:
             _echo_target_control_result(daemon_payload)
             return
@@ -669,9 +695,12 @@ def _run_build_clean(
     if not _confirm_destructive("clean", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
     daemon_payload = _try_daemon_build_control(
         "clean",
         input_ref=input_ref,
+        project_id=project_id,
+        cwd=cwd,
         dry_run=dry_run,
         force=force,
         yes=True,
@@ -711,9 +740,12 @@ def _run_build_restart(
     if not _confirm_destructive("restart", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
     daemon_payload = _try_daemon_build_control(
         "restart",
         input_ref=input_ref,
+        project_id=project_id,
+        cwd=cwd,
         dry_run=dry_run,
         force=force,
         yes=True,

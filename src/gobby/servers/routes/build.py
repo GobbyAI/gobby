@@ -44,6 +44,8 @@ class BuildRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_ref: str
+    project_id: str | None = None
+    cwd: str | None = None
     profile: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
@@ -69,6 +71,8 @@ class BuildControlRequest(BaseModel):
     """Request body for POST /api/build/{stop,resume,clean,restart}."""
 
     input_ref: str | None = None
+    project_id: str | None = None
+    cwd: str | None = None
     dry_run: bool = False
     force: bool = False
     yes: bool = False
@@ -138,6 +142,16 @@ def _parse_stage_options(values: list[str]) -> list[BuildStageCapOverride]:
     ]
 
 
+def _resolve_request_project_id(
+    server: HTTPServer,
+    request_data: BuildRequest | BuildControlRequest,
+) -> str:
+    return server.resolve_project_id(
+        project_id=request_data.project_id,
+        cwd=request_data.cwd,
+    )
+
+
 def _build_result_json(result: BuildResult) -> dict[str, Any]:
     payload = asdict(result)
     dispatcher_tick = payload.get("dispatcher_tick")
@@ -203,7 +217,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build(request_data: BuildRequest) -> dict[str, Any]:
         """Start lifecycle automation for a plan, epic, or automated leaf task."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build(
                 request_data.input_ref,
                 _build_options(request_data),
@@ -225,7 +239,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any]:
         """Stop project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
                 return _result_json(build_stop(db=server.services.database, project_id=project_id))
             result = await build_stop_target(
@@ -242,7 +256,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Resume project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
                 result = build_resume(db=server.services.database, project_id=project_id)
                 tick = await _kick_dispatcher_tick(
@@ -270,7 +284,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         if request_data.input_ref is None:
             raise HTTPException(status_code=400, detail="input_ref is required")
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build_clean_target(
                 request_data.input_ref,
                 db=server.services.database,
@@ -290,7 +304,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         if request_data.input_ref is None:
             raise HTTPException(status_code=400, detail="input_ref is required")
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build_restart_target(
                 request_data.input_ref,
                 db=server.services.database,

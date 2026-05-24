@@ -139,6 +139,49 @@ def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
     assert opts.isolation_explicit is False
 
 
+def test_post_api_build_resolves_project_from_request_context() -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.servers.routes.build import create_build_router
+
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            database=MagicMock(),
+            task_manager=MagicMock(),
+            config=MagicMock(),
+        ),
+        resolve_project_id=MagicMock(return_value="project-2"),
+    )
+    app = FastAPI()
+    app.include_router(create_build_router(server))
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="planning",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build", new=AsyncMock(return_value=build_result)
+    ) as build:
+        response = TestClient(app).post(
+            "/api/build",
+            json={
+                "input_ref": "plan.md",
+                "project_id": "project-2",
+                "cwd": "/tmp/project-2",
+            },
+        )
+
+    assert response.status_code == 200
+    server.resolve_project_id.assert_called_once_with(
+        project_id="project-2",
+        cwd="/tmp/project-2",
+    )
+    assert build.call_args.kwargs["project_id"] == "project-2"
+
+
 def test_post_api_build_returns_400_for_validation_errors() -> None:
     with patch(
         "gobby.servers.routes.build.build",

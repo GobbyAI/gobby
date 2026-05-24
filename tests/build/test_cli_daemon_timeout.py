@@ -65,3 +65,52 @@ def test_unhealthy_daemon_still_allows_local_fallback(monkeypatch: pytest.Monkey
 
     assert _try_daemon_build("#14370", BuildOptions()) is None
     assert UnhealthyDaemonClient.called_http_api is False
+
+
+def test_daemon_build_payload_carries_project_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build import BuildOptions
+    from gobby.cli.build import _try_daemon_build
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {
+                "task_id": "task-1",
+                "created": True,
+                "initial_lifecycle": "planning",
+                "applied_stages_skipped": [],
+                "dispatcher_tick": {"scanned": 0, "executed": 0, "skipped": 0},
+            }
+
+    class HealthyDaemonClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def check_health(self) -> tuple[bool, None]:
+            return True, None
+
+        def call_http_api(self, *args: object, **kwargs: object) -> FakeResponse:
+            calls.append(kwargs["json_data"])
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "gobby.config.app.load_config",
+        lambda: SimpleNamespace(daemon_port=60887),
+    )
+    monkeypatch.setattr("gobby.utils.daemon_client.DaemonClient", HealthyDaemonClient)
+
+    result = _try_daemon_build(
+        "plan.md",
+        BuildOptions(),
+        project_id="project-2",
+        cwd="/tmp/project-2",
+    )
+
+    assert result is not None
+    assert calls[0]["project_id"] == "project-2"
+    assert calls[0]["cwd"] == "/tmp/project-2"
