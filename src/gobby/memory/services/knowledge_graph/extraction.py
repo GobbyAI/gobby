@@ -14,11 +14,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_NON_ACTIONABLE_JSON_RESPONSE_MARKERS = (
+_CONVERSATIONAL_JSON_RESPONSE_MARKERS = (
     "i'm ready to help",
     "i’m ready to help",
+    "i'm ready to extract",
+    "i’m ready to extract",
+    "i understand",
+)
+_INSTRUCTION_ONLY_RESPONSE_MARKERS = (
     "not the actual content",
     "only technical instructions",
+    "content section contains only instructions",
+    "contains only instructions",
 )
 
 
@@ -27,7 +34,9 @@ def _is_non_actionable_json_response_error(error: ValueError) -> bool:
     message = str(error).lower()
     if "failed to parse" not in message or "response as json" not in message:
         return False
-    return any(marker in message for marker in _NON_ACTIONABLE_JSON_RESPONSE_MARKERS)
+    return any(marker in message for marker in _CONVERSATIONAL_JSON_RESPONSE_MARKERS) and any(
+        marker in message for marker in _INSTRUCTION_ONLY_RESPONSE_MARKERS
+    )
 
 
 class KnowledgeGraphExtractor:

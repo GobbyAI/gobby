@@ -635,6 +635,51 @@ class TestGracefulDegradation:
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
         mock_falkor.merge_node.assert_not_called()
 
+    async def test_add_to_graph_treats_instruction_only_parse_failure_as_no_entities(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The observed instruction-only Claude response is a no-entity result."""
+        mock_llm.generate_json = AsyncMock(
+            side_effect=ValueError(
+                "Failed to parse Claude response as JSON: I understand! I'm ready to "
+                "extract and classify named entities from content you provide. However, "
+                'I notice that the "Content" section contains only instructions about '
+                "picking the best approach, rather than actual memory content"
+            )
+        )
+
+        with caplog.at_level("INFO"):
+            result = await service.add_to_graph("instructions only", memory_id="mem-456")
+
+        assert result.status is KnowledgeGraphStatus.NOOP_NO_ENTITIES
+        assert "non-actionable conversational response" in caplog.text
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
+        mock_falkor.merge_node.assert_not_called()
+
+    async def test_add_to_graph_still_warns_on_real_parse_failure(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Malformed extraction JSON without instruction-only chatter remains actionable."""
+        mock_llm.generate_json = AsyncMock(
+            side_effect=ValueError("Failed to parse Claude response as JSON: {not json")
+        )
+
+        with caplog.at_level("WARNING"):
+            result = await service.add_to_graph("actual memory content", memory_id="mem-789")
+
+        assert result.status is KnowledgeGraphStatus.DETERMINISTIC_FAILURE
+        assert result.errors == ["Failed to parse Claude response as JSON: {not json"]
+        assert "Entity extraction failed for memory mem-789" in caplog.text
+        mock_falkor.merge_node.assert_not_called()
+
 
 # ===========================================================================
 # Cross-graph linking: RELATES_TO_CODE
