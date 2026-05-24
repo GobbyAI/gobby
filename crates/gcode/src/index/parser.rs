@@ -549,6 +549,7 @@ fn member_qualifier_path(
     if prefix.starts_with('$') || prefix.contains("->") || prefix.contains("?->") {
         return None;
     }
+    let is_absolute_namespace = prefix.starts_with('\\');
 
     let mut chars = prefix
         .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())
@@ -559,7 +560,12 @@ fn member_qualifier_path(
         return None;
     }
 
-    let mut qualifier = String::from(first);
+    let mut qualifier = if is_absolute_namespace {
+        "\\".to_string()
+    } else {
+        String::new()
+    };
+    qualifier.push(first);
     let mut last_was_separator = false;
     for ch in chars {
         if is_identifier_continue(ch) {
@@ -595,10 +601,7 @@ fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
             && !qualifier.is_empty()
             && !name.is_empty()
         {
-            return (
-                name.to_string(),
-                Some(qualifier.trim_start_matches('\\').to_string()),
-            );
+            return (name.to_string(), Some(qualifier.to_string()));
         }
     }
     (raw.to_string(), None)
@@ -675,6 +678,10 @@ mod tests {
 
     fn parse_csharp(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
         parse_source("src/Sample.cs", source, extra_files)
+    }
+
+    fn parse_php(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/sample.php", source, extra_files)
     }
 
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
@@ -1274,6 +1281,111 @@ class Sample {
         );
 
         assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn classifies_external_php_namespace_and_fully_qualified_calls() {
+        let parsed = parse_php(
+            r#"
+<?php
+namespace App;
+
+use Vendor\Pkg\Client as ApiClient;
+use function Vendor\Pkg\do_work as work;
+
+function run() {
+    ApiClient::connect();
+    work();
+    \Vendor\Pkg\helper();
+    \Vendor\Pkg\Service::build();
+}
+"#,
+            &[],
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "connect")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg\\Client")
+        );
+
+        let function_import_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "do_work")
+            .expect("function import call");
+        assert_eq!(function_import_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            function_import_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg")
+        );
+
+        let qualified_function_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "helper")
+            .expect("qualified function call");
+        assert_eq!(
+            qualified_function_call.callee_target_kind.as_str(),
+            "external"
+        );
+        assert_eq!(
+            qualified_function_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg")
+        );
+
+        let qualified_static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "build")
+            .expect("qualified static call");
+        assert_eq!(
+            qualified_static_call.callee_target_kind.as_str(),
+            "external"
+        );
+        assert_eq!(
+            qualified_static_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg\\Service")
+        );
+    }
+
+    #[test]
+    fn leaves_php_dynamic_member_and_local_import_calls_unresolved() {
+        let parsed = parse_php(
+            r#"
+<?php
+namespace App;
+
+use App\Local\Client;
+
+function run($obj) {
+    $obj->connect();
+    Client::connect();
+    missing();
+}
+"#,
+            &[(
+                "src/Local/Client.php",
+                r#"
+<?php
+namespace App\Local;
+
+class Client {}
+"#,
+            )],
+        );
+
         assert!(
             parsed
                 .calls

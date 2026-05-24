@@ -13,6 +13,7 @@ pub struct ImportResolutionContext {
     rust_self_crate_name: Option<String>,
     java_local_classes: HashSet<String>,
     csharp_local_roots: HashSet<String>,
+    php_local_symbols: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +97,7 @@ pub fn build_import_resolution_context(
         rust_self_crate_name: load_rust_self_crate_name(root_path),
         java_local_classes: build_java_local_class_index(candidate_files),
         csharp_local_roots: build_csharp_local_roots(candidate_files),
+        php_local_symbols: build_php_local_symbol_index(candidate_files),
     }
 }
 
@@ -115,6 +117,7 @@ pub(crate) fn parse_import_statement(
         "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
         "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
+        "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -181,6 +184,12 @@ pub(crate) fn resolve_external_callee(
     }
 
     let qualifier_path = qualifier_path?;
+    if qualifier_path.starts_with('\\') {
+        return Some(ExternalCallTarget {
+            module: qualifier_path.trim_start_matches('\\').to_string(),
+            callee_name: callee_name.to_string(),
+        });
+    }
     let root_binding = import_bindings.external_roots.get(root_alias)?;
     let module = if root_binding.module_from_qualifier {
         qualifier_path.to_string()
@@ -399,6 +408,36 @@ fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
         }
     }
     roots
+}
+
+fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {
+    let mut symbols = HashSet::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if ext != "php" {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let namespace = contents.lines().find_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("namespace ")
+                .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string())
+        });
+        for name in php_declared_symbols(&contents) {
+            symbols.insert(name.clone());
+            if let Some(namespace) = namespace.as_deref()
+                && !namespace.is_empty()
+            {
+                symbols.insert(format!("{namespace}\\{name}"));
+            }
+        }
+    }
+    symbols
 }
 
 fn parse_python_import_statement(
@@ -819,6 +858,71 @@ fn parse_csharp_import_statement(
     }
 }
 
+fn parse_php_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = text.trim().trim_end_matches(';').trim();
+    let Some(rest) = normalized.strip_prefix("use ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized.to_string(),
+        });
+        return;
+    };
+    let (is_function, rest) = rest
+        .strip_prefix("function ")
+        .map(|target| (true, target.trim()))
+        .unwrap_or((false, rest.trim()));
+
+    if rest.contains('{') || rest.contains('}') || rest.contains('*') {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: rest.to_string(),
+        });
+        return;
+    }
+
+    for item in split_top_level(rest, ',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let (target, alias) = split_alias(item);
+        let target = target.trim_start_matches('\\');
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: target.to_string(),
+        });
+        if !is_external_php_symbol(target, import_context) {
+            continue;
+        }
+
+        let imported_name = target.rsplit('\\').next().unwrap_or(target);
+        let local_alias = alias.unwrap_or(imported_name);
+        if is_function {
+            let module = target
+                .rsplit_once('\\')
+                .map(|(module, _)| module)
+                .unwrap_or(target);
+            extracted.bindings.bare.insert(
+                local_alias.to_string(),
+                ExternalImportBinding {
+                    module: module.to_string(),
+                    callee_name: imported_name.to_string(),
+                },
+            );
+        } else {
+            extracted
+                .bindings
+                .member
+                .insert(local_alias.to_string(), target.to_string());
+        }
+    }
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -981,6 +1085,23 @@ fn java_declared_types(contents: &str) -> Vec<String> {
     names
 }
 
+fn php_declared_symbols(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let tokens: Vec<&str> = contents
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| !token.is_empty())
+        .collect();
+    for window in tokens.windows(2) {
+        if matches!(
+            window[0],
+            "class" | "interface" | "trait" | "enum" | "function"
+        ) {
+            names.push(window[1].to_string());
+        }
+    }
+    names
+}
+
 fn is_external_java_class(class_path: &str, import_context: &ImportResolutionContext) -> bool {
     !import_context.java_local_classes.contains(class_path)
         && class_path
@@ -993,6 +1114,14 @@ fn is_external_csharp_path(path: &str, import_context: &ImportResolutionContext)
     path.split('.')
         .next()
         .is_some_and(|root| !import_context.csharp_local_roots.contains(root))
+}
+
+fn is_external_php_symbol(path: &str, import_context: &ImportResolutionContext) -> bool {
+    !import_context.php_local_symbols.contains(path)
+        && path
+            .rsplit('\\')
+            .next()
+            .is_none_or(|name| !import_context.php_local_symbols.contains(name))
 }
 
 fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {

@@ -142,6 +142,8 @@ const PHP: LanguageSpec = LanguageSpec {
     "#,
     call_query: r#"
         (function_call_expression function: (name) @name) @call
+        (function_call_expression function: (qualified_name) @name) @call
+        (scoped_call_expression scope: [(name) (qualified_name)] name: (name) @name) @call
         (member_call_expression name: (name) @name) @call
     "#,
 };
