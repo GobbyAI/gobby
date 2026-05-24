@@ -11,6 +11,7 @@ pub struct ImportResolutionContext {
     go_module_path: Option<String>,
     rust_external_crates: HashSet<String>,
     rust_self_crate_name: Option<String>,
+    java_local_classes: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,7 @@ pub fn build_import_resolution_context(
         go_module_path: load_go_module_path(root_path),
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
+        java_local_classes: build_java_local_class_index(candidate_files),
     }
 }
 
@@ -108,6 +110,7 @@ pub(crate) fn parse_import_statement(
         }
         "go" => parse_go_import_statement(text, rel_path, import_context, extracted),
         "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
+        "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
         _ => extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: text.to_string(),
@@ -318,6 +321,36 @@ fn load_rust_self_crate_name(root_path: &Path) -> Option<String> {
     }
 
     None
+}
+
+fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashSet<String> {
+    let mut classes = HashSet::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if ext != "java" {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let package = contents.lines().find_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("package ")
+                .map(|rest| rest.trim().trim_end_matches(';').trim().to_string())
+        });
+        for class_name in java_declared_types(&contents) {
+            classes.insert(class_name.clone());
+            if let Some(package) = package.as_deref()
+                && !package.is_empty()
+            {
+                classes.insert(format!("{package}.{class_name}"));
+            }
+        }
+    }
+    classes
 }
 
 fn parse_python_import_statement(
@@ -616,6 +649,61 @@ fn parse_rust_import_statement(
         .insert(local_alias.to_string(), path.to_string());
 }
 
+fn parse_java_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = text.trim().trim_end_matches(';').trim();
+    let Some(rest) = normalized.strip_prefix("import ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized.to_string(),
+        });
+        return;
+    };
+
+    let (is_static, target) = rest
+        .strip_prefix("static ")
+        .map(|target| (true, target.trim()))
+        .unwrap_or((false, rest.trim()));
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: target.to_string(),
+    });
+
+    if target.ends_with(".*") {
+        return;
+    }
+
+    if is_static {
+        let Some((class_path, member_name)) = target.rsplit_once('.') else {
+            return;
+        };
+        if !is_external_java_class(class_path, import_context) {
+            return;
+        }
+        extracted.bindings.bare.insert(
+            member_name.to_string(),
+            ExternalImportBinding {
+                module: class_path.to_string(),
+                callee_name: member_name.to_string(),
+            },
+        );
+        return;
+    }
+
+    if !is_external_java_class(target, import_context) {
+        return;
+    }
+    let class_alias = target.rsplit('.').next().unwrap_or(target);
+    extracted
+        .bindings
+        .member
+        .insert(class_alias.to_string(), target.to_string());
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -762,6 +850,28 @@ fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<Stri
         roots.remove(self_crate);
     }
     roots
+}
+
+fn java_declared_types(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let tokens: Vec<&str> = contents
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| !token.is_empty())
+        .collect();
+    for window in tokens.windows(2) {
+        if matches!(window[0], "class" | "interface" | "enum" | "record") {
+            names.push(window[1].to_string());
+        }
+    }
+    names
+}
+
+fn is_external_java_class(class_path: &str, import_context: &ImportResolutionContext) -> bool {
+    !import_context.java_local_classes.contains(class_path)
+        && class_path
+            .rsplit('.')
+            .next()
+            .is_none_or(|class_name| !import_context.java_local_classes.contains(class_name))
 }
 
 fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {

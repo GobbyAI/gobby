@@ -415,9 +415,14 @@ fn extract_calls(
         let target = call_node.unwrap_or(name_n);
         let caller_symbol = enclosing_symbol(symbols, target.start_byte());
         let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
-        let syntax = call_syntax_kind(name_n, target);
-        let local_target = resolve_same_file_callee(symbols, caller_symbol, &callee_name, syntax);
         let qualifier_path = member_qualifier_path(source, target, name_n).or(qualifier_from_name);
+        let detected_syntax = call_syntax_kind(name_n, target);
+        let syntax = if detected_syntax == CallSyntaxKind::Bare && qualifier_path.is_some() {
+            CallSyntaxKind::Member
+        } else {
+            detected_syntax
+        };
+        let local_target = resolve_same_file_callee(symbols, caller_symbol, &callee_name, syntax);
         let root_alias = qualifier_path
             .as_deref()
             .and_then(qualifier_root_alias)
@@ -662,6 +667,10 @@ mod tests {
 
     fn parse_rust(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
         parse_source("src/main.rs", source, extra_files)
+    }
+
+    fn parse_java(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/main/java/app/Sample.java", source, extra_files)
     }
 
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
@@ -1082,6 +1091,105 @@ fn run(value: Parser) {
                 "Cargo.toml",
                 r#"[package]
 name = "app"
+"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_java_import_and_static_import_calls() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import java.util.Collections;
+import static java.util.Objects.requireNonNull;
+
+class Sample {
+    void run() {
+        Collections.emptyList();
+        requireNonNull("x");
+    }
+}
+"#,
+            &[],
+        );
+
+        let class_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "emptyList")
+            .expect("class call");
+        assert_eq!(class_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            class_call.callee_external_module.as_deref(),
+            Some("java.util.Collections")
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "requireNonNull")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("java.util.Objects")
+        );
+    }
+
+    #[test]
+    fn leaves_java_wildcard_and_instance_calls_unresolved() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import java.util.*;
+
+class Sample {
+    void run(java.util.List<String> list) {
+        list.add("x");
+        emptyList();
+    }
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn leaves_local_java_imports_unresolved() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import app.helpers.Helper;
+
+class Sample {
+    void run() {
+        Helper.render();
+    }
+}
+"#,
+            &[(
+                "src/main/java/app/helpers/Helper.java",
+                r#"
+package app.helpers;
+
+class Helper {
+    static void render() {}
+}
 "#,
             )],
         );
