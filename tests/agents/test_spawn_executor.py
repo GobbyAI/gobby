@@ -433,11 +433,13 @@ class TestExecuteSpawn:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
             result = await execute_spawn(request)
 
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
+            mock_preapprove.assert_called_once_with("codex", "/path")
             mock_prepare.assert_called_once()
             call_kwargs = mock_prepare.call_args.kwargs
             assert call_kwargs["source"] == "codex"
@@ -521,9 +523,11 @@ class TestExecuteSpawn:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
             result = await execute_spawn(request)
 
+            mock_preapprove.assert_called_once_with("codex", "/path")
             command = mock_spawner.spawn.call_args.kwargs["command"]
             assert "--ask-for-approval" in command
             assert command[command.index("--ask-for-approval") + 1] == "never"
@@ -1081,9 +1085,11 @@ class TestExecuteSpawnErrorPaths:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
             result = await execute_spawn(request)
 
+        mock_preapprove.assert_called_once_with("codex", "/path")
         assert result.success is False
         assert "tmux failed" in (result.error or "")
 

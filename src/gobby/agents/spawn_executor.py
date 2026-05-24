@@ -656,6 +656,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Codex"):
         return validation_error
 
+    pre_approve_directory("codex", request.cwd)
+
     spawn_context = prepare_terminal_spawn(
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,

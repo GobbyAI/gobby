@@ -446,18 +446,17 @@ class TestModelDiscoveryTrust:
         assert qwen.success is True
 
 
-class TestCodexNoop:
-    def test_codex_is_noop(self, tmp_path: Path) -> None:
-        """Runtime Codex workspace trust is seeded at install time, not per spawn."""
+class TestCodexTrust:
+    def test_codex_pre_approves_workspace_path(self, tmp_path: Path) -> None:
+        """Runtime Codex workspace trust is seeded for the spawned workspace."""
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
             pre_approve_directory("codex", clone_dir)
 
-        # Should not create any files
-        assert not (tmp_path / ".claude").exists()
-        assert not (tmp_path / ".gemini").exists()
-        assert not (tmp_path / ".codex").exists()
+        config_file = tmp_path / ".codex" / "config.toml"
+        parsed = tomllib.loads(config_file.read_text())
+        assert parsed["projects"][clone_dir]["trust_level"] == "trusted"
 
     def test_install_trust_writes_codex_toml_projects(self, tmp_path: Path) -> None:
         codex_home = tmp_path / ".codex"

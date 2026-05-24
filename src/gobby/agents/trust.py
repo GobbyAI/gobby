@@ -122,14 +122,6 @@ def pre_approve_directory(cli: str, directory: PathValue) -> None:
         cli: CLI name (claude, gemini, qwen, codex, droid)
         directory: Absolute path to the workspace directory
     """
-    if cli == "codex":
-        logger.debug(
-            "Codex runtime workspace trust pre-approval is a no-op for %s; "
-            "install-time Gobby home trust is seeded by `gobby install`.",
-            os.fspath(directory),
-        )
-        return
-
     seed_cli_trust(cli, directory)
 
 
