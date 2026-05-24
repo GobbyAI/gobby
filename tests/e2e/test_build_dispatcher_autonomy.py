@@ -101,8 +101,12 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         fake_spawn_agent_impl,
     )
 
+    registry_task_manager = LocalTaskManager(temp_db)
     registry = create_stage_ops_registry(
-        RegistryContext(task_manager=task_manager, sync_manager=cast(Any, SimpleNamespace()))
+        RegistryContext(
+            task_manager=registry_task_manager,
+            sync_manager=cast(Any, SimpleNamespace()),
+        )
     )
     with session_context_for_test(worker.id):
         result = await registry.call(

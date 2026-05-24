@@ -25,7 +25,11 @@ def schedule_dispatcher_tick(
     services = get_app_context()
     if services is None or getattr(services, "agent_runner", None) is None:
         return
-    if getattr(services, "task_manager", None) is not ctx.task_manager:
+    service_task_manager = getattr(services, "task_manager", None)
+    if service_task_manager is None:
+        return
+    service_db = getattr(service_task_manager, "db", None)
+    if service_task_manager is not ctx.task_manager and service_db is not ctx.task_manager.db:
         return
     try:
         loop = asyncio.get_running_loop()

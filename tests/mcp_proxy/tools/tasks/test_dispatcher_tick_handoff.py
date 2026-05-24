@@ -54,6 +54,46 @@ async def test_schedule_dispatcher_tick_runs_with_matching_daemon_context(
 
 
 @pytest.mark.asyncio
+async def test_schedule_dispatcher_tick_accepts_distinct_task_manager_for_same_db(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP registries may use a task manager instance distinct from app context."""
+    service_task_manager = LocalTaskManager(temp_db)
+    registry_task_manager = LocalTaskManager(temp_db)
+    ctx = RegistryContext(
+        task_manager=registry_task_manager,
+        sync_manager=cast(Any, SimpleNamespace()),
+    )
+    services = SimpleNamespace(
+        agent_runner=SimpleNamespace(),
+        task_manager=service_task_manager,
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_kick_dispatcher_tick(**kwargs: object) -> None:
+        calls.append(dict(kwargs))
+
+    monkeypatch.setattr("gobby.app_context._current_container", services)
+    monkeypatch.setattr(
+        "gobby.build.dispatch_tick.kick_dispatcher_tick",
+        fake_kick_dispatcher_tick,
+    )
+
+    schedule_dispatcher_tick(
+        ctx,
+        project_id=sample_project["id"],
+        reason="submit_for_review",
+    )
+
+    await wait_for_async_condition(lambda: calls, description="dispatcher tick")
+    assert calls[0]["db"] is temp_db
+    assert calls[0]["project_id"] == sample_project["id"]
+    assert calls[0]["services"] is services
+
+
+@pytest.mark.asyncio
 async def test_schedule_dispatcher_tick_ignores_stale_app_context(
     temp_db: Any,
     sample_project: dict[str, Any],
@@ -66,7 +106,7 @@ async def test_schedule_dispatcher_tick_ignores_stale_app_context(
     )
     stale_services = SimpleNamespace(
         agent_runner=SimpleNamespace(),
-        task_manager=LocalTaskManager(temp_db),
+        task_manager=SimpleNamespace(db=object()),
     )
     calls: list[dict[str, object]] = []
 
