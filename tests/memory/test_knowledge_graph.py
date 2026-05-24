@@ -611,6 +611,30 @@ class TestGracefulDegradation:
 
         assert "memory mem-123" in caplog.text
 
+    async def test_add_to_graph_treats_conversational_parse_failure_as_no_entities(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Instruction-only content can make Claude reply conversationally instead of JSON."""
+        mock_llm.generate_json = AsyncMock(
+            side_effect=ValueError(
+                "Failed to parse Claude response as JSON: I'm ready to help extract and "
+                "classify named entities! However, I notice that the content section in "
+                "your message contains only technical instructions, not the actual content"
+            )
+        )
+
+        with caplog.at_level("INFO"):
+            result = await service.add_to_graph("technical instructions only", memory_id="mem-123")
+
+        assert result.status is KnowledgeGraphStatus.NOOP_NO_ENTITIES
+        assert "non-actionable conversational response" in caplog.text
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
+        mock_falkor.merge_node.assert_not_called()
+
 
 # ===========================================================================
 # Cross-graph linking: RELATES_TO_CODE

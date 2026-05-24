@@ -14,6 +14,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_NON_ACTIONABLE_JSON_RESPONSE_MARKERS = (
+    "i'm ready to help",
+    "i’m ready to help",
+    "not the actual content",
+    "only technical instructions",
+)
+
+
+def _is_non_actionable_json_response_error(error: ValueError) -> bool:
+    """Return True when the model replied with chatter instead of extraction JSON."""
+    message = str(error).lower()
+    if "failed to parse" not in message or "response as json" not in message:
+        return False
+    return any(marker in message for marker in _NON_ACTIONABLE_JSON_RESPONSE_MARKERS)
+
 
 class KnowledgeGraphExtractor:
     """Runs LLM prompts for entity, relationship, and cleanup extraction."""
@@ -34,7 +49,16 @@ class KnowledgeGraphExtractor:
             "memory/extract_entities",
             {"content": content},
         )
-        response = await self._llm.generate_json(prompt, model=self._model)
+        try:
+            response = await self._llm.generate_json(prompt, model=self._model)
+        except ValueError as error:
+            if not _is_non_actionable_json_response_error(error):
+                raise
+            logger.info(
+                "Entity extraction returned a non-actionable conversational response; "
+                "treating it as no entities"
+            )
+            return []
         raw_entities = response.get("entities", [])
         logger.debug(
             "Entity extraction response keys: %s, raw_entities count: %d",
