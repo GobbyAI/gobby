@@ -9,6 +9,7 @@ from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +48,37 @@ def test_create_session_messages_registry_returns_registry(renderer_registry) ->
     """Test that create_session_messages_registry returns an InternalToolRegistry."""
     assert isinstance(renderer_registry, InternalToolRegistry)
     assert renderer_registry.name == "gobby-sessions"
+
+
+@pytest.mark.asyncio
+async def test_record_verification_evidence_sets_readiness(
+    temp_db, session_manager, sample_project
+) -> None:
+    session = session_manager.register(
+        external_id="record-verification",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Record verification",
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": session.id,
+            "summary": "Read diff and verified touched rules",
+            "evidence_type": "manual_diff_review",
+            "supports": "completion readiness",
+        },
+    )
+
+    assert result["success"] is True
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert variables["verification_evidence_recorded"] is True
+    assert (
+        variables["verification_evidence"][0]["summary"] == "Read diff and verified touched rules"
+    )
 
 
 @pytest.mark.asyncio

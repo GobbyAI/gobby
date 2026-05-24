@@ -1,0 +1,50 @@
+tags: [task-enforcement, enforcement, lifecycle, completion-readiness, gobby, default]
+
+rules:
+  require-completion-readiness-evidence:
+    description: "Gate lifecycle success transitions until verification evidence is recorded"
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: >
+      not variables.get('plan_mode')
+      and not variables.get('verification_evidence_recorded')
+      and (variables.get('session_edited_files', []) or variables.get('task_has_commits'))
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-tasks:close_task"
+          - "gobby-tasks-ops:complete_stage"
+          - "gobby-tasks-ops:submit_for_review"
+          - "gobby-tasks-ops:approve_review"
+          - "gobby-tasks-ops:record_pr_opened"
+          - "gobby-tasks-ops:open_delivery_pr"
+          - "gobby-tasks-ops:record_pr_verdict"
+          - "gobby-tasks-ops:record_merge_result"
+          - "gobby-tasks-ops:close_linked_github_issue"
+          - "gobby-merge:merge_apply"
+        reason: |
+          Completion readiness requires fresh recorded verification evidence.
+
+          Run a validation command such as pytest, ruff check, mypy, or npm test.
+          Successful validation commands are recorded automatically.
+
+          For non-command evidence, call:
+          record_verification_evidence(summary="...", evidence_type="...", supports="...")
+
+  block-direct-verification-evidence-variable-set:
+    description: "Protect verification evidence variables from direct set_variable writes"
+    event: before_tool
+    enabled: true
+    priority: 20
+    when: >
+      event.data.get('tool_name') in ('set_variable', 'mcp__gobby__set_variable')
+      and tool_input.get('name') in ('verification_evidence_recorded', 'verification_evidence')
+    effects:
+      - type: block
+        tools:
+          - "set_variable"
+          - "mcp__gobby__set_variable"
+        reason: |
+          verification_evidence_recorded and verification_evidence are managed by Gobby.
+          Run a validation command or use gobby-sessions:record_verification_evidence.

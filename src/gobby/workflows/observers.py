@@ -8,6 +8,7 @@ They run BEFORE rule evaluation in the hook handler's _evaluate_rules path.
 import logging
 import re
 from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
@@ -17,6 +18,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actively_claimed,
 )
+from gobby.workflows.condition_helpers import is_validation_command
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -102,6 +104,42 @@ def _looks_like_commit_success(output: str) -> bool:
     if "nothing to commit" in output or "nothing added to commit" in output:
         return False
     return True
+
+
+def _extract_shell_command(event: "HookEvent") -> str:
+    if not event.data:
+        return ""
+    tool_input = event.data.get("tool_input") or {}
+    if isinstance(tool_input, dict):
+        command = tool_input.get("command") or tool_input.get("cmd")
+        if isinstance(command, str):
+            return command
+    command = event.data.get("command") or event.data.get("cmd")
+    return command if isinstance(command, str) else ""
+
+
+def _shell_tool_succeeded(event: "HookEvent") -> bool:
+    if not event.data:
+        return False
+    if event.data.get("is_error") or event.metadata.get("is_failure"):
+        return False
+    output = event.data.get("tool_output")
+    if isinstance(output, dict):
+        for key in ("exitCode", "exit_code", "returncode"):
+            value = output.get(key)
+            if isinstance(value, int) and value != 0:
+                return False
+        status = output.get("status")
+        if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
+            return False
+    return True
+
+
+def _append_verification_evidence(variables: dict[str, Any], evidence: dict[str, Any]) -> None:
+    existing = variables.get("verification_evidence", [])
+    if not isinstance(existing, list):
+        existing = []
+    variables["verification_evidence"] = [*existing, _json_safe(evidence)]
 
 
 def compute_mode_level(chat_mode: str) -> int:
@@ -392,6 +430,57 @@ def detect_bash_commit(event: "HookEvent", variables: dict[str, Any], session_id
         logger.info(
             f"Session {session_id}: task_has_commits=true (Bash git commit command fallback)"
         )
+
+
+def detect_verification_evidence(
+    event: "HookEvent",
+    variables: dict[str, Any],
+    session_id: str,
+) -> None:
+    """Record validation-command evidence from successful shell tool runs.
+
+    Successful validation commands set ``verification_evidence_recorded`` and append
+    a structured evidence item. Failed validation commands clear readiness and the
+    error triage flag so lifecycle success tools cannot run on stale evidence.
+    """
+    if not event.data:
+        return
+
+    tool_name = event.data.get("tool_name", "")
+    if tool_name not in _SHELL_TOOLS:
+        return
+
+    command = _extract_shell_command(event)
+    if not is_validation_command(command):
+        return
+
+    success = _shell_tool_succeeded(event)
+    evidence = {
+        "evidence_type": "validation_command",
+        "command": command,
+        "cwd": event.cwd,
+        "project_path": event.metadata.get("project_path"),
+        "timestamp": datetime.now(UTC).isoformat(),
+        "tool_name": tool_name,
+        "success": success,
+    }
+    _append_verification_evidence(variables, evidence)
+
+    if success:
+        variables["verification_evidence_recorded"] = True
+        logger.info(
+            "Session %s: verification_evidence_recorded=true (via %s)",
+            session_id,
+            command,
+        )
+        return
+
+    variables["verification_evidence_recorded"] = False
+    variables["errors_resolved"] = False
+    logger.info(
+        "Session %s: verification readiness cleared after failed validation command",
+        session_id,
+    )
 
 
 def detect_plan_mode_from_context(

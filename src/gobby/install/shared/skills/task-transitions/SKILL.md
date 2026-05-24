@@ -23,10 +23,11 @@ Before closing or changing task status, complete ALL gates below. They fire in o
 | 2 | Commit SHA passed to close_task | — | Non-work closes |
 | 3 | Lint + tests pass, all issues fixed | `errors_resolved` | — |
 | 4 | Memory review completed | `memory_review_completed` | — |
+| 5 | Fresh verification evidence recorded | `verification_evidence_recorded` | — |
 
 **Non-work close reasons** (skip gates 1-2): `duplicate`, `already_implemented`, `wont_fix`, `obsolete`, `out_of_repo`
 
-Gates 3-4 always apply, even for non-work closes.
+Gates 3-5 always apply, even for non-work closes.
 
 ---
 
@@ -103,6 +104,26 @@ set_variable(name="memory_review_completed", value=true, session_id="#2333")
 
 Do NOT create memories for bugs or errors — create tasks instead.
 
+## Gate 5: Completion Readiness Evidence
+
+Loading `verification-before-completion` is guidance only. It does not clear
+this gate.
+
+Successful validation commands such as `uv run pytest ...`, `uv run ruff check ...`,
+`uv run mypy ...`, and `npm test` are recorded automatically. If the evidence is
+manual review, PR state, or another non-command artifact, record it explicitly:
+
+```python
+call_tool("gobby-sessions", "record_verification_evidence", {
+    "summary": "Read the diff and verified the touched lifecycle gates match the task",
+    "evidence_type": "manual_diff_review",
+    "supports": "completion readiness for #N"
+}, session_id="#2333")
+```
+
+Editing files after evidence is recorded clears this gate. Failed validation
+commands also clear it and reset `errors_resolved`.
+
 ---
 
 ## Complete Close Sequence (interactive sessions)
@@ -113,7 +134,8 @@ Do NOT create memories for bugs or errors — create tasks instead.
 3. set_variable(errors_resolved=true)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
-6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
+6. Ensure verification evidence is recorded automatically or via record_verification_evidence
+7. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
 ```
 
 ## Review Flow (autonomous/pipeline agents)
@@ -196,5 +218,6 @@ Gates 3-4 still apply. `changes_summary` is still required — explain why no ch
 | `git add -A` | May stage secrets or binaries | Stage specific files |
 | File task instead of fixing error | Gate 3 blocks — `errors_resolved` not set | Investigate and fix first |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |
+| Load verification skill but record no evidence | Gate 5 blocks — `verification_evidence_recorded` not set | Run validation or record non-command evidence |
 | Omit `changes_summary` | close_task rejects — required for leaf tasks | Describe what changed and why |
 | Use review tools in interactive session | Blocked by rule | Use `close_task` — user is the reviewer |

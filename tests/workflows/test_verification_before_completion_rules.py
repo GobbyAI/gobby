@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -80,3 +83,90 @@ def test_lifecycle_call_rule_requires_verification_skill(db, manager) -> None:
         block_effects[0].reason
         == 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
     )
+
+
+def _close_task_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby-tasks__close_task",
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": "close_task",
+            "tool_input": {
+                "task_id": "#42",
+                "commit_sha": "abc1234",
+                "changes_summary": "done",
+            },
+        },
+    )
+
+
+def _set_variable_event(name: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {"name": name, "value": True, "session_id": "#1"},
+        },
+    )
+
+
+def _ready_variables(**overrides: object) -> dict[str, object]:
+    variables: dict[str, object] = {
+        "loaded_skills": ["task-transitions", "verification-before-completion"],
+        "session_edited_files": ["src/gobby/workflows/observers.py"],
+        "task_has_commits": True,
+        "errors_resolved": True,
+        "memory_review_completed": True,
+        "verification_evidence_recorded": True,
+    }
+    variables.update(overrides)
+    return variables
+
+
+@pytest.mark.asyncio
+async def test_completion_readiness_blocks_without_recorded_evidence(db, manager) -> None:
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _close_task_event(),
+        session_id="sid",
+        variables=_ready_variables(verification_evidence_recorded=False),
+    )
+
+    assert response.decision == "block"
+    assert "require-completion-readiness-evidence" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_completion_readiness_allows_with_all_sibling_gates(db, manager) -> None:
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _close_task_event(),
+        session_id="sid",
+        variables=_ready_variables(),
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_protected_evidence_variables_cannot_be_set_directly(db, manager) -> None:
+    _sync_bundled(db)
+
+    for name in ("verification_evidence_recorded", "verification_evidence"):
+        response = await RuleEngine(db).evaluate(
+            _set_variable_event(name),
+            session_id="sid",
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert "block-direct-verification-evidence-variable-set" in (response.reason or "")

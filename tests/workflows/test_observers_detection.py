@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from gobby.workflows.observers import (
     detect_mcp_call,
     detect_plan_mode_from_context,
     detect_task_claim,
+    detect_verification_evidence,
 )
 
 pytestmark = pytest.mark.unit
@@ -1021,6 +1023,7 @@ def _make_bash_event(
     tool_name: str = "Bash",
     command: str = "git commit -m 'msg'",
     is_error: bool = False,
+    cwd: str | None = None,
 ) -> HookEvent:
     """Helper to create a Bash AFTER_TOOL event with string output."""
     data: dict[str, object] = {
@@ -1036,6 +1039,7 @@ def _make_bash_event(
         session_id="test-session-ext",
         timestamp=datetime.now(UTC),
         data=data,
+        cwd=cwd,
         metadata={"_platform_session_id": SESSION_ID},
     )
 
@@ -1227,6 +1231,66 @@ class TestDetectBashCommit:
         assert "task_has_commits" not in variables
 
 
+class TestDetectVerificationEvidence:
+    """Verify validation commands record completion-readiness evidence."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uv run pytest tests/workflows/test_hooks.py -v",
+            "uv run ruff check src/gobby/workflows/observers.py",
+            "uv run mypy src/gobby/workflows/observers.py",
+            "npm test",
+        ],
+    )
+    def test_successful_validation_records_evidence(self, variables, command: str) -> None:
+        event = _make_bash_event("passed", command=command, cwd="/repo")
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["command"] == command
+        assert variables["verification_evidence"][-1]["cwd"] == "/repo"
+        assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
+        assert variables["verification_evidence"][-1]["success"] is True
+
+    def test_failed_validation_clears_readiness_and_errors_resolved(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
+        variables["errors_resolved"] = True
+        event = _make_bash_event(
+            "failed",
+            command="uv run pytest tests/workflows/test_hooks.py -v",
+            is_error=True,
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is False
+        assert variables["errors_resolved"] is False
+        assert variables["verification_evidence"][-1]["success"] is False
+
+    def test_non_validation_command_is_ignored(self, variables) -> None:
+        event = _make_bash_event("ok", command="git status")
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert "verification_evidence_recorded" not in variables
+
+    def test_git_commit_does_not_clear_recorded_evidence(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
+        event = _make_bash_event("[main abc1234] Fix\n 1 file changed")
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"] == [
+            {"command": "uv run pytest old.py", "success": True}
+        ]
+
+
 def _make_bash_event_dict(
     tool_output: dict[str, object],
     *,
@@ -1250,6 +1314,29 @@ def _make_bash_event_dict(
         data=data,
         metadata={"_platform_session_id": SESSION_ID},
     )
+
+
+def test_tracking_edited_file_clears_recorded_verification_evidence(temp_db) -> None:
+    from gobby.hooks.event_handlers._tool import ToolEventHandlerMixin
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(
+        SESSION_ID,
+        {
+            "verification_evidence_recorded": True,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+        },
+    )
+    handler = ToolEventHandlerMixin()
+    handler._session_manager = SimpleNamespace(db=temp_db)
+
+    handler._track_session_edited_file(SESSION_ID, "src/new_change.py", cwd=None)
+
+    variables = manager.get_variables(SESSION_ID)
+    assert variables["verification_evidence_recorded"] is False
+    assert variables["verification_evidence"] == []
+    assert variables["session_edited_files"] == ["src/new_change.py"]
 
 
 # =============================================================================

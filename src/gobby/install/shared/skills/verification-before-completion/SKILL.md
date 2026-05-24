@@ -49,6 +49,10 @@ Apply this before:
 
 Gobby's structural gates still do the enforcement work:
 
+- Loading this skill is guidance only. It does not satisfy completion
+  readiness by itself.
+- `require-completion-readiness-evidence` blocks lifecycle success tools after
+  edits or commits until fresh verification evidence is recorded.
 - `require-error-triage-before-status` blocks status changes until touched-file
   lint, tests, type checks, or focused verification have been run and failures
   are fixed.
@@ -63,6 +67,10 @@ Use the relevant verification from `.gobby/project.json`, scoped to touched
 files when the full suite would be wasteful. For review and delivery work,
 evidence can also be a read diff, linked task validation, PR verdict, merge
 result, or delivery-state record when that is the thing being claimed.
+
+Successful shell validation commands are recorded automatically. For evidence
+that cannot come from shell output, use `gobby-sessions:record_verification_evidence`
+with `summary`, `evidence_type`, and `supports`.
 
 Do not upgrade a partial check into a broad claim. Say "focused tests pass" when
 only focused tests ran. Say "not verified" when evidence is missing.

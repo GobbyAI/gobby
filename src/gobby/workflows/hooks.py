@@ -458,6 +458,7 @@ class WorkflowHookHandler:
             detect_mcp_call,
             detect_plan_mode_from_context,
             detect_task_claim,
+            detect_verification_evidence,
             reconcile_claimed_tasks,
         )
 
@@ -483,6 +484,7 @@ class WorkflowHookHandler:
             )
             detect_commit_link(event, variables, session_id)
             detect_bash_commit(event, variables, session_id)
+            detect_verification_evidence(event, variables, session_id)
             detect_mcp_call(event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary
@@ -692,7 +694,12 @@ class WorkflowHookHandler:
                 logger.warning("Could not run workflow engine: Event loop is already running.")
                 return HookResponse(decision="allow")
             except RuntimeError:
-                return asyncio.run(self.evaluate_async(event))
+                coroutine = self.evaluate_async(event)
+                try:
+                    return asyncio.run(coroutine)
+                except BaseException:
+                    coroutine.close()
+                    raise
 
         except concurrent.futures.CancelledError:
             return self._handle_cancelled(event)

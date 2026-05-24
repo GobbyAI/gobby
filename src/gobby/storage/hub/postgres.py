@@ -190,6 +190,7 @@ class PostgresHubDatabase:
     def __init__(self, dsn: str) -> None:
         self._pool = ConnectionPool(
             conninfo=dsn,
+            open=True,
             min_size=int(os.getenv("PGPOOL_MIN", "2")),
             max_size=int(os.getenv("PGPOOL_MAX", "10")),
             timeout=int(os.getenv("PGCONNECT_TIMEOUT", "5")),
