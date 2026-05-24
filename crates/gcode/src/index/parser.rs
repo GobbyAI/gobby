@@ -439,7 +439,11 @@ fn extract_calls(
         let target = call_node.unwrap_or(name_n);
         let caller_symbol = enclosing_symbol(symbols, target.start_byte());
         let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
-        let qualifier_path = member_qualifier_path(source, target, name_n).or(qualifier_from_name);
+        // If the captured callee is already qualified, trust that text over a
+        // prefix inferred from the wider call node.
+        let qualifier_path = call_qualifier_path(qualifier_from_name, || {
+            member_qualifier_path(source, target, name_n)
+        });
         let detected_syntax = call_syntax_kind(name_n, target);
         let syntax = if detected_syntax == CallSyntaxKind::Bare && qualifier_path.is_some() {
             CallSyntaxKind::Member
@@ -792,6 +796,8 @@ fn resolve_same_file_callee_for_language(
     syntax: CallSyntaxKind,
 ) -> Option<String> {
     if language == "ruby" && syntax == CallSyntaxKind::Bare {
+        // Ruby bare calls are dynamic dispatch/open-class territory; same-file
+        // name matching creates noisy false edges here.
         return None;
     }
     resolve_same_file_callee(symbols, caller_symbol, callee_name, syntax)
@@ -848,6 +854,13 @@ fn member_qualifier_path(
     } else {
         Some(qualifier)
     }
+}
+
+fn call_qualifier_path(
+    qualifier_from_name: Option<String>,
+    qualifier_from_member: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    qualifier_from_name.or_else(qualifier_from_member)
 }
 
 fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
@@ -1018,6 +1031,20 @@ mod tests {
                 None
             }
         }
+    }
+
+    #[test]
+    fn explicit_qualified_raw_callee_takes_precedence_over_member_prefix() {
+        let mut inferred_called = false;
+        let (_, qualifier_from_name) = split_qualified_callee("Vendor\\Pkg\\helper");
+
+        let qualifier_path = call_qualifier_path(qualifier_from_name, || {
+            inferred_called = true;
+            Some("Vendor".to_string())
+        });
+
+        assert_eq!(qualifier_path.as_deref(), Some("Vendor\\Pkg"));
+        assert!(!inferred_called);
     }
 
     #[test]
@@ -1262,11 +1289,13 @@ package main
 import (
     "fmt"
     cli "github.com/acme/client"
+    "gopkg.in/yaml.v3"
 )
 
 func run() {
     fmt.Println("hello")
     cli.Connect()
+    yaml.Unmarshal(nil, nil)
 }
 "#,
             &[("go.mod", "module example.com/app\n")],
@@ -1289,6 +1318,17 @@ func run() {
         assert_eq!(
             alias_call.callee_external_module.as_deref(),
             Some("github.com/acme/client")
+        );
+
+        let yaml_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Unmarshal")
+            .expect("yaml call");
+        assert_eq!(yaml_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            yaml_call.callee_external_module.as_deref(),
+            Some("gopkg.in/yaml.v3")
         );
     }
 
@@ -1348,7 +1388,7 @@ fn run() {
 name = "app"
 
 [dependencies]
-serde_json = "1"
+serde_json = { version = "1" }
 "#,
             )],
         );
@@ -1687,6 +1727,7 @@ use App\Local\Client;
 function run($obj) {
     $obj->connect();
     Client::connect();
+    \missing();
     missing();
 }
 "#,

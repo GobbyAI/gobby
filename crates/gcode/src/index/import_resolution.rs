@@ -198,6 +198,7 @@ pub(crate) fn resolve_external_callee(
                 callee_name: callee_name.to_string(),
             });
         }
+        // Multiple wildcard imports make the source module ambiguous, so fail closed.
         return None;
     }
 
@@ -214,8 +215,12 @@ pub(crate) fn resolve_external_callee(
 
     let qualifier_path = qualifier_path?;
     if qualifier_path.starts_with('\\') {
+        let module = qualifier_path.trim_start_matches('\\');
+        if module.is_empty() {
+            return None;
+        }
         return Some(ExternalCallTarget {
-            module: qualifier_path.trim_start_matches('\\').to_string(),
+            module: module.to_string(),
             callee_name: callee_name.to_string(),
         });
     }
@@ -334,10 +339,18 @@ fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {
         if !in_dependency_section {
             continue;
         }
-        let Some((name, _)) = line.split_once('=') else {
+        let mut parts = line.splitn(2, '=');
+        let Some(name) = parts.next() else {
             continue;
         };
-        let name = name.trim().trim_matches('"').replace('-', "_");
+        if parts.next().is_none() {
+            continue;
+        }
+        let name = name
+            .trim()
+            .trim_matches(['"', '\''])
+            .trim()
+            .replace('-', "_");
         if !name.is_empty() {
             crates.insert(name);
         }
@@ -592,11 +605,17 @@ fn load_elixir_dependency_names(root_path: &Path) -> HashSet<String> {
         }
     }
     if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.lock")) {
-        let mut rest = contents.as_str();
-        while let Some(start) = rest.find('"') {
-            rest = &rest[start + 1..];
+        for line in contents
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let Some(start) = line.find('"') else {
+                continue;
+            };
+            let rest = &line[start + 1..];
             let Some(end) = rest.find('"') else {
-                break;
+                continue;
             };
             let dep = &rest[..end];
             if dep
@@ -605,7 +624,6 @@ fn load_elixir_dependency_names(root_path: &Path) -> HashSet<String> {
             {
                 deps.insert(dep.to_string());
             }
-            rest = &rest[end + 1..];
         }
     }
     deps
@@ -1278,14 +1296,12 @@ fn extract_quoted_string(text: &str) -> Option<String> {
 }
 
 fn go_default_package_alias(module: &str) -> String {
-    module
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(module)
+    let module = module.trim_end_matches('/');
+    let last_segment = module.rsplit('/').next().unwrap_or(module);
+    last_segment
         .split_once(".v")
         .map(|(name, _)| name)
-        .unwrap_or_else(|| module.rsplit('/').next().unwrap_or(module))
+        .unwrap_or(last_segment)
         .replace('-', "_")
 }
 
@@ -1570,5 +1586,79 @@ fn js_package_name(module: &str) -> Option<&str> {
         module.get(..consumed)
     } else {
         module.split('/').next()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn loads_rust_inline_table_dependency_names() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+serde = { version = "1.0" }
+"tokio-util" = { version = "0.7", features = ["codec"] }
+"#,
+        )
+        .expect("cargo toml");
+
+        let crates = load_rust_external_crates(tempdir.path());
+
+        assert!(crates.contains("serde"));
+        assert!(crates.contains("tokio_util"));
+    }
+
+    #[test]
+    fn loads_elixir_mix_lock_first_quoted_dependency_per_line() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("mix.lock"),
+            r#"%{
+  "jason": {:hex, :jason, "1.4.4", "checksum", [:mix], [], "hexpm", "repo"},
+  "httpoison": {:hex, :httpoison, "2.2.1", "checksum", [:mix], [], "hexpm", "repo"}
+}"#,
+        )
+        .expect("mix.lock");
+
+        let deps = load_elixir_dependency_names(tempdir.path());
+
+        assert!(deps.contains("jason"));
+        assert!(deps.contains("httpoison"));
+        assert!(!deps.contains("1"));
+        assert!(!deps.contains("hexpm"));
+    }
+
+    #[test]
+    fn go_default_package_alias_uses_last_segment_before_version_suffix() {
+        assert_eq!(go_default_package_alias("gopkg.in/yaml.v3"), "yaml");
+        assert_eq!(
+            go_default_package_alias("github.com/acme/api-client/"),
+            "api_client"
+        );
+    }
+
+    #[test]
+    fn empty_php_fully_qualified_namespace_stays_unresolved() {
+        let target = resolve_external_callee(
+            &ImportBindings::default(),
+            &[],
+            "helper",
+            Some(""),
+            Some("\\"),
+            false,
+        );
+
+        assert!(target.is_none());
     }
 }

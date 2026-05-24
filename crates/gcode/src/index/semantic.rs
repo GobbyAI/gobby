@@ -126,18 +126,66 @@ fn location_from_lsp_value(value: &Value) -> Option<DefinitionLocation> {
 
 fn source_defines_macro(source: &[u8], callee_name: &str) -> bool {
     let text = String::from_utf8_lossy(source);
-    text.lines().any(|line| {
-        let line = line.trim_start();
-        let Some(rest) = line.strip_prefix("#define") else {
-            return false;
-        };
-        let macro_name = rest
-            .trim_start()
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .next()
-            .unwrap_or_default();
-        macro_name == callee_name
-    })
+    logical_source_lines(&text)
+        .iter()
+        .filter_map(|line| macro_definition_name(line))
+        .any(|macro_name| macro_name == callee_name)
+}
+
+fn logical_source_lines(text: &str) -> Vec<String> {
+    let mut logical_lines = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if let Some(continued) = trimmed.strip_suffix('\\') {
+            current.push_str(continued);
+            continue;
+        }
+
+        current.push_str(line);
+        logical_lines.push(std::mem::take(&mut current));
+    }
+
+    if !current.is_empty() {
+        logical_lines.push(current);
+    }
+
+    logical_lines
+}
+
+fn macro_definition_name(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix("#define")?;
+    if !rest.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+
+    let rest = rest.trim_start();
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    let mut end = first.len_utf8();
+    for (idx, ch) in chars {
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    let after_name = &rest[end..];
+    if after_name
+        .chars()
+        .next()
+        .is_none_or(|ch| ch == '(' || ch.is_whitespace())
+    {
+        Some(&rest[..end])
+    } else {
+        None
+    }
 }
 
 fn path_is_inside_root(path: &Path, root_path: &Path) -> bool {
@@ -172,13 +220,40 @@ fn env_flag(name: &str) -> bool {
 }
 
 fn path_to_uri(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    let path = path.replace('\\', "/");
+    #[cfg(not(windows))]
+    let path = path.into_owned();
+
     let encoded = path
-        .to_string_lossy()
         .split('/')
-        .map(|part| urlencoding::encode(part).into_owned())
+        .enumerate()
+        .map(|(idx, part)| {
+            if idx == 0 && is_windows_drive_prefix(part) {
+                part.to_string()
+            } else {
+                urlencoding::encode(part).into_owned()
+            }
+        })
         .collect::<Vec<_>>()
         .join("/");
-    format!("file://{encoded}")
+    if encoded.starts_with("//") {
+        format!("file:{encoded}")
+    } else if is_windows_drive_path(&encoded) {
+        format!("file:///{encoded}")
+    } else {
+        format!("file://{encoded}")
+    }
+}
+
+fn is_windows_drive_prefix(part: &str) -> bool {
+    let bytes = part.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn is_windows_drive_path(path: &str) -> bool {
+    path.get(..2).is_some_and(is_windows_drive_prefix)
 }
 
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
@@ -449,6 +524,38 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn detects_function_like_and_backslash_continued_macros() {
+        assert!(source_defines_macro(
+            b"#define trace(value) log(value)\nvoid run() { trace(1); }",
+            "trace"
+        ));
+        assert!(source_defines_macro(
+            b"#define \\\ntrace(value) \\\nlog(value)\nvoid run() { trace(1); }",
+            "trace"
+        ));
+        assert!(!source_defines_macro(
+            b"#define trace_wrapper(value) trace(value)",
+            "trace"
+        ));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn path_to_uri_encodes_absolute_path_components() {
+        let uri = path_to_uri(Path::new("/tmp/gobby uri/a b/c#d.rs"));
+
+        assert_eq!(uri, "file:///tmp/gobby%20uri/a%20b/c%23d.rs");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn path_to_uri_preserves_windows_drive_prefix() {
+        let uri = path_to_uri(Path::new(r"C:\Users\Josh\gobby uri\a#b.rs"));
+
+        assert_eq!(uri, "file:///C:/Users/Josh/gobby%20uri/a%23b.rs");
     }
 
     #[test]
