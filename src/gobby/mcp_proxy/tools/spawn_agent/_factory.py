@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -347,12 +348,12 @@ def create_spawn_agent_registry(
         # Auto-subscribe parent session + lineage to agent completion events
         run_id = result.get("run_id")
         if result.get("success") and run_id and completion_registry and resolved_parent_session_id:
-            _auto_subscribe_agent(
-                completion_registry,
-                run_id,
-                resolved_parent_session_id,
-                session_manager,
-                db,
+            subscribe_agent_completion(
+                completion_registry=completion_registry,
+                run_id=str(run_id),
+                subscriber_session_id=resolved_parent_session_id,
+                session_manager=session_manager,
+                db=db,
             )
 
         return result
@@ -495,45 +496,3 @@ def create_spawn_agent_registry(
         }
 
     return registry
-
-
-def _auto_subscribe_agent(
-    completion_registry: Any,
-    run_id: str,
-    parent_session_id: str,
-    session_manager: Any | None,
-    db: Any | None,
-) -> None:
-    """Register a completion event for an agent run and subscribe parent lineage."""
-    lineage_ids: list[str] = [parent_session_id]
-    if session_manager:
-        try:
-            from gobby.agents.session import ChildSessionManager
-
-            child_mgr = ChildSessionManager(session_manager)
-            lineage = child_mgr.get_session_lineage(parent_session_id)
-            lineage_ids = [s.id for s in lineage]
-            if parent_session_id not in lineage_ids:
-                lineage_ids.append(parent_session_id)
-        except Exception:
-            logger.debug(
-                f"Could not resolve session lineage for {parent_session_id}", exc_info=True
-            )
-
-    try:
-        completion_registry.register(run_id, subscribers=lineage_ids)
-    except Exception:
-        logger.debug(f"Failed to register completion event for run {run_id}", exc_info=True)
-        return
-
-    # Persist subscribers for restart recovery
-    if db is not None:
-        try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager
-
-            em = LocalPipelineExecutionManager(db=db, project_id="")
-            em.add_completion_subscribers(run_id, lineage_ids)
-        except Exception:
-            logger.debug(
-                f"Failed to persist completion subscribers for run {run_id}", exc_info=True
-            )

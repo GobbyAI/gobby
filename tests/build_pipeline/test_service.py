@@ -73,6 +73,93 @@ def _init_git_repo(path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.service import DispatcherTickSummary
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.sessions import SessionManager
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Coordinated build",
+        task_type="epic",
+    )
+    coordinator = SessionManager(temp_db).register(
+        external_id="coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        title="Coordinator",
+    )
+    seen: dict[str, object] = {}
+
+    async def fake_tick(*args: object, **_kwargs: object) -> DispatcherTickSummary:
+        db = args[0]
+        tick_project_id = str(args[1])
+        run = BuildHistoryStorage(db).latest_run_for_input(tick_project_id, f"#{task.seq_num}")
+        seen["root_task_id"] = run.root_task_id if run else None
+        seen["summary"] = run.summary if run else None
+        return DispatcherTickSummary()
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
+
+    await _build(
+        f"#{task.seq_num}",
+        _options(isolation="none", coordinator_session_ref=f"#{coordinator.seq_num}"),
+        db=temp_db,
+        project_id=project_id,
+    )
+    run = BuildHistoryStorage(temp_db).latest_run_for_input(project_id, f"#{task.seq_num}")
+
+    assert seen["root_task_id"] == task.id
+    assert seen["summary"] == {
+        "coordinator_session_id": coordinator.id,
+        "isolation": "none",
+        "quick": False,
+    }
+    assert run is not None
+    assert run.root_task_id == task.id
+    assert run.summary["coordinator_session_id"] == coordinator.id
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_coordinator_from_another_project(temp_db, tmp_path: Path) -> None:
+    from gobby.storage.sessions import SessionManager
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    other_repo = tmp_path / "other"
+    other_repo.mkdir()
+    other_project = LocalProjectManager(temp_db).create(
+        name="other-coordinator-project",
+        repo_path=str(other_repo),
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Coordinated build",
+        task_type="epic",
+    )
+    coordinator = SessionManager(temp_db).register(
+        external_id="other-coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=other_project.id,
+        title="Other Coordinator",
+    )
+
+    with pytest.raises(ValueError, match="must belong to the build project"):
+        await _build(
+            f"#{task.seq_num}",
+            _options(isolation="none", coordinator_session_ref=coordinator.id),
+            db=temp_db,
+            project_id=project_id,
+        )
+
+
+@pytest.mark.asyncio
 async def test_build_rejects_unknown_skip_stage_with_valid_values(
     temp_db,
     tmp_path: Path,

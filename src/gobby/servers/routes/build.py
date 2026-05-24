@@ -65,6 +65,7 @@ class BuildRequest(BaseModel):
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = Field(default=0, ge=0)
     dry_run: bool = False
+    coordinator: str | None = None
 
 
 class BuildControlRequest(BaseModel):
@@ -108,6 +109,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         planning_seed_state=request_data.planning_seed_state,
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
         dry_run=request_data.dry_run,
+        coordinator_session_ref=request_data.coordinator,
     )
 
 

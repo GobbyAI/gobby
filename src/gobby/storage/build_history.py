@@ -148,6 +148,30 @@ class BuildHistoryStorage:
             )
         return self._require_run(run_id)
 
+    def update_run_context(
+        self,
+        run_id: str,
+        *,
+        root_task_id: str | None = None,
+        summary: Mapping[str, Any] | None = None,
+    ) -> BuildRun:
+        current = self._require_run(run_id)
+        merged_summary: dict[str, Any] | None = None
+        if summary is not None:
+            merged_summary = dict(current.summary or {})
+            merged_summary.update(summary)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE build_runs
+                   SET root_task_id = COALESCE(?, root_task_id),
+                       summary_json = COALESCE(?, summary_json)
+                 WHERE id = ?
+                """,
+                (root_task_id, _json_dump(merged_summary), run_id),
+            )
+        return self._require_run(run_id)
+
     def record_run(
         self,
         *,
@@ -256,6 +280,44 @@ class BuildHistoryStorage:
         )
         return BuildRun.from_row(row) if row is not None else None
 
+    def latest_coordinated_run_for_task(self, project_id: str, task_id: str) -> BuildRun | None:
+        ancestor_rows = self.db.fetchall(
+            """
+            WITH RECURSIVE ancestors(id, parent_task_id) AS (
+                SELECT id, parent_task_id
+                  FROM tasks
+                 WHERE id = ? AND project_id = ?
+                UNION ALL
+                SELECT parent.id, parent.parent_task_id
+                  FROM tasks parent
+                  JOIN ancestors child ON child.parent_task_id = parent.id
+                 WHERE parent.project_id = ?
+            )
+            SELECT id FROM ancestors
+            """,
+            (task_id, project_id, project_id),
+        )
+        ancestor_ids = [str(row["id"]) for row in ancestor_rows]
+        if not ancestor_ids:
+            return None
+        placeholders = ", ".join("?" for _ in ancestor_ids)
+        rows = self.db.fetchall(
+            f"""
+            SELECT *
+              FROM build_runs
+             WHERE project_id = ?
+               AND root_task_id IN ({placeholders})
+             ORDER BY started_at DESC, id DESC
+             LIMIT 100
+            """,  # nosec B608 # placeholders are generated from trusted list length only.
+            (project_id, *ancestor_ids),
+        )
+        for row in rows:
+            run = BuildRun.from_row(row)
+            if run.summary and run.summary.get("coordinator_session_id"):
+                return run
+        return None
+
     def list_runs(
         self,
         *,
@@ -335,6 +397,18 @@ def best_effort_finish_run(db: HubDatabase, run_id: str | None, **kwargs: Any) -
         return None
 
 
+def best_effort_update_run_context(
+    db: HubDatabase, run_id: str | None, **kwargs: Any
+) -> BuildRun | None:
+    if run_id is None:
+        return None
+    try:
+        return BuildHistoryStorage(db).update_run_context(run_id, **kwargs)
+    except Exception:
+        logger.warning("Failed to update build run context", exc_info=True)
+        return None
+
+
 def best_effort_record_run(db: HubDatabase, **kwargs: Any) -> BuildRun | None:
     try:
         return BuildHistoryStorage(db).record_run(**kwargs)
@@ -388,4 +462,5 @@ __all__ = [
     "best_effort_record_event",
     "best_effort_record_run",
     "best_effort_start_run",
+    "best_effort_update_run_context",
 ]

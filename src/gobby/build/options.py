@@ -37,6 +37,7 @@ class BuildOptions:
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = 0
     dry_run: bool = False
+    coordinator_session_ref: str | None = None
 
     @property
     def workspace_backend(self) -> WorkspaceBackend:

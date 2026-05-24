@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -34,6 +35,7 @@ from .utils import resolve_project_ref
 
 logger = logging.getLogger(__name__)
 BuildPlanningSeedState = Literal["drafted", "needs_review", "approved"]
+CURRENT_COORDINATOR = "__current_cli_session__"
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
 _PROFILE_ERROR_RE = re.compile(
@@ -168,6 +170,8 @@ def _build_payload(
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "dry_run": opts.dry_run,
     }
+    if opts.coordinator_session_ref:
+        payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
     return payload
@@ -507,6 +511,12 @@ def _open_database() -> HubDatabase:
     default=False,
     help="Preview build, clean, or restart without persisting changes.",
 )
+@click.option(
+    "--coordinator",
+    is_flag=False,
+    flag_value=CURRENT_COORDINATOR,
+    help="Session to wake for build-spawned agent completions.",
+)
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
@@ -533,6 +543,7 @@ def build_command(
     planning_seed_state: str,
     completed_plan_review_rounds: int,
     dry_run: bool,
+    coordinator: str | None,
     force: bool,
     yes: bool,
     no_resume: bool,
@@ -582,6 +593,7 @@ def build_command(
         planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
         completed_plan_review_rounds=completed_plan_review_rounds,
         dry_run=dry_run,
+        coordinator_session_ref=_coordinator_session_ref(coordinator),
     )
     project_id = resolve_project_id()
     cwd = str(Path.cwd())
@@ -598,6 +610,19 @@ def build_command(
             db.close()
 
     _echo_build_result(result)
+
+
+def _coordinator_session_ref(coordinator: str | None) -> str | None:
+    if coordinator is None:
+        return None
+    if coordinator != CURRENT_COORDINATOR and coordinator.strip():
+        return coordinator.strip()
+    current_session = (os.environ.get("GOBBY_SESSION_ID") or "").strip()
+    if current_session:
+        return current_session
+    raise click.ClickException(
+        "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
+    )
 
 
 @click.command("stop")

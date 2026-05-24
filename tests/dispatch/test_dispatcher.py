@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -108,8 +109,8 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
         )
         VALUES (
             'comment-holistic-followup', ?, NULL, 'holistic-reviewer', 'system',
-            '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', datetime('now'),
-            datetime('now')
+            '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
         )
         """,
         (task.id,),
@@ -526,6 +527,142 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert spawn_kwargs["initial_variables"]["_step_workflow_name"] == "backend-developer-steps"
     assert launcher.source == "dispatcher_launcher"
     assert storage.get_mutex(task.id).run_id == "run-services"
+
+
+async def test_spawn_action_subscribes_build_coordinator_completion(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    coordinator = session_manager.register(
+        external_id="coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Coordinator",
+    )
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-coordinated",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "none"}
+
+    completion_registry = MagicMock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+        completion_registry=completion_registry,
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    completion_registry.register.assert_called_once_with(
+        "run-coordinated",
+        subscribers=[coordinator.id],
+    )
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-coordinated"
+    )
+    assert subscribers == [coordinator.id]
+
+
+async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-unattended",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "none"}
+
+    completion_registry = MagicMock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+        completion_registry=completion_registry,
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    completion_registry.register.assert_not_called()
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-unattended"
+    )
+    assert subscribers == []
 
 
 async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(

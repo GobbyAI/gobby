@@ -52,6 +52,7 @@ def resolve_build_profile_options(
         planning_seed_state=opts.planning_seed_state,
         completed_plan_review_rounds=opts.completed_plan_review_rounds,
         dry_run=opts.dry_run,
+        coordinator_session_ref=opts.coordinator_session_ref,
     )
 
 

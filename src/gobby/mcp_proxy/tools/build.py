@@ -45,6 +45,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         reset_expansion_output: bool = False,
         max_active_agents: int | None = None,
         max_retries: int | None = None,
+        coordinator: str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Start lifecycle automation for a plan file, epic, or automated leaf task."""
@@ -72,6 +73,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             reset_expansion_output=reset_expansion_output,
             max_active_agents=max_active_agents,
             max_retries=max_retries,
+            coordinator_session_ref=coordinator,
         )
         result = await build(
             input_ref,
@@ -126,6 +128,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "reset_expansion_output": {"type": "boolean", "default": False},
                 "max_active_agents": {"type": "integer", "minimum": 1},
                 "max_retries": {"type": "integer", "minimum": 0},
+                "coordinator": {"type": "string"},
                 "project_id": {"type": "string"},
             },
             "required": ["input_ref"],

@@ -61,6 +61,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "planning_seed_state": "needs_review",
                 "completed_plan_review_rounds": 2,
                 "dry_run": True,
+                "coordinator": "#6075",
             },
         )
 
@@ -103,6 +104,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.planning_seed_state == "needs_review"
     assert opts.completed_plan_review_rounds == 2
     assert opts.dry_run is True
+    assert opts.coordinator_session_ref == "#6075"
     assert call.kwargs["project_id"] == "project-1"
     assert call.kwargs["services"] is not None
 

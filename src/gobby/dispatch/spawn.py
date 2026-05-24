@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import psycopg
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.build.workspaces import BuildWorkspaceError, ensure_epic_integration_workspaces
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import (
     TaskArtifactConstraintError,
@@ -179,7 +181,37 @@ async def spawn_agent(
         raise DispatchSpawnFailed("missing run_id")
 
     _persist_spawn_artifacts(db, action.task_id, result)
+    _subscribe_build_coordinator_completion(
+        db=db,
+        project_id=project_id,
+        task_id=action.task_id,
+        run_id=str(run_id),
+        services=services,
+    )
     return str(run_id)
+
+
+def _subscribe_build_coordinator_completion(
+    *,
+    db: HubDatabase,
+    project_id: str,
+    task_id: str,
+    run_id: str,
+    services: object | None,
+) -> None:
+    run = BuildHistoryStorage(db).latest_coordinated_run_for_task(project_id, task_id)
+    if run is None or not run.summary:
+        return
+    coordinator_session_id = run.summary.get("coordinator_session_id")
+    if not isinstance(coordinator_session_id, str) or not coordinator_session_id:
+        return
+    subscribe_agent_completion(
+        completion_registry=getattr(services, "completion_registry", None),
+        run_id=run_id,
+        subscriber_session_id=coordinator_session_id,
+        session_manager=getattr(services, "session_manager", None),
+        db=db,
+    )
 
 
 def _prepare_spawn_artifacts(

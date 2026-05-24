@@ -46,6 +46,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--dry-run" in result.output
     assert "Preview build, clean, or restart without" in result.output
     assert "persisting changes." in result.output
+    assert "--coordinator" in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -100,6 +101,8 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "--completed-plan-review-rounds",
                 "2",
                 "--dry-run",
+                "--coordinator",
+                "#6075",
             ],
         )
 
@@ -134,6 +137,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.planning_seed_state == "approved"
     assert opts.completed_plan_review_rounds == 2
     assert opts.dry_run is True
+    assert opts.coordinator_session_ref == "#6075"
     assert call.kwargs == {
         "db": open_db.return_value,
         "project_id": "project-1",
@@ -274,6 +278,64 @@ def test_build_payload_includes_dry_run() -> None:
     payload = _build_payload(BuildOptions(dry_run=True), "plan.md")
 
     assert payload["dry_run"] is True
+
+
+def test_build_payload_includes_coordinator() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(BuildOptions(coordinator_session_ref="#6075"), "#42")
+
+    assert payload["coordinator"] == "#6075"
+
+
+def test_build_cli_bare_coordinator_uses_current_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    monkeypatch.setenv("GOBBY_SESSION_ID", "session-current")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._try_daemon_build", return_value=None),
+        patch("gobby.cli.build.asyncio.run", return_value=build_result),
+        patch("gobby.cli.build.build", new=AsyncMock()) as build,
+    ):
+        result = CliRunner().invoke(cli, ["build", str(plan_file), "--coordinator"])
+
+    assert result.exit_code == 0
+    assert build.call_args.args[1].coordinator_session_ref == "session-current"
+    open_db.return_value.close.assert_called_once_with()
+
+
+def test_build_cli_bare_coordinator_requires_current_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+
+    result = CliRunner().invoke(cli, ["build", str(plan_file), "--coordinator"])
+
+    assert result.exit_code != 0
+    assert "pass --coordinator SESSION explicitly" in result.output
 
 
 def test_build_payload_includes_project_context() -> None:

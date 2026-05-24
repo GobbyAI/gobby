@@ -49,8 +49,10 @@ from gobby.storage.build_history import (
     best_effort_finish_run,
     best_effort_record_event,
     best_effort_start_run,
+    best_effort_update_run_context,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
     ManifestAlreadyInitializedError,
@@ -85,6 +87,12 @@ async def build(
     services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
+    coordinator_session_id = _resolve_coordinator_session_id(
+        opts,
+        db=db,
+        project_id=project_id,
+        services=services,
+    )
     if opts.dry_run:
         return await _build_dry_run(
             input_ref,
@@ -100,7 +108,10 @@ async def build(
         input_ref=input_ref,
         action="build",
         actor="build",
-        summary={"quick": opts.quick, "isolation": opts.isolation},
+        summary=_build_run_summary(
+            {"quick": opts.quick, "isolation": opts.isolation},
+            coordinator_session_id,
+        ),
     )
     try:
         result = await _build_impl(
@@ -109,6 +120,7 @@ async def build(
             db=db,
             project_id=project_id,
             services=services,
+            build_run_id=run.id if run is not None else None,
         )
     except Exception as exc:
         best_effort_finish_run(
@@ -132,7 +144,7 @@ async def build(
         run.id if run is not None else None,
         status="completed",
         root_task_id=result.task_id,
-        summary=asdict(result),
+        summary=_build_run_summary(asdict(result), coordinator_session_id),
     )
     best_effort_record_event(
         db,
@@ -175,6 +187,46 @@ async def _build_dry_run(
         return replace(result, dry_run=True)
 
 
+def _build_run_summary(
+    payload: dict[str, object],
+    coordinator_session_id: str | None,
+) -> dict[str, object]:
+    if coordinator_session_id is None:
+        return payload
+    return {**payload, "coordinator_session_id": coordinator_session_id}
+
+
+def _resolve_coordinator_session_id(
+    opts: BuildOptions,
+    *,
+    db: HubDatabase,
+    project_id: str,
+    services: object | None,
+) -> str | None:
+    ref = opts.coordinator_session_ref
+    if not ref:
+        return None
+    manager = getattr(services, "session_manager", None) or SessionManager(db)
+    try:
+        resolved_id = str(manager.resolve_session_reference(ref, project_id))
+    except ValueError as exc:
+        raise ValueError(f"build coordinator session could not be resolved: {exc}") from exc
+    session = manager.get(resolved_id)
+    if session is None:
+        raise ValueError(f"build coordinator session not found: {ref}")
+    if session.project_id != project_id:
+        raise ValueError("build coordinator session must belong to the build project")
+    return resolved_id
+
+
+def _attach_build_run_root(
+    db: HubDatabase,
+    build_run_id: str | None,
+    root_task_id: str,
+) -> None:
+    best_effort_update_run_context(db, build_run_id, root_task_id=root_task_id)
+
+
 async def _build_impl(
     input_ref: str,
     opts: BuildOptions,
@@ -182,6 +234,7 @@ async def _build_impl(
     db: HubDatabase,
     project_id: str,
     services: object | None = None,
+    build_run_id: str | None = None,
 ) -> BuildResult:
     """Start lifecycle automation after history instrumentation is installed."""
 
@@ -211,6 +264,7 @@ async def _build_impl(
             target_branch,
             db,
             services,
+            build_run_id,
         )
 
     if not isinstance(task_or_plan, Task):
@@ -227,6 +281,7 @@ async def _build_impl(
             project_id,
             services,
             target_branch,
+            build_run_id,
         )
 
     _reset_task_ref_expansion_output(task_manager, task, opts)
@@ -241,6 +296,7 @@ async def _build_impl(
             db,
             project_id,
             services,
+            build_run_id,
         )
 
     return await _build_epic(
@@ -253,6 +309,7 @@ async def _build_impl(
         db,
         project_id,
         services,
+        build_run_id,
     )
 
 
@@ -266,6 +323,7 @@ async def _build_plan_file(
     target_branch: str | None,
     db: HubDatabase,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     task = task_manager.create_task(
         project_id=project_id,
@@ -291,6 +349,7 @@ async def _build_plan_file(
     _seed_plan_file_stage_state(task_manager, task.id, opts)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    _attach_build_run_root(db, build_run_id, task.id)
     tick = await _build_dispatcher_tick(
         task_manager.db,
         project_id,
@@ -355,6 +414,7 @@ async def _build_leaf(
     db: HubDatabase,
     project_id: str,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     if task.category not in AUTOMATED_LEAF_CATEGORIES:
         allowed = ", ".join(sorted(AUTOMATED_LEAF_CATEGORIES))
@@ -376,6 +436,7 @@ async def _build_leaf(
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    _attach_build_run_root(db, build_run_id, task.id)
     tick = await _build_dispatcher_tick(
         db,
         project_id,
@@ -408,6 +469,7 @@ async def _build_epic(
     db: HubDatabase,
     project_id: str,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
@@ -463,6 +525,7 @@ async def _build_epic(
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    _attach_build_run_root(db, build_run_id, task.id)
     tick = await _build_dispatcher_tick(
         db,
         project_id,
@@ -510,6 +573,7 @@ async def _resume_existing_lifecycle(
     project_id: str,
     services: object | None,
     target_branch: str | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     resume_skip_stages = skip_stages
     skip_stages_shape_resume = _skip_stages_can_shape_expanded_epic_resume(
@@ -585,6 +649,7 @@ async def _resume_existing_lifecycle(
     specs = stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    _attach_build_run_root(db, build_run_id, task.id)
     tick = await _build_dispatcher_tick(
         db,
         project_id,
