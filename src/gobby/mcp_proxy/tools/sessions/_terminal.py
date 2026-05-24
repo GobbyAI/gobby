@@ -45,6 +45,8 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
 }
 _CODEX_INTERRUPT_KEY = "Escape"
 _CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
+_DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS = 180.0
+_COMPACT_HANDOFF_FALLBACK_MAX_CHARS = 20_000
 
 
 async def _send_tmux_keys(
@@ -245,6 +247,83 @@ def _has_summary_refresh_source(session: Any) -> bool:
     return isinstance(transcript_path, str) and bool(transcript_path.strip())
 
 
+def _compact_handoff_refresh_timeout_seconds() -> float:
+    try:
+        from gobby.config.app import load_config
+
+        config = load_config()
+        compact_handoff = getattr(config, "compact_handoff", None)
+        value = getattr(
+            compact_handoff,
+            "refresh_timeout_seconds",
+            _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
+        )
+        return float(value)
+    except Exception as exc:
+        logger.debug("Using default compact handoff refresh timeout: %s", exc)
+        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
+
+
+def _compact_handoff_fallback_markdown(session: Any, *, reason: str) -> str | None:
+    """Build a bounded handoff fallback when LLM summary refresh cannot finish."""
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if isinstance(digest_markdown, str) and digest_markdown.strip():
+        digest = digest_markdown.strip()
+        if len(digest) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
+            digest = digest[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
+            digest = "[older digest content truncated]\n\n" + digest
+        return (
+            "# Compact Handoff\n\n"
+            f"LLM handoff refresh did not complete before compaction ({reason}). "
+            "Continuing with the latest session digest.\n\n"
+            f"{digest}"
+        )
+
+    summary_markdown = getattr(session, "summary_markdown", None)
+    if isinstance(summary_markdown, str) and summary_markdown.strip():
+        return summary_markdown.strip()
+    return None
+
+
+async def _persist_compact_handoff_fallback(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    fallback = _compact_handoff_fallback_markdown(session, reason=reason)
+    if not fallback:
+        return {
+            "success": False,
+            "error": f"handoff refresh {reason} and no digest/summary fallback exists",
+            "timed_out": reason == "timed out",
+        }
+
+    try:
+        session_manager.update_summary(session_id, summary_markdown=fallback)
+        session_manager.update_status(session_id, "handoff_ready")
+        session.summary_markdown = fallback
+        session.status = "handoff_ready"
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed persisting compact_self handoff fallback for %s: %s",
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return {"success": False, "error": detail, "timed_out": reason == "timed out"}
+
+    return {
+        "success": True,
+        "refreshed": True,
+        "fallback": True,
+        "timed_out": reason == "timed out",
+        "summary_length": len(fallback),
+    }
+
+
 async def _refresh_compact_handoff_context(
     session_id: str,
     session: Any,
@@ -258,13 +337,30 @@ async def _refresh_compact_handoff_context(
 
     from gobby.sessions.summarize import generate_session_summaries
 
+    timeout_seconds = _compact_handoff_refresh_timeout_seconds()
     try:
-        result = await generate_session_summaries(
-            session_id=session_id,
-            session_manager=session_manager,
-            llm_service=llm_service,
-            db=db,
-            set_handoff_ready=True,
+        result = await asyncio.wait_for(
+            generate_session_summaries(
+                session_id=session_id,
+                session_manager=session_manager,
+                llm_service=llm_service,
+                db=db,
+                set_handoff_ready=True,
+            ),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Timed out refreshing compact_self handoff context for %s after %.1fs; "
+            "using digest fallback",
+            session_id,
+            timeout_seconds,
+        )
+        return await _persist_compact_handoff_fallback(
+            session_id,
+            session,
+            session_manager,
+            reason="timed out",
         )
     except Exception as exc:
         detail = str(exc) or type(exc).__name__
@@ -538,6 +634,10 @@ def register_terminal_tools(
         if refresh_result.get("refreshed"):
             result["handoff_context_refreshed"] = True
             result["handoff_summary_length"] = refresh_result.get("summary_length")
+        if refresh_result.get("fallback"):
+            result["handoff_context_fallback"] = True
+        if refresh_result.get("timed_out"):
+            result["handoff_context_refresh_timed_out"] = True
         return result
 
     @registry.tool(

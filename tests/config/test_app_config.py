@@ -798,10 +798,7 @@ class TestBootstrapConfig:
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
-            "daemon_port: 9999\n"
-            "bind_host: 0.0.0.0\n"
-            "websocket_port: 9998\n"
-            "ui_port: 9997\n",
+            "daemon_port: 9999\nbind_host: 0.0.0.0\nwebsocket_port: 9998\nui_port: 9997\n",
         )
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 9999
@@ -1131,11 +1128,13 @@ class TestCompactHandoffConfig:
         """Test default compact handoff config."""
         config = CompactHandoffConfig()
         assert config.enabled is True
+        assert config.refresh_timeout_seconds == 180.0
 
     def test_custom_values(self) -> None:
         """Test custom compact handoff config."""
-        config = CompactHandoffConfig(enabled=False)
+        config = CompactHandoffConfig(enabled=False, refresh_timeout_seconds=45.0)
         assert config.enabled is False
+        assert config.refresh_timeout_seconds == 45.0
 
 
 class TestContextInjectionConfig:
