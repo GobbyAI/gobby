@@ -10,20 +10,27 @@ import pytest
 
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
-def _seed_falkordb_config(db_path: Path) -> None:
-    db = HubDatabase(db_path)
-    try:
-        run_migrations(db)
-        store = ConfigStore(db)
-        store.set("databases.falkordb.host", "localhost", source="test")
-        store.set("databases.falkordb.port", 6379, source="test")
-    finally:
-        db.close()
+class _NonClosingDb:
+    dialect = "postgres"
+
+    def __init__(self, db: HubDatabase) -> None:
+        self._db = db
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._db, name)
+
+    def close(self) -> None:
+        pass
+
+
+def _seed_falkordb_config(db: HubDatabase) -> None:
+    store = ConfigStore(db)
+    store.set("databases.falkordb.host", "localhost", source="test")
+    store.set("databases.falkordb.port", 6379, source="test")
 
 
 class _FakeRedisClient:
@@ -50,48 +57,35 @@ class _RedisFactory:
 
 
 class TestIsFalkorDBInstalled:
-    def test_uses_runtime_hub_for_requested_home(self, tmp_path: Path) -> None:
-        import gobby.cli.services as services
-
-        db_path = tmp_path / "hub-postgres.db"
-        _seed_falkordb_config(db_path)
-        db = HubDatabase(db_path)
-        try:
-            with patch(
-                "gobby.storage.hub.runtime.open_runtime_hub_database",
-                return_value=db,
-            ) as open_db:
-                assert services.is_falkordb_installed(gobby_home=tmp_path) is True
-        finally:
-            db.close()
-
-        open_db.assert_called_once_with(
-            str(tmp_path / "bootstrap.yaml"),
-            apply_migrations=False,
-        )
-
-    def test_uses_default_gobby_home_when_home_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_uses_runtime_hub_for_requested_home(
+        self,
+        tmp_path: Path,
+        hub_db: HubDatabase,
     ) -> None:
         import gobby.cli.services as services
 
-        db_path = tmp_path / "hub-postgres.db"
-        _seed_falkordb_config(db_path)
-        db = HubDatabase(db_path)
-        monkeypatch.setattr(services, "get_gobby_home", lambda: tmp_path)
-        try:
-            with patch(
-                "gobby.storage.hub.runtime.open_runtime_hub_database",
-                return_value=db,
-            ) as open_db:
-                assert services.is_falkordb_installed() is True
-        finally:
-            db.close()
+        _seed_falkordb_config(hub_db)
+        proxy = _NonClosingDb(hub_db)
+        with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
+            assert services.is_falkordb_installed(gobby_home=tmp_path) is True
 
-        open_db.assert_called_once_with(
-            str(tmp_path / "bootstrap.yaml"),
-            apply_migrations=False,
-        )
+        open_db.assert_called_once_with(tmp_path)
+
+    def test_uses_default_gobby_home_when_home_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        hub_db: HubDatabase,
+    ) -> None:
+        import gobby.cli.services as services
+
+        _seed_falkordb_config(hub_db)
+        proxy = _NonClosingDb(hub_db)
+        monkeypatch.setattr(services, "get_gobby_home", lambda: tmp_path)
+        with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
+            assert services.is_falkordb_installed() is True
+
+        open_db.assert_called_once_with(None)
 
     def test_services_module_does_not_define_default_db_path_helper(self) -> None:
         import gobby.cli.services as services
@@ -125,20 +119,20 @@ class TestFalkorDBHealthAndStatus:
         assert client.close_count == 1
 
     @pytest.mark.asyncio
-    async def test_status_reports_installed_health_and_endpoint(self, tmp_path: Path) -> None:
+    async def test_status_reports_installed_health_and_endpoint(
+        self,
+        tmp_path: Path,
+        hub_db: HubDatabase,
+    ) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        _seed_falkordb_config(tmp_path / "hub-postgres.db")
-        db = HubDatabase(tmp_path / "hub-postgres.db")
-
-        try:
-            with (
-                patch("gobby.cli.services._open_falkordb_config_db", return_value=db),
-                patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)),
-            ):
-                status = await get_falkordb_status(gobby_home=tmp_path)
-        finally:
-            db.close()
+        _seed_falkordb_config(hub_db)
+        proxy = _NonClosingDb(hub_db)
+        with (
+            patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy),
+            patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)),
+        ):
+            status = await get_falkordb_status(gobby_home=tmp_path)
 
         assert status == {
             "installed": True,

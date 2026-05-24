@@ -186,7 +186,7 @@ _TEST_PROJECT_ID = "test-project-001"
 def _ensure_project(db: HubDatabase) -> None:
     """Insert a minimal project row so session FK constraints are satisfied."""
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name) VALUES (?, 'test-project')",
+        "INSERT INTO projects (id, name) VALUES (?, 'test-project') ON CONFLICT (id) DO NOTHING",
         (_TEST_PROJECT_ID,),
     )
 
@@ -195,8 +195,9 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
     """Insert a minimal session row so FK constraints are satisfied."""
     _ensure_project(db)
     db.execute(
-        "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id) "
-        "VALUES (?, ?, 'test-machine', 'claude', ?)",
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+        "VALUES (?, ?, 'test-machine', 'claude', ?) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, session_id, _TEST_PROJECT_ID),
     )
 

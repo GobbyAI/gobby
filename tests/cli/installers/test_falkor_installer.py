@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from gobby.storage.hub.protocol import HubDatabase
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -175,26 +177,30 @@ class TestInstallFalkorDB:
             gobby_home=tmp_path,
         )
 
-    def test_update_config_removes_legacy_neo4j_keys(self, tmp_path: Path) -> None:
+    def test_update_config_removes_legacy_neo4j_keys(
+        self,
+        tmp_path: Path,
+        hub_db: HubDatabase,
+    ) -> None:
         from gobby.cli.installers.falkor import _update_config
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.hub.protocol import HubDatabase
-        from tests.fixtures.migrations import run_migrations
 
-        db_path = tmp_path / "hub-postgres.db"
+        class NonClosingDb:
+            dialect = "postgres"
 
-        def open_db(_home: Path, *, apply_migrations: bool = True) -> HubDatabase:
+            def __getattr__(self, name: str) -> object:
+                return getattr(hub_db, name)
+
+            def close(self) -> None:
+                pass
+
+        def open_db(_home: Path, *, apply_migrations: bool = True) -> NonClosingDb:
             _ = apply_migrations
-            return HubDatabase(db_path)
+            return NonClosingDb()
 
-        db = HubDatabase(db_path)
-        try:
-            run_migrations(db)
-            store = ConfigStore(db)
-            store.set("databases.neo4j.url", "http://localhost:8474")
-            store.set("databases.neo4j.password", "$secret:password")
-        finally:
-            db.close()
+        store = ConfigStore(hub_db)
+        store.set("databases.neo4j.url", "http://localhost:8474")
+        store.set("databases.neo4j.password", "$secret:password")
 
         with patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db):
             _update_config(
@@ -204,14 +210,9 @@ class TestInstallFalkorDB:
                 gobby_home=tmp_path,
             )
 
-        db = HubDatabase(db_path)
-        try:
-            store = ConfigStore(db)
-            assert store.get("databases.neo4j.url") is None
-            assert store.get("databases.neo4j.password") is None
-            assert store.get("databases.falkordb.host") == "127.0.0.1"
-        finally:
-            db.close()
+        assert store.get("databases.neo4j.url") is None
+        assert store.get("databases.neo4j.password") is None
+        assert store.get("databases.falkordb.host") == "127.0.0.1"
 
     def test_install_falkordb_returns_error_on_compose_failure(self, tmp_path: Path) -> None:
         from gobby.cli.installers.falkor import ResolvedFalkorPassword, install_falkordb

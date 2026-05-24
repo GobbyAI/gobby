@@ -10,77 +10,57 @@ import pytest
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.status import format_status_message
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
-
-
-def _make_config_db(path: Path) -> HubDatabase:
-    db = HubDatabase(path)
-    run_migrations(db)
-    return db
 
 
 class TestIsFalkorDBInstalled:
     """Tests for is_falkordb_installed."""
 
-    def test_returns_true_when_config_store_keys_exist(self, tmp_path: Path) -> None:
+    def test_returns_true_when_config_store_keys_exist(self, hub_db: HubDatabase) -> None:
         from gobby.cli.services import is_falkordb_installed
 
-        db = _make_config_db(tmp_path / "hub-postgres.db")
-        try:
-            store = ConfigStore(db)
-            store.set("databases.falkordb.host", "127.0.0.1")
-            store.set("databases.falkordb.port", 16379)
-            assert is_falkordb_installed(db=db) is True
-        finally:
-            db.close()
+        store = ConfigStore(hub_db)
+        store.set("databases.falkordb.host", "127.0.0.1")
+        store.set("databases.falkordb.port", 16379)
+        assert is_falkordb_installed(db=hub_db) is True
 
-    def test_returns_false_when_config_store_keys_are_missing(self, tmp_path: Path) -> None:
+    def test_returns_false_when_config_store_keys_are_missing(
+        self,
+        hub_db: HubDatabase,
+    ) -> None:
         from gobby.cli.services import is_falkordb_installed
 
-        db = _make_config_db(tmp_path / "hub-postgres.db")
-        try:
-            assert is_falkordb_installed(db=db) is False
-        finally:
-            db.close()
+        assert is_falkordb_installed(db=hub_db) is False
 
 
 class TestGetFalkorDBStatus:
     """Tests for get_falkordb_status."""
 
     @pytest.mark.asyncio
-    async def test_returns_status_dict(self, tmp_path: Path) -> None:
+    async def test_returns_status_dict(self, hub_db: HubDatabase) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        db = _make_config_db(tmp_path / "hub-postgres.db")
-        try:
-            store = ConfigStore(db)
-            store.set("databases.falkordb.host", "127.0.0.1")
-            store.set("databases.falkordb.port", 16379)
-            with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
-                result = await get_falkordb_status(
-                    db=db,
-                    host="127.0.0.1",
-                    port=16379,
-                    password="secret",
-                )
-        finally:
-            db.close()
+        store = ConfigStore(hub_db)
+        store.set("databases.falkordb.host", "127.0.0.1")
+        store.set("databases.falkordb.port", 16379)
+        with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
+            result = await get_falkordb_status(
+                db=hub_db,
+                host="127.0.0.1",
+                port=16379,
+                password="secret",
+            )
 
         assert result["installed"] is True
         assert result["healthy"] is False
         assert result["url"] == "redis://127.0.0.1:16379"
 
     @pytest.mark.asyncio
-    async def test_returns_not_installed(self, tmp_path: Path) -> None:
+    async def test_returns_not_installed(self, hub_db: HubDatabase) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        db = _make_config_db(tmp_path / "hub-postgres.db")
-        try:
-            result = await get_falkordb_status(db=db)
-        finally:
-            db.close()
+        result = await get_falkordb_status(db=hub_db)
 
         assert result["installed"] is False
 

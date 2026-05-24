@@ -4,9 +4,7 @@ These tests verify the full worktree lifecycle with real database operations,
 including creation, status transitions, and cleanup.
 """
 
-import tempfile
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -15,21 +13,15 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
-from tests.fixtures.migrations import run_migrations
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def temp_db():
+def temp_db(hub_db: HubDatabase) -> HubDatabase:
     """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        db = HubDatabase(str(db_path))
-        run_migrations(db)
-        yield db
-        db.close()
+    return hub_db
 
 
 @pytest.fixture

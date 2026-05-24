@@ -16,7 +16,6 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -31,12 +30,13 @@ def mock_daemon_client():
 
 
 @pytest.fixture
-def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
+def hook_manager_with_mocks(
+    temp_dir: Path,
+    mock_daemon_client: MagicMock,
+    hub_db: HubDatabase,
+) -> HookManager:
     """Create a HookManager with mocked dependencies."""
-    # Create temp database
-    db_path = temp_dir / "test.db"
-    db = HubDatabase(db_path)
-    run_migrations(db)
+    db = hub_db
 
     # Create a test project
     project_mgr = LocalProjectManager(db)
@@ -50,9 +50,8 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
     from gobby.config.app import DaemonConfig
     from gobby.config.extensions import HookExtensionsConfig, WebhooksConfig
 
-    # Create config with temp DB and disabled webhooks
+    # Create config with disabled webhooks.
     test_config = DaemonConfig(
-        database_url=str(db_path),
         hook_extensions=HookExtensionsConfig(
             webhooks=WebhooksConfig(enabled=False),
         ),
@@ -69,6 +68,7 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
             daemon_host="localhost",
             daemon_port=60887,
             config=test_config,
+            database=db,
             log_file=str(temp_dir / "logs" / "hook-manager.log"),
         )
 
@@ -78,10 +78,8 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
 
         yield manager
 
-        # Cleanup: HookManager uses the temp database via config.database_url
-        # (protect_production_resources fixture ensures GOBBY_TEST_PROTECT is set)
+        # Cleanup: the database itself is owned by the hub_db fixture.
         manager.shutdown()
-        db.close()
 
 
 @pytest.fixture
@@ -585,7 +583,10 @@ class TestHookManagerConfigLoadError:
     """Tests for config loading error handling."""
 
     def test_init_handles_config_load_error(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that init handles config loading errors gracefully."""
         with (
@@ -599,6 +600,7 @@ class TestHookManagerConfigLoadError:
                 daemon_host="localhost",
                 daemon_port=60887,
                 config=None,  # Force config loading
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
@@ -609,7 +611,10 @@ class TestHookManagerConfigLoadError:
             manager.shutdown()
 
     def test_init_uses_default_health_check_interval_without_config(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that init uses default health check interval when config is None."""
         with (
@@ -622,6 +627,7 @@ class TestHookManagerConfigLoadError:
                 daemon_host="localhost",
                 daemon_port=60887,
                 config=None,
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
@@ -1671,7 +1677,10 @@ class TestHookManagerLogging:
     """Tests for logging setup."""
 
     def test_setup_logging_creates_log_directory(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that logging setup creates the log file directory."""
         # First ensure the parent directory for logs doesn't exist
@@ -1687,6 +1696,7 @@ class TestHookManagerLogging:
             manager = HookManager(
                 daemon_host="localhost",
                 daemon_port=60887,
+                database=hub_db,
                 log_file=str(log_path),
             )
 
@@ -1698,7 +1708,10 @@ class TestHookManagerLogging:
             manager.shutdown()
 
     def test_setup_logging_reuses_existing_logger(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that logging setup reuses existing logger if already configured."""
         import logging
@@ -1714,6 +1727,7 @@ class TestHookManagerLogging:
             manager = HookManager(
                 daemon_host="localhost",
                 daemon_port=60887,
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook.log"),
             )
 

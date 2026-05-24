@@ -33,19 +33,14 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def temp_db():
+def temp_db(hub_db: HubDatabase) -> HubDatabase:
     """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        db = HubDatabase(str(db_path))
-        run_migrations(db)
-        yield db
+    return hub_db
 
 
 @pytest.fixture

@@ -22,7 +22,6 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -43,15 +42,13 @@ _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
 
 
 @pytest.fixture
-def db(tmp_path) -> HubDatabase:
-    database = HubDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(hub_db: HubDatabase) -> HubDatabase:
+    database = hub_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
-    yield database
-    database.close()
+    return database
 
 
 def _insert_session(

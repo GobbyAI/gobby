@@ -145,8 +145,9 @@ def _seed_registry(db: TestDatabase) -> dict[str, PlanRegistryEntry]:
 def _seed_project(db: TestDatabase) -> None:
     db.execute(
         """
-        INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
+        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (?, 'gobby', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+        ON CONFLICT (id) DO NOTHING
         """,
         (PROJECT_ID, str(PROJECT_ROOT)),
     )

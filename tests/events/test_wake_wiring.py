@@ -9,21 +9,18 @@ import pytest
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from gobby.storage.hub.protocol import HubDatabase
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> HubDatabase:
+def db(hub_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied and test project seeded."""
-    db_path = tmp_path / "test.db"
-    database = HubDatabase(db_path)
-    run_migrations(database)
+    database = hub_db
     # Seed a project so FK constraints pass for pipeline_executions
     database.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("test-project", "Test Project"),
     )
     return database
@@ -340,5 +337,7 @@ class TestMigration137:
 
     def test_agent_runs_has_continuation_prompt(self, db) -> None:
         """agent_runs table has continuation_prompt column."""
-        row = db.fetchone("SELECT sql FROM postgres_master WHERE type='table' AND name='agent_runs'")
+        row = db.fetchone(
+            "SELECT sql FROM postgres_master WHERE type='table' AND name='agent_runs'"
+        )
         assert "continuation_prompt" in row["sql"]

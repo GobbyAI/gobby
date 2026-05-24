@@ -1,5 +1,4 @@
 import json
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -8,24 +7,20 @@ from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[HubDatabase]:
+def db(tmp_path: Path, hub_db: HubDatabase) -> HubDatabase:
     """Initialize database with migrations."""
-    db_path = tmp_path / "hub-postgres.db"
-    database = HubDatabase(str(db_path))
-    run_migrations(database)
+    database = hub_db
     # Create dummy project required for sessions
     database.execute(
         "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
         ("proj-1", "Test Project", str(tmp_path)),
     )
-    yield database
-    database.close()
+    return database
 
 
 @pytest.fixture

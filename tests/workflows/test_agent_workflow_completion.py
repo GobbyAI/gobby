@@ -33,12 +33,18 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 def _create_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        """
+        INSERT INTO projects (id, name, created_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO NOTHING
+        """,
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, "ext-1", "machine-1", "claude", "project-1"),
     )
 
@@ -302,9 +308,7 @@ class TestAgentWorkflowCompletion:
         assert completion_registry.notify.await_args is None
 
     @pytest.mark.asyncio
-    async def test_failed_codex_mcp_envelope_keeps_review_step_open(
-        self, db: HubDatabase
-    ) -> None:
+    async def test_failed_codex_mcp_envelope_keeps_review_step_open(self, db: HubDatabase) -> None:
         instance_manager = _register_agent_workflow(
             db,
             review_tool="reject_review",
@@ -490,7 +494,11 @@ class TestAgentWorkflowCompletion:
         self, db: HubDatabase
     ) -> None:
         db.execute(
-            "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            """
+            INSERT INTO projects (id, name, created_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO NOTHING
+            """,
             ("project-1", "test-project"),
         )
         sessions = SessionManager(db)

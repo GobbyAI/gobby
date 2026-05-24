@@ -9,22 +9,18 @@ from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import Task
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_hook_manager(temp_dir: Path):
+def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> HookManager:
     """Create a HookManager with a real test database but mocked external dependencies.
 
     Uses a real PostgreSQL database (like hook_manager_with_mocks) to avoid 'file is not
     a database' errors from incomplete HubDatabase patching.
     """
-    # Create temp database
-    db_path = temp_dir / "test_context.db"
-    db = HubDatabase(db_path)
-    run_migrations(db)
+    db = hub_db
 
     # Create a test project for project_id resolution
     project_mgr = LocalProjectManager(db)
@@ -38,9 +34,8 @@ def mock_hook_manager(temp_dir: Path):
     from gobby.config.app import DaemonConfig
     from gobby.config.extensions import HookExtensionsConfig, WebhooksConfig
 
-    # Create config with temp DB and disabled external services
+    # Create config with disabled external services.
     test_config = DaemonConfig(
-        database_url=str(db_path),
         hook_extensions=HookExtensionsConfig(
             webhooks=WebhooksConfig(enabled=False),
         ),
@@ -55,6 +50,7 @@ def mock_hook_manager(temp_dir: Path):
             daemon_host="localhost",
             daemon_port=60887,
             config=test_config,
+            database=db,
             log_file=str(temp_dir / "logs" / "hook-manager.log"),
         )
 
@@ -81,7 +77,6 @@ def mock_hook_manager(temp_dir: Path):
 
         # Cleanup
         manager.shutdown()
-        db.close()
 
 
 def test_hook_event_task_id(mock_hook_manager) -> None:

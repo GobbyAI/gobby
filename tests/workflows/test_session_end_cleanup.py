@@ -30,8 +30,9 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
-        "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
     )
 

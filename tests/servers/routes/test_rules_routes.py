@@ -19,18 +19,14 @@ from starlette.testclient import TestClient
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from tests.fixtures.migrations import run_migrations
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> HubDatabase:
-    db_path = tmp_path / "test_rules_routes.db"
-    database = HubDatabase(db_path)
-    run_migrations(database)
-    return database
+def db(hub_db: HubDatabase) -> HubDatabase:
+    return hub_db
 
 
 @pytest.fixture

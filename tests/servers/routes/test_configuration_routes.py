@@ -19,7 +19,6 @@ from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
-from tests.fixtures.migrations import run_migrations
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -40,7 +39,7 @@ def real_config() -> DaemonConfig:
 
 
 @pytest.fixture
-def temp_db(hub_db):
+def temp_db(hub_db: HubDatabase) -> HubDatabase:
     return hub_db
 
 
@@ -62,15 +61,6 @@ def server(temp_db, real_config, task_manager):
 @pytest.fixture
 def client(server) -> TestClient:
     return TestClient(server.app)
-
-
-@pytest.fixture
-def postgres_db(tmp_path):
-    db_path = tmp_path / "phase4-config-routes.db"
-    db = HubDatabase(db_path)
-    run_migrations(db)
-    yield db
-    db.close()
 
 
 @pytest.fixture

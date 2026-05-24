@@ -20,7 +20,6 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -61,11 +60,8 @@ def host() -> ChatMixinHost:
 
 
 @pytest.fixture
-def rules_db(tmp_path) -> HubDatabase:
-    db_path = tmp_path / "test_fire_lifecycle_parity.db"
-    database = HubDatabase(db_path)
-    run_migrations(database)
-    return database
+def rules_db(hub_db: HubDatabase) -> HubDatabase:
+    return hub_db
 
 
 def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMock:

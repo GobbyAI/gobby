@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.merge_resolutions import MergeConflict, MergeResolution, MergeResolutionManager
 
 pytestmark = pytest.mark.integration
@@ -161,18 +162,13 @@ class TestTaskStatusDuringMerge:
 class TestMergeStatePersistence:
     """Tests for merge state persistence across daemon restarts."""
 
-    def test_merge_resolution_persists(self, tmp_path) -> None:
+    def test_merge_resolution_persists(self, hub_db: HubDatabase) -> None:
         """Merge resolution should persist in database."""
-        from gobby.storage.hub.protocol import HubDatabase
         from gobby.storage.merge_resolutions import MergeResolutionManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.worktrees import LocalWorktreeManager
-        from tests.fixtures.migrations import run_migrations
 
-        # Create real database
-        db_path = tmp_path / "test.db"
-        db = HubDatabase(db_path)
-        run_migrations(db)
+        db = hub_db
 
         # Create prerequisite data (project and worktree for foreign key)
         project_manager = LocalProjectManager(db)
@@ -200,8 +196,6 @@ class TestMergeStatePersistence:
         assert retrieved is not None
         assert retrieved.worktree_id == worktree.id
         assert retrieved.source_branch == "feature/test"
-
-        db.close()
 
     def test_worktree_merge_state_in_database_schema(self) -> None:
         """Database schema should include merge_state column in worktrees table."""
