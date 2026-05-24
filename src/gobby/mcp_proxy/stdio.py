@@ -66,6 +66,7 @@ WAIT_TOOL_NAMES = (
     "wait_for_all_tasks",
     "wait_for_agent",
 )
+HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, "compact_self")
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
@@ -108,8 +109,8 @@ async def _call_with_wait_heartbeat(
     tool_name: str,
     timeout: float | None,
 ) -> dict[str, Any]:
-    """Keep stdio MCP transport active while a long-running wait tool blocks."""
-    if ctx is None or tool_name not in WAIT_TOOL_NAMES:
+    """Keep stdio MCP transport active while a long-running proxied tool blocks."""
+    if ctx is None or tool_name not in HEARTBEAT_TOOL_NAMES:
         return await tool_call
 
     stop_event = asyncio.Event()
@@ -621,9 +622,13 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
 
         requested_timeout = None
         if tool_name in WAIT_TOOL_NAMES:
-            raw_timeout = final_args.get("timeout") if isinstance(final_args, dict) else None
+            raw_timeout = None
+            if isinstance(final_args, dict):
+                raw_timeout = final_args.get("timeout") or final_args.get("timeout_seconds")
             if isinstance(raw_timeout, int | float):
                 requested_timeout = float(raw_timeout)
+        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
+            requested_timeout = 300.0
 
         call_kwargs: dict[str, Any] = {}
         if project_id:

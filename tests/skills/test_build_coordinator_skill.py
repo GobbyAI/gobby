@@ -70,10 +70,8 @@ def test_build_coordinator_documents_compact_self_tool_path() -> None:
     assert "gobby-sessions:compact_self" in body
     assert 'list_tools(server_name="gobby-sessions")' in body
     assert 'get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")' in body
-    assert (
-        'call_tool("gobby-sessions", "compact_self", {"session_id": "<current-session>"})' in body
-    )
-    assert "Use the Gobby session ref for `session_id`" in body
+    assert 'call_tool("gobby-sessions", "compact_self", {})' in body
+    assert "top-level `call_tool.session_id`" in body
 
 
 def test_build_coordinator_requires_stage_normalization_and_bug_fixes() -> None:

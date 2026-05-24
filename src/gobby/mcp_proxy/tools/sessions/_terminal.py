@@ -412,7 +412,7 @@ def register_terminal_tools(
     @registry.tool(
         name="compact_self",
         description=(
-            "Trigger context compaction in the calling session's CLI by firing "
+            "Trigger context compaction in the current MCP caller's CLI by firing "
             "the appropriate slash command (/compact for Claude Code, "
             "/compact for Codex, /compress for other supported CLIs). Designed "
             "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after spawning "
@@ -421,7 +421,15 @@ def register_terminal_tools(
             "sessions use the live daemon ChatSession registry."
         ),
     )
-    async def compact_self(session_id: str, rule_name: str | None = None) -> dict[str, Any]:
+    async def compact_self(rule_name: str | None = None) -> dict[str, Any]:
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+        if not session_id:
+            return {
+                "compacted": False,
+                "reason": "compact_self requires current MCP SessionContext",
+            }
         if rule_name:
             logger.info("Compacting session %s (triggered by rule %s)", session_id, rule_name)
         resolved_session_id, session, error = _resolve_session_for_compaction(

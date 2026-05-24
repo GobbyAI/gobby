@@ -114,10 +114,11 @@ decisions. Use progressive discovery, then call `gobby-sessions:compact_self`:
 1. `list_mcp_servers()`
 2. `list_tools(server_name="gobby-sessions")`
 3. `get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")`
-4. `call_tool("gobby-sessions", "compact_self", {"session_id": "<current-session>"})`
+4. `call_tool("gobby-sessions", "compact_self", {})`
 
-Use the Gobby session ref for `session_id`, such as `#5812`. Set `rule_name`
-only when a workflow or rule specifically requires attribution.
+Pass the current Gobby session ref as the top-level `call_tool.session_id`, not
+inside `arguments`. Set `rule_name` only when a workflow or rule specifically
+requires attribution.
 
 Before compacting, leave enough state in the conversation or task notes for the
 continuation to resume without rediscovery.

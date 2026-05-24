@@ -82,6 +82,18 @@ async def _safe_call(
     logger: logging.Logger,
 ) -> None:
     """Execute a single MCP call, logging errors without propagating."""
+    from gobby.utils.session_context import (
+        SessionContext,
+        reset_session_context,
+        set_session_context,
+    )
+
+    session_id = arguments.get("session_id")
+    session_token = (
+        set_session_context(SessionContext(session_id=session_id))
+        if isinstance(session_id, str) and session_id
+        else None
+    )
     try:
         result = await call_tool_fn(server, tool, arguments)
         if isinstance(result, dict) and result.get("success") is False:
@@ -90,3 +102,6 @@ async def _safe_call(
             )
     except Exception as exc:
         logger.error(f"dispatch_mcp_calls: {server}/{tool} failed: {exc}", exc_info=True)
+    finally:
+        if session_token is not None:
+            reset_session_context(session_token)

@@ -23,7 +23,6 @@ rules:
         server: gobby-sessions
         tool: compact_self
         arguments:
-          session_id: "{{ event.session_id }}"
           rule_name: auto-compact-after-task-close
         background: true
       - type: set_variable

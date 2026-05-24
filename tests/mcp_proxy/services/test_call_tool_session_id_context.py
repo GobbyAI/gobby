@@ -26,6 +26,12 @@ OPTIONAL_SESSION_ID_SCHEMA: dict[str, Any] = {
     "required": [],
 }
 
+COMPACT_SELF_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"rule_name": {"type": "string"}},
+    "required": [],
+}
+
 SESSION_UUID_3 = "33333333-3333-4333-8333-333333333333"
 SESSION_UUID_7 = "77777777-7777-4777-8777-777777777777"
 
@@ -149,6 +155,30 @@ async def test_arguments_session_id_stays_in_target_arguments(
         "get_session",
         {"session_id": "target-session"},
         session_id="wrapper-session",
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_self_uses_wrapper_session_without_nested_session_id(
+    resolving_tool_proxy: tuple[ToolProxyService, MagicMock, MagicMock],
+) -> None:
+    proxy, mcp_manager, _ = resolving_tool_proxy
+    _use_schema(proxy, COMPACT_SELF_SCHEMA)
+
+    result = await proxy.call_tool(
+        "gobby-sessions",
+        "compact_self",
+        arguments={"rule_name": "build-coordinator-handoff"},
+        session_id="#7",
+        enforce_workflow=False,
+    )
+
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-sessions",
+        "compact_self",
+        {"rule_name": "build-coordinator-handoff"},
+        session_id=SESSION_UUID_7,
     )
 
 

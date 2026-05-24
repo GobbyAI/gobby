@@ -312,11 +312,11 @@ class TestWebChatLifecycle:
         temp_db,
         sample_project,
     ) -> None:
-        """Closing one claimed task while another epic remains queues compact_self for "db-id".
+        """Closing one claimed task while another epic remains queues compact_self.
 
         The setup wires task/session managers, a _web_chat_session, WorkflowHookHandler,
         RuleEngine, and _LifecycleHost before firing the AFTER_TOOL close_task hook.
-        Expected outcome: one gobby-sessions compact_self MCP call for session_id "db-id".
+        Expected outcome: one gobby-sessions compact_self MCP call using caller context.
         """
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
@@ -377,7 +377,6 @@ class TestWebChatLifecycle:
                 "server": "gobby-sessions",
                 "tool": "compact_self",
                 "arguments": {
-                    "session_id": "db-id",
                     "rule_name": "auto-compact-after-task-close",
                 },
                 "background": True,

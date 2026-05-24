@@ -339,6 +339,7 @@ class TestAutoCompactAfterTaskClose:
         assert compact_call.tool == "compact_self"
         assert compact_call.background is True
         assert compact_call.when is None
+        assert compact_call.arguments == {"rule_name": "auto-compact-after-task-close"}
 
         fallback_nudge = fallback_nudges[0]
         assert "compact_call_queue_failed" in (fallback_nudge.when or "")
@@ -395,6 +396,7 @@ class TestAutoCompactAfterTaskClose:
         ]
         assert len(compact_calls) == 1
         assert compact_calls[0]["background"] is True
+        assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
         assert response.context is None
         assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
 

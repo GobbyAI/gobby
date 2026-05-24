@@ -8,6 +8,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.mcp_dispatch import dispatch_mcp_calls
+from gobby.utils.session_context import get_current_session_id
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -62,6 +63,24 @@ class TestContextInjection:
 
         args = call_tool.call_args[0][2]
         assert args["session_id"] == "explicit"
+
+    @pytest.mark.asyncio
+    async def test_seeds_session_context_for_internal_callers(self) -> None:
+        seen_contexts: list[str | None] = []
+
+        async def call_tool(_server: str, _tool: str, _arguments: dict) -> dict[str, bool]:
+            seen_contexts.append(get_current_session_id())
+            return {"success": True}
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-sessions", "tool": "compact_self", "arguments": {}}],
+            _make_event(platform_session_id="plat-123"),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert seen_contexts == ["plat-123"]
+        assert get_current_session_id() is None
 
 
 class TestGuardClauses:

@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 )
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -79,7 +80,9 @@ def _register_compact_self(
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
+    caller_session_id = kwargs.pop("session_id", "s1")
     with (
+        session_context_for_test(caller_session_id),
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
             return_value=tmux_manager,
@@ -87,6 +90,24 @@ def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwarg
         patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
     ):
         return asyncio.run(compact_self(**kwargs))
+
+
+def _run_direct_compact_self(
+    compact_self: Callable[..., Any],
+    session_id: str,
+    **kwargs: Any,
+) -> Any:
+    with session_context_for_test(session_id):
+        return asyncio.run(compact_self(**kwargs))
+
+
+async def _await_direct_compact_self(
+    compact_self: Callable[..., Any],
+    session_id: str,
+    **kwargs: Any,
+) -> Any:
+    with session_context_for_test(session_id):
+        return await compact_self(**kwargs)
 
 
 class TestCompactSelfCLIMap:
@@ -107,6 +128,17 @@ class TestCompactSelfCLIMap:
 
 
 class TestCompactSelfTerminalPath:
+    def test_schema_uses_caller_session_context(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, _tmux = _register_compact_self(session)
+
+        schema = registry.get_schema("compact_self")
+
+        assert schema is not None
+        input_schema = schema["inputSchema"]
+        assert "session_id" not in input_schema["properties"]
+        assert "session_id" not in input_schema["required"]
+
     def test_claude_session_fires_slash_compact_via_send_keys(self) -> None:
         session = _make_terminal_session("claude")
         registry, tmux = _register_compact_self(session)
@@ -316,8 +348,9 @@ class TestCompactSelfTerminalPath:
                 "gobby.sessions.summarize.generate_session_summaries",
                 side_effect=refresh_summary,
             ) as mock_refresh,
+            session_context_for_test("s1"),
         ):
-            result = asyncio.run(compact_self(session_id="s1"))
+            result = asyncio.run(compact_self())
             handoff = get_handoff_context(session_id="s1")
 
         assert result["compacted"] is True
@@ -345,10 +378,22 @@ class TestCompactSelfFailureModes:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="missing"))
+        with session_context_for_test("missing"):
+            result = asyncio.run(compact_self())
 
         assert result["compacted"] is False
         assert "not found" in result["reason"]
+
+    def test_missing_session_context_returns_compacted_false(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, _tmux = _register_compact_self(session)
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self())
+
+        assert result["compacted"] is False
+        assert "SessionContext" in result["reason"]
 
     def test_unknown_source_returns_compacted_false(self) -> None:
         session = _make_terminal_session("ubergoose")
@@ -412,7 +457,8 @@ class TestCompactSelfFailureModes:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        with session_context_for_test("#42"):
+            result = asyncio.run(compact_self())
 
         assert result["compacted"] is False
         assert "failed to resolve session #42" in result["reason"]
@@ -463,7 +509,7 @@ class TestCompactSelfWebChatPath:
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending"
         ) as mock_mark:
-            result = asyncio.run(compact_self(session_id="db-id"))
+            result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result == {
             "compacted": True,
@@ -487,7 +533,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["compacted"] is False
         assert "No live web_chat session" in result["reason"]
@@ -518,7 +564,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -547,7 +593,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["command"] == "/compact"
         assert live_session.send_message.call_args_list == [
@@ -582,7 +628,7 @@ class TestCompactSelfWebChatPath:
         active_task = asyncio.create_task(active_turn())
         web_chat_registry.track_active_task("conv-1", active_task)
 
-        result = await compact_self(session_id="db-id")
+        result = await _await_direct_compact_self(compact_self, "db-id")
 
         assert result == {
             "compacted": True,
@@ -623,7 +669,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -665,7 +711,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id=lookup_id))
+        result = _run_direct_compact_self(compact_self, lookup_id)
 
         assert result == {
             "compacted": True,
@@ -716,7 +762,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -760,7 +806,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result == {"compacted": False, "reason": "Session db-id not found"}
 
@@ -806,7 +852,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result == {"compacted": True, "session_id": "db-id"}
         assert web_chat_registry.compacted_session_ids == ["#42", "db-id"]
@@ -831,7 +877,7 @@ class TestCompactSelfUnsupportedSessionType:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="s1"))
+        result = _run_direct_compact_self(compact_self, "s1")
 
         assert result["compacted"] is False
         assert "unsupported session_type" in result["reason"]

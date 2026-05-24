@@ -678,14 +678,14 @@ class TestDaemonProxy:
                 await proxy.call_tool(
                     "gobby-sessions",
                     "compact_self",
-                    {"session_id": "#6074", "rule_name": "build-coordinator-handoff"},
+                    {"rule_name": "build-coordinator-handoff"},
                     session_id="#6074",
                 )
 
                 mock_request.assert_called_once_with(
                     "POST",
                     "/api/mcp/gobby-sessions/tools/compact_self",
-                    json={"session_id": "#6074", "rule_name": "build-coordinator-handoff"},
+                    json={"rule_name": "build-coordinator-handoff"},
                     timeout=300.0,
                     session_id="#6074",
                 )
@@ -1067,6 +1067,42 @@ class TestMCPToolsWrapper:
             result = await asyncio.wait_for(task, timeout=0.2)
 
         assert result == {"res": "call"}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_emits_progress_heartbeat_for_compact_self(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+
+        heartbeat_seen = asyncio.Event()
+        release_call = asyncio.Event()
+        ctx = MagicMock()
+        ctx.report_progress = AsyncMock(side_effect=lambda **_: heartbeat_seen.set())
+
+        async def _block_until_heartbeat(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            await heartbeat_seen.wait()
+            await release_call.wait()
+            return {"res": "compacted"}
+
+        mock_proxy.call_tool.side_effect = _block_until_heartbeat
+
+        with patch("gobby.mcp_proxy.stdio.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
+            task: asyncio.Task[Any] = asyncio.create_task(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-sessions",
+                    tool_name="compact_self",
+                    arguments={"rule_name": "build-coordinator-handoff"},
+                    session_id="#6074",
+                    ctx=ctx,
+                )
+            )
+            await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
+            assert ctx.report_progress.await_count >= 1
+            progress_kwargs = ctx.report_progress.await_args.kwargs
+            assert progress_kwargs["total"] == 300.0
+            release_call.set()
+            result = await asyncio.wait_for(task, timeout=0.2)
+
+        assert result == {"res": "compacted"}
 
     @pytest.mark.asyncio
     async def test_call_tool_skips_progress_heartbeat_for_non_wait_tools(self) -> None:
