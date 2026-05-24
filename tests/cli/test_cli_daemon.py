@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,6 +39,30 @@ class TestDaemonHealthWait:
 
         mock_httpx_get.side_effect = [
             httpx.ConnectError("daemon not ready"),
+            MagicMock(status_code=200),
+        ]
+        mock_monotonic.side_effect = [0.0, 0.0, 0.5, 1.0]
+
+        elapsed = _wait_for_daemon_health(60887, timeout=5.0, interval=0.5)
+
+        assert elapsed == pytest.approx(1.0)
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.5)
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_health_treats_read_error_as_not_ready(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Connection resets during restart health polling are transient."""
+        from gobby.cli.daemon import _wait_for_daemon_health
+
+        mock_httpx_get.side_effect = [
+            httpx.ReadError("[Errno 54] Connection reset by peer"),
             MagicMock(status_code=200),
         ]
         mock_monotonic.side_effect = [0.0, 0.0, 0.5, 1.0]
@@ -83,6 +108,30 @@ class TestDaemonHealthWait:
         mock_httpx_get.side_effect = [
             MagicMock(status_code=200),
             httpx.ConnectError("daemon stopping"),
+        ]
+        mock_monotonic.side_effect = [0.0, 0.0, 0.25, 0.5]
+
+        elapsed = _wait_for_daemon_unhealthy(60887, timeout=5.0, interval=0.25)
+
+        assert elapsed == pytest.approx(0.5)
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.25)
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_unhealthy_treats_read_error_as_stopped(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Connection resets during stop polling mean the old daemon is no longer healthy."""
+        from gobby.cli.daemon import _wait_for_daemon_unhealthy
+
+        mock_httpx_get.side_effect = [
+            MagicMock(status_code=200),
+            httpx.ReadError("[Errno 54] Connection reset by peer"),
         ]
         mock_monotonic.side_effect = [0.0, 0.0, 0.25, 0.5]
 
@@ -482,8 +531,10 @@ class TestStartCommand:
         mock_kill_daemons.return_value = 0
 
         # HTTP port available, WS port not
-        def port_available_side_effect(port):
-            return port == mock_daemon_config.daemon_port
+        daemon_port = int(mock_daemon_config.daemon_port)
+
+        def port_available_side_effect(port: int) -> bool:
+            return port == daemon_port
 
         mock_is_port_available.side_effect = port_available_side_effect
         mock_wait_port.return_value = False
@@ -1405,7 +1456,7 @@ class TestDaemonCommandsIntegration:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1434,7 +1485,7 @@ class TestDaemonCommandsIntegration:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command displays startup summary."""
         mock_load_config.return_value = mock_daemon_config
@@ -1482,7 +1533,7 @@ class TestEdgeCases:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1515,7 +1566,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start handles health check timeout gracefully."""
         mock_load_config.return_value = mock_daemon_config
@@ -1565,7 +1616,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start retries when health check returns non-200."""
         mock_load_config.return_value = mock_daemon_config
@@ -1622,7 +1673,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start handles Popen exception."""
         mock_load_config.return_value = mock_daemon_config
@@ -1719,7 +1770,7 @@ class TestCommandBuilding:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1750,7 +1801,7 @@ class TestCommandBuilding:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command builds correct subprocess command."""
         mock_load_config.return_value = mock_daemon_config
@@ -1806,7 +1857,7 @@ class TestCommandBuilding:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command uses correct subprocess options."""
         mock_load_config.return_value = mock_daemon_config

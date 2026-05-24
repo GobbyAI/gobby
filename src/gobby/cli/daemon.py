@@ -238,7 +238,7 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
                         _step(task, scheduled=True)
                 return True
 
-        except (httpx.ConnectError, httpx.TimeoutException):
+        except (httpx.RequestError, httpx.TimeoutException):
             pass
         except Exception:
             return False
@@ -269,7 +269,7 @@ def _is_daemon_healthy(http_port: int) -> bool:
     try:
         response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
         return response.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except (httpx.RequestError, httpx.TimeoutException):
         return False
 
 
@@ -797,7 +797,7 @@ def health(ctx: click.Context) -> None:
         else:
             click.echo(f"Gobby daemon: unhealthy (HTTP {response.status_code})")
             sys.exit(1)
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except (httpx.RequestError, httpx.TimeoutException):
         click.echo(f"Gobby daemon: not responding (PID: {pid})")
         sys.exit(1)
 
