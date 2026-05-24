@@ -3,6 +3,7 @@
 import logging
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -91,7 +92,7 @@ def _completed_process(
     )
 
 
-async def _run_inline(func, *args, **kwargs):
+async def _run_inline(func: Any, *args: Any, **kwargs: Any) -> Any:
     """Execute asyncio.to_thread call sites synchronously in tests."""
     return func(*args, **kwargs)
 

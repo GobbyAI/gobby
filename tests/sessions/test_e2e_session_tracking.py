@@ -20,9 +20,19 @@ pytestmark = pytest.mark.unit
 class MockWebSocketServer:
     def __init__(self) -> None:
         self.broadcasted_messages: list[dict[str, Any]] = []
+        self.tts_events: list[tuple[str, dict[str, Any], bool]] = []
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         self.broadcasted_messages.append(message)
+
+    async def feed_attached_session_tts(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool = False,
+    ) -> None:
+        self.tts_events.append((session_id, rendered, complete))
 
 
 @pytest.fixture

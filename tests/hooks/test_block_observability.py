@@ -85,7 +85,7 @@ def _insert_block_rule(
     event: str,
     reason: str = "",
 ) -> None:
-    definition = {
+    definition: dict[str, Any] = {
         "event": event,
         "priority": 10,
         "effects": [
@@ -112,7 +112,7 @@ def _setup_step_workflow(
     session_id: str = "test-session",
 ) -> None:
     _create_session_row(db, session_id)
-    definition = {
+    definition: dict[str, Any] = {
         "name": "step-observability",
         "version": "2.0",
         "enabled": False,

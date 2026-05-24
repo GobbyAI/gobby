@@ -4,6 +4,8 @@ Tests for MergeResolution and MergeConflict persistence in PostgreSQL database.
 Tests should fail initially as the storage module does not exist yet.
 """
 
+from typing import Any
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -259,6 +261,7 @@ class TestMergeResolutionDataclass:
         )
 
         row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", ("mr-1",))
+        assert row is not None
         resolution = MergeResolution.from_row(row)
 
         assert resolution.id == "mr-1"
@@ -344,6 +347,7 @@ class TestMergeConflictDataclass:
         )
 
         row = db.fetchone("SELECT * FROM merge_conflicts WHERE id = ?", ("mc-1",))
+        assert row is not None
         conflict = MergeConflict.from_row(row)
 
         assert conflict.id == "mc-1"
@@ -490,7 +494,7 @@ class TestMergeResolutionManagerGet:
 class TestMergeResolutionManagerMergeLookup:
     """Tests for exact merge lookup and idempotent creation helpers."""
 
-    def _manager_with_worktree(self, hub_db: HubDatabase):
+    def _manager_with_worktree(self, hub_db: HubDatabase) -> Any:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db = hub_db
@@ -550,7 +554,7 @@ class TestMergeResolutionManagerMergeLookup:
         original_lookup = manager.get_resolution_for_merge
         stale = True
 
-        def stale_once(worktree_id: str, source_branch: str, target_branch: str):
+        def stale_once(worktree_id: str, source_branch: str, target_branch: str) -> Any:
             nonlocal stale
             if stale:
                 stale = False
@@ -657,6 +661,7 @@ class TestMergeResolutionManagerUpdate:
 
         # Verify in database
         row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", (resolution.id,))
+        assert row is not None
         assert row["status"] == "resolved"
 
 
@@ -839,6 +844,7 @@ class TestConflictStateTransitions:
             resolved_content="merged code",
         )
 
+        assert updated is not None
         assert updated.status == "resolved"
 
     def test_transition_pending_to_failed(self, hub_db: HubDatabase) -> None:
@@ -873,6 +879,7 @@ class TestConflictStateTransitions:
 
         updated = manager.update_conflict(conflict.id, status="failed")
 
+        assert updated is not None
         assert updated.status == "failed"
 
     def test_transition_pending_to_human_review(self, hub_db: HubDatabase) -> None:
@@ -907,6 +914,7 @@ class TestConflictStateTransitions:
 
         updated = manager.update_conflict(conflict.id, status="human_review")
 
+        assert updated is not None
         assert updated.status == "human_review"
 
 
@@ -1181,6 +1189,7 @@ class TestResolutionHistoryTracking:
 
         updated = manager.update_resolution(resolution.id, status="resolved")
 
+        assert updated is not None
         assert updated.updated_at != original_updated_at
 
     def test_get_conflicts_for_resolution(self, hub_db: HubDatabase) -> None:

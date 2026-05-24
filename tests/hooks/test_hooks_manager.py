@@ -3,8 +3,10 @@
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_daemon_client():
+def mock_daemon_client() -> Any:
     """Create a mock daemon client."""
     client = MagicMock()
     # Mock check_status to return (is_ready, message, status, error)
@@ -34,7 +36,7 @@ def hook_manager_with_mocks(
     temp_dir: Path,
     mock_daemon_client: MagicMock,
     hub_db: HubDatabase,
-) -> HookManager:
+) -> Iterator[HookManager]:
     """Create a HookManager with mocked dependencies."""
     db = hub_db
 
@@ -245,7 +247,7 @@ class TestHookManagerHandle:
         """Hook activity repairs false-expired terminal sessions before handling."""
         manager = hook_manager_with_mocks
         project_id = manager._resolve_project_id(None, str(temp_dir))
-        session = manager._session_manager.register(
+        session = cast(Any, manager._session_manager).register(
             external_id="codex-ext-1",
             machine_id="test-machine-id",
             source="codex",
@@ -754,6 +756,7 @@ class TestHookManagerWebhookBlocking:
             response = manager.handle(event)
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "Webhook rejected" in response.reason
 
     def test_handle_webhook_error_fails_open(
@@ -791,13 +794,14 @@ class TestHookManagerHandlerErrors:
         )
 
         # Mock handler to raise exception
-        def failing_handler(evt):
+        def failing_handler(evt: Any) -> Any:
             raise Exception("Handler crashed")
 
         with patch.object(manager._event_handlers, "get_handler", return_value=failing_handler):
             response = manager.handle(event)
 
         assert response.decision == "allow"
+        assert response.reason is not None
         assert "Handler error:" in response.reason
 
 
@@ -814,14 +818,14 @@ class TestHookManagerBroadcasting:
 
         mock_broadcaster = MagicMock()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             return None
 
         mock_broadcaster.broadcast_event = MagicMock(side_effect=mock_broadcast)
         manager.broadcaster = mock_broadcaster
 
         # Simulate running in an event loop
-        async def run_in_loop():
+        async def run_in_loop() -> Any:
             return manager.handle(sample_session_start_event)
 
         asyncio.run(run_in_loop())
@@ -841,7 +845,7 @@ class TestHookManagerBroadcasting:
         mock_broadcaster = MagicMock()
         broadcasted = threading.Event()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             broadcasted.set()
             return None
 
@@ -854,7 +858,7 @@ class TestHookManagerBroadcasting:
 
         import threading
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -895,7 +899,7 @@ class TestHookManagerBroadcasting:
 
         mock_broadcaster = MagicMock()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             return None
 
         mock_broadcaster.broadcast_event = MagicMock(side_effect=mock_broadcast)
@@ -940,7 +944,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        precreated = manager._session_manager.create_web_chat_session(
+        precreated = cast(Any, manager._session_manager).create_web_chat_session(
             machine_id="test-machine-id",
             project_id=project_id,
             source="codex",
@@ -1024,7 +1028,7 @@ class TestHookManagerSessionLookup:
 
         tokens = resolve_and_seed_contexts(
             session_ref=resumed_event.metadata["_platform_session_id"],
-            session_manager=manager._session_manager,
+            session_manager=cast(Any, manager._session_manager),
             db=manager._database,
         )
         try:
@@ -1140,7 +1144,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        existing = manager._session_manager.register(
+        existing = cast(Any, manager._session_manager).register(
             external_id="shared-session-id",
             machine_id="test-machine-id",
             source="codex",
@@ -1419,8 +1423,7 @@ class TestHookManagerWebhookDispatch:
         # Disable webhooks
         manager._webhook_dispatcher.config.enabled = False
 
-        result = manager._dispatch_webhooks_async(event)
-        assert result is None
+        manager._dispatch_webhooks_async(event)
 
     def test_dispatch_webhooks_async_no_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1441,8 +1444,7 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = []
 
-        result = manager._dispatch_webhooks_async(event)
-        assert result is None
+        manager._dispatch_webhooks_async(event)
 
     def test_dispatch_webhooks_async_with_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1480,7 +1482,7 @@ class TestHookManagerWebhookDispatch:
         loop = asyncio.new_event_loop()
         manager._loop = loop
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -1490,7 +1492,7 @@ class TestHookManagerWebhookDispatch:
 
         try:
 
-            async def mock_dispatch(*args, **kwargs):
+            async def mock_dispatch(*args: Any, **kwargs: Any) -> Any:
                 dispatched.set()
                 return None
 
@@ -1548,7 +1550,7 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = [endpoint]
 
-        async def run_dispatch():
+        async def run_dispatch() -> Any:
             with (
                 patch.object(manager._webhook_dispatcher, "_build_payload", return_value={}),
                 patch.object(
@@ -1558,11 +1560,12 @@ class TestHookManagerWebhookDispatch:
                 ),
             ):
                 manager._dispatch_webhooks_async(event)
+                dispatch_single = cast(AsyncMock, manager._webhook_dispatcher._dispatch_single)
                 await wait_for_async_condition(
-                    lambda: manager._webhook_dispatcher._dispatch_single.await_count == 1,
+                    lambda: dispatch_single.await_count == 1,
                     description="webhook dispatch",
                 )
-                assert manager._webhook_dispatcher._dispatch_single.await_count == 1
+                assert dispatch_single.await_count == 1
 
         asyncio.run(run_dispatch())
 
@@ -1584,7 +1587,7 @@ class TestHookManagerShutdownWebhook:
         loop = asyncio.new_event_loop()
         manager._loop = loop
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -1620,10 +1623,10 @@ class TestHookManagerShutdownWebhook:
         manager = hook_manager_with_mocks
 
         # Mock close to raise exception
-        async def failing_close():
+        async def failing_close() -> Any:
             raise Exception("Close failed")
 
-        manager._webhook_dispatcher.close = failing_close
+        cast(Any, manager._webhook_dispatcher).close = failing_close
         manager._loop = None
 
         # Should not raise - error is logged
@@ -1753,7 +1756,7 @@ class TestHookManagerContextMerging:
         workflow_response = HookResponse(decision="allow", context="Workflow context")
 
         # Mock event handler to return response with context
-        def handler_with_context(event):
+        def handler_with_context(event: Any) -> Any:
             return HookResponse(decision="allow", context="Handler context")
 
         with (
@@ -1763,6 +1766,7 @@ class TestHookManagerContextMerging:
             response = manager.handle(sample_session_start_event)
 
         # Both contexts should be present
+        assert response.context is not None
         assert "Handler context" in response.context
         assert "Workflow context" in response.context
 

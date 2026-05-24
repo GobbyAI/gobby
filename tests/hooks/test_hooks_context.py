@@ -1,5 +1,7 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> HookManager:
+def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> Iterator[HookManager]:
     """Create a HookManager with a real test database but mocked external dependencies.
 
     Uses a real PostgreSQL database (like hook_manager_with_mocks) to avoid 'file is not
@@ -57,13 +59,13 @@ def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> HookManager:
         # Pre-warm the daemon status cache
         manager._health_monitor._cached_daemon_is_ready = True
         manager._health_monitor._cached_daemon_status = "ready"
-        manager._health_monitor.get_cached_status = MagicMock(
+        cast(Any, manager._health_monitor).get_cached_status = MagicMock(
             return_value=(True, None, "running", None)
         )
 
         # Mock _session_manager.get to return None for get() to avoid pre-created session path
         if manager._event_handlers._session_manager:
-            manager._event_handlers._session_manager.get = MagicMock(return_value=None)
+            cast(Any, manager._event_handlers._session_manager).get = MagicMock(return_value=None)
 
         # Replace _session_manager and _session_task_manager with mocks
         # so tests can set return_value on their methods
@@ -79,7 +81,7 @@ def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> HookManager:
         manager.shutdown()
 
 
-def test_hook_event_task_id(mock_hook_manager) -> None:
+def test_hook_event_task_id(mock_hook_manager: Any) -> None:
     """Test that task_id is populated in HookEvent during handling."""
 
     # Setup
@@ -122,7 +124,7 @@ def test_hook_event_task_id(mock_hook_manager) -> None:
     assert event.metadata["_platform_session_id"] == platform_session_id
 
 
-def test_session_start_context_injection(mock_hook_manager) -> None:
+def test_session_start_context_injection(mock_hook_manager: Any) -> None:
     """Test that task context is injected into SESSION_START context."""
 
     external_id = "test-session-123"

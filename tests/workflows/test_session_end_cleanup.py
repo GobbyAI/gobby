@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(temp_db: HubDatabase) -> HubDatabase:
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
@@ -52,7 +54,7 @@ class _SessionEndHandler(SessionEndMixin):
     def __init__(self, db: HubDatabase) -> None:
         self.logger = MagicMock()
         self._session_manager = None
-        self._workflow_handler = SimpleNamespace(rule_engine=RuleEngine(db=db))
+        self._workflow_handler = cast(Any, SimpleNamespace(rule_engine=RuleEngine(db=db)))
         self._session_storage = MagicMock()
         self._session_storage.get.return_value = SimpleNamespace(
             created_at="2024-01-01T00:00:00Z",

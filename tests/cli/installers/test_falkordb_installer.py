@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -19,13 +20,15 @@ from gobby.storage.secrets import SecretStore
 pytestmark = pytest.mark.unit
 
 
-def _falkor_module():
+def _falkor_module() -> Any:
     return importlib.import_module("gobby.cli.installers.falkor")
 
 
-def _read_compose_services(repo_root: Path) -> dict[str, object]:
+def _read_compose_services(repo_root: Path) -> dict[str, Any]:
     compose_path = repo_root / "src/gobby/data/docker-compose.services.yml"
-    return yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
 
 
 class _NonClosingDb:
@@ -41,10 +44,10 @@ class _NonClosingDb:
         pass
 
 
-def _patch_config_db(db: HubDatabase):
+def _patch_config_db(db: HubDatabase) -> Any:
     def open_db(_home: Path, *, apply_migrations: bool = True) -> HubDatabase:
         _ = apply_migrations
-        return _NonClosingDb(db)
+        return cast(HubDatabase, _NonClosingDb(db))
 
     return patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db)
 
@@ -339,16 +342,14 @@ class TestInstallFalkorDB:
         original_resolve_password = module._resolve_falkordb_password
         original_update_config = module._update_config
 
-        def track_password(
-            password: str | None = None, *, gobby_home: Path | None = None
-        ) -> module.ResolvedFalkorPassword:
+        def track_password(password: str | None = None, *, gobby_home: Path | None = None) -> Any:
             received_homes.append(gobby_home)
             return original_resolve_password(password, gobby_home=gobby_home)
 
         def track_open_config_db(home: Path, *, apply_migrations: bool = True) -> HubDatabase:
             _ = apply_migrations
             received_homes.append(home)
-            return _NonClosingDb(hub_db)
+            return cast(HubDatabase, _NonClosingDb(hub_db))
 
         def track_update_config(
             *args: object, gobby_home: Path | None = None, **kwargs: object

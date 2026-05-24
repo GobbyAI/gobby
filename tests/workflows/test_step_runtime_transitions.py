@@ -296,6 +296,7 @@ async def test_step_workflow_complete_user_write_is_blocked(db: HubDatabase) -> 
     )
 
     assert response.decision == "block"
+    assert response.reason is not None
     assert "step_workflow_complete" in response.reason
 
 
@@ -312,6 +313,7 @@ async def test_step_workflow_complete_call_tool_write_is_blocked(db: HubDatabase
     )
 
     assert response.decision == "block"
+    assert response.reason is not None
     assert "step_workflow_complete" in response.reason
 
 

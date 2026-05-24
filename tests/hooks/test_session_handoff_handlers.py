@@ -42,7 +42,7 @@ class TestSessionStartHandoff:
         session.workflow_name = None
         return session
 
-    def _fake_compact_self_consumer(self, scheduled: list[tuple[object, str]]):
+    def _fake_compact_self_consumer(self, scheduled: list[tuple[object, str]]) -> Any:
         def _consume(
             db: HubDatabase,
             *,
@@ -128,6 +128,7 @@ class TestSessionStartHandoff:
         response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
+        assert response.context is not None
         assert "Parent session: parent-sess-123" in response.context
         mock_dependencies["session_storage"].find_parent.assert_called_once()
 

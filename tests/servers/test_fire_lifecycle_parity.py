@@ -8,7 +8,7 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -74,7 +74,10 @@ def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMo
     return session
 
 
-def _make_workflow_handler(decision: str = "allow", context: str | None = None) -> MagicMock:
+def _make_workflow_handler(
+    decision: Literal["allow", "deny", "ask", "block", "modify"] = "allow",
+    context: str | None = None,
+) -> MagicMock:
     handler = MagicMock()
     response = HookResponse(decision=decision, context=context)
     handler.evaluate.return_value = response

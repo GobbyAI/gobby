@@ -20,21 +20,19 @@ import json
 import logging
 import threading
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
-if TYPE_CHECKING:
-    pass
 
-
-def _create_session_row(db: object, session_id: str) -> None:
+def _create_session_row(db: HubDatabase, session_id: str) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at)
@@ -52,7 +50,7 @@ def _create_session_row(db: object, session_id: str) -> None:
     )
 
 
-def _install_step_workflow(db: object, session_id: str, current_step: str) -> None:
+def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -475,7 +473,7 @@ class TestAgentRunCompletion:
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
-    def test_complete_agent_run_fails_incomplete_step_workflow(self, temp_db) -> None:
+    def test_complete_agent_run_fails_incomplete_step_workflow(self, temp_db: Any) -> None:
         """SESSION_END does not mark a live step workflow as successful."""
         from gobby.storage.agents import LocalAgentRunManager
 
@@ -513,7 +511,7 @@ class TestAgentRunCompletion:
         assert "workflow=merge-worker" in updated.error
         assert "current_step=resolve_conflicts" in updated.error
 
-    def test_complete_agent_run_allows_completed_step_workflow(self, temp_db) -> None:
+    def test_complete_agent_run_allows_completed_step_workflow(self, temp_db: Any) -> None:
         """A leftover terminal-step workflow instance does not force failure."""
         from gobby.storage.agents import LocalAgentRunManager
 
@@ -687,7 +685,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         errors: list[Exception] = []
 
-        def register_sessions():
+        def register_sessions() -> Any:
             try:
                 for i in range(100):
                     coordinator.register_session(f"session-{threading.current_thread().name}-{i}")
@@ -708,7 +706,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         errors: list[Exception] = []
 
-        def cache_messages():
+        def cache_messages() -> Any:
             try:
                 for i in range(50):
                     session_id = f"session-{i % 10}"
@@ -730,7 +728,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         call_count = {"count": 0}
 
-        def increment_with_lock():
+        def increment_with_lock() -> Any:
             with coordinator.get_lookup_lock():
                 # Simulate work
                 current = call_count["count"]
@@ -800,16 +798,16 @@ class TestIntegrationWithHookManager:
         class MockHookManager:
             """Simulates how HookManager would use SessionCoordinator."""
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self._session_coordinator = SessionCoordinator()
 
-            def handle_session_start(self, session_id: str):
+            def handle_session_start(self, session_id: str) -> Any:
                 if not self._session_coordinator.is_registered(session_id):
                     self._session_coordinator.register_session(session_id)
                     return "Session registered"
                 return "Already registered"
 
-            def handle_session_end(self, session):
+            def handle_session_end(self, session: Any) -> Any:
                 self._session_coordinator.complete_agent_run(session)
                 self._session_coordinator.unregister_session(session.id)
 

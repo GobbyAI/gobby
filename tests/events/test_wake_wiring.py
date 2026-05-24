@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -170,7 +171,7 @@ class TestRegistryWakeCallback:
 class TestContinuationPromptStorage:
     """continuation_prompt persisted in pipeline_executions and agent_runs."""
 
-    def test_pipeline_execution_stores_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_stores_continuation_prompt(self, db: Any) -> None:
         """continuation_prompt column stored and retrieved."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -184,7 +185,7 @@ class TestContinuationPromptStorage:
         assert fetched is not None
         assert fetched.continuation_prompt == "Review the results and create subtasks"
 
-    def test_pipeline_execution_no_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_no_continuation_prompt(self, db: Any) -> None:
         """continuation_prompt defaults to None."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -216,7 +217,7 @@ class TestContinuationPromptStorage:
 class TestAutoSubscribeLineage:
     """Auto-subscribe wires completion events when run_pipeline is called."""
 
-    def test_auto_subscribe_registers_and_persists(self, db) -> None:
+    def test_auto_subscribe_registers_and_persists(self, db: Any) -> None:
         """_auto_subscribe_lineage registers event and persists to DB."""
         from gobby.mcp_proxy.tools.workflows._pipelines import _auto_subscribe_lineage
         from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -280,7 +281,7 @@ class TestStartupRecovery:
     """Startup recovery notifies subscribers of interrupted pipelines."""
 
     @pytest.mark.asyncio
-    async def test_interrupted_pipeline_wakes_subscribers(self, db) -> None:
+    async def test_interrupted_pipeline_wakes_subscribers(self, db: Any) -> None:
         """Subscribers of interrupted pipelines are notified on startup."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
@@ -299,6 +300,7 @@ class TestStartupRecovery:
 
         # Verify it's interrupted
         updated = em.get_execution(exe.id)
+        assert updated is not None
         assert updated.status == ExecutionStatus.INTERRUPTED
 
         # Now simulate the startup recovery wake
@@ -328,14 +330,14 @@ class TestStartupRecovery:
 class TestMigration137:
     """Migration 137 adds continuation_prompt columns."""
 
-    def test_pipeline_execution_has_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_has_continuation_prompt(self, db: Any) -> None:
         """pipeline_executions table has continuation_prompt column."""
         row = db.fetchone(
             "SELECT sql FROM postgres_master WHERE type='table' AND name='pipeline_executions'"
         )
         assert "continuation_prompt" in row["sql"]
 
-    def test_agent_runs_has_continuation_prompt(self, db) -> None:
+    def test_agent_runs_has_continuation_prompt(self, db: Any) -> None:
         """agent_runs table has continuation_prompt column."""
         row = db.fetchone(
             "SELECT sql FROM postgres_master WHERE type='table' AND name='agent_runs'"

@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,7 +61,7 @@ def create_http_server(
     task_mgr = MagicMock() if task_manager is _NOT_PROVIDED else task_manager
 
     services = ServiceContainer(
-        config=config,
+        config=cast(Any, config),
         database=db,
         session_manager=sess_mgr,
         task_manager=task_mgr,
@@ -122,7 +122,7 @@ def http_server(
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
     services = ServiceContainer(
-        config=None,
+        config=cast(Any, None),
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

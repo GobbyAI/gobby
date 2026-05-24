@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -82,7 +83,7 @@ class _SessionEndHandler(SessionEndMixin):
         workflow_handler: WorkflowHookHandler,
     ) -> None:
         self.logger = MagicMock()
-        self._session_manager = session_manager
+        self._session_manager = cast(Any, session_manager)
         self._workflow_handler = workflow_handler
         self._session_storage = session_manager
         self._session_coordinator = None
@@ -168,7 +169,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     tool_proxy = ToolProxyService(
         mcp_manager=MagicMock(),
         validate_arguments=False,
-        hook_manager_resolver=lambda: hook_manager,
+        hook_manager_resolver=lambda: cast(Any, hook_manager),
     )
 
     server = MagicMock()

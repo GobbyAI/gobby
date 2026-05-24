@@ -185,8 +185,7 @@ def test_delete_instance_nonexistent(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    result = mgr.delete_instance("nonexistent", "nonexistent")
-    assert result is None
+    mgr.delete_instance("nonexistent", "nonexistent")
     assert mgr.get_instance("nonexistent", "nonexistent") is None
 
 
@@ -265,8 +264,7 @@ def test_set_enabled_nonexistent(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    result = mgr.set_enabled("nonexistent", "nonexistent", True)
-    assert result is None
+    mgr.set_enabled("nonexistent", "nonexistent", True)
     assert mgr.get_instance("nonexistent", "nonexistent") is None
 
 
