@@ -49,12 +49,15 @@ def _strip_none(obj: Any) -> Any:
     return obj
 
 
-LLM_TASK_TOOLS = (
+# Tools that can legitimately spend longer than a standard HTTP proxy call on
+# LLM-backed generation or long-running coordination before returning.
+EXTENDED_TIMEOUT_TOOL_NAMES = (
     "close_task",
     "expand_task",
     "apply_tdd",
     "merge_resolve",
     "suggest_next_task",
+    "compact_self",
 )
 
 WAIT_TOOL_NAMES = (
@@ -281,8 +284,8 @@ class DaemonProxy:
         # Check for tool-specific override in config
         if tool_timeouts and tool_name in tool_timeouts:
             timeout = tool_timeouts[tool_name]
-        # Fallback for LLM-based task tools if not explicit in config
-        elif tool_name in LLM_TASK_TOOLS:
+        # Fallback for slow LLM-backed/coordinator tools if not explicit in config
+        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
             timeout = 300.0
         # Wait tools: use the requested timeout plus a buffer
         elif tool_name in WAIT_TOOL_NAMES:

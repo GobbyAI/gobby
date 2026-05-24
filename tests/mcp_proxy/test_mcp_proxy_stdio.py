@@ -2,6 +2,8 @@
 
 import asyncio
 import signal
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -159,7 +161,7 @@ class TestStartDaemonProcess:
     """Tests for start_daemon_process function."""
 
     @pytest.mark.asyncio
-    async def test_returns_already_running_if_daemon_running(self):
+    async def test_returns_already_running_if_daemon_running(self) -> None:
         """Test returns already_running if daemon is already running."""
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=True):
             with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
@@ -170,7 +172,7 @@ class TestStartDaemonProcess:
                 assert result["pid"] == 12345
 
     @pytest.mark.asyncio
-    async def test_starts_daemon_successfully(self):
+    async def test_starts_daemon_successfully(self) -> None:
         """Test successful daemon start."""
         mock_proc = MagicMock()
         mock_proc.returncode = None
@@ -198,7 +200,7 @@ class TestStartDaemonProcess:
                             assert "started successfully" in result["output"]
 
     @pytest.mark.asyncio
-    async def test_handles_start_failure(self):
+    async def test_handles_start_failure(self) -> None:
         """Test handles daemon start failure."""
         mock_proc = MagicMock()
         mock_proc.returncode = 1
@@ -218,7 +220,7 @@ class TestStartDaemonProcess:
                     assert result["error"] == "Start failed"
 
     @pytest.mark.asyncio
-    async def test_handles_timeout(self):
+    async def test_handles_timeout(self) -> None:
         """Test handles start command checks timeout."""
         mock_proc = MagicMock()
         mock_proc.returncode = None
@@ -245,7 +247,7 @@ class TestStartDaemonProcess:
                             assert "unhealthy" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_handles_exception(self):
+    async def test_handles_exception(self) -> None:
         """Test handles unexpected exception."""
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
             with patch(
@@ -296,7 +298,7 @@ class TestStopDaemonProcess:
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
 
-            def kill_side_effect(pid, sig):
+            def kill_side_effect(pid: int, sig: int) -> None:
                 if sig == 0:
                     raise ProcessLookupError("Process gone")
                 return None
@@ -356,7 +358,7 @@ class TestRestartDaemonProcess:
     """Tests for restart_daemon_process function."""
 
     @pytest.mark.asyncio
-    async def test_restarts_daemon_successfully(self):
+    async def test_restarts_daemon_successfully(self) -> None:
         """Test successful daemon restart."""
         with patch(
             "gobby.mcp_proxy.daemon_control.stop_daemon_process", new_callable=AsyncMock
@@ -395,7 +397,7 @@ class TestCheckDaemonHttpHealth:
     """Tests for check_daemon_http_health function."""
 
     @pytest.mark.asyncio
-    async def test_returns_true_on_200_response(self):
+    async def test_returns_true_on_200_response(self) -> None:
         """Test returns True when daemon responds with 200."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -409,7 +411,7 @@ class TestCheckDaemonHttpHealth:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_non_200_response(self):
+    async def test_returns_false_on_non_200_response(self) -> None:
         """Test returns False when daemon responds with non-200."""
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -423,7 +425,7 @@ class TestCheckDaemonHttpHealth:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_connection_error(self):
+    async def test_returns_false_on_connection_error(self) -> None:
         """Test returns False when connection fails."""
         mock_client = AsyncMock()
         mock_client.get.side_effect = Exception("Connection refused")
@@ -435,7 +437,7 @@ class TestCheckDaemonHttpHealth:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_uses_provided_timeout(self):
+    async def test_uses_provided_timeout(self) -> None:
         """Test uses provided timeout value."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -473,7 +475,7 @@ class TestEnsureDaemonRunning:
     """Tests for ensure_daemon_running function."""
 
     @pytest.mark.asyncio
-    async def test_does_nothing_if_healthy(self):
+    async def test_does_nothing_if_healthy(self) -> None:
         """Test does nothing if daemon is already healthy."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
@@ -487,12 +489,11 @@ class TestEnsureDaemonRunning:
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    result = await ensure_daemon_running()
-                    assert result is None
+                    await ensure_daemon_running()
                     assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_waits_for_unhealthy_daemon_without_restart(self):
+    async def test_waits_for_unhealthy_daemon_without_restart(self) -> None:
         """Test waits for an unhealthy daemon instead of restarting it."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
@@ -520,7 +521,7 @@ class TestEnsureDaemonRunning:
                                 assert mock_sleep.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_exits_instead_of_restarting_persistently_unhealthy_daemon(self):
+    async def test_exits_instead_of_restarting_persistently_unhealthy_daemon(self) -> None:
         """Test stdio MCP clients do not restart a busy or unhealthy daemon."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
@@ -549,7 +550,7 @@ class TestEnsureDaemonRunning:
                                     mock_exit.assert_called_with(1)
 
     @pytest.mark.asyncio
-    async def test_starts_daemon_if_not_running(self):
+    async def test_starts_daemon_if_not_running(self) -> None:
         """Test starts daemon if not running."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
@@ -599,7 +600,7 @@ class TestDaemonProxy:
     """Tests for DaemonProxy."""
 
     @pytest.mark.asyncio
-    async def test_request_handles_empty_exception_message(self):
+    async def test_request_handles_empty_exception_message(self) -> None:
         """Test _request handles exceptions with empty messages."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
@@ -615,7 +616,7 @@ class TestDaemonProxy:
             assert result["error"] == "Exception: (no message)"
 
     @pytest.mark.asyncio
-    async def test_call_tool_uses_extended_timeout_for_expand_task(self):
+    async def test_call_tool_uses_extended_timeout_for_expand_task(self) -> None:
         """Test call_tool uses extended timeout for expand_task."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
@@ -640,7 +641,7 @@ class TestDaemonProxy:
                 assert mock_request.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_call_tool_uses_extended_timeout_for_merge_resolve(self):
+    async def test_call_tool_uses_extended_timeout_for_merge_resolve(self) -> None:
         """merge_resolve is LLM-backed and must not use the default 30s timeout."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
@@ -664,7 +665,33 @@ class TestDaemonProxy:
                 )
 
     @pytest.mark.asyncio
-    async def test_call_tool_proxies_when_timeout_config_load_fails(self):
+    async def test_call_tool_uses_extended_timeout_for_compact_self(self) -> None:
+        """compact_self refreshes handoff context before terminal compaction."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                await proxy.call_tool(
+                    "gobby-sessions",
+                    "compact_self",
+                    {"session_id": "#6074", "rule_name": "build-coordinator-handoff"},
+                    session_id="#6074",
+                )
+
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-sessions/tools/compact_self",
+                    json={"session_id": "#6074", "rule_name": "build-coordinator-handoff"},
+                    timeout=300.0,
+                    session_id="#6074",
+                )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_proxies_when_timeout_config_load_fails(self) -> None:
         """call_tool should not fail just because optional timeout config is unavailable."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
@@ -687,7 +714,7 @@ class TestDaemonProxyMethods:
     """Tests for DaemonProxy specific methods."""
 
     @pytest.mark.asyncio
-    async def test_get_tool_schema_uses_seeded_session_header(self):
+    async def test_get_tool_schema_uses_seeded_session_header(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         with patch.dict("os.environ", {"GOBBY_SESSION_ID": "session-123"}):
@@ -712,7 +739,7 @@ class TestDaemonProxyMethods:
         assert kwargs["headers"]["X-Gobby-Session-Id"] == "session-123"
 
     @pytest.mark.asyncio
-    async def test_list_tools(self):
+    async def test_list_tools(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -727,7 +754,7 @@ class TestDaemonProxyMethods:
             assert len(result["servers"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_tool_schema_success(self):
+    async def test_get_tool_schema_success(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -738,7 +765,7 @@ class TestDaemonProxyMethods:
             assert result["tool"]["name"] == "tool"
 
     @pytest.mark.asyncio
-    async def test_list_mcp_servers(self):
+    async def test_list_mcp_servers(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -757,7 +784,7 @@ class TestDaemonProxyMethods:
             assert "issues" not in result
 
     @pytest.mark.asyncio
-    async def test_list_mcp_servers_keeps_issue_details(self):
+    async def test_list_mcp_servers_keeps_issue_details(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -775,7 +802,7 @@ class TestDaemonProxyMethods:
             assert result["issues"] == [{"name": "srv2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
-    async def test_recommend_tools(self):
+    async def test_recommend_tools(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -785,7 +812,7 @@ class TestDaemonProxyMethods:
             assert result["tools"] == ["t1"]
 
     @pytest.mark.asyncio
-    async def test_search_tools(self):
+    async def test_search_tools(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -795,7 +822,7 @@ class TestDaemonProxyMethods:
             assert result["tools"] == ["t1"]
 
     @pytest.mark.asyncio
-    async def test_init_project(self):
+    async def test_init_project(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -806,7 +833,7 @@ class TestDaemonProxyMethods:
             mock_req.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_add_mcp_server(self):
+    async def test_add_mcp_server(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -817,7 +844,7 @@ class TestDaemonProxyMethods:
             mock_req.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_remove_mcp_server(self):
+    async def test_remove_mcp_server(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -828,7 +855,7 @@ class TestDaemonProxyMethods:
             mock_req.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_import_mcp_server(self):
+    async def test_import_mcp_server(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -839,7 +866,7 @@ class TestDaemonProxyMethods:
             mock_req.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_removed_wait_for_completion_returns_error_without_request(self):
+    async def test_removed_wait_for_completion_returns_error_without_request(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -859,11 +886,20 @@ class TestMCPToolsWrapper:
     """Tests for the FastMCP tools registered by register_proxy_tools."""
 
     @staticmethod
-    def _register_tools():
-        captured_tools = {}
+    def _register_tools() -> tuple[
+        dict[str, Callable[..., Awaitable[Any]]],
+        MagicMock,
+        Callable[..., Coroutine[Any, Any, Any]],
+    ]:
+        captured_tools: dict[str, Callable[..., Awaitable[Any]]] = {}
 
-        def mock_tool_decorator(name=None, **kwargs):
-            def real_decorator(func):
+        def mock_tool_decorator(
+            name: str | None = None,
+            **_kwargs: Any,
+        ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+            def real_decorator(
+                func: Callable[..., Awaitable[Any]],
+            ) -> Callable[..., Awaitable[Any]]:
                 tool_name = name or func.__name__
                 captured_tools[tool_name] = func
                 return func
@@ -888,7 +924,7 @@ class TestMCPToolsWrapper:
 
         register_proxy_tools(mock_mcp, mock_proxy)
 
-        async def run_tool(_tool_name, **kwargs):
+        async def run_tool(_tool_name: str, **kwargs: Any) -> Any:
             if _tool_name in captured_tools:
                 return await captured_tools[_tool_name](**kwargs)
             raise ValueError(f"Tool {_tool_name} not captured")
@@ -896,7 +932,7 @@ class TestMCPToolsWrapper:
         return captured_tools, mock_proxy, run_tool
 
     @pytest.mark.asyncio
-    async def test_tools_exist_and_delegate(self):
+    async def test_tools_exist_and_delegate(self) -> None:
         """Test that tools are registered and delegate to proxy."""
         captured_tools, mock_proxy, run_tool = self._register_tools()
 
@@ -1008,7 +1044,7 @@ class TestMCPToolsWrapper:
         ctx = MagicMock()
         ctx.report_progress = AsyncMock(side_effect=lambda **_: heartbeat_seen.set())
 
-        async def _block_until_heartbeat(*args, **kwargs):
+        async def _block_until_heartbeat(*_args: Any, **_kwargs: Any) -> dict[str, str]:
             await heartbeat_seen.wait()
             await release_call.wait()
             return {"res": "call"}
@@ -1016,7 +1052,7 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.side_effect = _block_until_heartbeat
 
         with patch("gobby.mcp_proxy.stdio.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
-            task = asyncio.create_task(
+            task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
                     server_name="gobby-tasks",
@@ -1056,7 +1092,7 @@ class TestEnsureDaemonRunningFailures:
     """Tests for ensure_daemon_running failure paths."""
 
     @pytest.mark.asyncio
-    async def test_start_failure_exits(self):
+    async def test_start_failure_exits(self) -> None:
         """Test ensure_daemon_running exits if start fails."""
         with patch("gobby.mcp_proxy.stdio.load_config"):
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
@@ -1076,7 +1112,7 @@ class TestEnsureDaemonRunningFailures:
                         assert mock_exit.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_health_check_timeout_exits(self):
+    async def test_health_check_timeout_exits(self) -> None:
         """Test ensure_daemon_running exits if health check times out."""
         with patch("gobby.mcp_proxy.stdio.load_config"):
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
