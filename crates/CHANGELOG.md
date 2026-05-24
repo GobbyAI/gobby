@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setups must provide an inline `database_url` or one of the explicit fallback
   sources above; broker-managed secrets stay behind the daemon broker.
 
+### Fixed
+
+#### gcode
+
+- **Directory path indexing root** — `gcode index <path>` now indexes from the
+  resolved project root when `<path>` is inside the current project, keeping
+  relative file paths stable instead of treating the passed directory as a new
+  root.
+
 ### Removed
 
 #### gcode
