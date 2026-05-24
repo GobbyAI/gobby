@@ -566,27 +566,15 @@ fn member_qualifier_path(
         String::new()
     };
     qualifier.push(first);
-    let mut last_was_separator = false;
     for ch in chars {
-        if is_identifier_continue(ch) {
-            qualifier.push(ch);
-            last_was_separator = false;
-        } else if matches!(ch, '.' | '\\') {
-            qualifier.push(ch);
-            last_was_separator = true;
-        } else if ch == ':' && !last_was_separator {
-            qualifier.push(ch);
-            last_was_separator = true;
-        } else if ch == ':' && last_was_separator {
+        if is_identifier_continue(ch) || matches!(ch, '.' | ':' | '\\') {
             qualifier.push(ch);
         } else {
             break;
         }
     }
 
-    let qualifier = qualifier
-        .trim_end_matches(|ch| matches!(ch, '.' | ':' | '\\'))
-        .to_string();
+    let qualifier = qualifier.trim_end_matches(['.', ':', '\\']).to_string();
     if qualifier.is_empty() {
         None
     } else {
