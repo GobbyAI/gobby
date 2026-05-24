@@ -183,6 +183,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`gobby_acp_child` in terminal_context** — `terminal_context.capture()` now includes `gobby_acp_child` (read from `GOBBY_ACP_CHILD`). The daemon's SESSION_START handler uses it as a second line of defense to recognize and drop registrations from ACP subprocesses even if the env short-circuit didn't fire.
 - **Surface nested `permissionDecisionReason` in block messages** — `extract_reason` now also checks `hookSpecificOutput.permissionDecisionReason` (and `.reason` inside that object) after the top-level fallback keys. Modern Claude Code PreToolUse deny responses carry the reason inside `hookSpecificOutput`; `is_blocked` already recognized the nested shape, but `extract_reason` didn't — so denies surfaced as the bare "Blocked by hook" fallback instead of the daemon's actual message.
 
+## [0.4.3] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Built-in exclusion passthrough** — Gobby-owned CLIs (`gobby`,
+  `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are now excluded
+  from squeezing. Their output is surfaced raw and skips compression headers
+  and daemon savings reports.
+
 ## [0.4.2] — gsqz
 
 ### Fixed
