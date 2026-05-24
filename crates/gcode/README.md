@@ -97,14 +97,10 @@ setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
 
 Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
 asks the local daemon broker for the hub DSN first. If the daemon is
-unavailable, it falls back to explicit non-keychain sources:
+unavailable, it falls back to explicit fallback sources:
 `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`
-`database_url`, inline bootstrap `database_url`, then supported
-`database_url_ref` values. Bootstrap fallback requires `hub_backend: postgres`.
-gcode never reads the native OS keyring directly. For explicit daemonless
-setups, use inline `database_url`.
-If macOS keeps asking for Keychain authorization, check `which -a gcode`; stale
-binaries from before `0.8.4` can still read Keychain directly.
+`database_url`, then bootstrap `database_url`. Bootstrap fallback requires
+`hub_backend: postgres`.
 
 ### With Gobby
 
