@@ -27,6 +27,22 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     return database
 
 
+def _has_column(db: HubDatabase, table: str, column: str) -> bool:
+    if getattr(db, "dialect", None) == "postgres":
+        row = db.fetchone(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = ? AND column_name = ?
+            """,
+            (table, column),
+        )
+        return row is not None
+
+    rows = db.fetchall(f"PRAGMA table_info({table})")
+    return any(row["name"] == column for row in rows)
+
+
 class TestWakeDispatcherSdkResume:
     """WakeDispatcher SDK resume path."""
 
@@ -332,14 +348,8 @@ class TestMigration137:
 
     def test_pipeline_execution_has_continuation_prompt(self, db: Any) -> None:
         """pipeline_executions table has continuation_prompt column."""
-        row = db.fetchone(
-            "SELECT sql FROM postgres_master WHERE type='table' AND name='pipeline_executions'"
-        )
-        assert "continuation_prompt" in row["sql"]
+        assert _has_column(db, "pipeline_executions", "continuation_prompt")
 
     def test_agent_runs_has_continuation_prompt(self, db: Any) -> None:
         """agent_runs table has continuation_prompt column."""
-        row = db.fetchone(
-            "SELECT sql FROM postgres_master WHERE type='table' AND name='agent_runs'"
-        )
-        assert "continuation_prompt" in row["sql"]
+        assert _has_column(db, "agent_runs", "continuation_prompt")

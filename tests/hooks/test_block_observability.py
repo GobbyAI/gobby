@@ -97,10 +97,12 @@ def _insert_block_rule(
     }
     db.execute(
         """
-        INSERT INTO workflow_definitions (name, workflow_type, definition_json, enabled, source)
-        VALUES (?, 'rule', ?, 1, 'test')
+        INSERT INTO workflow_definitions (
+            id, name, workflow_type, definition_json, enabled, source
+        )
+        VALUES (?, ?, 'rule', ?, ?, 'test')
         """,
-        (name, json.dumps(definition)),
+        (f"rule-{name}", name, json.dumps(definition), True),
     )
 
 

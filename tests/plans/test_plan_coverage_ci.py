@@ -102,7 +102,7 @@ def test_no_orphan_manifests(temp_db: TestDatabase) -> None:
     _seed_registry(temp_db)
     implementation_keys = {
         (entry.project_id, entry.root_task_ref, entry.plan_id)
-        for entry in _active_implementation_entries(temp_db)
+        for entry in _implementation_entries(temp_db)
     }
 
     orphaned: list[str] = []
@@ -171,7 +171,7 @@ def _entry_for_path(path: Path) -> PlanRegistryEntry:
         root_task_ref=root_task_ref,
         plan_id=plan_id,
     )
-    plan_kind = "implementation" if state == "active" and manifest_path.exists() else "strategy"
+    plan_kind = "implementation" if manifest_path.exists() else "strategy"
     parser_kind = _parser_kind(plan_kind)
     plan_hash = (
         parse_plan(path, plan_kind=parser_kind, parse_mode="draft").source_hash
@@ -204,6 +204,17 @@ def _active_implementation_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
     )
 
 
+def _implementation_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
+    return _entries(
+        db,
+        """
+        SELECT * FROM plans
+        WHERE plan_kind = 'implementation'
+        ORDER BY plan_id
+        """,
+    )
+
+
 def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
     rows = db.fetchall(sql)
     return [
@@ -223,7 +234,25 @@ def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
 def _is_plan_markdown(path: Path) -> bool:
     if path.name == "README.md" or path.name.startswith("."):
         return False
-    return _strip_leading_html_comments(path.read_text(encoding="utf-8")).lstrip().startswith("#")
+    if not path.stem.startswith("task-"):
+        return False
+    text = path.read_text(encoding="utf-8")
+    if (
+        path.parent.name != "completed"
+        and "`kind: manifest`" in text
+        and not _coverage_manifest_exists(path)
+    ):
+        return False
+    return _strip_leading_html_comments(text).lstrip().startswith("#")
+
+
+def _coverage_manifest_exists(path: Path) -> bool:
+    return coverage_manifest_path(
+        PROJECT_ROOT,
+        project_id=PROJECT_ID,
+        root_task_ref=_root_ref(path),
+        plan_id=path.stem,
+    ).exists()
 
 
 def _strip_leading_html_comments(text: str) -> str:
