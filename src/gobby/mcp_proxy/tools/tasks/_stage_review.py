@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
     _release_current_agent_dispatch_mutex,
 )
+from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     _clear_prior_claim_session_variables,
@@ -209,6 +210,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "needs_review")
         except Exception:
             pass  # nosec B110 # best-effort linking
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="submit_for_review",
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -307,6 +313,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             action="approve_review",
             from_session_id=resolved_session_id,
             signoff_message=verdict,
+        )
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="approve_review",
         )
         return _operation_response(ctx, resolved_id, stage_name)
 
@@ -415,6 +426,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             action="reject_review",
             from_session_id=resolved_session_id,
             signoff_message=verdict,
+        )
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="reject_review",
         )
         return _operation_response(ctx, resolved_id, stage_name)
 
