@@ -1,5 +1,5 @@
 hub_backend: postgres
-database_url_ref: keyring:gobby:postgres_database_url
+database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby
 postgres_install_mode: docker
 bind_host: localhost
 daemon_port: 60887

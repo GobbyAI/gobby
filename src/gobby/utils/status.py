@@ -83,21 +83,6 @@ def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
     return "extensions ok"
 
 
-def _format_postgres_keyring(payload: dict[str, Any]) -> str | None:
-    keyring = payload.get("keyring")
-    if not isinstance(keyring, dict):
-        return None
-    if keyring.get("error"):
-        return "keyring unavailable"
-    if not keyring.get("configured"):
-        return "keyring not configured"
-    if keyring.get("credential_present"):
-        return "keyring ok"
-    if keyring.get("readable"):
-        return "keyring missing credential"
-    return "keyring configured"
-
-
 def _format_postgres_service_status(payload: Any) -> str | None:
     """Format a compact PostgreSQL hub service status without exposing DSNs."""
     if not isinstance(payload, dict):
@@ -115,7 +100,6 @@ def _format_postgres_service_status(payload: Any) -> str | None:
     for part in (
         _format_postgres_host_db(payload),
         _format_postgres_extensions(payload),
-        _format_postgres_keyring(payload),
     ):
         if part:
             details.append(part)

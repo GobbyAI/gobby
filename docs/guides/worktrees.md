@@ -77,7 +77,7 @@ On creation, Gobby copies `.gobby/project.json` into the worktree and records th
 parent project path so the isolated checkout can still resolve project context.
 
 Worktree metadata is stored in Gobby's PostgreSQL hub, reached through the
-bootstrap/keyring `database_url` configuration.
+`database_url` in `~/.gobby/bootstrap.yaml`.
 
 ## Status And Ownership
 

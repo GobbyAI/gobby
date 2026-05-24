@@ -10,7 +10,6 @@ Provides fixtures for:
 - MCP client connections
 """
 
-import ast
 import json
 import os
 import shutil
@@ -18,7 +17,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
@@ -31,10 +29,6 @@ import pytest_asyncio
 
 # Mark all tests in this directory as e2e tests
 pytestmark = pytest.mark.e2e
-
-_POSTGRES_DATABASE_URL_REF = "keyring:gobby:postgres_database_url"
-_TEST_KEYRING_MODULE = "keyring.py"
-_TEST_POSTGRES_DSN_FILE = "postgres-dsn.txt"
 
 
 @dataclass
@@ -118,7 +112,6 @@ def prepare_daemon_env(
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
-    env.pop("GOBBY_TEST_POSTGRES_DSN", None)
 
     # Disable any LLM providers to avoid external calls
     env["ANTHROPIC_API_KEY"] = ""
@@ -131,14 +124,6 @@ def prepare_daemon_env(
     if home_dir is not None:
         home_path = Path(home_dir)
         env["HOME"] = str(home_path)
-
-        dsn_path = home_path / _TEST_POSTGRES_DSN_FILE
-        if dsn_path.exists():
-            env["GOBBY_TEST_POSTGRES_DSN"] = dsn_path.read_text().strip()
-
-        keyring_module = home_path / _TEST_KEYRING_MODULE
-        if keyring_module.exists():
-            env["PYTHONPATH"] = f"{home_path}:{env['PYTHONPATH']}"
 
     return env
 
@@ -187,43 +172,6 @@ def find_free_port(max_retries: int = 20) -> int:
 def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     separator = "&" if "?" in database_url else "?"
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
-
-
-def _write_test_keyring_module(gobby_home: Path) -> None:
-    module_path = gobby_home / _TEST_KEYRING_MODULE
-    module_source = textwrap.dedent(
-        '''\
-        """Read-only keyring shim for e2e daemon subprocesses."""
-
-        import os
-
-
-        class _TestKeyring:
-            name = "Gobby e2e test keyring"
-
-            def get_password(self, service, username):
-                if service == "gobby" and username == "postgres_database_url":
-                    return os.environ.get("GOBBY_TEST_POSTGRES_DSN")
-                return None
-
-            def set_password(self, service, username, password):
-                raise RuntimeError("e2e keyring shim is read-only")
-
-
-        def get_keyring():
-            return _TestKeyring()
-
-
-        def get_password(service, username):
-            return get_keyring().get_password(service, username)
-
-
-        def set_password(service, username, password):
-            return get_keyring().set_password(service, username, password)
-        '''
-    )
-    ast.parse(module_source, filename=str(module_path))
-    module_path.write_text(module_source)
 
 
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
@@ -402,10 +350,8 @@ def e2e_config(
     db_path = gobby_home / "gobby-hub.db"
     log_dir = gobby_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    _write_test_keyring_module(gobby_home)
 
     postgres_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
-    (gobby_home / _TEST_POSTGRES_DSN_FILE).write_text(postgres_url)
 
     config_content = f"""
 daemon_port: {http_port}
@@ -444,7 +390,7 @@ session_summary:
     bootstrap_path = gobby_home / "bootstrap.yaml"
     bootstrap_content = f"""
 hub_backend: postgres
-database_url_ref: {_POSTGRES_DATABASE_URL_REF}
+database_url: {postgres_url}
 postgres_install_mode: external
 daemon_port: {http_port}
 database_path: "{db_path}"

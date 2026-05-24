@@ -260,7 +260,7 @@ The daemon exposes memory routes under `/api/memories`.
 ## Architecture
 
 The PostgreSQL hub is the source of truth. Runtime connection details come from
-bootstrap/keyring `database_url` settings.
+the `database_url` in `~/.gobby/bootstrap.yaml`.
 
 ```mermaid
 flowchart LR
@@ -486,7 +486,7 @@ gobby memory rebuild-graph --wait
 
 | Path | Description |
 | --- | --- |
-| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN. |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN. |
 | `~/.gobby/bootstrap.yaml` | Bootstrap settings, including Postgres install metadata. |
 | `.gobby/memories.jsonl` | JSONL memory backup/export file. |
 | `.gobby/resources/` | Screenshot/image resources created by multimodal memory tools. |

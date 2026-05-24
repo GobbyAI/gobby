@@ -50,7 +50,7 @@ server, WebSocket server, and optional UI dev server.
 |----------|---------------|
 | Python | 3.13+ (`requires-python = ">=3.13"`) |
 | Package runner | `uv` for source/development commands such as `uv run gobby start` |
-| Database | Local PostgreSQL hub configured through bootstrap/keyring `database_url` |
+| Database | Local PostgreSQL hub configured through `bootstrap.yaml` `database_url` |
 | HTTP API | `localhost:60887` by default |
 | WebSocket | `localhost:60888` by default |
 | Installed Web UI | `localhost:60887` by default |

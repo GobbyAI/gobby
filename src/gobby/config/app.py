@@ -749,7 +749,7 @@ def load_config(
         cli_overrides: Dictionary of CLI argument overrides
         secret_resolver: Optional callable for resolving secrets (checked before env vars)
         config_store: Optional ConfigStore instance for DB-first resolution
-        resolve_database_url: Resolve bootstrap database_url_ref for runtime DB startup
+        resolve_database_url: Require bootstrap database_url for runtime DB startup
 
     Returns:
         Validated DaemonConfig instance

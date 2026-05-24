@@ -231,11 +231,9 @@ def ensure_daemon_config() -> dict[str, Any]:
 
     import yaml
 
-    from gobby.config.bootstrap import POSTGRES_DATABASE_URL_REF
-
     defaults = {
         "hub_backend": "postgres",
-        "database_url_ref": POSTGRES_DATABASE_URL_REF,
+        "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
         "postgres_install_mode": "docker",
         "daemon_port": 60887,
         "bind_host": "localhost",

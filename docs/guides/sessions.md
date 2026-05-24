@@ -379,7 +379,7 @@ stop or turn-end event does not release the agent run.
 
 | Path | Description |
 | :--- | :--- |
-| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN for sessions and related tables. |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN for sessions and related tables. |
 | `~/.gobby/logs/` | Daemon logs. |
 | `.gobby/session_summaries/` | Default file output for CLI-created handoff summaries. |
 

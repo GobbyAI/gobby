@@ -86,7 +86,9 @@ class TestEnsureDaemonConfig:
         assert res["source"] == "generated"
         assert target.exists()
         assert "hub_backend: postgres" in target.read_text()
-        assert "database_url_ref: keyring:gobby:postgres_database_url" in target.read_text()
+        assert "database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby" in (
+            target.read_text()
+        )
         assert "daemon_port: 60887" in target.read_text()
 
 

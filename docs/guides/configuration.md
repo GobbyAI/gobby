@@ -51,7 +51,7 @@ available:
 
 ```yaml
 hub_backend: postgres
-database_url_ref: "keyring:gobby:postgres_database_url"
+database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_install_mode: docker
 daemon_port: 60887
 bind_host: "localhost"
@@ -62,19 +62,15 @@ falkordb_password: "gobbyfalkor"
 
 `database_path` is retained only for legacy compatibility and operator-managed
 artifacts outside the current runtime. PostgreSQL is the only runtime hub.
-Startup fails when the PostgreSQL DSN cannot be resolved instead of falling
+Startup fails when the PostgreSQL DSN is missing instead of falling
 back to SQLite, so do not use `database_path` or `gobby postgres uninstall` as
 a runtime recovery path.
 
-Root bootstrap `database_url_ref` must stay on
-`keyring:gobby:postgres_database_url`. The OS keyring credential belongs to the
-installing user. Linux desktop sessions need an unlocked Secret Service or
-KWallet backend; Linux headless/systemd services need the same Unix user and
-DBus/keyring context used during install. Windows uses Credential Manager, so a
-Windows service must run as the same user that created the credential. Gobby may
-generate isolated helper bootstraps with
+Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
+`bootstrap.yaml` is written with mode `0600`; keep that permission so the DSN
+stays owner-readable only. Gobby may generate isolated helper bootstraps with
 `daemon:gobby:postgres_database_url`; that ref is broker-only and is resolved by
-the local daemon, not the OS keyring.
+the local daemon.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.

@@ -69,48 +69,30 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    - Confirm validation-window write capture is configured for the activation
      mode.
 
-## Bootstrap Credential Storage
+## Bootstrap DSN Storage
 
-`gobby postgres install` stores the PostgreSQL DSN in the OS keyring and writes
-only this reference to `~/.gobby/bootstrap.yaml`:
+`gobby postgres install` writes the PostgreSQL DSN directly to
+`~/.gobby/bootstrap.yaml`:
 
 ```yaml
-database_url_ref: keyring:gobby:postgres_database_url
+database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby
 ```
 
-Do not paste a plaintext `database_url` into `bootstrap.yaml` during the
-overlap window. Startup migrates an existing plaintext `database_url` into that
-keyring entry and rewrites the file with mode `0600`; startup fails when
-`bootstrap.yaml` has broader permissions or the referenced keyring value is
-missing.
+The installer writes `bootstrap.yaml` with mode `0600`. Startup fails when the
+file has broader permissions or when `hub_backend: postgres` is present without
+`database_url`.
 
-`gobby postgres status` reports the configured keyring backend, whether the
-`keyring:gobby:postgres_database_url` credential can be read, and any platform
-guidance returned by the preflight. `gobby postgres install` also verifies a
-write/read round trip before it records bootstrap defaults.
-
-Platform expectations:
-
-- Linux desktop: a Secret Service or KWallet-compatible backend must be
-  installed and unlocked for the user running Gobby. Typical packages include
-  `gnome-keyring`, `kwallet`, and Python `SecretStorage` support.
-- Linux headless or systemd: the daemon must run as the same Unix user that ran
-  `gobby postgres install`, and that user must have access to an unlocked
-  keyring through its DBus session. User services should preserve that user
-  context instead of switching to root.
-- Windows: the DSN is stored in Windows Credential Manager for the installing
-  user. The daemon service must run as that same Windows user; LocalSystem or a
-  different service account cannot read the credential.
+`gobby postgres status` reports mode, host, database, health, extension
+availability, and external ownership when applicable.
 
 `gobby postgres uninstall` is service cleanup. Before restarting the daemon
 after uninstalling a PostgreSQL service, preserve or recreate a valid PostgreSQL
-`database_url_ref` / `database_url` bootstrap entry. If the keyring entry was
-deleted, recreate it by rerunning the matching
+`database_url` bootstrap entry. Recreate it by rerunning the matching
 `gobby postgres install --mode ... --dsn ...` command while the daemon is stopped.
 
 After the validation window closes, the steady-state PostgreSQL runtime still
-uses the same keyring reference. Product-supported recovery must preserve a
-valid keyring entry; there is no supported plaintext bootstrap fallback.
+uses the same `database_url` field. Product-supported recovery must preserve a
+valid PostgreSQL DSN.
 
 ## Validation Capture
 

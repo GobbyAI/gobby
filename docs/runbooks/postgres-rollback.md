@@ -147,10 +147,8 @@ intact.
 ## Recovery After Export
 
 1. Keep the current bootstrap on PostgreSQL. Do not use `gobby postgres
-   uninstall` as a recovery step. Leave `bootstrap.yaml` using the PostgreSQL
-   keyring reference
-   (`keyring:gobby:postgres_database_url`) and do not add a plaintext
-   `database_url`.
+   uninstall` as a recovery step. Leave `bootstrap.yaml` using a valid
+   PostgreSQL `database_url` with mode `0600`.
 
 2. Choose the recovery path:
 
@@ -188,6 +186,6 @@ intact.
 
 ## After the Validation Window
 
-This recovery export path is only for the validation window. The keyring-backed
-DSN remains required; deleting the keyring entry or writing a plaintext fallback
-to `bootstrap.yaml` is not a supported steady-state recovery path.
+This recovery export path is only for the validation window. A valid
+PostgreSQL `database_url` in `bootstrap.yaml` remains required for steady-state
+runtime recovery.

@@ -68,7 +68,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 │  │   HubDatabase   │  │  MCPDBManager   │  │ File Storage    │        │
 │  │  (PostgreSQL)   │  │ (tool caching)  │  │ (sync, logs)    │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
-│                    bootstrap/keyring database_url                       │
+│                    bootstrap.yaml database_url                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

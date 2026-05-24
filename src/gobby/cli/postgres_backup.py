@@ -45,7 +45,7 @@ def postgres_backup_configured(*, gobby_home: Path | None = None) -> bool:
         data = _bootstrap.read_bootstrap_yaml(_bootstrap.bootstrap_path(home))
     except (OSError, yaml.YAMLError):
         return False
-    return _has_text(data.get("database_url")) or _has_text(data.get("database_url_ref"))
+    return _has_text(data.get("database_url"))
 
 
 def create_postgres_backup(

@@ -1684,7 +1684,6 @@ class TestEdgeCases:
                 "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
                 "healthy": True,
                 "extensions": {"pg_search": True, "pgaudit": True},
-                "keyring": {"configured": True, "credential_present": True},
             },
         }
 

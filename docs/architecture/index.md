@@ -79,7 +79,7 @@ gobby status
                           │
 ┌─────────────────────────▼────────────────────────────────────┐
 │                    Data Layer                                 │
-│              PostgreSQL hub (bootstrap/keyring database_url)      │
+│              PostgreSQL hub (bootstrap.yaml database_url)         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,7 +123,7 @@ gobby status
 | Path | Purpose |
 |------|---------|
 | `~/.gobby/config.yaml` | Daemon configuration |
-| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN |
 | `~/.gobby/logs/` | Log files |
 | `~/.gobby/session_summaries/` | Generated summaries |
 

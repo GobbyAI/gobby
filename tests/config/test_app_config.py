@@ -49,7 +49,6 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.telemetry.config import TelemetrySettings
-from tests.config.fake_keyring import FakeKeyring, install_fake_keyring
 
 pytestmark = pytest.mark.unit
 
@@ -733,11 +732,10 @@ class TestLoadConfig:
         assert config.cron.check_interval_seconds == 60
 
     def test_load_config_preserves_bootstrap_backend_selection_over_db(
-        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+        self, temp_dir: Path
     ) -> None:
         """DB config cannot override bootstrap-level hub backend selection."""
 
-        install_fake_keyring(monkeypatch, FakeKeyring())
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
@@ -764,13 +762,9 @@ class TestLoadConfig:
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert config.postgres_install_mode == "docker"
 
-    def test_load_config_without_resolution_does_not_migrate_plaintext_dsn(
-        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Config readers can inspect bootstrap fields without touching Keychain."""
+    def test_load_config_without_resolution_reads_plaintext_dsn(self, temp_dir: Path) -> None:
+        """Config readers can inspect bootstrap fields without special credential access."""
 
-        fake_keyring = FakeKeyring()
-        install_fake_keyring(monkeypatch, fake_keyring)
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
@@ -783,7 +777,6 @@ class TestLoadConfig:
 
         assert config.daemon_port == 61234
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
-        assert fake_keyring.set_calls == []
 
 
 class TestBootstrapConfig:
