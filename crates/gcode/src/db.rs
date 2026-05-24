@@ -9,6 +9,9 @@ use crate::schema;
 
 const POSTGRES_DATABASE_URL_REF: &str = "keyring:gobby:postgres_database_url";
 const DAEMON_POSTGRES_DATABASE_URL_REF: &str = "daemon:gobby:postgres_database_url";
+const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
+const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
+const GCODE_CONFIG_FILENAME: &str = "gcode.yaml";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
 const BROKER_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -38,13 +41,41 @@ pub fn bootstrap_path() -> anyhow::Result<PathBuf> {
     Ok(gobby_home()?.join("bootstrap.yaml"))
 }
 
-/// Resolve the PostgreSQL hub DSN from Gobby bootstrap config.
+/// Resolve the PostgreSQL hub DSN from explicit overrides or Gobby bootstrap config.
 ///
 /// gcode intentionally has no local database fallback. Keyring-backed bootstraps resolve
 /// through the long-lived daemon broker so short-lived gcode processes never touch the OS
 /// keyring directly.
 pub fn resolve_database_url() -> anyhow::Result<String> {
-    let path = bootstrap_path()?;
+    let home = gobby_home()?;
+    resolve_database_url_from_sources(
+        &home,
+        |bootstrap_path| resolve_brokered_database_url_at(&home, bootstrap_path),
+        |name| std::env::var(name).ok(),
+    )
+}
+
+fn resolve_database_url_from_sources(
+    home: &Path,
+    broker_resolver: impl Fn(&Path) -> anyhow::Result<String>,
+    get_var: impl FnMut(&str) -> Option<String>,
+) -> anyhow::Result<String> {
+    let path = home.join("bootstrap.yaml");
+
+    if let Ok(database_url) = broker_resolver(&path) {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) =
+        resolve_database_url_from_config_file(&home.join(GCODE_CONFIG_FILENAME))?
+    {
+        return Ok(database_url);
+    }
+
     let contents = std::fs::read_to_string(&path).with_context(|| {
         format!(
             "missing Gobby bootstrap at {}. Configure the Gobby PostgreSQL hub before running gcode.",
@@ -52,7 +83,47 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
         )
     })?;
     let bootstrap = parse_bootstrap_database(&contents)?;
-    resolve_database_url_from_bootstrap(&bootstrap, || resolve_brokered_database_url(&path))
+    resolve_database_url_from_bootstrap(&bootstrap, || broker_resolver(&path))
+}
+
+fn resolve_database_url_from_env(
+    mut get_var: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    for name in [GCODE_DATABASE_URL_ENV, GOBBY_POSTGRES_DSN_ENV] {
+        if let Some(value) = non_empty_trimmed(get_var(name)) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn resolve_database_url_from_config_file(path: &Path) -> anyhow::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    parse_gcode_config_database_url(&contents)
+        .with_context(|| format!("failed to parse {}", path.display()))
+}
+
+fn parse_gcode_config_database_url(contents: &str) -> anyhow::Result<Option<String>> {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(contents)?;
+    let Some(map) = yaml.as_mapping() else {
+        if yaml.is_null() {
+            return Ok(None);
+        }
+        bail!("gcode.yaml must be a mapping");
+    };
+
+    let key = serde_yaml::Value::String("database_url".to_string());
+    match map.get(&key) {
+        Some(value) => match value.as_str() {
+            Some(text) => Ok(non_empty_trimmed(Some(text.to_string()))),
+            None => bail!("gcode.yaml field `database_url` must be a string"),
+        },
+        None => Ok(None),
+    }
 }
 
 fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase> {
@@ -92,6 +163,10 @@ fn resolve_database_url_from_bootstrap(
         );
     }
 
+    if let Some(database_url) = bootstrap.database_url.as_deref() {
+        return Ok(database_url.to_string());
+    }
+
     if let Some(database_url_ref) = bootstrap.database_url_ref.as_deref() {
         parse_database_url_ref(database_url_ref)?;
         let database_url = broker_resolver().with_context(|| {
@@ -106,18 +181,14 @@ fn resolve_database_url_from_bootstrap(
         return Ok(database_url);
     }
 
-    if let Some(database_url) = bootstrap.database_url.as_deref() {
-        return Ok(database_url.to_string());
-    }
-
     bail!(
         "hub_backend=postgres requires `database_url_ref: {POSTGRES_DATABASE_URL_REF}`, `database_url_ref: {DAEMON_POSTGRES_DATABASE_URL_REF}`, or an inline `database_url`"
     )
 }
 
-fn resolve_brokered_database_url(bootstrap_path: &Path) -> anyhow::Result<String> {
-    let home = gobby_home()?;
-    resolve_brokered_database_url_at(&home, bootstrap_path)
+fn non_empty_trimmed(value: Option<String>) -> Option<String> {
+    let value = value?.trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn resolve_brokered_database_url_at(
@@ -223,6 +294,125 @@ mod tests {
     }
 
     #[test]
+    fn database_url_env_prefers_gcode_specific_var() {
+        let resolved = resolve_database_url_from_env(|name| match name {
+            GCODE_DATABASE_URL_ENV => Some(" postgresql://env/db ".to_string()),
+            GOBBY_POSTGRES_DSN_ENV => Some("postgresql://gobby/db".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(resolved.as_deref(), Some("postgresql://env/db"));
+    }
+
+    #[test]
+    fn database_url_env_falls_back_to_gobby_postgres_dsn() {
+        let resolved = resolve_database_url_from_env(|name| match name {
+            GOBBY_POSTGRES_DSN_ENV => Some(" postgresql://gobby/db ".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(resolved.as_deref(), Some("postgresql://gobby/db"));
+    }
+
+    #[test]
+    fn database_url_env_ignores_empty_values() {
+        let resolved = resolve_database_url_from_env(|name| match name {
+            GCODE_DATABASE_URL_ENV => Some("  ".to_string()),
+            GOBBY_POSTGRES_DSN_ENV => Some("\n\t".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn database_url_sources_prefer_daemon_broker() {
+        let home = tempfile::tempdir().expect("temp home");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| Ok("postgresql://broker/db".to_string()),
+            |name| match name {
+                GCODE_DATABASE_URL_ENV => Some("postgresql://env/db".to_string()),
+                _ => None,
+            },
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://broker/db");
+    }
+
+    #[test]
+    fn database_url_sources_fall_back_to_env_when_daemon_is_unavailable() {
+        let home = tempfile::tempdir().expect("temp home");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| bail!("daemon unavailable"),
+            |name| match name {
+                GOBBY_POSTGRES_DSN_ENV => Some("postgresql://env/db".to_string()),
+                _ => None,
+            },
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://env/db");
+    }
+
+    #[test]
+    fn database_url_sources_fall_back_to_bootstrap_inline_when_daemon_is_unavailable() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://inline/db\n",
+        )
+        .expect("write bootstrap");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| bail!("daemon unavailable"),
+            |_| None,
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://inline/db");
+    }
+
+    #[test]
+    fn gcode_config_accepts_database_url() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = home.path().join(GCODE_CONFIG_FILENAME);
+        std::fs::write(&path, "database_url: postgresql://config/db\n").expect("write config");
+
+        let resolved = resolve_database_url_from_config_file(&path)
+            .expect("config parses")
+            .expect("database_url present");
+
+        assert_eq!(resolved, "postgresql://config/db");
+    }
+
+    #[test]
+    fn gcode_config_missing_file_is_not_an_override() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = home.path().join(GCODE_CONFIG_FILENAME);
+
+        let resolved = resolve_database_url_from_config_file(&path).expect("missing config ok");
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn gcode_config_empty_file_is_not_an_override() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = home.path().join(GCODE_CONFIG_FILENAME);
+        std::fs::write(&path, "").expect("write config");
+
+        let resolved = resolve_database_url_from_config_file(&path).expect("empty config ok");
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
     fn postgres_bootstrap_resolves_keyring_ref_through_broker() {
         let resolved = resolve_database_url_from_bootstrap(
             &bootstrap("postgres", None, Some(POSTGRES_DATABASE_URL_REF)),
@@ -312,18 +502,18 @@ mod tests {
     }
 
     #[test]
-    fn postgres_bootstrap_prefers_ref_over_inline_url() {
+    fn postgres_bootstrap_prefers_inline_url_over_ref() {
         let resolved = resolve_database_url_from_bootstrap(
             &bootstrap(
                 "postgres",
                 Some("postgresql://inline/db"),
                 Some(POSTGRES_DATABASE_URL_REF),
             ),
-            || Ok("postgresql://broker/db".to_string()),
+            || unreachable!("broker should not be used when inline url is present"),
         )
-        .expect("resolve ref");
+        .expect("resolve inline url");
 
-        assert_eq!(resolved, "postgresql://broker/db");
+        assert_eq!(resolved, "postgresql://inline/db");
     }
 
     #[test]

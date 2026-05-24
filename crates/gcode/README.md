@@ -95,14 +95,14 @@ projects read FalkorDB settings from `databases.falkordb.*`; daemon-independent
 setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
 `GOBBY_FALKORDB_PASSWORD`.
 
-Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
-`~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
-hub DSN from `database_url_ref` or `database_url`. For
-`database_url_ref: keyring:gobby:postgres_database_url`, gcode asks the local
-Gobby daemon broker for the DSN and fails clearly when the daemon is unavailable.
-gcode never reads the native OS keyring directly. The DSN is not written to a
-plaintext runtime file. For explicit daemonless setups, use inline
-`database_url`.
+Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
+asks the local daemon broker for the hub DSN first. If the daemon is
+unavailable, it falls back to explicit non-keychain sources:
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`
+`database_url`, inline bootstrap `database_url`, then supported
+`database_url_ref` values. Bootstrap fallback requires `hub_backend: postgres`.
+gcode never reads the native OS keyring directly. For explicit daemonless
+setups, use inline `database_url`.
 If macOS keeps asking for Keychain authorization, check `which -a gcode`; stale
 binaries from before `0.8.4` can still read Keychain directly.
 
@@ -200,9 +200,10 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 
 **Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
-**PostgreSQL DSNs stay out of plaintext files.** Isolated gcode runtimes keep
-`database_url_ref: daemon:gobby:postgres_database_url`; gcode resolves it
-through the daemon broker only.
+**PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
+ask the daemon broker first. Operators who need daemonless access can opt into
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`, or inline
+bootstrap `database_url`.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 
