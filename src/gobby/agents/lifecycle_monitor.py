@@ -27,7 +27,6 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
-from gobby.workflows.step_context import has_active_step_workflow
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -105,7 +104,6 @@ class AgentLifecycleMonitor:
             loop_tracker=self._loop_tracker,
             get_tmux_config=lambda: self._tmux_config,
             handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
-            should_skip_periodic_enter=self._run_has_active_step_workflow,
             run_db=run_db,
         )
         self._cleanup_handler = AgentCleanupHandler(
@@ -166,10 +164,6 @@ class AgentLifecycleMonitor:
     def register_master_fd(self, run_id: str, fd: int) -> None:
         """Register a PTY master file descriptor for an agent."""
         self._master_fds[run_id] = fd
-
-    def _run_has_active_step_workflow(self, run: AgentRun) -> bool:
-        """Return whether this run's child session is managed by a step workflow."""
-        return has_active_step_workflow(self._db, run.child_session_id)
 
     def get_cleanup_agent(self) -> Callable[..., Awaitable[None]] | None:
         """Return the cleanup callable used for restart reconciliation."""

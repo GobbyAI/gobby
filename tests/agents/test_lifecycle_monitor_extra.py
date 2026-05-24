@@ -687,7 +687,7 @@ class TestPeriodicAgentTerminalEnter:
         ]
 
     @pytest.mark.asyncio
-    async def test_periodic_enter_skips_active_step_workflow_agents(
+    async def test_periodic_enter_reaches_active_step_workflow_agents(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -730,11 +730,16 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr.list_active.return_value = [
             self._run(child_session_id=child.id),
         ]
+        mock_tmux.send_keys.return_value = True
 
         handled = await monitor.check_periodic_enters()
 
-        assert handled == 0
-        mock_tmux.send_keys.assert_not_called()
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-periodic",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_periodic_enter_respects_interval_per_run(self) -> None:

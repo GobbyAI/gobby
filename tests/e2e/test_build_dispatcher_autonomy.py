@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
@@ -134,11 +135,11 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
 
 
 @pytest.mark.asyncio
-async def test_idle_planner_stage_agent_gets_handoff_reprompt_without_blank_enter(
+async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_reprompt(
     temp_db: Any,
     sample_project: dict[str, Any],
 ) -> None:
-    """A stalled planner step must get a semantic handoff prompt, not a blank Enter."""
+    """A stalled planner still gets Enter nudges and later a semantic handoff prompt."""
     from gobby.agents.sync import sync_bundled_agents
 
     sync_bundled_agents(temp_db)
@@ -223,8 +224,12 @@ async def test_idle_planner_stage_agent_gets_handoff_reprompt_without_blank_ente
     monitor._idle_check_handler._tmux = mock_tmux
     monitor._idle_detector.get_state(stored_run.id).first_idle_at = time.monotonic() - 120
 
-    assert await monitor.check_periodic_enters() == 0
-    assert mock_tmux.send_keys.call_count == 0
+    assert await monitor.check_periodic_enters() == 1
+    mock_tmux.send_keys.assert_called_once_with(
+        "gobby-idle-planner",
+        PromptDetector.ENTER_KEY,
+        literal=False,
+    )
 
     assert await monitor.check_idle_agents() == 1
     sent_prompt = mock_tmux.send_keys.call_args.args[1]

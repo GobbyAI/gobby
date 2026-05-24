@@ -31,7 +31,6 @@ class TerminalPromptMonitor:
         loop_tracker: LoopTracker,
         get_tmux_config: Callable[[], TmuxConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
-        should_skip_periodic_enter: Callable[[AgentRun], bool] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
@@ -41,7 +40,6 @@ class TerminalPromptMonitor:
         self._loop_tracker = loop_tracker
         self._get_tmux_config = get_tmux_config
         self._handle_looping_agent = handle_looping_agent
-        self._should_skip_periodic_enter = should_skip_periodic_enter
         self._monotonic = monotonic
         self._last_enter_sent_at: dict[str, float] = {}
         self._run_db_callback = run_db
@@ -183,15 +181,6 @@ class TerminalPromptMonitor:
 
             last_sent = self._last_enter_sent_at.get(run.id)
             if last_sent is not None and now - last_sent < interval:
-                continue
-            if self._should_skip_periodic_enter is not None and await self._run_db(
-                self._should_skip_periodic_enter,
-                run,
-            ):
-                logger.debug(
-                    "Skipping periodic Enter for agent %s with active step workflow",
-                    run.id,
-                )
                 continue
 
             try:
