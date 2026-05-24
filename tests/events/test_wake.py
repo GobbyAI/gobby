@@ -604,6 +604,44 @@ class TestWakeDispatch:
         assert tmux_pane_sender.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_live_wake_prunes_stale_timestamps_and_unused_locks(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stale wake state cleanup removes idle locks but leaves active dispatch locks."""
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+        locked = asyncio.Lock()
+        await locked.acquire()
+        dispatcher._last_live_wake = {
+            "stale": (1, 900.0),
+            "locked": (1, 900.0),
+            "fresh": (1, 990.0),
+        }
+        dispatcher._live_wake_locks = {
+            "stale": asyncio.Lock(),
+            "locked": locked,
+            "fresh": asyncio.Lock(),
+        }
+        monkeypatch.setattr("gobby.events.wake.time.monotonic", lambda: 1000.0)
+
+        try:
+            assert dispatcher._should_send_live_wake("new", FakeSession(id="new")) is True
+        finally:
+            locked.release()
+
+        assert "stale" not in dispatcher._last_live_wake
+        assert "stale" not in dispatcher._live_wake_locks
+        assert "locked" in dispatcher._last_live_wake
+        assert "locked" in dispatcher._live_wake_locks
+        assert "fresh" in dispatcher._last_live_wake
+        assert "fresh" in dispatcher._live_wake_locks
+
+    @pytest.mark.asyncio
     async def test_pane_wake_failure_does_not_record_timestamp(
         self,
         session_manager: MagicMock,

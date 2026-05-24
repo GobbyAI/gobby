@@ -82,6 +82,46 @@ async def test_record_verification_evidence_sets_readiness(
 
 
 @pytest.mark.asyncio
+async def test_record_verification_evidence_keeps_latest_50_items(
+    temp_db, session_manager, sample_project
+) -> None:
+    session = session_manager.register(
+        external_id="record-verification-bounded",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Record bounded verification",
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "verification_evidence": [
+                {"summary": f"old evidence {index}", "success": True} for index in range(55)
+            ],
+        },
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": session.id,
+            "summary": "Verified bounded evidence behavior",
+            "evidence_type": "manual_diff_review",
+            "supports": "completion readiness",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["evidence_count"] == 50
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    evidence = variables["verification_evidence"]
+    assert len(evidence) == 50
+    assert evidence[0]["summary"] == "old evidence 6"
+    assert evidence[-1]["summary"] == "Verified bounded evidence behavior"
+
+
+@pytest.mark.asyncio
 async def test_get_session_messages_renderer_path(mock_transcript_reader, renderer_registry):
     """Test get_session_messages uses transcript_reader.get_rendered_messages when available."""
     rendered = RenderedMessage(

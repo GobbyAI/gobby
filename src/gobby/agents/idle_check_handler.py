@@ -188,11 +188,21 @@ class IdleCheckHandler:
         if db is None:
             return IdleDetector.REPROMPT_MESSAGE
 
-        step_context = await self._run_db(
-            get_active_step_workflow_context,
-            db,
-            run.child_session_id,
-        )
+        try:
+            step_context = await self._run_db(
+                get_active_step_workflow_context,
+                db,
+                run.child_session_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to load active step workflow context for idle reprompt on run %s "
+                "session %s",
+                run.id,
+                run.child_session_id,
+                exc_info=True,
+            )
+            return IdleDetector.REPROMPT_MESSAGE
         if step_context is None:
             return IdleDetector.REPROMPT_MESSAGE
 

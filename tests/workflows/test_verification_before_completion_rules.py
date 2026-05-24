@@ -132,6 +132,7 @@ def _ready_variables(**overrides: object) -> dict[str, object]:
 
 @pytest.mark.asyncio
 async def test_completion_readiness_blocks_without_recorded_evidence(db, manager) -> None:
+    """Lifecycle success tools are blocked until fresh verification evidence exists."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
@@ -146,6 +147,7 @@ async def test_completion_readiness_blocks_without_recorded_evidence(db, manager
 
 @pytest.mark.asyncio
 async def test_completion_readiness_allows_with_all_sibling_gates(db, manager) -> None:
+    """Completion readiness allows close_task when every sibling gate is satisfied."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
@@ -159,6 +161,7 @@ async def test_completion_readiness_allows_with_all_sibling_gates(db, manager) -
 
 @pytest.mark.asyncio
 async def test_protected_evidence_variables_cannot_be_set_directly(db, manager) -> None:
+    """Agents must record evidence through approved observers or MCP tools."""
     _sync_bundled(db)
 
     for name in ("verification_evidence_recorded", "verification_evidence"):

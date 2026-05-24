@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION, IdleCheckHandler
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -124,6 +125,54 @@ async def test_read_recent_codex_response_items_keeps_tail(tmp_path: Path) -> No
 
     assert len(items) == 1
     assert items[0]["payload_type"] == "custom_tool_call"
+
+
+@pytest.mark.asyncio
+async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        session_manager=session_manager,
+        check_interval_seconds=1.0,
+        tmux_config=config,
+    )
+    parent = session_manager.register(
+        external_id="parent-session-fallback",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    child = session_manager.register(
+        external_id="codex-child-fallback",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    run = _make_terminal_run(
+        agent_run_manager,
+        parent.to_dict(),
+        child_session_id=child.id,
+        run_id="run-codex-fallback",
+        tmux_session_name="gobby-codex-fallback",
+    )
+
+    with (
+        patch(
+            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            side_effect=RuntimeError("context lookup failed"),
+        ),
+        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+    ):
+        message = await monitor._idle_check_handler._idle_reprompt_message(run)
+
+    assert message == IdleDetector.REPROMPT_MESSAGE
+    assert any(call.kwargs.get("exc_info") is True for call in mock_warning.call_args_list)
 
 
 @pytest.mark.asyncio

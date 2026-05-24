@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.verification_evidence import append_verification_evidence
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
 
+logger = logging.getLogger(__name__)
+
 
 def register_verification_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
-    db: Any,
+    db: HubDatabase,
 ) -> None:
     """Register manual verification evidence tools."""
 
@@ -39,6 +44,12 @@ def register_verification_tools(
     ) -> dict[str, Any]:
         """Record structured verification evidence for the current session."""
         if session_manager is None or db is None:
+            logger.warning(
+                "record_verification_evidence missing dependencies: "
+                "session_manager_available=%s db_available=%s",
+                session_manager is not None,
+                db is not None,
+            )
             return {"success": False, "error": "Session manager and database are required"}
 
         if not summary.strip() or not evidence_type.strip() or not supports.strip():
@@ -57,6 +68,11 @@ def register_verification_tools(
         try:
             resolved_session_id = resolve_session_id(session_manager, session_id)
         except ValueError as exc:
+            logger.warning(
+                "record_verification_evidence failed to resolve session_id=%s",
+                session_id,
+                exc_info=True,
+            )
             return {"success": False, "error": str(exc)}
 
         evidence = {
@@ -75,15 +91,22 @@ def register_verification_tools(
         manager = SessionVariableManager(db)
         variables = manager.get_variables(resolved_session_id)
         existing = variables.get("verification_evidence", [])
-        if not isinstance(existing, list):
-            existing = []
-        evidence_items = [*existing, evidence]
+        evidence_items = append_verification_evidence(existing, evidence)
         manager.merge_variables(
             resolved_session_id,
             {
                 "verification_evidence": evidence_items,
                 "verification_evidence_recorded": True,
             },
+        )
+        logger.info(
+            "record_verification_evidence merged variables resolved_session_id=%s task_id=%s "
+            "evidence_type=%s supports=%s evidence_count=%s",
+            resolved_session_id,
+            task_id,
+            evidence_type,
+            supports,
+            len(evidence_items),
         )
 
         return {

@@ -19,6 +19,7 @@ from gobby.tasks.state_semantics import (
     is_task_actively_claimed,
 )
 from gobby.workflows.condition_helpers import is_validation_command
+from gobby.workflows.verification_evidence import append_verification_evidence
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -137,9 +138,9 @@ def _shell_tool_succeeded(event: "HookEvent") -> bool:
 
 def _append_verification_evidence(variables: dict[str, Any], evidence: dict[str, Any]) -> None:
     existing = variables.get("verification_evidence", [])
-    if not isinstance(existing, list):
-        existing = []
-    variables["verification_evidence"] = [*existing, _json_safe(evidence)]
+    variables["verification_evidence"] = append_verification_evidence(
+        existing, _json_safe(evidence)
+    )
 
 
 def compute_mode_level(chat_mode: str) -> int:

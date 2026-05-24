@@ -363,6 +363,17 @@ class WakeDispatcher:
             "error_message": f"No live web_chat session found for {session_id}",
         }
 
+    def _prune_live_wake_state(self, stale_before: float) -> None:
+        """Drop stale wake timestamps and unused per-session locks."""
+        for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
+            if recorded_ts >= stale_before:
+                continue
+            lock = self._live_wake_locks.get(recorded_session_id)
+            if lock is not None and lock.locked():
+                continue
+            self._last_live_wake.pop(recorded_session_id, None)
+            self._live_wake_locks.pop(recorded_session_id, None)
+
     def _should_send_live_wake(self, session_id: str, session: Any) -> bool:
         """Decide whether to send a live wake signal to a session.
 
@@ -373,10 +384,7 @@ class WakeDispatcher:
         reads its inbox.
         """
         now = time.monotonic()
-        stale_before = now - PANE_WAKE_DEBOUNCE_SECONDS
-        for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
-            if recorded_ts < stale_before:
-                self._last_live_wake.pop(recorded_session_id, None)
+        self._prune_live_wake_state(now - PANE_WAKE_DEBOUNCE_SECONDS)
 
         last = self._last_live_wake.get(session_id)
         if last is None:

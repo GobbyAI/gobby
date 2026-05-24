@@ -1254,6 +1254,23 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
         assert variables["verification_evidence"][-1]["success"] is True
 
+    def test_validation_evidence_keeps_latest_50_items(self, variables) -> None:
+        variables["verification_evidence"] = [
+            {"command": f"uv run pytest old_{index}.py", "success": True} for index in range(55)
+        ]
+        event = _make_bash_event(
+            "passed",
+            command="uv run pytest tests/workflows/test_hooks.py -v",
+            cwd="/repo",
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"]
+        assert len(evidence) == 50
+        assert evidence[0]["command"] == "uv run pytest old_6.py"
+        assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
+
     def test_failed_validation_clears_readiness_and_errors_resolved(self, variables) -> None:
         variables["verification_evidence_recorded"] = True
         variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
