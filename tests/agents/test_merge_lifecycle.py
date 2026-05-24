@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
@@ -49,7 +49,7 @@ def _step(agent: dict, name: str) -> dict:
     return matches[0]
 
 
-def _create_session(db: LocalDatabase, session_id: str = "merge-worker-session") -> None:
+def _create_session(db: HubDatabase, session_id: str = "merge-worker-session") -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
         ("project-1", "test-project"),
@@ -63,7 +63,7 @@ def _create_session(db: LocalDatabase, session_id: str = "merge-worker-session")
 
 
 def _install_merge_worker_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     session_id: str = "merge-worker-session",
     current_step: str = "merge",
@@ -133,8 +133,8 @@ def _mcp_event(
     )
 
 
-def _test_db(tmp_path: Path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "merge-worker.db")
+def _test_db(tmp_path: Path) -> HubDatabase:
+    db = HubDatabase(tmp_path / "merge-worker.db")
     run_migrations(db)
     return db
 

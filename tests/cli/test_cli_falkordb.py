@@ -128,7 +128,7 @@ class TestFalkorDBInstallFlags:
         mock_update_config.assert_not_called()
         mock_bootstrap_write.assert_not_called()
         assert not (gobby_home / "bootstrap.yaml").exists()
-        assert not (gobby_home / "gobby-hub.db").exists()
+        assert not (gobby_home / "hub-postgres.db").exists()
         assert not (gobby_home / "services").exists()
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,7 +14,7 @@ def _now() -> str:
 
 
 def _session_exists(
-    conn: HubDatabase | Transaction | sqlite3.Connection,
+    conn: HubDatabase | Transaction,
     session_id: str | None,
 ) -> bool:
     if not session_id:
@@ -25,7 +24,7 @@ def _session_exists(
 
 
 def _close_task_in_txn(
-    conn: Transaction | sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     *,
     db: HubDatabase | None = None,
@@ -100,7 +99,7 @@ def _close_task_in_txn(
 
 
 def _complete_terminal_delivery_stage_for_close(
-    conn: Transaction | sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     *,
     now: str,
@@ -158,7 +157,7 @@ def _is_terminal_delivery_stage(row: Any) -> bool:
 
 
 def _completion_commit_sha_for_stage(
-    conn: Transaction | sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     stage_name: str,
     fallback_commit_sha: str | None,
@@ -182,7 +181,7 @@ def _completion_commit_sha_for_stage(
 
 
 def _cascade_close_descendants(
-    conn: Transaction | sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     closed_at: str,
     closed_in_session_id: str | None,

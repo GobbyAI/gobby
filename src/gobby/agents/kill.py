@@ -15,7 +15,7 @@ import sys
 from typing import Any
 
 from gobby.storage.agents import AgentRun
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
 
 async def _close_terminal_window(
     session_id: str,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     session_manager: SessionManager | None = None,
     signal_name: str = "TERM",
     timeout: float = 5.0,
@@ -179,7 +179,7 @@ async def _close_tmux_session(session_name: str) -> dict[str, Any]:
 
 async def kill_agent(
     run: AgentRun,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     master_fd: int | None = None,
     signal_name: str = "TERM",

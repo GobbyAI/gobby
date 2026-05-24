@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from gobby.storage.merge_resolutions import ConflictStatus
 from gobby.worktrees.merge import ConflictHunk
@@ -103,7 +104,7 @@ def store_missing_conflicts(
                 status=status,
             )
             existing[file_path] = created
-        except sqlite3.IntegrityError:
+        except psycopg.IntegrityError:
             logger.debug("Conflict row already exists for %s in %s", file_path, resolution_id)
 
 

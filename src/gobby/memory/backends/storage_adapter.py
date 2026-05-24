@@ -4,9 +4,9 @@ Wraps an existing LocalMemoryManager instance to provide the async
 MemoryBackendProtocol interface. Used by MemoryManager to expose PostgreSQL
 hub-backed memory storage through the backend protocol.
 
-Unlike the old SQLiteBackend (deleted in Memory V4), this adapter does NOT
-create its own LocalMemoryManager — it reuses the one owned by MemoryManager,
-eliminating the duplicate-instance problem.
+Unlike the removed standalone backend, this adapter does NOT create its own
+LocalMemoryManager — it reuses the one owned by MemoryManager, eliminating the
+duplicate-instance problem.
 """
 
 from __future__ import annotations

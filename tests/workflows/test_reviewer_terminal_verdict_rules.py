@@ -4,19 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.condition_helpers import is_validation_command
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -29,18 +27,16 @@ RULE_NAMES = {
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
-    """Create a rule-synced SQLite fixture database."""
-    database = LocalDatabase(tmp_path / "reviewer_terminal_verdict_rules.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    """Create a rule-synced PostgreSQL fixture database."""
+    database = temp_db
     result = sync_bundled_rules(database, get_bundled_rules_path())
     assert result["errors"] == []
     yield database
-    database.close()
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     """Return workflow definition storage for the fixture database."""
     return LocalWorkflowDefinitionManager(db)
 
@@ -175,7 +171,7 @@ def test_bundled_reviewer_terminal_verdict_rules_sync(
 
 @pytest.mark.asyncio
 async def test_qa_reviewer_successful_validation_sets_pending_and_injects_reminder(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     """QA reviewer validation success sets pending state and injects verdict guidance."""
     engine = RuleEngine(db)
@@ -196,7 +192,7 @@ async def test_qa_reviewer_successful_validation_sets_pending_and_injects_remind
 
 
 @pytest.mark.asyncio
-async def test_codex_cmd_alias_validation_sets_pending(db: LocalDatabase) -> None:
+async def test_codex_cmd_alias_validation_sets_pending(db: HubDatabase) -> None:
     """Codex exec_command validation aliases are accepted as validation commands."""
     engine = RuleEngine(db)
     variables = _review_vars("qa-reviewer")
@@ -215,7 +211,7 @@ async def test_codex_cmd_alias_validation_sets_pending(db: LocalDatabase) -> Non
 
 @pytest.mark.asyncio
 async def test_python_module_ruff_format_check_is_validation_command(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     """`python -m ruff format --check` counts as validation, including through uv."""
     engine = RuleEngine(db)
@@ -230,7 +226,7 @@ async def test_python_module_ruff_format_check_is_validation_command(
 
 @pytest.mark.asyncio
 async def test_doc_reviewer_successful_validation_uses_review_verdict_contract(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     """Doc reviewer validation success requests the review verdict tools."""
     engine = RuleEngine(db)
@@ -247,7 +243,7 @@ async def test_doc_reviewer_successful_validation_uses_review_verdict_contract(
 
 @pytest.mark.asyncio
 async def test_holistic_reviewer_successful_validation_requires_stage_verdict(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     """Holistic reviewer validation success requests holistic QA stage verdict tools."""
     engine = RuleEngine(db)
@@ -263,7 +259,7 @@ async def test_holistic_reviewer_successful_validation_requires_stage_verdict(
 
 
 @pytest.mark.asyncio
-async def test_failed_validation_does_not_set_pending(db: LocalDatabase) -> None:
+async def test_failed_validation_does_not_set_pending(db: HubDatabase) -> None:
     """Failed validation does not mark the terminal verdict as pending."""
     engine = RuleEngine(db)
     variables = _review_vars("qa-reviewer")
@@ -279,7 +275,7 @@ async def test_failed_validation_does_not_set_pending(db: LocalDatabase) -> None
 
 
 @pytest.mark.asyncio
-async def test_terminal_verdict_success_clears_pending(db: LocalDatabase) -> None:
+async def test_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
     """QA reviewer approval clears pending terminal-verdict variables."""
     engine = RuleEngine(db)
     variables = {
@@ -297,7 +293,7 @@ async def test_terminal_verdict_success_clears_pending(db: LocalDatabase) -> Non
 
 
 @pytest.mark.asyncio
-async def test_holistic_terminal_verdict_success_clears_pending(db: LocalDatabase) -> None:
+async def test_holistic_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
     """Holistic reviewer completion clears pending terminal-verdict variables."""
     engine = RuleEngine(db)
     variables = {
@@ -314,7 +310,7 @@ async def test_holistic_terminal_verdict_success_clears_pending(db: LocalDatabas
 
 
 @pytest.mark.asyncio
-async def test_turn_end_blocks_while_terminal_verdict_pending(db: LocalDatabase) -> None:
+async def test_turn_end_blocks_while_terminal_verdict_pending(db: HubDatabase) -> None:
     """Turn end is blocked until a reviewer submits the terminal verdict."""
     engine = RuleEngine(db)
     variables = {

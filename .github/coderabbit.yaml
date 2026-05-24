@@ -52,7 +52,7 @@ reviews:
       instructions: |
         Focus on:
         - SQL injection prevention
-        - Thread-safety for SQLite connections
+        - Thread-safety for database connections
         - Transaction handling and rollback
         - Migration safety and backwards compatibility
         - Proper connection cleanup

@@ -18,12 +18,11 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedToolEvent
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observers import detect_mcp_call
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -49,14 +48,13 @@ _REQUIRE_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "codex_skill_injection.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -77,7 +75,7 @@ def _install_rule(
 
 @pytest.mark.asyncio
 async def test_synthesized_before_tool_blocks_for_task_creation_skill(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     _install_rule(
         manager,
@@ -124,7 +122,7 @@ async def test_synthesized_before_tool_blocks_for_task_creation_skill(
 
 @pytest.mark.asyncio
 async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_prompt(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     _install_rule(
         manager,
@@ -181,7 +179,7 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
 
 @pytest.mark.asyncio
 async def test_synthesized_event_skipped_when_skill_already_loaded(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """The rule's canonical loaded_skills idempotency guard applies."""
     _install_rule(
@@ -220,7 +218,7 @@ async def test_synthesized_event_skipped_when_skill_already_loaded(
 
 @pytest.mark.asyncio
 async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """Legacy injected_skills no longer satisfies skill_loaded()."""
     _install_rule(
@@ -290,7 +288,7 @@ def test_synthesized_event_requires_non_empty_external_id(
 
 @pytest.mark.asyncio
 async def test_synthesized_event_for_unrelated_server_does_not_fire(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     _install_rule(
         manager,

@@ -7,12 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentWorkflows,
 )
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -23,10 +22,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_apply_persona.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -38,7 +35,7 @@ def db(tmp_path) -> LocalDatabase:
 class TestBuildPersonaChanges:
     """Tests for the shared build_persona_changes function."""
 
-    def test_sets_agent_type_and_rules(self, db: LocalDatabase) -> None:
+    def test_sets_agent_type_and_rules(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(name="developer")
@@ -52,7 +49,7 @@ class TestBuildPersonaChanges:
         assert "_active_rule_names" in changes
         assert changes["is_spawned_agent"] is False
 
-    def test_spawned_flag(self, db: LocalDatabase) -> None:
+    def test_spawned_flag(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(name="worker")
@@ -65,7 +62,7 @@ class TestBuildPersonaChanges:
 
         assert changes["is_spawned_agent"] is True
 
-    def test_merges_agent_variables(self, db: LocalDatabase) -> None:
+    def test_merges_agent_variables(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
@@ -83,7 +80,7 @@ class TestBuildPersonaChanges:
         assert changes["my_var"] == "hello"
         assert changes["another"] == 42
 
-    def test_skips_reserved_variables(self, db: LocalDatabase) -> None:
+    def test_skips_reserved_variables(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
@@ -101,7 +98,7 @@ class TestBuildPersonaChanges:
         assert "_reserved" not in changes
         assert changes["good_var"] == "ok"
 
-    def test_blocked_tools(self, db: LocalDatabase) -> None:
+    def test_blocked_tools(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
@@ -118,7 +115,7 @@ class TestBuildPersonaChanges:
         assert changes["_agent_blocked_tools"] == ["Write", "Bash"]
         assert changes["_agent_blocked_mcp_tools"] == ["gobby-tasks:delete_task"]
 
-    def test_skill_format_override(self, db: LocalDatabase) -> None:
+    def test_skill_format_override(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
@@ -133,7 +130,7 @@ class TestBuildPersonaChanges:
 
         assert changes["_skill_format"] == "compact"
 
-    def test_step_workflow_not_created_for_caller_persona(self, db: LocalDatabase) -> None:
+    def test_step_workflow_not_created_for_caller_persona(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
 
@@ -170,7 +167,7 @@ class TestBuildPersonaChanges:
         instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
         assert instance is None
 
-    def test_step_workflow_creates_instance_for_spawned_session(self, db: LocalDatabase) -> None:
+    def test_step_workflow_creates_instance_for_spawned_session(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
         from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -207,7 +204,7 @@ class TestBuildPersonaChanges:
         assert instance.workflow_name == "stepper-steps"
         assert instance.current_step == "plan"
 
-    def test_spawned_session_preserves_existing_step_workflow(self, db: LocalDatabase) -> None:
+    def test_spawned_session_preserves_existing_step_workflow(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowInstance, WorkflowStep
         from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -259,7 +256,7 @@ class TestBuildPersonaChanges:
         assert instance.current_step == "execute"
         assert instance.variables == {"task_claimed": True, "loaded_skills": ["tech-writer"]}
 
-    def test_uses_preloaded_rules_and_skills(self, db: LocalDatabase) -> None:
+    def test_uses_preloaded_rules_and_skills(self, db: HubDatabase) -> None:
         """When enabled_rules and all_skills are passed, DB is not queried."""
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
@@ -276,7 +273,7 @@ class TestBuildPersonaChanges:
         assert changes["_agent_type"] == "test"
         assert active_rules == set()
 
-    def test_db_variable_definitions(self, db: LocalDatabase) -> None:
+    def test_db_variable_definitions(self, db: HubDatabase) -> None:
         """Variable definitions from the DB get applied."""
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -308,7 +305,7 @@ class TestBuildPersonaChanges:
 class TestBuildSessionPersonaChanges:
     """Tests for the narrow session persona helper."""
 
-    def test_only_sets_persona_context_fields(self, db: LocalDatabase) -> None:
+    def test_only_sets_persona_context_fields(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_session_persona_changes
         from gobby.workflows.definitions import WorkflowStep
 
@@ -345,7 +342,7 @@ class TestApplyPersonaImpl:
     """Tests for the apply_persona MCP tool implementation."""
 
     @pytest.mark.asyncio
-    async def test_unknown_agent_errors(self, db: LocalDatabase) -> None:
+    async def test_unknown_agent_errors(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         result = await apply_persona_impl(
@@ -371,7 +368,7 @@ class TestApplyPersonaImpl:
         assert "Database" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_no_session_errors(self, db: LocalDatabase) -> None:
+    async def test_no_session_errors(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         with patch(
@@ -388,7 +385,7 @@ class TestApplyPersonaImpl:
         assert "session" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_happy_path(self, db: LocalDatabase) -> None:
+    async def test_happy_path(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         with (
@@ -424,7 +421,7 @@ class TestApplyPersonaImpl:
         mock_merge.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_merges_custom_variables(self, db: LocalDatabase) -> None:
+    async def test_merges_custom_variables(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         with (
@@ -461,7 +458,7 @@ class TestApplyPersonaImpl:
         assert merged_changes["custom_key"] == "custom_val"
 
     @pytest.mark.asyncio
-    async def test_non_persona_capable_agent_errors(self, db: LocalDatabase) -> None:
+    async def test_non_persona_capable_agent_errors(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         with patch(
@@ -478,7 +475,7 @@ class TestApplyPersonaImpl:
         assert "persona-capable" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_with_task_id(self, db: LocalDatabase) -> None:
+    async def test_with_task_id(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         mock_task = MagicMock()

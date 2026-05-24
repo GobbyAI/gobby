@@ -7,14 +7,14 @@ Provides functions for integrating the task system with the workflow engine:
 import logging
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
 
 
 def update_task_from_workflow(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     validation_status: str | None = None,
     validation_feedback: str | None = None,
@@ -25,7 +25,7 @@ def update_task_from_workflow(
     corresponding task record.
 
     Args:
-        db: LocalDatabase instance
+        db: HubDatabase instance
         task_id: ID of the task to update
         validation_status: Validation status ('pending', 'valid', 'invalid')
         validation_feedback: Feedback from validation

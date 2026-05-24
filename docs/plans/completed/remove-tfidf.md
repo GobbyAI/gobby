@@ -2,7 +2,7 @@
 
 ## Context
 
-Gobby has three search backends: Qdrant (vector/semantic), FTS5 (SQLite full-text), and TF-IDF (scikit-learn in-memory). TF-IDF is the weakest — it requires in-memory fitting, has no persistence, needs a dirty-flag/refit cycle, and brings a scikit-learn dependency. Both task search and skill search currently use TF-IDF, but the data already lives in SQLite where FTS5 is a natural fit. Qdrant handles real semantic search for memory/code. TF-IDF is redundant.
+Gobby has three search backends: Qdrant (vector/semantic), FTS5 (PostgreSQL full-text), and TF-IDF (scikit-learn in-memory). TF-IDF is the weakest — it requires in-memory fitting, has no persistence, needs a dirty-flag/refit cycle, and brings a scikit-learn dependency. Both task search and skill search currently use TF-IDF, but the data already lives in PostgreSQL where FTS5 is a natural fit. Qdrant handles real semantic search for memory/code. TF-IDF is redundant.
 
 ## Scope
 
@@ -101,7 +101,7 @@ New `TaskSearcher`:
 New `SkillSearch`:
 - Constructor takes `db` (not `SearchConfig`)
 - `search(query, top_k, filters)` → FTS5 query with `deleted_at IS NULL` and `enabled = 1`
-- Category filter pushed into SQL via `json_extract(s.metadata, '$.skillport.category')`
+- Category filter pushed into SQL via `jsonb_path_query(s.metadata, '$.skillport.category')`
 - Tag filters remain Python-side (JSON array membership)
 - `search_async()` kept as thin `asyncio.to_thread` wrapper
 - **Remove**: `index_skills()`, `index_skills_async()`, `add_skill()`, `update_skill()`, `remove_skill()`, `needs_reindex()`, fallback tracking methods

@@ -43,7 +43,7 @@ def test_seed_rows_survive_reset(
        canonical value on reset.
     5. `schema_migrations` is verifiably absent from the computed
        `truncate_tables` set inside `_reset_schema`.
-    6. The removed SQLite import marker table is absent from the baseline.
+    6. The removed PostgreSQL import marker table is absent from the baseline.
     """
     psycopg = pytest.importorskip("psycopg")
 
@@ -127,5 +127,5 @@ def test_seed_rows_survive_reset(
         truncate_tables = all_tables - _BASELINE_BOOKKEEPING_TABLES
         assert "schema_migrations" not in truncate_tables
         assert "schema_migrations" in all_tables
-        # (6) Removed SQLite import marker table is absent from the baseline.
+        # (6) Removed PostgreSQL import marker table is absent from the baseline.
         assert "gobby_migration_state" not in all_tables

@@ -56,7 +56,8 @@ def validate_commit_requirements(
             message=(
                 "\nA commit is required before closing this task.\n\n"
                 "**Normal flow:**\n"
-                '1. Commit your changes: git commit -m "[#N] description"\n'
+                "1. Commit your changes: "
+                'git commit -m "[<project_name>-#<task_number>] <type>: <description>"\n'
                 '2. Close with commit_sha: close_task(task_id="#N", commit_sha="<sha>")\n\n'
                 "**Edge cases (no work done):**\n"
                 '- Task was already done: reason="already_implemented"\n'

@@ -19,7 +19,6 @@ from gobby.search import SearchConfig, UnifiedSearcher
 from gobby.search.keyword import pick_search_backend
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.skills import Skill
 
@@ -106,7 +105,7 @@ class SkillSearch:
     def __init__(
         self,
         *,
-        db: DatabaseProtocol | HubDatabase,
+        db: HubDatabase | HubDatabase,
         config: SearchConfig | None = None,
         refit_threshold: int = 10,
         embedding_model: str = "nomic-embed-text",
@@ -117,7 +116,7 @@ class SkillSearch:
         """Initialize skill search.
 
         Args:
-            db: HubDatabase or legacy LocalDatabase instance for keyword search.
+            db: HubDatabase or legacy HubDatabase instance for keyword search.
             config: Search configuration (defaults to auto mode).
             refit_threshold: Number of updates before automatic refit
             embedding_model: Embedding model name (from EmbeddingsConfig)

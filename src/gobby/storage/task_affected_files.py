@@ -5,11 +5,12 @@ dependency analysis and contention detection between concurrent tasks.
 """
 
 import logging
-import sqlite3
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+
+import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -79,7 +80,7 @@ class TaskAffectedFileManager:
                     ).fetchone()
                     if row is not None:
                         results.append(TaskAffectedFile.from_row(row))
-                except sqlite3.IntegrityError:
+                except psycopg.IntegrityError:
                     # UNIQUE constraint — file already exists from another source
                     logger.debug(f"File {file_path} already tracked for task {task_id}")
             return results
@@ -113,7 +114,7 @@ class TaskAffectedFileManager:
                     (task_id, file_path, source),
                 ).fetchone()
                 return TaskAffectedFile.from_row(row) if row is not None else None
-        except sqlite3.IntegrityError:
+        except psycopg.IntegrityError:
             logger.debug(f"File {file_path} already tracked for task {task_id}")
             return None
 

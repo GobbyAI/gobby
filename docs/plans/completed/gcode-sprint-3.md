@@ -2,7 +2,7 @@
 
 ## Context
 
-Sprints 1-2 delivered a fully functional Rust CLI (`gcode`) with tree-sitter parsing, SQLite indexing, FTS5 search, Neo4j graph, Qdrant vectors, llama-cpp-2 embeddings, RRF hybrid search, Fernet decryption, and savings tracking. 31 tests pass, build clean.
+Sprints 1-2 delivered a fully functional Rust CLI (`gcode`) with tree-sitter parsing, PostgreSQL indexing, FTS5 search, Neo4j graph, Qdrant vectors, llama-cpp-2 embeddings, RRF hybrid search, Fernet decryption, and savings tracking. 31 tests pass, build clean.
 
 Sprint 3 makes gcode the primary code index interface, replacing the gobby-code MCP server. Agents (both Claude Code subagents and gobby-spawned agents) get steered to `gcode` via Bash instead of MCP progressive discovery. The gobby-code MCP is gated behind a feature flag for transition. Daemon retains SymbolSummarizer (needs LLM) and uses gcode for faster indexing.
 

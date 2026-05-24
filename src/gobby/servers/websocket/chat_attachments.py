@@ -10,12 +10,12 @@ from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.servers.websocket.db import run_db
 from gobby.storage.chat_attachments import ChatAttachmentRecord
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 class AttachmentSessionManager(Protocol):
     @property
-    def db(self) -> DatabaseProtocol | None: ...
+    def db(self) -> HubDatabase | None: ...
 
 
 class ChatAttachmentConfig(Protocol):
@@ -111,14 +111,14 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
     return context
 
 
-def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
+def _attachment_db(owner: AttachmentOwner) -> HubDatabase:
     session_manager = getattr(owner, "session_manager", None)
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
     db = getattr(session_manager, "db", None)
     if db is None:
         raise ValueError("Attachment storage requires session_manager.db")
-    return cast(DatabaseProtocol, db)
+    return cast(HubDatabase, db)
 
 
 def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:

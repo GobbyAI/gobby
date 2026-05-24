@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
 def register_agent_step_workflow(
     agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> str:
     """Create or refresh the generated step workflow for an agent definition."""
     step_workflow_name = f"{agent_body.name}-steps"

@@ -25,7 +25,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
     assert {"install", "backup", "restore", "uninstall", "status", "activate"} <= set(
         postgres_group.commands
     )
-    assert "migrate-from-sqlite" not in postgres_group.commands
+    assert "migrate-from-postgres" not in postgres_group.commands
     assert "deactivate" not in postgres_group.commands
 
 
@@ -233,24 +233,24 @@ def test_postgres_uninstall_preserves_required_runtime_bootstrap(
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == mode
     assert "runtime bootstrap preserved" in result.output
-    assert "hub_backend=sqlite" not in result.output
+    assert "hub_backend=postgres" not in result.output
     assert "PostgreSQL uninstalled" not in result.output
 
 
-def test_postgres_uninstall_rejects_sqlite_runtime_rollback(
+def test_postgres_uninstall_rejects_runtime_rollback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="sqlite")
+    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
 
     assert result.exit_code != 0
     bootstrap = _read_bootstrap(tmp_path)
-    assert bootstrap["hub_backend"] == "sqlite"
+    assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == "docker"
     assert "requires hub_backend=postgres" in result.output

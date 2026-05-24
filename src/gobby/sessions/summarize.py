@@ -20,7 +20,7 @@ from typing import Any, Protocol
 import aiofiles
 
 from gobby.sessions.summary_validity import is_summary_markdown_valid
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class LLMServiceProtocol(Protocol):
     def get_default_provider(self) -> Any: ...
 
 
-async def _run_sqlite(
+async def _run_db(
     run_db: Callable[..., Awaitable[Any]] | None,
     func: Callable[..., Any],
     *args: Any,
@@ -59,7 +59,7 @@ async def _run_sqlite(
 def _resolve_run_db(
     explicit_run_db: Callable[..., Awaitable[Any]] | None,
     *,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
 ) -> Callable[..., Awaitable[Any]] | None:
     if explicit_run_db is not None:
@@ -92,7 +92,7 @@ async def generate_session_summaries(
     session_id: str,
     session_manager: SessionManagerProtocol,
     llm_service: LLMServiceProtocol | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
     set_handoff_ready: bool = True,
@@ -124,9 +124,9 @@ async def generate_session_summaries(
     if not session_manager:
         return {"success": False, "error": "Session manager not available"}
 
-    sqlite_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
+    db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
 
-    session = await _run_sqlite(sqlite_runner, session_manager.get, session_id)
+    session = await _run_db(db_runner, session_manager.get, session_id)
     if not session:
         return {"success": False, "error": "No session found", "session_id": session_id}
 
@@ -171,7 +171,7 @@ async def generate_session_summaries(
         llm_service=llm_service,
         db=db,
         session_manager=session_manager,
-        run_db=sqlite_runner,
+        run_db=db_runner,
     )
 
     if not is_summary_markdown_valid(full_markdown):
@@ -183,8 +183,8 @@ async def generate_session_summaries(
 
     # Persist to database
     if is_summary_markdown_valid(full_markdown):
-        await _run_sqlite(
-            sqlite_runner,
+        await _run_db(
+            db_runner,
             session_manager.update_summary,
             session_id,
             summary_markdown=full_markdown,
@@ -192,7 +192,7 @@ async def generate_session_summaries(
 
     # Set handoff_ready status
     if set_handoff_ready:
-        await _run_sqlite(sqlite_runner, session_manager.update_status, session_id, "handoff_ready")
+        await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
 
     # Write files if requested
     files_written = await _write_files(
@@ -209,8 +209,8 @@ async def generate_session_summaries(
         try:
             from gobby.savings.discovery import record_discovery_savings
 
-            await _run_sqlite(
-                sqlite_runner,
+            await _run_db(
+                db_runner,
                 record_discovery_savings,
                 resolved_db,
                 session.id,
@@ -420,7 +420,7 @@ async def _generate_full_summary(
     turns: list[dict[str, Any]],
     handoff_ctx: Any,
     llm_service: LLMServiceProtocol | None,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> tuple[str | None, str | None]:
@@ -504,12 +504,12 @@ async def _generate_full_summary(
         # Enrich with DB context
         resolved_db = db or getattr(session_manager, "db", None)
         claimed_tasks = (
-            await _run_sqlite(run_db, _get_claimed_tasks, session.id, resolved_db)
+            await _run_db(run_db, _get_claimed_tasks, session.id, resolved_db)
             if resolved_db
             else ""
         )
         session_memories = (
-            await _run_sqlite(run_db, _get_session_memories, session.id, resolved_db)
+            await _run_db(run_db, _get_session_memories, session.id, resolved_db)
             if resolved_db
             else ""
         )
@@ -544,7 +544,7 @@ async def _generate_full_summary(
         return None, str(e)
 
 
-def _get_claimed_tasks(session_id: str, db: DatabaseProtocol) -> str:
+def _get_claimed_tasks(session_id: str, db: HubDatabase) -> str:
     """Get tasks assigned to this session, formatted for LLM context.
 
     Args:
@@ -600,7 +600,7 @@ def _get_claimed_tasks(session_id: str, db: DatabaseProtocol) -> str:
         return ""
 
 
-def _get_session_memories(session_id: str, db: DatabaseProtocol) -> str:
+def _get_session_memories(session_id: str, db: HubDatabase) -> str:
     """Get memories stored during this session, formatted for LLM context.
 
     Args:

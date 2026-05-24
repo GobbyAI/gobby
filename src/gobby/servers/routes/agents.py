@@ -107,7 +107,7 @@ async def _batch_load_session_info(
 
     Returns dict mapping session_id to enrichment fields.
     """
-    import sqlite3
+    import psycopg
 
     if not session_ids:
         return {}
@@ -140,7 +140,7 @@ async def _batch_load_session_info(
                 "git_branch": row["git_branch"],
             }
         return result
-    except sqlite3.Error:
+    except psycopg.Error:
         logger.warning("Failed to load session info for agent runs", exc_info=True)
         return {}
 

@@ -178,8 +178,8 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    hub_backend, database_url, postgres_install_mode, plus migration-only
-    database_path compatibility) are read from ~/.gobby/bootstrap.yaml.
+    hub_backend, database_url, and postgres_install_mode) are read from
+    ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -222,19 +222,11 @@ class DaemonConfig(BaseModel):
     )
 
     # Hub connection settings
-    database_path: str = Field(
-        default="~/.gobby/gobby-hub.db",
-        description=(
-            "Legacy local database path retained for compatibility; runtime hub access "
-            "uses PostgreSQL database_url."
-        ),
-    )
     hub_backend: Literal["postgres"] = Field(
         default="postgres",
         description=(
             'hub_backend (Literal["postgres"]) selected by bootstrap.yaml; only "postgres" '
-            'is supported. "sqlite" was removed; see docs/guides/configuration.md#bootstrap '
-            "and use `gobby postgres install`."
+            "is supported; use `gobby postgres install`."
         ),
     )
     database_url: str | None = Field(
@@ -807,10 +799,6 @@ def load_config(
     # SAFETY SWITCH: Protect production resources during tests
     # If GOBBY_TEST_PROTECT is set, force safe paths from environment
     if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-        # Override database path
-        if safe_db := os.environ.get("GOBBY_DATABASE_PATH"):
-            config_dict["database_path"] = safe_db
-
         # Override telemetry logging paths
         telemetry_config = config_dict.setdefault("telemetry", {})
         if safe_client := os.environ.get("GOBBY_LOGGING_CLIENT"):

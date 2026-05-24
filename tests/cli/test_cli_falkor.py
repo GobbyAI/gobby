@@ -8,15 +8,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.status import format_status_message
 from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
-def _make_config_db(path: Path) -> LocalDatabase:
-    db = LocalDatabase(path)
+def _make_config_db(path: Path) -> HubDatabase:
+    db = HubDatabase(path)
     run_migrations(db)
     return db
 
@@ -27,7 +27,7 @@ class TestIsFalkorDBInstalled:
     def test_returns_true_when_config_store_keys_exist(self, tmp_path: Path) -> None:
         from gobby.cli.services import is_falkordb_installed
 
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -39,7 +39,7 @@ class TestIsFalkorDBInstalled:
     def test_returns_false_when_config_store_keys_are_missing(self, tmp_path: Path) -> None:
         from gobby.cli.services import is_falkordb_installed
 
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             assert is_falkordb_installed(db=db) is False
         finally:
@@ -53,7 +53,7 @@ class TestGetFalkorDBStatus:
     async def test_returns_status_dict(self, tmp_path: Path) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -76,7 +76,7 @@ class TestGetFalkorDBStatus:
     async def test_returns_not_installed(self, tmp_path: Path) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             result = await get_falkordb_status(db=db)
         finally:

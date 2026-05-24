@@ -8,7 +8,7 @@
 
 ## Context
 
-gsqz and gcode are successfully ported to Rust as standalone binaries in the gobby-cli monorepo (~9K LOC). The Python daemon is ~184K LOC across 670 files with 63 SQLite tables. Goal: incrementally replace the Python daemon with a compiled Rust binary. This is a clean rewrite opportunity — shed legacy cruft, optimize, ship a single binary.
+gsqz and gcode are successfully ported to Rust as standalone binaries in the gobby-cli monorepo (~9K LOC). The Python daemon is ~184K LOC across 670 files with 63 PostgreSQL tables. Goal: incrementally replace the Python daemon with a compiled Rust binary. This is a clean rewrite opportunity — shed legacy cruft, optimize, ship a single binary.
 
 The gsqz/gcode experience (standalone crate, clean design, fast iteration) is the template for how this should feel.
 
@@ -26,12 +26,12 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 |--------|------|-----|---------|
 | `bootstrap.rs` | gcode/config.rs, gsqz/config.rs | ~100 | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
 | `daemon.rs` | gsqz/daemon.rs, gcode/savings.rs | ~80 | ureq HTTP client for daemon API (savings reporting, config fetch) |
-| `db.rs` | gcode/db.rs | ~40 | SQLite connection helpers (WAL, foreign keys, busy timeout) |
+| `db.rs` | gcode/db.rs | ~40 | PostgreSQL connection helpers (WAL, foreign keys, busy timeout) |
 | `secrets.rs` | gcode/secrets.rs | ~180 | Fernet decryption (machine_id + secret_salt → PBKDF2 → decrypt) |
 | `project.rs` | gcode/project.rs | ~80 | Project root detection, project.json reading, UUID5 generation |
 
 **Cargo.toml feature gates:**
-- `sqlite` — rusqlite dependency
+- `PostgreSQL` — ruPostgreSQL dependency
 - `secrets` — fernet, pbkdf2, sha2, base64
 - `daemon` — ureq, serde_json
 
@@ -46,13 +46,13 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 
 ## Phase 2: Storage Layer in `gobby-core`
 
-**What:** Port the full gobby-hub.db schema and core CRUD operations to Rust.
+**What:** Port the full PostgreSQL hub schema and core CRUD operations to Rust.
 
 **Why now:** Storage is the most coupled module (42% of Python files import it). Every other component builds on it. Getting this right in Rust is the foundation for everything.
 
 **Scope:**
 - Embed v182 baseline schema directly (no migration history needed for fresh Rust builds)
-- Port `DatabaseProtocol` — 10 core methods (execute, fetchone, fetchall, transaction, safe_update, etc.)
+- Port `HubDatabase` — 10 core methods (execute, fetchone, fetchall, transaction, safe_update, etc.)
 - Port storage managers in priority order:
 
 | Manager | Methods | Priority | Rationale |
@@ -69,7 +69,7 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 | Others | varies | 4 | worktrees, clones, comms, cron, metrics, prompts, skills |
 
 **Key patterns to get right:**
-- Thread-safe connection pooling (r2d2 or deadpool-sqlite)
+- Thread-safe connection pooling (r2d2 or deadpool-PostgreSQL)
 - FTS5 trigger-synced virtual tables (3 tables, 12 triggers)
 - JSON column handling (serde_json for metadata blobs)
 - Composite unique indexes and soft deletes
@@ -77,10 +77,10 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 
 **Deliverables:**
 - [ ] `gobby-core::schema` — full v182 baseline as embedded SQL
-- [ ] `gobby-core::storage::Database` — connection pool with DatabaseProtocol equivalent
+- [ ] `gobby-core::storage::Database` — connection pool with HubDatabase equivalent
 - [ ] Priority 1 managers (tasks, sessions, config_store)
 - [ ] Priority 2 managers (workflow_definitions, mcp, memories)
-- [ ] Integration tests against real SQLite (not mocks)
+- [ ] Integration tests against real PostgreSQL (not mocks)
 
 ---
 
@@ -176,7 +176,7 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 Each phase has its own verification:
 
 - **Phase 1:** gcode and gsqz build and pass tests with gobby-core dependency. No behavior change.
-- **Phase 2:** Storage integration tests run against real SQLite. CRUD operations match Python behavior. FTS5 search returns same results.
+- **Phase 2:** Storage integration tests run against real PostgreSQL. CRUD operations match Python behavior. FTS5 search returns same results.
 - **Phase 3:** Rust daemon serves endpoints. Compare responses against Python daemon for same requests. CLI works against both.
 - **Phase 4:** Hook evaluation latency measured before/after. Rule engine produces same decisions as Python for test corpus.
 - **Phase 5:** Python daemon fully replaced. All existing tests pass against Rust daemon (adapted to Rust test harness).
@@ -188,7 +188,7 @@ Each phase has its own verification:
 **Rust (gobby-cli monorepo):**
 - `~/Projects/gobby-cli/Cargo.toml` — workspace members
 - `~/Projects/gobby-cli/crates/gcode/src/config.rs` — config to extract
-- `~/Projects/gobby-cli/crates/gcode/src/db.rs` — SQLite to extract
+- `~/Projects/gobby-cli/crates/gcode/src/db.rs` — PostgreSQL to extract
 - `~/Projects/gobby-cli/crates/gcode/src/secrets.rs` — secrets to extract
 - `~/Projects/gobby-cli/crates/gcode/src/project.rs` — project detection to extract
 - `~/Projects/gobby-cli/crates/gsqz/src/config.rs` — config to extract
@@ -196,7 +196,7 @@ Each phase has its own verification:
 
 **Python (schema source of truth):**
 - `src/gobby/storage/baseline_schema.sql` — v182 full schema
-- `src/gobby/storage/database.py` — DatabaseProtocol (10 methods)
+- `src/gobby/storage/database.py` — HubDatabase (10 methods)
 - `src/gobby/storage/sessions.py` — biggest manager (42 methods)
 - `src/gobby/storage/tasks/` — task sub-package (32 methods, 2798 LOC)
 - `src/gobby/workflows/engine/core.py` — rule engine to port in Phase 4

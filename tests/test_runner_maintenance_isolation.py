@@ -12,8 +12,8 @@ from gobby.runner_maintenance import (
     cleanup_expired_isolation_loop,
 )
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_cleanup_missing_isolation_records_removes_dead_paths(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     """Worktree and clone records with missing directories are removed."""
@@ -69,10 +69,10 @@ def test_cleanup_missing_isolation_records_removes_dead_paths(
 
 @pytest.mark.asyncio
 async def test_expired_isolation_loop_uses_bounded_db_runner(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Missing-record cleanup in the periodic loop keeps SQLite handles bounded."""
+    """Missing-record cleanup in the periodic loop keeps PostgreSQL handles bounded."""
     project = LocalProjectManager(temp_db).create(
         name="proj-1",
         repo_path=str(tmp_path / "repo"),

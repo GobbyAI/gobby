@@ -2,9 +2,9 @@
 
 import json
 import logging
-import sqlite3
 from datetime import UTC, datetime
 
+import psycopg
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation
@@ -148,11 +148,10 @@ def create_task(
 
             return task_id
 
-        except (sqlite3.IntegrityError, UniqueViolation) as e:
+        except (psycopg.IntegrityError, UniqueViolation) as e:
             error_msg = str(e)
             if (
-                "UNIQUE constraint failed: tasks.id" in error_msg
-                or "tasks.id" in error_msg
+                "tasks.id" in error_msg
                 or "tasks_pkey" in error_msg
                 or "Key (id)=" in error_msg
             ):

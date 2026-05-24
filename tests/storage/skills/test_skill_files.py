@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
 
 class FakeRow(dict):
-    """Dict subclass that supports sqlite3.Row-style key access."""
+    """Dict subclass that supports dict[str, object]-style key access."""
 
     def keys(self) -> list[str]:
         return list(super().keys())
@@ -48,7 +48,7 @@ def _hash(text: str) -> str:
 
 
 @pytest.fixture
-def storage(temp_db: LocalDatabase) -> LocalSkillManager:
+def storage(temp_db: HubDatabase) -> LocalSkillManager:
     return LocalSkillManager(temp_db)
 
 

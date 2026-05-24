@@ -135,7 +135,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import HubDatabase
 ```
 
 ### Import Rules
@@ -676,11 +676,11 @@ Use `__init__.py` to define public API:
 
 ```python
 # storage/__init__.py
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import HubDatabase
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
 
-__all__ = ["LocalDatabase", "LocalSessionManager", "LocalTaskManager"]
+__all__ = ["HubDatabase", "LocalSessionManager", "LocalTaskManager"]
 ```
 
 ---

@@ -31,7 +31,7 @@ git repo files
   → embed chunks via LiteLLM
   → upsert to Qdrant (code_chunks collection, payload: file, symbol, kind, lines)
   → build graph in Neo4j (CodeFile/CodeClass/CodeFunction nodes, CALLS/IMPORTS/INHERITS/CONTAINS edges)
-  → track file hashes in SQLite for incremental re-indexing
+  → track file hashes in PostgreSQL for incremental re-indexing
 ```
 
 ---
@@ -49,7 +49,7 @@ src/gobby/codebase/
 ├── indexer.py         # Orchestrator: parse→chunk→embed→store, incremental logic
 └── retriever.py       # Graph-RAG retrieval: Qdrant search → Neo4j expand → re-rank
 
-src/gobby/storage/codebase.py          # SQLite tables for indexing state
+src/gobby/storage/codebase.py          # PostgreSQL tables for indexing state
 src/gobby/config/codebase.py           # CodebaseConfig pydantic model
 src/gobby/mcp_proxy/tools/codebase.py  # gobby-codebase MCP tool registry
 ```
@@ -148,14 +148,14 @@ class CodebaseIndexer:
     async def index_project(self, project_path: str, project_id: str, full: bool = False) -> IndexJob:
         """Index a project. Incremental by default."""
         # 1. Walk files, filter by language
-        # 2. Check content hashes against SQLite (skip unchanged if not full)
+        # 2. Check content hashes against PostgreSQL (skip unchanged if not full)
         # 3. For each changed file:
         #    a. Parse with tree-sitter → symbols
         #    b. Chunk symbols → embeddable text
         #    c. Embed via LiteLLM
         #    d. Upsert to Qdrant (code_chunks collection)
         #    e. Build/update Neo4j graph nodes + edges
-        #    f. Update file hash in SQLite
+        #    f. Update file hash in PostgreSQL
         # 4. Clean up removed files (delete from Qdrant + Neo4j)
         # 5. Return IndexJob with stats
 ```
@@ -205,7 +205,7 @@ class CodeSearchResult:
 
 ### 7. Storage (`storage/codebase.py`)
 
-SQLite tables (added via migration):
+PostgreSQL tables (added via migration):
 
 ```sql
 CREATE TABLE code_index_files (
@@ -233,7 +233,7 @@ CREATE TABLE code_index_jobs (
 );
 ```
 
-No need for a `code_symbols` table in SQLite — symbols live in Qdrant (with payloads) and Neo4j (as nodes). SQLite just tracks indexing state.
+No need for a `code_symbols` table in PostgreSQL — symbols live in Qdrant (with payloads) and Neo4j (as nodes). PostgreSQL just tracks indexing state.
 
 ### 8. Config (`config/codebase.py`)
 
@@ -301,7 +301,7 @@ This is a rule *template* (disabled by default, installable via rules engine).
 3. `src/gobby/codebase/parser.py` — Tree-sitter parsing (Python + TS first)
 4. `src/gobby/codebase/chunker.py` — Symbol chunking
 5. `src/gobby/config/codebase.py` — Config model
-6. `src/gobby/storage/codebase.py` — SQLite storage + migration
+6. `src/gobby/storage/codebase.py` — PostgreSQL storage + migration
 7. `pyproject.toml` — Add tree-sitter dependencies (required)
 
 ### Phase 2: Indexing Pipeline

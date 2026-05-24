@@ -9,14 +9,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -24,9 +23,8 @@ EvalFn = Callable[..., Awaitable[HookResponse]]
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "hook_eval_serialization.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -219,7 +217,7 @@ async def test_session_end_cleanup_waits_for_queued_same_session_event(tmp_path)
 
 @pytest.mark.asyncio
 async def test_loaded_skill_observer_persists_before_next_same_session_event(
-    db: LocalDatabase,
+    db: HubDatabase,
     tmp_path,
 ) -> None:
     platform_session_id = "platform-skill-session"

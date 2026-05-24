@@ -35,7 +35,7 @@ def db(hub_db):
 
 @pytest.fixture
 def memory_config():
-    """Create a default memory configuration with SQLite backend."""
+    """Create a default memory configuration with PostgreSQL backend."""
     return MemoryConfig(
         enabled=True,
         backend="local",
@@ -61,7 +61,7 @@ def mock_config():
     """Create a mock MemoryConfig."""
     config = MagicMock(spec=MemoryConfig)
     config.access_debounce_seconds = 60
-    config.backend = "sqlite"
+    config.backend = "postgres"
     return config
 
 
@@ -669,7 +669,7 @@ class TestDeleteMemoryExtended:
         )
         memory = await manager.create_memory(content="To delete VS fail")
         result = await manager.delete_memory(memory.id)
-        assert result is True  # Still returns True since SQLite delete succeeded
+        assert result is True  # Still returns True since PostgreSQL delete succeeded
         assert mock_vs.delete.await_count == 1
 
 

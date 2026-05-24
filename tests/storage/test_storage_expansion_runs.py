@@ -4,18 +4,16 @@ from unittest.mock import patch
 import pytest
 
 import gobby.storage.expansion_runs as expansion_runs_module
-from gobby.storage.database import LocalDatabase
 from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "expansion_runs.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase):
+    database = temp_db
     with database.transaction() as conn:
         conn.execute("INSERT INTO projects (id, name) VALUES (?, ?)", ("p1", "test_project"))
     return database

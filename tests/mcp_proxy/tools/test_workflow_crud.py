@@ -10,10 +10,9 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
     export_workflow_definition,
     update_workflow_definition,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.loader import WorkflowLoader
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -53,16 +52,14 @@ steps: []
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test_crud.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def def_manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -101,7 +98,7 @@ class TestCreateWorkflow:
 
     def test_create_with_project_id(
         self,
-        db: LocalDatabase,
+        db: HubDatabase,
         def_manager: LocalWorkflowDefinitionManager,
         loader: WorkflowLoader,
     ) -> None:
@@ -427,7 +424,7 @@ class TestExportWorkflow:
 
 
 class TestRegistryIntegration:
-    def test_workflows_registry_has_crud_tools(self, db: LocalDatabase) -> None:
+    def test_workflows_registry_has_crud_tools(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         registry = create_workflows_registry(db=db)
@@ -438,7 +435,7 @@ class TestRegistryIntegration:
         assert "delete_workflow" in tool_names
         assert "export_workflow" in tool_names
 
-    def test_pipelines_registry_has_crud_tools(self, db: LocalDatabase) -> None:
+    def test_pipelines_registry_has_crud_tools(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         registry = create_workflows_registry(db=db)

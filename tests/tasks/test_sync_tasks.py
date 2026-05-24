@@ -34,9 +34,9 @@ def sample_project(hub_db):
     return project.to_dict()
 
 
-def _set_sqlite_foreign_keys(db, enabled: bool) -> None:
-    if getattr(db, "dialect", "postgres") == "sqlite":
-        db.execute(f"PRAGMA foreign_keys = {'ON' if enabled else 'OFF'}")
+def _set_db_foreign_keys(db, enabled: bool) -> None:
+    if getattr(db, "dialect", "postgres") == "postgres":
+        db.execute(f"information_schema foreign_keys = {'ON' if enabled else 'OFF'}")
 
 
 class TestTaskSyncManager:
@@ -509,9 +509,9 @@ class TestClosedStateRoundTrip:
         assert data["due_date"] == "2026-01-20"
 
         # Delete task from DB to simulate fresh import
-        _set_sqlite_foreign_keys(sync_manager.db, False)
+        _set_db_foreign_keys(sync_manager.db, False)
         sync_manager.db.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
-        _set_sqlite_foreign_keys(sync_manager.db, True)
+        _set_db_foreign_keys(sync_manager.db, True)
         row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task.id,))
         assert row is None
 
@@ -545,7 +545,7 @@ class TestClosedStateRoundTrip:
 
         # Set session-local fields that should NOT be wiped by import
         # Disable FK checks since session IDs reference sessions table
-        _set_sqlite_foreign_keys(sync_manager.db, False)
+        _set_db_foreign_keys(sync_manager.db, False)
         sync_manager.db.execute(
             """UPDATE tasks SET
                 assignee = 'session-uuid-123',
@@ -556,7 +556,7 @@ class TestClosedStateRoundTrip:
             WHERE id = ?""",
             (task.id,),
         )
-        _set_sqlite_foreign_keys(sync_manager.db, True)
+        _set_db_foreign_keys(sync_manager.db, True)
 
         # Create JSONL with newer timestamp to trigger UPDATE path
         jsonl_data = {

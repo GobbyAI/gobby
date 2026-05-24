@@ -79,7 +79,7 @@ Four functions:
 
 Rule selector matching per dimension:
 - `tag:X` → `any(fnmatch(t, X) for t in row.tags)`
-- `group:X` → `fnmatch(json_extract(definition_json, '$.group'), X)`
+- `group:X` → `fnmatch(jsonb_path_query(definition_json, '$.group'), X)`
 - `name:X` or bare string → `fnmatch(row.name, X)`
 - `source:X` → `fnmatch(row.source, X)`
 - `*` → always True
@@ -97,7 +97,7 @@ Include is OR (any match = included). Then exclude is subtracted (any match = ex
 
 **File**: `src/gobby/workflows/agent_resolver.py`
 
-- `resolve_agent(name: str, db: DatabaseProtocol, cli_source: str | None = None) -> AgentDefinitionBody | None`
+- `resolve_agent(name: str, db: HubDatabase, cli_source: str | None = None) -> AgentDefinitionBody | None`
   - Follows `extends` chain up to `MAX_EXTENDS_DEPTH = 5`
   - Cycle detection via `seen: set[str]`. Any cycle or depth breach raises `AgentResolutionError`.
   - Merges from root ancestor → leaf (child overrides parent)

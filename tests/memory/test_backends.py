@@ -52,10 +52,10 @@ class TestGetBackend:
         backend = get_backend("null")
         assert isinstance(backend, MemoryBackendProtocol)
 
-    def test_get_backend_sqlite_raises(self) -> None:
-        """Test that 'sqlite' backend type is no longer supported via factory."""
+    def test_get_backend_postgres_raises(self) -> None:
+        """Test that 'postgres' backend type is no longer supported via factory."""
         with pytest.raises(ValueError, match="Unknown backend type"):
-            get_backend("sqlite")
+            get_backend("postgres")
 
 
 # =============================================================================

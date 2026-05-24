@@ -250,7 +250,7 @@ def test_storage_runtime_imports_hub_database_not_legacy_protocol(repo_root: Pat
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == "gobby.storage.database":
-                if any(alias.name == "DatabaseProtocol" for alias in node.names):
+                if any(alias.name == "HubDatabase" for alias in node.names):
                     offenders.append(str(path.relative_to(repo_root)))
 
     assert offenders == []

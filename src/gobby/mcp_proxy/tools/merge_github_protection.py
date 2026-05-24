@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import sqlite3
 import subprocess  # nosec B404 # used for a fixed git dry-run fallback.
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+import psycopg
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -67,7 +68,7 @@ def github_token(db: HubDatabase | None) -> str | None:
             token = store.get(name)
             if token:
                 return token
-    except (LookupError, OSError, RuntimeError, sqlite3.Error):
+    except (LookupError, OSError, RuntimeError, psycopg.Error):
         return None
     return None
 

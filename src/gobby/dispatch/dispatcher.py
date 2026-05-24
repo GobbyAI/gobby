@@ -6,12 +6,13 @@ import asyncio
 import inspect
 import json
 import logging
-import sqlite3
 import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+
+import psycopg
 
 from gobby.dispatch import rules as dispatch_rules
 from gobby.dispatch.actions import (
@@ -44,7 +45,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
@@ -72,9 +73,9 @@ DISPATCH_HOLDER = "dispatcher"
 DISPATCH_TTL_SECONDS = 600
 ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS = 30
 _PIPELINE_ATTACH_DATABASE_ERRORS = (
-    sqlite3.IntegrityError,
-    sqlite3.OperationalError,
-    sqlite3.DatabaseError,
+    psycopg.IntegrityError,
+    psycopg.OperationalError,
+    psycopg.Error,
 )
 
 
@@ -113,7 +114,7 @@ def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
 
 async def run_heartbeat(
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
     startup: bool = False,
     max_active_agents: int | None = None,
@@ -219,7 +220,7 @@ async def run_heartbeat(
             ):
                 write_set_guard.reserve(action.task_id)
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
-        except (TypeError, AttributeError, sqlite3.DatabaseError):
+        except (TypeError, AttributeError, psycopg.Error):
             mutex.release()
             raise
         except DispatchSpawnUnavailable as exc:
@@ -259,7 +260,7 @@ def _log_write_set_overlap(overlap: WriteSetOverlap) -> None:
 def _candidate_for_stage_snapshot(
     candidate: Task,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None,
 ) -> Task | None:
     if _candidate_current_stage(candidate) is not None:
@@ -281,7 +282,7 @@ def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> H
 
 def sweep_orphan_no_run_dispatch_mutexes(
     mutex_storage: TaskDispatchMutexManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str | None = None,
     now: datetime | None = None,
@@ -362,7 +363,7 @@ async def _execute_action(
     action: Action,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object,
     services: object | None,
 ) -> object | None:
@@ -382,7 +383,7 @@ async def _execute_spawn_action(
     action: SpawnAgentAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     services: object | None,
 ) -> str | None:
@@ -411,7 +412,7 @@ async def execute_action(
     action: Action,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None = None,
     services: object | None = None,
 ) -> object | None:
@@ -479,7 +480,7 @@ async def _start_pipeline_action(
     action: StartPipelineAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     services: object | None,
 ) -> dict[str, object]:
@@ -555,7 +556,7 @@ async def _start_pipeline_action(
 def _escalate_pipeline_dispatch(
     action: StartPipelineAction,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     reason: str,
 ) -> dict[str, object]:
     escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
@@ -603,7 +604,7 @@ def _create_stage_pipeline_execution(
     pipeline: object,
     inputs: dict[str, Any],
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
 ) -> str:
     execution_id = generate_prefixed_id("pe")
@@ -650,7 +651,7 @@ def _create_stage_pipeline_execution(
     return execution_id
 
 
-def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> StageStatesManager:
+def _stage_states_manager(*, db: HubDatabase, services: object | None) -> StageStatesManager:
     task_manager = getattr(services, "task_manager", None)
     manager = getattr(task_manager, "stage_states", None)
     if manager is not None:
@@ -658,7 +659,7 @@ def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> S
     return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
-def count_active_agents(db: DatabaseProtocol | None, project_id: str | None = None) -> int:
+def count_active_agents(db: HubDatabase | None, project_id: str | None = None) -> int:
     """Return pending/running agent runs, optionally scoped by parent-session project."""
     if db is None:
         return 0
@@ -688,7 +689,7 @@ def _handle_spawn_failure(
     action: SpawnAgentAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     error: str,
 ) -> None:
@@ -752,7 +753,7 @@ def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
 def create_isolation(
     action: CreateIsolationAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None = None,
 ) -> TaskArtifacts | None:
     artifacts = getattr(context, "artifacts", None)
@@ -793,14 +794,14 @@ def resolve_branch_sha(branch: str) -> str:
 
 def set_artifacts_atomic(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     **fields: str | int | None,
 ) -> TaskArtifacts:
     return _set_artifacts_atomic(db, task_id, **fields)
 
 
-def append_audit_marker(db: DatabaseProtocol, task_id: str, heading: str, body: str) -> bool:
+def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
     task = get_task(db, task_id)
     description = task.description or ""
     marker = f"\n\n### {heading}\n\n{body}"
@@ -808,7 +809,7 @@ def append_audit_marker(db: DatabaseProtocol, task_id: str, heading: str, body: 
     return True
 
 
-def escalate_task(*, db: DatabaseProtocol, task_id: str, reason: str) -> bool:
+def escalate_task(*, db: HubDatabase, task_id: str, reason: str) -> bool:
     _escalate_task(db, task_id, reason=reason)
     return True
 

@@ -11,18 +11,15 @@ from gobby.storage.config_store import (
     is_secret_key_name,
     unflatten_config,
 )
-from gobby.storage.database import LocalDatabase
-from tests.fixtures.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a test database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 

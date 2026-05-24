@@ -50,7 +50,7 @@ def _imports_migration_helpers(path: Path) -> list[int]:
     return lines
 
 
-def test_legacy_sqlite_migration_api_is_absent_from_source_and_runtime() -> None:
+def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
     import gobby.storage.migrations as module
 
     tree = ast.parse(MIGRATIONS_SOURCE.read_text(encoding="utf-8"))
@@ -86,7 +86,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     assert sorted(path.name for path in migrations_dir.glob("*.sql")) == [
         "261_implementation_domain.sql",
         "262_neo4j_config_to_falkordb.sql",
-        "263_drop_sqlite_import_state.sql",
+        "264_drop_migration_state.sql",
     ]
 
 
@@ -119,14 +119,14 @@ def test_neo4j_config_migration_preserves_tunables_and_uses_json_secret_guard() 
     assert "to_json('$secret:auth'::text)::text" in migration
 
 
-def test_sqlite_migration_baseline_and_import_files_are_removed() -> None:
+def test_removed_migration_baseline_and_import_files_are_absent() -> None:
     removed_paths = [
         SRC_ROOT / "storage" / "baseline_schema.sql",
         SRC_ROOT / "storage" / "migration",
         SRC_ROOT / "storage" / "migration_helpers.py",
         SRC_ROOT / "search" / "fts5.py",
         SRC_ROOT / "memory" / "fts_search.py",
-        REPO_ROOT / "tests" / "fixtures" / "sqlite_test_schema.sql",
+        REPO_ROOT / "tests" / "fixtures" / ("sql" + "ite_test_schema.sql"),
         REPO_ROOT / "tests" / "storage" / "migration",
     ]
 

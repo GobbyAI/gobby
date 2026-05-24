@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
@@ -34,7 +34,7 @@ def get_bundled_variables_path() -> Path:
 
 
 def sync_bundled_variables(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     variables_path: Path | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:

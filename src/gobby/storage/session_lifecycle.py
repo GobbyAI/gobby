@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
-from gobby.storage.sql_dialect import is_postgres, older_than_now_expr
+from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,11 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
     """Return guard clauses for retained session references present in this schema."""
     guards: list[str] = []
 
-    # table_name is drawn from _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS, a
-    # hardcoded module-scope constant; it never comes from user input. The
-    # f-string interpolation into PRAGMA is safe here — do not "fix" this
-    # into a parameterized call (PRAGMA does not accept bound parameters
-    # for identifiers anyway).
     for table_name, columns in _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS:
-        rows = _table_column_rows(db, table_name)
-        if not rows:
+        existing_columns = table_column_names(db, table_name)
+        if not existing_columns:
             continue
 
-        existing_columns = {row["name"] for row in rows}
         matched_columns = [column for column in columns if column in existing_columns]
         if not matched_columns:
             continue
@@ -51,21 +45,6 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
         guards.append(f"NOT EXISTS (SELECT 1 FROM {table_name} {alias} WHERE {column_predicate})")
 
     return tuple(guards)
-
-
-def _table_column_rows(db: HubDatabase, table_name: str) -> list[Row]:
-    if is_postgres(db):
-        return db.fetchall(
-            """
-            SELECT column_name AS name
-              FROM information_schema.columns
-             WHERE table_schema = current_schema()
-               AND table_name = ?
-            """,
-            (table_name,),
-        )
-    return db.fetchall(f"PRAGMA table_info({table_name})")
-
 
 def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
@@ -80,11 +59,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
-    empty_terminal_context_sql = (
-        "terminal_context IS NULL"
-        if is_postgres(db)
-        else "(terminal_context IS NULL OR terminal_context = '')"
-    )
+    empty_terminal_context_sql = "terminal_context IS NULL"
     cursor = db.execute(
         f"""
         UPDATE sessions

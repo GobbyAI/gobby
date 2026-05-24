@@ -781,7 +781,7 @@ class TestInitializeProject:
             }
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -806,7 +806,7 @@ class TestInitializeProject:
         # Patch all the imports used inside the function
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -830,7 +830,7 @@ class TestInitializeProject:
         """Test that provided name overrides directory name."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -854,7 +854,7 @@ class TestInitializeProject:
         """Test that provided github_url is used."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value="https://auto-detected.com"):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -884,7 +884,7 @@ class TestInitializeProject:
             with patch(
                 "gobby.utils.git.get_github_url", return_value="https://github.com/detected/repo"
             ):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -911,7 +911,7 @@ class TestInitializeProject:
         """Test handling when project exists in DB but no local project.json."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             # Project exists in database
@@ -967,7 +967,7 @@ class TestInitializeProject:
             }
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -1000,7 +1000,7 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -1031,7 +1031,7 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_existing = MagicMock()
@@ -1056,7 +1056,7 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
@@ -1101,7 +1101,7 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.database.LocalDatabase"):
+                with patch("gobby.storage.database.HubDatabase"):
                     with patch("gobby.utils.project_init.open_runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()

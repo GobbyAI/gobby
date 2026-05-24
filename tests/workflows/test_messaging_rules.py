@@ -14,26 +14,23 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
 from gobby.workflows.engine.core import RuleEngine
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_messaging_rules.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -98,7 +95,7 @@ class TestDeliverPendingMessages:
 
     @pytest.mark.asyncio
     async def test_fires_on_before_agent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
 
@@ -113,7 +110,7 @@ class TestDeliverPendingMessages:
 
     @pytest.mark.asyncio
     async def test_records_correct_mcp_call(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
 
@@ -129,7 +126,7 @@ class TestDeliverPendingMessages:
 
     @pytest.mark.asyncio
     async def test_skips_for_non_agent_session(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
 
@@ -145,7 +142,7 @@ class TestDeliverPendingMessages:
 
     @pytest.mark.asyncio
     async def test_skips_when_platform_session_id_is_missing(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
 
@@ -186,7 +183,7 @@ _SENDER_SESSION = "sender-session-aaa"
 _TEST_PROJECT_ID = "test-project-001"
 
 
-def _ensure_project(db: LocalDatabase) -> None:
+def _ensure_project(db: HubDatabase) -> None:
     """Insert a minimal project row so session FK constraints are satisfied."""
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name) VALUES (?, 'test-project')",
@@ -194,7 +191,7 @@ def _ensure_project(db: LocalDatabase) -> None:
     )
 
 
-def _create_session(db: LocalDatabase, session_id: str) -> None:
+def _create_session(db: HubDatabase, session_id: str) -> None:
     """Insert a minimal session row so FK constraints are satisfied."""
     _ensure_project(db)
     db.execute(
@@ -204,7 +201,7 @@ def _create_session(db: LocalDatabase, session_id: str) -> None:
     )
 
 
-def _insert_undelivered_message(db: LocalDatabase, to_session: str) -> str:
+def _insert_undelivered_message(db: HubDatabase, to_session: str) -> str:
     """Insert an undelivered inter-session message, returns message id."""
     _create_session(db, _SENDER_SESSION)
     _create_session(db, to_session)
@@ -218,7 +215,7 @@ def _insert_undelivered_message(db: LocalDatabase, to_session: str) -> str:
     return msg_id
 
 
-def _insert_delivered_message(db: LocalDatabase, to_session: str) -> str:
+def _insert_delivered_message(db: HubDatabase, to_session: str) -> str:
     """Insert an already-delivered inter-session message, returns message id."""
     _create_session(db, _SENDER_SESSION)
     _create_session(db, to_session)
@@ -279,7 +276,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_injects_context_when_messages_pending(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _insert_undelivered_message(db, target_session)
@@ -299,7 +296,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_on_deliver_pending_messages(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """No nudge when the agent is already reading its mail."""
         target_session = str(uuid.uuid4())
@@ -320,7 +317,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_no_messages(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _create_session(db, target_session)
@@ -340,7 +337,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_messages_already_delivered(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _insert_delivered_message(db, target_session)
@@ -360,7 +357,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_skipped_for_root_sessions(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Root sessions (no _agent_type) should not get nudge from agent_scope: ['*']."""
         target_session = str(uuid.uuid4())
@@ -382,7 +379,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_platform_session_id_absent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Non-platform sessions (no _platform_session_id) get no nudge."""
         target_session = str(uuid.uuid4())
@@ -403,7 +400,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_context_renders_message_count(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Injected context should include the count from pending_message_count."""
         target_session = str(uuid.uuid4())
@@ -434,7 +431,7 @@ class TestJinja2HelperRendering:
 
     @pytest.mark.asyncio
     async def test_pending_message_count_renders_in_block_reason(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """pending_message_count is callable from block reason templates."""
         target_session = str(uuid.uuid4())
@@ -469,7 +466,7 @@ class TestJinja2HelperRendering:
 
     @pytest.mark.asyncio
     async def test_helpers_available_in_inject_context(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Helper functions are accessible in inject_context templates."""
         target_session = str(uuid.uuid4())

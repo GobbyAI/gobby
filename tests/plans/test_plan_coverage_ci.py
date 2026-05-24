@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
+import psycopg
 import pytest
 import yaml
 
@@ -303,7 +303,7 @@ def test_plans_table_has_unique_project_plan_constraint(temp_db: TestDatabase) -
     _seed_registry(temp_db)
     first = _active_entries(temp_db)[0]
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(psycopg.IntegrityError):
         temp_db.execute(
             """
             INSERT INTO plans (

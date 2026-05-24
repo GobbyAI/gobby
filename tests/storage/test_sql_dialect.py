@@ -21,7 +21,7 @@ from gobby.storage.token_events import TokenEventStore
 
 
 class _CaptureDb:
-    def __init__(self, dialect: Literal["sqlite", "postgres"]) -> None:
+    def __init__(self, dialect: Literal["postgres"] = "postgres") -> None:
         self.dialect = dialect
         self.queries: list[str] = []
         self.params: list[tuple[Any, ...]] = []
@@ -60,38 +60,25 @@ class _CaptureDb:
 
 
 class _Db:
-    def __init__(self, dialect: Literal["sqlite", "postgres"]) -> None:
+    def __init__(self, dialect: Literal["postgres"] = "postgres") -> None:
         self.dialect = dialect
 
 
 def test_json_text_expr_uses_jsonb_path_operator_for_postgres() -> None:
-    assert json_text_expr(_Db("postgres"), "metadata", "skillport", "category") == (
+    assert json_text_expr(_Db(), "metadata", "skillport", "category") == (
         "metadata #>> '{skillport,category}'"
     )
 
 
-def test_json_text_expr_preserves_sqlite_json_extract_for_overlap_window() -> None:
-    assert json_text_expr(_Db("sqlite"), "metadata", "skillport", "category") == (
-        "json_extract(metadata, '$.skillport.category')"
-    )
-
-
 def test_json_array_contains_condition_uses_jsonb_contains_for_postgres() -> None:
-    condition, params = json_array_contains_condition(_Db("postgres"), "tags", "gobby")
+    condition, params = json_array_contains_condition(_Db(), "tags", "gobby")
 
     assert condition == "tags @> ?::jsonb"
     assert params == ('["gobby"]',)
 
 
-def test_json_array_contains_condition_uses_json_each_for_sqlite() -> None:
-    condition, params = json_array_contains_condition(_Db("sqlite"), "tags", "gobby")
-
-    assert condition == "EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)"
-    assert params == ("gobby",)
-
-
 def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
     manager = LocalTaskManager(db)  # type: ignore[arg-type]
 
     assert (
@@ -104,7 +91,6 @@ def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
     task_query = db.queries[task_query_index]
 
     assert "tasks.labels @> ?::jsonb" in task_query
-    assert "json_each" not in task_query
     assert db.params[task_query_index] == (
         "proj1",
         '["interactive:planning-in-progress:sess"]',
@@ -114,7 +100,7 @@ def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
 
 
 def test_skill_list_negative_limit_omits_limit_for_postgres() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
     manager = LocalSkillManager(db)  # type: ignore[arg-type]
 
     assert manager.list_skills(project_id=None, include_global=False, limit=-1) == []
@@ -126,7 +112,7 @@ def test_skill_list_negative_limit_omits_limit_for_postgres() -> None:
 
 
 def test_timestamp_helpers_emit_postgres_native_time_arithmetic() -> None:
-    db = _Db("postgres")
+    db = _Db()
 
     assert older_than_now_expr(db, "updated_at", "?", "hour") == (
         "updated_at < NOW() - (?::double precision * INTERVAL '1 hour')"
@@ -143,7 +129,7 @@ def test_timestamp_helpers_emit_postgres_native_time_arithmetic() -> None:
 
 
 def test_table_column_names_uses_information_schema_for_postgres() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
 
     def fetchall(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
         db.queries.append(query)
@@ -154,19 +140,18 @@ def test_table_column_names_uses_information_schema_for_postgres() -> None:
 
     assert table_column_names(db, "tasks") == {"id", "title"}
     assert "information_schema.columns" in db.queries[-1]
-    assert "PRAGMA" not in db.queries[-1]
     assert db.params[-1] == ("tasks",)
 
 
 def test_table_column_names_rejects_invalid_table_name() -> None:
-    db = _CaptureDb("sqlite")
+    db = _CaptureDb()
 
     with pytest.raises(ValueError, match="Invalid table name"):
         table_column_names(db, "tasks); DROP TABLE tasks; --")
 
 
 def test_completion_notification_query_uses_postgres_jsonb_without_json_valid() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
     manager = InterSessionMessageManager(db)  # type: ignore[arg-type]
 
     assert manager.has_completion_notification("sess", "completion", "run-1") is False
@@ -179,7 +164,7 @@ def test_completion_notification_query_uses_postgres_jsonb_without_json_valid() 
 
 
 def test_metric_snapshot_queries_use_postgres_intervals() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
     storage = MetricSnapshotStorage(db)  # type: ignore[arg-type]
 
     assert storage.get_snapshots(hours=6) == []
@@ -192,7 +177,7 @@ def test_metric_snapshot_queries_use_postgres_intervals() -> None:
 
 
 def test_token_timeseries_uses_postgres_bucket_and_window_sql() -> None:
-    db = _CaptureDb("postgres")
+    db = _CaptureDb()
     store = TokenEventStore(db)  # type: ignore[arg-type]
 
     assert store.get_timeseries(hours=12, granularity="30m") == []

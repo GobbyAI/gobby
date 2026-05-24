@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.asyncio
 async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
-    """Move operations use the injected SQLite runner instead of the default executor."""
+    """Move operations use the injected PostgreSQL runner instead of the default executor."""
     storage = MagicMock()
     storage.move_to_project.return_value = SimpleNamespace(
         id="skl-1",
@@ -47,7 +47,7 @@ async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
-        run_db=run_db,
+        db_runner=run_db,
     )
     registry = InternalToolRegistry(name="gobby-skills")
     register(ctx, registry)

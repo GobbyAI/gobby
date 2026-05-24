@@ -41,14 +41,14 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 |--------|--------|---------|
 | `bootstrap.rs` | gcode/config.rs:152-234, gsqz/config.rs | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
 | `daemon.rs` | gsqz/daemon.rs (81 LOC) | ureq HTTP client for daemon API (get_json, post_json) |
-| `db.rs` | gcode/db.rs (38 LOC) | SQLite connection helpers (WAL, FK, busy timeout) |
+| `db.rs` | gcode/db.rs (38 LOC) | PostgreSQL connection helpers (WAL, FK, busy timeout) |
 | `secrets.rs` | gcode/secrets.rs (179 LOC) | Fernet decryption (machine_id + secret_salt -> PBKDF2 -> decrypt) |
 | `project.rs` | gcode/project.rs (338 LOC) | Project root detection, project.json, UUID5 generation |
 | `error.rs` | new | GobbyError enum with thiserror |
 
 ### Feature Gates
 
-- `sqlite` — rusqlite dep (db.rs)
+- `PostgreSQL` — ruPostgreSQL dep (db.rs)
 - `secrets` — fernet, pbkdf2, hmac, sha2, base64 (secrets.rs)
 - `daemon` — ureq, serde_json (daemon.rs)
 
@@ -74,7 +74,7 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 
 ### Key Decisions
 
-- **deadpool-sqlite** for async connection pooling (not r2d2 — async-native, aligns with tokio)
+- **deadpool-PostgreSQL** for async connection pooling (not r2d2 — async-native, aligns with tokio)
 - **Embed v182 baseline schema** directly via `include_str!` — no migration history
 - **`&'static str` column names** in UpdateBuilder instead of Python's regex validation — compile-time safety
 - **`Explicit<T>` enum** for sentinel pattern: `Unset` vs `Set(Option<T>)` — replaces Python's `_UNSET = object()`
@@ -113,7 +113,7 @@ src/
 
 ### Key Implementation Details
 
-- **seq_num allocation:** Must use `transaction_immediate` (BEGIN IMMEDIATE) to prevent TOCTOU race on MAX(seq_num). Python does this at `_crud.py:64-70`. Note: BEGIN IMMEDIATE acquires a RESERVED lock immediately, preventing concurrent writers from interleaving but allowing readers. Contention is low (single-user daemon, task creation is infrequent). Configure `busy_timeout` (5000ms matches Python default) and use a simple retry loop (3 attempts, 100ms backoff) for `SQLITE_BUSY` — this matches the Python behavior where SQLite's internal busy handler retries transparently.
+- **seq_num allocation:** Must use `transaction_immediate` (BEGIN IMMEDIATE) to prevent TOCTOU race on MAX(seq_num). Python does this at `_crud.py:64-70`. Note: BEGIN IMMEDIATE acquires a RESERVED lock immediately, preventing concurrent writers from interleaving but allowing readers. Contention is low (single-user daemon, task creation is infrequent). Configure `busy_timeout` (5000ms matches Python default) and use a simple retry loop (3 attempts, 100ms backoff) for `SQLITE_BUSY` — this matches the Python behavior where PostgreSQL's internal busy handler retries transparently.
 - **FTS5 triggers:** Created by baseline schema SQL. Integration tests must verify triggers fire on INSERT/UPDATE/DELETE.
 - **Path cache:** Parent chain traversal with depth limit (100). Cascade updates on reparenting affect multiple rows.
 - **Cycle detection:** Iterative DFS with explicit stack and visited set. `would_create_cycle()` checks before insert. Note: the Python implementation (`task_dependencies.py:114-138`) is already iterative — port it directly, do not introduce recursion.
@@ -124,7 +124,7 @@ src/
 
 | File | LOC | Methods |
 |------|-----|---------|
-| `src/gobby/storage/database.py` | ~300 | 9 (DatabaseProtocol) |
+| `src/gobby/storage/database.py` | ~300 | 9 (HubDatabase) |
 | `src/gobby/storage/config_store.py` | 231 | 14 |
 | `src/gobby/storage/tasks/` (11 files) | 2,811 | 32 |
 | `src/gobby/storage/memories.py` | 450+ | 27 |
@@ -133,7 +133,7 @@ src/
 
 ### Verification
 
-- Integration tests against real SQLite (tempfile DBs, not mocks)
+- Integration tests against real PostgreSQL (tempfile DBs, not mocks)
 - FTS5 search returns ranked results with correct BM25 scoring
 - `transaction_immediate` serializes concurrent seq_num allocation (multi-tokio-task test)
 - Cycle detection finds cycles, rejects them
@@ -381,8 +381,8 @@ resolver = "3"
 
 | Crate | Key Deps |
 |-------|----------|
-| gobby-core | thiserror, serde, serde_yaml, rusqlite (feature), fernet/pbkdf2 (feature), ureq (feature), uuid |
-| gobby-storage | gobby-core, rusqlite, deadpool-sqlite, tokio, serde_json, thiserror, uuid |
+| gobby-core | thiserror, serde, serde_yaml, ruPostgreSQL (feature), fernet/pbkdf2 (feature), ureq (feature), uuid |
+| gobby-storage | gobby-core, ruPostgreSQL, deadpool-PostgreSQL, tokio, serde_json, thiserror, uuid |
 | gobby-rules | gobby-core, minijinja, serde_json, tokio, thiserror, async-trait |
 | gobby-hook | gobby-core (daemon, bootstrap, project), serde_json, clap, libc |
 
@@ -398,7 +398,7 @@ Rust crates integrate with the Python daemon via HTTP — no FFI/pyo3. The daemo
 
 The rule engine (`gobby-rules`) is consumed as a library by `gobby-hook` and eventually by a Rust HTTP shell (`gobby-daemon`, not in this phase). During transition, the Python rule engine and Rust rule engine coexist — the Python daemon uses its own, gobby-hook uses the Rust one. Parity is verified by running the same test vectors against both.
 
-The storage layer (`gobby-storage`) reads/writes the same SQLite DB as the Python daemon. Schema is shared (embedded baseline). No migration needed — both sides see the same tables. Concurrent access is safe via WAL mode + busy_timeout.
+The storage layer (`gobby-storage`) reads/writes the same PostgreSQL DB as the Python daemon. Schema is shared (embedded baseline). No migration needed — both sides see the same tables. Concurrent access is safe via WAL mode + busy_timeout.
 
 ### Rollback
 

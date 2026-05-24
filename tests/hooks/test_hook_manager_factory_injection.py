@@ -11,7 +11,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.hook_manager import HookManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -104,7 +104,7 @@ def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
 
 
 def test_factory_create_reuses_injected_session_manager(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     default_config: DaemonConfig,
 ) -> None:

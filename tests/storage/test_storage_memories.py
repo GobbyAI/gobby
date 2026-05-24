@@ -2,19 +2,16 @@ import uuid
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase):
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture

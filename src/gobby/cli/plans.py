@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import click
+import psycopg
 
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.consumer_sweep import run_consumer_sweep
@@ -109,7 +109,7 @@ def register_plan_command(
             plan_kind=plan_kind,
             root_task_ref=resolved_root_ref,
         )
-    except (PlanParseError, ValueError, OSError, sqlite3.Error) as exc:
+    except (PlanParseError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -167,7 +167,7 @@ def archive_plan_command(plan_id: str, reason: str | None, project: str | None) 
             project_id=_project_id(project),
             reason=reason,
         )
-    except (PlanNotFoundError, ValueError, OSError, sqlite3.Error) as exc:
+    except (PlanNotFoundError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -223,7 +223,7 @@ def _validate_plan_for_cli(
                 code_index=code_index,
                 include_tests=include_tests,
             )
-        except (OSError, sqlite3.Error, ValueError) as exc:
+        except (OSError, psycopg.Error, ValueError) as exc:
             return {
                 **result,
                 "valid": False,

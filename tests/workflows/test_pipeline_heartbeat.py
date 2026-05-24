@@ -20,7 +20,7 @@ from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat, PipelineHeartb
 from gobby.workflows.pipeline_state import ExecutionStatus
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +28,7 @@ PROJECT_ID = "test-project"
 SESSION_ID = "sess-test-001"
 
 
-def _seed_db(db: LocalDatabase) -> None:
+def _seed_db(db: HubDatabase) -> None:
     """Insert project + session rows to satisfy FK constraints."""
     db.execute(
         """INSERT INTO projects (id, name, repo_path, created_at, updated_at)
@@ -46,7 +46,7 @@ def _seed_db(db: LocalDatabase) -> None:
 
 
 @pytest.fixture
-def exec_manager(temp_db: LocalDatabase) -> LocalPipelineExecutionManager:
+def exec_manager(temp_db: HubDatabase) -> LocalPipelineExecutionManager:
     _seed_db(temp_db)
     return LocalPipelineExecutionManager(temp_db, PROJECT_ID)
 
@@ -65,7 +65,7 @@ def heartbeat(
 
 def _create_stalled_execution(
     exec_manager: LocalPipelineExecutionManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     stale_minutes: int = 5,
     session_id: str = SESSION_ID,
 ) -> str:
@@ -128,7 +128,7 @@ async def _execute_pipeline_heartbeat_cron(
 async def test_stalled_no_agents_marks_failed(
     heartbeat: PipelineHeartbeat,
     exec_manager: LocalPipelineExecutionManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Stalled execution with no alive agents → FAILED."""
     exe_id = _create_stalled_execution(exec_manager, temp_db)
@@ -147,7 +147,7 @@ async def test_stalled_with_alive_agents_touches_updated_at(
     heartbeat: PipelineHeartbeat,
     exec_manager: LocalPipelineExecutionManager,
     agent_run_manager: LocalAgentRunManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Stalled execution with alive agents → updated_at refreshed, stays RUNNING."""
     exe_id = _create_stalled_execution(exec_manager, temp_db)
@@ -203,7 +203,7 @@ async def test_callable_cron_handler_interface(
 @pytest.mark.asyncio
 async def test_pipeline_heartbeat_cron_parks_when_idle(
     heartbeat: PipelineHeartbeat,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """No running executions or stale task candidates parks the heartbeat row."""
     storage = CronJobStorage(temp_db)
@@ -222,7 +222,7 @@ async def test_pipeline_heartbeat_cron_parks_when_idle(
 async def test_pipeline_heartbeat_cron_keeps_schedule_after_stalled_execution(
     heartbeat: PipelineHeartbeat,
     exec_manager: LocalPipelineExecutionManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """A handled stalled execution counts as work and does not park the row."""
     _create_stalled_execution(exec_manager, temp_db)
@@ -242,7 +242,7 @@ async def test_pipeline_heartbeat_cron_keeps_schedule_after_stalled_execution(
 async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """A recovered stale claim counts as work and does not park the row."""
     _seed_db(temp_db)
@@ -263,17 +263,17 @@ async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
 
 
 @pytest.fixture
-def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
 @pytest.fixture
-def agent_run_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
+def agent_run_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
     return LocalAgentRunManager(temp_db)
 
 
 @pytest.fixture
-def session_manager(temp_db: LocalDatabase) -> SessionManager:
+def session_manager(temp_db: HubDatabase) -> SessionManager:
     return SessionManager(temp_db)
 
 
@@ -325,7 +325,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """In-progress task with terminal agent run and no live agent moves back to ready."""
     _seed_db(temp_db)
@@ -359,7 +359,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """In-progress task with linked commits but no live agent moves to review."""
     _seed_db(temp_db)
@@ -400,7 +400,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
 async def test_stale_review_task_releases_claim_without_status_regression(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """needs_review task with dead assignee should only clear ownership."""
     _seed_db(temp_db)
@@ -442,7 +442,7 @@ async def test_task_with_active_agent_run_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """in_progress task with active (running) agent run → not touched."""
     _seed_db(temp_db)
@@ -481,7 +481,7 @@ async def test_stale_task_no_managers_returns_zero(
 async def test_interactive_session_task_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """in_progress task assigned to a live interactive session → not touched."""
     _seed_db(temp_db)
@@ -501,7 +501,7 @@ async def test_interactive_session_task_not_recovered(
 async def test_expired_session_task_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """In-progress task assigned to an expired session returns to ready."""
     _seed_db(temp_db)
@@ -523,7 +523,7 @@ async def test_expired_session_task_recovered(
 async def test_paused_agent_session_task_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """In-progress task assigned to a paused agent session (depth > 0) returns to ready."""
     _seed_db(temp_db)
@@ -547,7 +547,7 @@ async def test_paused_agent_session_task_recovered(
 async def test_paused_interactive_session_task_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """in_progress task assigned to a paused interactive session (depth 0) → not touched."""
     _seed_db(temp_db)
@@ -570,7 +570,7 @@ async def test_paused_interactive_session_task_not_recovered(
 async def test_nonexistent_session_task_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """In-progress task assigned to unknown session returns to ready."""
     _seed_db(temp_db)

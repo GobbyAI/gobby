@@ -82,7 +82,7 @@ def prepare_daemon_env(
 
     This handles the critical setup that's easy to miss when manually spawning daemons:
     1. Sets PYTHONPATH to include the src directory
-    2. Removes GOBBY_DATABASE_PATH so daemon uses its config file's database_path
+    2. Removes GOBBY_DATABASE_PATH so daemon uses its config file's database_url
     3. Clears LLM API keys to avoid external calls
     4. Overrides HOME to isolate the daemon from the real ~/.gobby/
 
@@ -347,7 +347,7 @@ def e2e_config(
     gobby_home.mkdir(parents=True, exist_ok=True)
 
     config_path = gobby_home / "config.yaml"
-    db_path = gobby_home / "gobby-hub.db"
+    db_path = gobby_home / "hub-postgres.db"
     log_dir = gobby_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -356,7 +356,7 @@ def e2e_config(
     config_content = f"""
 daemon_port: {http_port}
 test_mode: true
-database_path: "{db_path}"
+database_url: "{db_path}"
 
 websocket:
   enabled: true
@@ -393,7 +393,7 @@ hub_backend: postgres
 database_url: {postgres_url}
 postgres_install_mode: external
 daemon_port: {http_port}
-database_path: "{db_path}"
+database_url: "{db_path}"
 bind_host: localhost
 websocket_port: {ws_port}
 """
@@ -457,7 +457,7 @@ def daemon_instance(
         gobby_dir=e2e_project_dir / ".gobby",
         log_file=log_file,
         error_log_file=error_log_file,
-        db_path=gobby_home / "gobby-hub.db",
+        db_path=gobby_home / "hub-postgres.db",
         config_path=config_path,
     )
 
@@ -1021,7 +1021,7 @@ def assert_no_external_writes() -> Generator[None]:
             # since a running daemon continuously writes to its db and logs.
             # Log file mtime changes are always the production daemon (test
             # daemon writes to its temp dir), so exempt them unconditionally.
-            # SQLite WAL/SHM files can be touched by any process that opens
+            # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
             if basename.endswith(("-shm", "-wal", "-journal")):

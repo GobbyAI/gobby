@@ -1,41 +1,32 @@
 """Tests for TaskAffectedFileManager storage layer."""
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db():
-    """Create a fresh in-memory database with migrations applied."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
-        # Insert a dummy project and tasks for FK constraints
+def db(temp_db: HubDatabase):
+    """Create a fresh database with task rows for FK constraints."""
+    database = temp_db
+    database.execute(
+        "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+        ("proj-1", "test-project", "/tmp/test"),
+    )
+    for tid in ("task-1", "task-2", "task-3"):
         database.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj-1", "test-project", "/tmp/test"),
+            "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (tid, f"Task {tid}", "proj-1", "task", 2),
         )
-        for tid in ("task-1", "task-2", "task-3"):
-            database.execute(
-                "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (tid, f"Task {tid}", "proj-1", "task", 2),
-            )
-        yield database
-        database.close()
+    yield database
 
 
 @pytest.fixture
-def af_manager(db: LocalDatabase) -> TaskAffectedFileManager:
+def af_manager(db: HubDatabase) -> TaskAffectedFileManager:
     return TaskAffectedFileManager(db)
 
 

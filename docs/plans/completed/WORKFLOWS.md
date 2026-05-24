@@ -712,7 +712,7 @@ The action requires additional services beyond the current ActionContext:
 class ActionContext:
     session_id: str
     state: WorkflowState
-    db: LocalDatabase
+    db: HubDatabase
     session_manager: LocalSessionManager
     template_engine: TemplateEngine
     # Required for generate_handoff:
@@ -1144,7 +1144,7 @@ Before building new workflow capabilities, extract the current session handoff b
 
 ### Phase 11: Error Recovery Strategies
 
-- [ ] Implement Daemon Crash Recovery (restore state from SQLite on restart)
+- [ ] Implement Daemon Crash Recovery (restore state from PostgreSQL on restart)
 - [ ] Implement Tool Timeout Handling (auto-transition to 'reflect' on persistent timeouts)
 - [x] Implement "Escape Hatch" commands (`--force`, `reset`, `disable`, `enable`) (cli/workflows.py)
 
@@ -1169,13 +1169,13 @@ Before building new workflow capabilities, extract the current session handoff b
 | --- | ---------- | ---------- | ----------- |
 | 1 | **Workflow inheritance** | Yes - support `extends:` with property overrides | Standard pattern in YAML systems (Docker Compose, GitHub Actions). Reduces duplication. |
 | 2 | **Multi-workflow support** | One phase-based workflow *active at a time per session*, unlimited lifecycle workflows | Phase-based workflows enforce tool restrictions; lifecycle workflows are event-driven observers. A phase workflow can complete (terminal phase or explicit end), allowing another to be activated. Multiple concurrent sessions can each have their own active workflow. |
-| 3 | **Cross-session state** | Workflow state is session-local; persistence via task system | Ephemeral workflow state in SQLite for current session. Durable work tracked in tasks table for cross-session continuity. |
+| 3 | **Cross-session state** | Workflow state is session-local; persistence via task system | Ephemeral workflow state in PostgreSQL for current session. Durable work tracked in tasks table for cross-session continuity. |
 | 4 | **Approval UX** | Inject question via context, block tool until approval | Reuse existing patterns (similar to AskUserQuestion). No new UX paradigm needed. |
 | 5 | **Escape hatches** | ✅ Resolved - `--force`, `reset`, `disable` CLI commands | See CLI Commands section. |
 | 6 | **Workflow versioning** | Stop → Edit → Restart pattern | Mid-workflow changes ignored (YAML locked when activated). To apply changes: end workflow, edit YAML, activate again. |
 | 7 | **Codex hook blocking** | N/A - only notify hook exists | Codex uses notify script only. Full hook control would require app-server session spawning. YAGNI for MVP. |
 | 8 | **generate_handoff storage** | Write to `sessions.summary_markdown`, not `workflow_handoffs` | `workflow_handoffs` is temporary strangler fig scaffolding. The existing `sessions` table already has summary storage. File backups (`~/.gobby/session_summaries/`) are a separate system. |
-| 9 | **Explainability** | SQLite audit log with CLI/MCP access | Inspired by Parlant's "Full Explainability". Enables debugging workflow decisions. Separate table for query flexibility. 7-day retention by default. |
+| 9 | **Explainability** | PostgreSQL audit log with CLI/MCP access | Inspired by Parlant's "Full Explainability". Enables debugging workflow decisions. Separate table for query flexibility. 7-day retention by default. |
 
 ---
 

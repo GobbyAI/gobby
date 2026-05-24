@@ -107,7 +107,7 @@ CREATE UNIQUE INDEX idx_prompts_name_scope_project
 
 Database becomes the sole runtime source. The filesystem search path logic is removed from `load()`/`exists()`/`list_templates()`.
 
-- Replace `project_dir`, `global_dir`, `defaults_dir` constructor params with `db: DatabaseProtocol` and `project_id: str | None = None`
+- Replace `project_dir`, `global_dir`, `defaults_dir` constructor params with `db: HubDatabase` and `project_id: str | None = None`
 - `load()`: queries `LocalPromptManager.get_by_name()` only — no filesystem fallback
 - `exists()`: queries database only
 - `list_templates()`: queries database only

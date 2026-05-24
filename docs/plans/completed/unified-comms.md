@@ -282,5 +282,5 @@ Platform webhook → POST /api/comms/webhooks/{channel_name}
 2. `uv run ruff check src/gobby/communications/ src/gobby/config/communications.py src/gobby/storage/communications.py`
 3. `uv run mypy src/gobby/communications/`
 4. Start daemon (`uv run gobby start --verbose`), verify no errors in logs related to communications
-5. Verify DB tables exist: `sqlite3 ~/.gobby/gobby-hub.db ".tables" | grep comms`
+5. Verify DB tables exist: `psycopg ~/.gobby/PostgreSQL hub ".tables" | grep comms`
 6. Verify config accessible: check `communications` section in daemon config export

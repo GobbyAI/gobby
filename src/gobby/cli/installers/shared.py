@@ -223,7 +223,7 @@ def sync_bundled_content_to_db(
     The daemon no longer syncs on startup (except in dev mode).
 
     Args:
-        db: Database connection implementing DatabaseProtocol.
+        db: Database connection implementing HubDatabase.
         skip_types: Optional set of content type names to skip (e.g. ``{"workflows"}``).
             Used by the integrity checker to block tampered types.
 

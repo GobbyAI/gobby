@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.build_history import best_effort_record_event
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
 
 _REVIEW_SAFE_STATES = frozenset({"needs_review", "review_approved"})
@@ -45,7 +45,7 @@ class _WorkspaceCheck:
 
 
 def recover_safe_build_claims(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None,
 ) -> ClaimRecoverySummary:
     """Release review-safe build claims whose isolation workspace is clean."""
@@ -86,7 +86,7 @@ def recover_safe_build_claims(
 
 
 def _claimed_automation_candidates(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str | None,
 ) -> list[_ClaimCandidate]:
@@ -134,7 +134,7 @@ def _claimed_automation_candidates(
 
 
 def _refusal_payload(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_manager: LocalTaskManager,
     candidate: _ClaimCandidate,
     claim: str,
@@ -155,7 +155,7 @@ def _refusal_payload(
 
 
 def _agent_claim_payload(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     claim: str,
 ) -> dict[str, Any] | None:
@@ -244,7 +244,7 @@ def _git_status_lines(path: Path) -> tuple[list[str], str | None]:
 
 
 def _record_claim_recovery_event(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     candidate: _ClaimCandidate,
     *,
     outcome: Literal["released", "refused"],

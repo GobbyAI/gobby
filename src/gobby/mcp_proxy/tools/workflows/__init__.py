@@ -53,7 +53,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
     list_variables,
     update_variable,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_workflow_project_path
@@ -102,7 +102,7 @@ class _ExternalMCPInventory(Protocol):
 def create_workflows_registry(
     loader: WorkflowLoader | None = None,
     session_manager: SessionManager | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     internal_manager: _InternalRegistryInventory | None = None,
     mcp_manager: _ExternalMCPInventory | None = None,
     # Pipeline dependencies (resolved lazily at call time)

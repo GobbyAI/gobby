@@ -415,7 +415,12 @@ class StageRegistryManager:
         if default_ref is not None:
             return f"Stage '{name}' is referenced by task type defaults"
         build_profiles = self.db.fetchone(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'build_profiles'"
+            """
+            SELECT tablename AS name
+              FROM pg_tables
+             WHERE schemaname = current_schema()
+               AND tablename = 'build_profiles'
+            """
         )
         if build_profiles is None:
             return None
@@ -424,14 +429,10 @@ class StageRegistryManager:
             SELECT name
               FROM build_profiles
              WHERE deleted_at IS NULL
-               AND EXISTS (
-                   SELECT 1
-                     FROM json_each(skip_stages_json) AS skipped
-                    WHERE skipped.value = ?
-               )
+               AND skip_stages_json @> ?::jsonb
              LIMIT 1
             """,
-            (name,),
+            (json.dumps([name]),),
         )
         if profile_ref is not None:
             return f"Stage '{name}' is referenced by build profile '{profile_ref['name']}'"

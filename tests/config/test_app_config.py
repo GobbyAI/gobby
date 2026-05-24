@@ -383,7 +383,6 @@ class TestDaemonConfig:
         config = DaemonConfig()
         assert config.daemon_port == 60887
         assert config.daemon_health_check_interval == 10.0
-        assert config.database_path == "~/.gobby/gobby-hub.db"
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
 
     def test_port_validation(self) -> None:
@@ -747,7 +746,7 @@ class TestLoadConfig:
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
                 return {
-                    "hub_backend": "sqlite",
+                    "hub_backend": "local",
                     "database_url": None,
                     "postgres_install_mode": "external",
                 }
@@ -788,7 +787,6 @@ class TestBootstrapConfig:
 
         bootstrap = load_bootstrap(str(temp_dir / "nonexistent.yaml"))
         assert bootstrap.daemon_port == 60887
-        assert bootstrap.database_path == "~/.gobby/gobby-hub.db"
         assert bootstrap.bind_host == "localhost"
         assert bootstrap.websocket_port == 60888
         assert bootstrap.ui_port == 60889
@@ -800,7 +798,6 @@ class TestBootstrapConfig:
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
-            "database_path: /custom/db.sqlite\n"
             "daemon_port: 9999\n"
             "bind_host: 0.0.0.0\n"
             "websocket_port: 9998\n"
@@ -808,7 +805,6 @@ class TestBootstrapConfig:
         )
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 9999
-        assert bootstrap.database_path == "/custom/db.sqlite"
         assert bootstrap.bind_host == "0.0.0.0"
         assert bootstrap.websocket_port == 9998
         assert bootstrap.ui_port == 9997
@@ -845,7 +841,6 @@ class TestBootstrapConfig:
         write_secure_bootstrap(bootstrap_file, "daemon_port: 5555\n")
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 5555
-        assert bootstrap.database_path == "~/.gobby/gobby-hub.db"  # default
 
     def test_legacy_config_path_redirects(self, temp_dir: Path) -> None:
         """Test that passing a config.yaml path finds bootstrap.yaml in same dir."""

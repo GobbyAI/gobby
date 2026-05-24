@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+import psycopg
+
 from gobby.build.workspaces import BuildWorkspaceError, ensure_epic_integration_workspaces
 from gobby.dispatch.actions import SpawnAgentAction
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import (
     TaskArtifactConstraintError,
     TaskArtifactManager,
@@ -39,7 +40,7 @@ class DispatchSpawnFailed(RuntimeError):
 async def spawn_agent(
     action: SpawnAgentAction,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     context: object | None = None,
     services: object | None = None,
 ) -> str:
@@ -185,7 +186,7 @@ async def spawn_agent(
 
 def _prepare_spawn_artifacts(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     action: SpawnAgentAction,
     task: Task,
     task_manager: LocalTaskManager,
@@ -228,7 +229,7 @@ def _prepare_spawn_artifacts(
 
 def _sanitize_reusable_spawn_artifacts(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     artifacts: TaskArtifacts,
     services: object | None,
@@ -273,7 +274,7 @@ def _sanitize_reusable_spawn_artifacts(
 
 def _repair_leaf_target_branch(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     task_manager: LocalTaskManager,
     artifacts: TaskArtifacts,
@@ -294,7 +295,7 @@ def _repair_leaf_target_branch(
 
 def _worktree_artifact_is_stale(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     worktree_id: str,
     services: object | None,
@@ -318,7 +319,7 @@ def _worktree_artifact_is_stale(
 
 def _clone_artifact_is_stale(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     clone_id: str,
     services: object | None,
@@ -342,7 +343,7 @@ def _clone_artifact_is_stale(
 
 def _repair_missing_epic_target_branch(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     task_manager: LocalTaskManager,
     project_id: str,
@@ -367,7 +368,7 @@ def _repair_missing_epic_target_branch(
 
 
 def _promote_existing_worktree_artifact(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     artifacts: TaskArtifacts,
 ) -> TaskArtifacts | None:
@@ -400,7 +401,7 @@ def _promote_existing_worktree_artifact(
 
 
 def _promote_existing_clone_artifact(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     artifacts: TaskArtifacts,
 ) -> TaskArtifacts | None:
@@ -453,7 +454,7 @@ def _nearest_parent_integration_or_target(
     return None
 
 
-def _current_project_branch(db: DatabaseProtocol, project_id: str) -> str | None:
+def _current_project_branch(db: HubDatabase, project_id: str) -> str | None:
     from gobby.storage.projects import LocalProjectManager
     from gobby.worktrees.git import WorktreeGitManager
 
@@ -519,7 +520,7 @@ def _service_clone_manager(services: object | None, project_id: str) -> object |
 
 
 def _persist_spawn_artifacts(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     result: Mapping[str, object],
 ) -> None:
@@ -546,7 +547,7 @@ def _persist_spawn_artifacts(
     if fields:
         try:
             _set_artifacts_atomic(db, task_id, **fields)
-        except (TaskArtifactConstraintError, ValueError, sqlite3.DatabaseError):
+        except (TaskArtifactConstraintError, ValueError, psycopg.Error):
             logger.error(
                 "Failed to persist dispatcher spawn artifacts",
                 extra={"task_id": task_id, "fields": fields},

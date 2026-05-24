@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.dispatch.actions import Action, SpawnAgentAction, StartStageAction
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class DispatchWriteSetGuard:
     def __init__(
         self,
         *,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         file_owners: dict[str, set[str]] | None = None,
     ) -> None:
         self._db = db
@@ -37,7 +37,7 @@ class DispatchWriteSetGuard:
     @classmethod
     def load(
         cls,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         *,
         project_id: str | None = None,
     ) -> DispatchWriteSetGuard:

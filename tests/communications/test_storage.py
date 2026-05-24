@@ -9,11 +9,11 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.communications import LocalCommunicationsStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def comms_store(temp_db: LocalDatabase) -> LocalCommunicationsStore:
+def comms_store(temp_db: HubDatabase) -> LocalCommunicationsStore:
     """Fixture for communications store."""
     return LocalCommunicationsStore(temp_db, project_id="00000000-0000-0000-0000-000000000000")
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
@@ -49,7 +50,7 @@ def create_plan_registry(
                 plan_kind=plan_kind,
                 root_task_ref=root_ref,
             )
-        except (ValueError, OSError, sqlite3.Error) as exc:
+        except (ValueError, OSError, psycopg.Error) as exc:
             return {"ok": False, "error": "create_plan_failed", "message": str(exc)}
         return {"ok": True, "plan": record.to_dict()}
 
@@ -139,7 +140,7 @@ def create_plan_registry(
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
-        except (ValueError, OSError, sqlite3.Error) as exc:
+        except (ValueError, OSError, psycopg.Error) as exc:
             return _known_error_payload(exc, "archive_plan_failed")
         return {"ok": True, "plan": record.to_dict()}
 
@@ -166,7 +167,7 @@ def create_plan_registry(
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
-        except (ValueError, OSError, sqlite3.Error) as exc:
+        except (ValueError, OSError, psycopg.Error) as exc:
             return _known_error_payload(exc, "update_plan_hash_failed")
         return {"ok": True, "plan": record.to_dict()}
 
@@ -189,7 +190,7 @@ def create_plan_registry(
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
-        except (ValueError, OSError, sqlite3.Error) as exc:
+        except (ValueError, OSError, psycopg.Error) as exc:
             return _known_error_payload(exc, "regenerate_manifest_failed")
         return {"ok": True, "manifest_path": str(path)}
 

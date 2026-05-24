@@ -22,7 +22,7 @@ from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
@@ -39,8 +39,8 @@ def _spec(name: str = "ghook", floor: str = "0.4.1") -> ManagedBinSpec:
     )
 
 
-def _db(tmp_path: Path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "bin-state.db")
+def _db(tmp_path: Path) -> HubDatabase:
+    db = HubDatabase(tmp_path / "bin-state.db")
     run_migrations(db)
     return db
 

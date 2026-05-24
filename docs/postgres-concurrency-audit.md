@@ -38,7 +38,7 @@ Diff command used for the integration delta:
 git log --oneline 4f1607141ea0be23c4c44fd8813b93f83590cb02..2aa15634a06e30eb7aff94a24912a8b1b8b5500c -- src/gobby/storage/ src/gobby/cli/postgres.py
 ```
 
-Resolved finding: the SQLite-to-Postgres importer covered by this audit has
+Resolved finding: the PostgreSQL-to-Postgres importer covered by this audit has
 since been removed. The remaining active scope is PostgreSQL runtime
 concurrency.
 
@@ -49,7 +49,7 @@ Unresolved High/Medium findings: None.
 | Postgres after-commit callbacks re-evaluated after Phase 5 (`src/gobby/storage/hub/postgres.py:181`, `src/gobby/storage/tasks/_manager.py:190`, `src/gobby/storage/sessions/_bootstrap.py:68`) | Low | None in existing listener callbacks. | Callbacks run after commit; fresh pooled readers see committed state, while long-running readers keep their existing MVCC snapshot. | None. | No code change required. | `test_after_commit_async_reader_uses_committed_state`, `test_after_commit_reader_respects_long_running_snapshot` |
 | Backend-neutral concurrent read-modify-write paths using `transaction_immediate` (`src/gobby/storage/hub/postgres.py:161`) | Low | Read-then-update paths use typed PostgreSQL advisory/row locks. | Concurrent writers serialize through `transaction_immediate` lock targets. | None. | No code change required. | `test_read_modify_write_path_serializes_concurrent_writers` |
 
-Unchanged baseline callsites omitted from the table above: SQLite
-`LocalDatabase.transaction()` / `_run_after_commit_callbacks()` and the
+Unchanged baseline callsites omitted from the table above: PostgreSQL
+`HubDatabase.transaction()` / `_run_after_commit_callbacks()` and the
 backend-neutral `Transaction.after_commit()` protocol documentation. Their risk
 classification remains Low after the Phase 5 importer integration.

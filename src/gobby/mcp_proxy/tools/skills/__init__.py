@@ -98,7 +98,7 @@ def create_skills_registry(
         loader=SkillLoader(),
         project_id=project_id,
         hub_manager=hub_manager,
-        run_db=run_db,
+        db_runner=run_db,
     )
 
     # Expose search instance on registry for testing/manual indexing

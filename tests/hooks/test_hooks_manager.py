@@ -11,7 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 from gobby.workflows.state_manager import SessionVariableManager
@@ -35,7 +35,7 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
     """Create a HookManager with mocked dependencies."""
     # Create temp database
     db_path = temp_dir / "test.db"
-    db = LocalDatabase(db_path)
+    db = HubDatabase(db_path)
     run_migrations(db)
 
     # Create a test project
@@ -52,7 +52,7 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
 
     # Create config with temp DB and disabled webhooks
     test_config = DaemonConfig(
-        database_path=str(db_path),
+        database_url=str(db_path),
         hook_extensions=HookExtensionsConfig(
             webhooks=WebhooksConfig(enabled=False),
         ),
@@ -78,7 +78,7 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
 
         yield manager
 
-        # Cleanup: HookManager uses the temp database via config.database_path
+        # Cleanup: HookManager uses the temp database via config.database_url
         # (protect_production_resources fixture ensures GOBBY_TEST_PROTECT is set)
         manager.shutdown()
         db.close()

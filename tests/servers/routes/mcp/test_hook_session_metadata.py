@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
 
-def _post_claude_hook(temp_db: LocalDatabase, payload: dict, headers: dict | None = None) -> dict:
+def _post_claude_hook(temp_db: HubDatabase, payload: dict, headers: dict | None = None) -> dict:
     session_manager = SessionManager(temp_db)
     server = create_http_server(
         port=60887,
@@ -36,7 +36,7 @@ def _post_claude_hook(temp_db: LocalDatabase, payload: dict, headers: dict | Non
     return adapter.handle_native.call_args.args[0]
 
 
-def test_real_session_header_is_passed_to_adapter_payload(temp_db: LocalDatabase) -> None:
+def test_real_session_header_is_passed_to_adapter_payload(temp_db: HubDatabase) -> None:
     adapter_payload = _post_claude_hook(
         temp_db,
         {
@@ -51,7 +51,7 @@ def test_real_session_header_is_passed_to_adapter_payload(temp_db: LocalDatabase
     assert adapter_payload["input_data"]["session_id"] == "claude-external"
 
 
-def test_envelope_headers_cannot_override_real_session_header(temp_db: LocalDatabase) -> None:
+def test_envelope_headers_cannot_override_real_session_header(temp_db: HubDatabase) -> None:
     adapter_payload = _post_claude_hook(
         temp_db,
         {
@@ -68,7 +68,7 @@ def test_envelope_headers_cannot_override_real_session_header(temp_db: LocalData
 
 
 def test_embedded_envelope_headers_are_ignored_without_real_header(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     adapter_payload = _post_claude_hook(
         temp_db,

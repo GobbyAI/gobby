@@ -17,13 +17,6 @@ class _TransactionConnection(Protocol):
 
 
 _SESSION_UNIQUE_CONSTRAINT = "idx_sessions_unique"
-_SQLITE_SESSION_UNIQUE_PREFIX = "UNIQUE constraint failed:"
-_SESSION_UNIQUE_REQUIRED_COLUMNS = (
-    "sessions.external_id",
-    "sessions.machine_id",
-    "sessions.source",
-    "sessions.project_id",
-)
 
 
 def is_session_unique_conflict(exc: BaseException) -> bool:
@@ -31,10 +24,6 @@ def is_session_unique_conflict(exc: BaseException) -> bool:
     messages.append(str(exc))
     for message in messages:
         if _SESSION_UNIQUE_CONSTRAINT in message:
-            return True
-        if _SQLITE_SESSION_UNIQUE_PREFIX in message and all(
-            column in message for column in _SESSION_UNIQUE_REQUIRED_COLUMNS
-        ):
             return True
     return False
 

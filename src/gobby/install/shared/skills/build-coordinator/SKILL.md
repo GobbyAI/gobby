@@ -78,8 +78,8 @@ Use supported MCP surfaces first:
 - `gobby-worktrees` or `gobby-clones` when workspace state is part of the
   failure.
 
-Monitor agents directly with the supported MCP surfaces above. Do not require a
-separate monitoring skill for coordinator runs.
+Monitor agents directly with the supported MCP surfaces above. `build-coordinator`
+contains the coordinator monitoring guidance.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after

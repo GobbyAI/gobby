@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,8 +64,8 @@ def source_texts(paths: Iterable[str]) -> str:
     return "\n".join(chunks)
 
 
-def table_columns(db: LocalDatabase, table: str) -> set[str]:
-    return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
+def table_columns(db: HubDatabase, table: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"information_schema table_info({table})")}
 
 
 def assert_no_regex_matches(

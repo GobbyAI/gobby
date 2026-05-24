@@ -578,10 +578,10 @@ class TestExportMerge:
         old_record = {
             "id": "57d7158b-caf9-59d7-9ef5-971f9b7ab8bb",
             "content": (
-                "SQLite migrations are flattened at baseline version 260. "
+                "PostgreSQL migrations are flattened at baseline version 260. "
                 "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 260`, "
                 "`_MIN_MIGRATION_VERSION = 260`, and an empty `MIGRATIONS` list; "
-                "historical SQLite upgrade support below v260 is intentionally "
+                "historical PostgreSQL upgrade support below v260 is intentionally "
                 "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
                 "which already includes the folded v259/v260 objects such as "
                 "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
@@ -589,17 +589,17 @@ class TestExportMerge:
                 "`trg_chat_attachments_updated_at_touch`."
             ),
             "created_at": "2026-05-18T14:43:36.509768+00:00",
-            "tags": ["storage", "sqlite", "migrations"],
+            "tags": ["storage", "postgres", "migrations"],
             "type": "codebase_fact",
             "updated_at": "2026-05-18T14:43:36.509768+00:00",
         }
         newer_record = {
             "id": "e720187e-e971-5d3b-a999-1f25acf0e39c",
             "content": (
-                "SQLite migrations are flattened at baseline version 260. "
+                "PostgreSQL migrations are flattened at baseline version 260. "
                 "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 260`, "
                 "`_MIN_MIGRATION_VERSION = 260`, and an empty `MIGRATIONS` list; "
-                "historical SQLite upgrade support below v260 is intentionally "
+                "historical PostgreSQL upgrade support below v260 is intentionally "
                 "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
                 "which includes the folded v259/v260 objects: "
                 "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
@@ -607,7 +607,7 @@ class TestExportMerge:
                 "`trg_chat_attachments_updated_at_touch`."
             ),
             "created_at": "2026-05-17T20:19:19.756488+00:00",
-            "tags": ["storage", "migrations", "baseline", "sqlite", "v260"],
+            "tags": ["storage", "migrations", "baseline", "postgres", "v260"],
             "type": "decision",
             "updated_at": "2026-05-18T15:43:00.273039+00:00",
         }
@@ -623,7 +623,7 @@ class TestExportMerge:
         assert merged["tags"] == [
             "baseline",
             "migrations",
-            "sqlite",
+            "postgres",
             "storage",
             "v260",
         ]

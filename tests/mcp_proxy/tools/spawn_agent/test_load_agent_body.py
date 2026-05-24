@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
@@ -17,7 +17,7 @@ class TestLoadAgentBody:
     """_load_agent_body loads from workflow_definitions."""
 
     def test_loads_existing_agent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 
@@ -49,7 +49,7 @@ class TestLoadAgentBody:
         assert result.isolation == "worktree"
         assert result.workflows.rules == ["require-task-before-edit", "require-commit"]
 
-    def test_returns_none_for_missing_agent(self, db: LocalDatabase) -> None:
+    def test_returns_none_for_missing_agent(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 
         result = _load_agent_body("nonexistent-agent", db)
@@ -62,7 +62,7 @@ class TestLoadAgentBody:
         assert result is None
 
     def test_ignores_non_agent_types(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 

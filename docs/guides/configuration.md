@@ -60,10 +60,10 @@ ui_port: 60889
 falkordb_password: "gobbyfalkor"
 ```
 
-`database_path` is retained only for legacy compatibility and operator-managed
+`database_url` is retained only for legacy compatibility and operator-managed
 artifacts outside the current runtime. PostgreSQL is the only runtime hub.
 Startup fails when the PostgreSQL DSN is missing instead of falling
-back to SQLite, so do not use `database_path` or `gobby postgres uninstall` as
+back to PostgreSQL, so do not use `database_url` or `gobby postgres uninstall` as
 a runtime recovery path.
 
 Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.

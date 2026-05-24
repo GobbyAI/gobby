@@ -76,7 +76,6 @@ def test_update_task_uses_postgres_column_introspection(monkeypatch: pytest.Monk
     assert changed_parent is False
     column_sql, column_params = db.fetchall_calls[0]
     assert "information_schema.columns" in column_sql
-    assert "PRAGMA" not in column_sql
     assert column_params == ("tasks",)
     assert db.execute_calls[0][0] == (
         "UPDATE tasks SET validation_fail_count = ?, updated_at = ? WHERE id = ?"

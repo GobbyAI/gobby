@@ -10,11 +10,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+
+import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_unique_constraint_error(exc: Exception) -> bool:
-    if isinstance(exc, sqlite3.IntegrityError):
+    if isinstance(exc, psycopg.IntegrityError):
         return True
     return getattr(exc, "sqlstate", None) == "23505"
 

@@ -4,7 +4,6 @@ Tests for config.py MCP tools module.
 Tests the config tools that provide read/write access to daemon configuration.
 """
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -13,24 +12,20 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(tmp_path: Path) -> LocalDatabase:
+def temp_db(postgres_db: HubDatabase) -> HubDatabase:
     """Create a temporary database with schema."""
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    return db
+    return postgres_db
 
 
 @pytest.fixture
-def config_store(temp_db: LocalDatabase) -> ConfigStore:
+def config_store(temp_db: HubDatabase) -> ConfigStore:
     """Create a ConfigStore backed by temp database."""
     return ConfigStore(temp_db)
 
@@ -53,7 +48,7 @@ def config_registry(config_store: ConfigStore, config_state: dict[str, DaemonCon
 
 @pytest.fixture
 def config_registry_with_db(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     config_store: ConfigStore,
     config_state: dict[str, DaemonConfig],
 ) -> InternalToolRegistry:
@@ -96,7 +91,7 @@ class TestGetConfig:
 
     def test_get_config_masks_auto_detected_secret_key(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
         mock_machine_id,
@@ -150,7 +145,7 @@ class TestGetConfigSection:
 
     def test_get_config_section_masks_auto_detected_secret_keys(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
         mock_machine_id,
@@ -224,7 +219,7 @@ class TestSetConfig:
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_state: dict[str, DaemonConfig],
         mock_machine_id,
     ) -> None:
@@ -245,7 +240,7 @@ class TestSetConfig:
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         mock_machine_id,
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
@@ -406,7 +401,7 @@ class TestConfigStoreSecrets:
     """Tests for ConfigStore secret-aware methods."""
 
     @pytest.fixture
-    def secret_store(self, temp_db: LocalDatabase) -> SecretStore:
+    def secret_store(self, temp_db: HubDatabase) -> SecretStore:
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
             return SecretStore(temp_db)
 
@@ -472,7 +467,7 @@ class TestSetConfigSecret:
     @pytest.fixture
     def config_registry_with_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
     ) -> InternalToolRegistry:
@@ -485,7 +480,7 @@ class TestSetConfigSecret:
         )
 
     def test_set_config_secret_encrypts(
-        self, config_registry_with_db, config_store: ConfigStore, temp_db: LocalDatabase
+        self, config_registry_with_db, config_store: ConfigStore, temp_db: HubDatabase
     ) -> None:
         """set_config with is_secret=True encrypts the value."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
@@ -673,7 +668,7 @@ class TestSetConfigBatch:
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_state: dict[str, DaemonConfig],
         mock_machine_id,
     ) -> None:
@@ -698,7 +693,7 @@ class TestSetConfigBatch:
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         mock_machine_id,
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
@@ -720,7 +715,7 @@ class TestSetConfigBatch:
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         mock_machine_id,
     ) -> None:
         with (
@@ -750,7 +745,7 @@ class TestDeleteConfig:
     @pytest.fixture
     def config_registry_with_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
     ) -> InternalToolRegistry:
@@ -826,7 +821,7 @@ class TestDeleteConfig:
         config_registry_with_db,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Deleting a secret override clears both the config row and secret blob."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
@@ -852,7 +847,7 @@ class TestDeleteConfig:
         config_registry_with_db,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Secret deletion fails cleanly when the registry has no DB access."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):

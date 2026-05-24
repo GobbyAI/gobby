@@ -33,7 +33,7 @@ __all__ = [
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ class MemoryBackupManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         memory_manager: MemoryManager | None,
         config: MemoryBackupConfig,
     ):

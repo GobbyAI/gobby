@@ -42,7 +42,7 @@ def test_croniter_every_5_minutes() -> None:
 
 
 def _make_mock_row(data: dict) -> MagicMock:
-    """Create a mock sqlite3.Row with given data."""
+    """Create a mock dict[str, object] with given data."""
     row = MagicMock()
     row.__getitem__ = lambda self, key: data[key]
     row.keys = lambda: list(data.keys())

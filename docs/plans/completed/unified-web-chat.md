@@ -741,12 +741,12 @@ Clean up the old plan approval persistence mechanism now that `PendingInteractio
 
 **Target:** `src/gobby/storage/migrations.py`
 
-Add migration v202 — SQLite doesn't support DROP COLUMN before 3.35.0, so recreate the table without `pending_plan_path`:
+Add migration v202 — PostgreSQL doesn't support DROP COLUMN before 3.35.0, so recreate the table without `pending_plan_path`:
 
 ```python
 def _migrate_v202(self, conn: Connection) -> None:
     """Remove pending_plan_path from sessions table."""
-    # Use SQLite table recreation pattern:
+    # Use PostgreSQL table recreation pattern:
     # 1. Create new table without pending_plan_path
     # 2. Copy data
     # 3. Drop old table
@@ -754,7 +754,7 @@ def _migrate_v202(self, conn: Connection) -> None:
     # 5. Recreate indexes
 ```
 
-Or if SQLite version >= 3.35.0 (Python 3.13 bundles 3.45+):
+Or if PostgreSQL version >= 3.35.0 (Python 3.13 bundles 3.45+):
 ```python
 conn.execute("ALTER TABLE sessions DROP COLUMN pending_plan_path")
 ```

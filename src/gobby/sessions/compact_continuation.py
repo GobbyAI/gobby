@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS = 3.0
 
 
 def mark_compact_self_continuation_pending(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     session_id: str,
     *,
     prompt: str = COMPACT_SELF_CONTINUE_PROMPT,
@@ -47,7 +47,7 @@ def mark_compact_self_continuation_pending(
         return False
 
 
-def clear_compact_self_continuation_pending(db: DatabaseProtocol, session_id: str) -> bool:
+def clear_compact_self_continuation_pending(db: HubDatabase, session_id: str) -> bool:
     """Clear the pending continuation marker if it exists."""
     try:
         _remove_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE)
@@ -62,7 +62,7 @@ def clear_compact_self_continuation_pending(db: DatabaseProtocol, session_id: st
 
 
 def consume_compact_self_continuation_pending(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     session_id: str,
     *,
     now: datetime | None = None,
@@ -131,7 +131,7 @@ def schedule_compact_self_continuation(
 
 
 def consume_and_schedule_compact_self_continuation(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     pending_session_id: str | None,
     target_session: Any,
@@ -151,7 +151,7 @@ def consume_and_schedule_compact_self_continuation(
 
 
 def schedule_compact_self_continuation_fallback(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     pending_session_id: str,
     target_session: Any,
@@ -192,7 +192,7 @@ async def _send_compact_self_continuation(
 
 
 async def _consume_and_send_compact_self_continuation_fallback(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     pending_session_id: str,
     target_session: Any,
@@ -278,7 +278,7 @@ def _run_coroutine_thread(coro: Any) -> None:
 
 
 def _merge_session_variable(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     session_id: str,
     name: str,
     value: Any,
@@ -304,11 +304,11 @@ def _merge_session_variable(
             )
 
 
-def _remove_session_variable(db: DatabaseProtocol, session_id: str, name: str) -> Any:
+def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
     return _pop_session_variable(db, session_id, name)
 
 
-def _pop_session_variable(db: DatabaseProtocol, session_id: str, name: str) -> Any:
+def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
     now = datetime.now(UTC).isoformat()
     with db.transaction_immediate() as conn:
         row = conn.execute(

@@ -91,8 +91,6 @@ class MigrationRunner:
         for path in migrations_dir.iterdir():
             if not path.is_file():
                 continue
-            if path.name.endswith(".sqlite.sql"):
-                raise RuntimeError(f"SQLite migration files are no longer supported: {path.name}")
             match = _MIGRATION_FILE_RE.match(path.name)
             if match is None:
                 continue

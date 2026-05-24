@@ -24,7 +24,7 @@ from gobby.storage.sql_dialect import older_than_now_expr
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
@@ -61,11 +61,11 @@ async def _sleep_until_next_bin_freshness_cycle(
 
 
 async def bin_freshness_loop(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     config: BinFreshnessConfig,
     is_shutdown_requested: Callable[[], bool],
     *,
-    update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
+    update_once: Callable[[HubDatabase, BinFreshnessConfig], list[Any]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,

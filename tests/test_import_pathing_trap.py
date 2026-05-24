@@ -23,7 +23,7 @@ def test_import_pathing_trap_is_fixed(protect_production_resources) -> None:
 
     # Check its behavior
     config = gobby.mcp_proxy.stdio.load_config()
-    assert "test-safe.db" in config.database_path, (
+    assert "test-safe-postgres" in config.database_url, (
         "Resulting config should point to safe test database"
     )
 
@@ -40,7 +40,7 @@ def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -
     runner = gobby.runner.GobbyRunner()
 
     # Ensure it's using the safe DB
-    assert "test-safe.db" in str(runner.database.db_path)
+    assert "test-safe-postgres" in str(runner.database.db_path)
 
 
 def test_fixture_redirects_gobby_home(protect_production_resources) -> None:

@@ -15,8 +15,8 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
     from gobby.storage.expansion_runs import ExpansionRun
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import Task
 
 
@@ -136,7 +136,7 @@ def run_expansion_qa_coverage(
 
 def _evaluate_with_a4(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     plan_path: Path,
     plan_id: str,
     plan_hash: str,

@@ -17,7 +17,7 @@ from ._implementation import spawn_agent_impl
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ def _suggestion_task_description(
 
 def _load_agent_body(
     name: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     project_id: str | None = None,
 ) -> AgentDefinitionBody | None:
     """Load an agent definition from workflow_definitions via direct lookup.
@@ -96,7 +96,7 @@ def _load_agent_body(
 
 def _register_agent_step_workflow(
     agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> str:
     """Register a synthetic WorkflowDefinition from agent's inline steps.
 
@@ -118,7 +118,7 @@ def create_spawn_agent_registry(
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     session_manager: Any | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     completion_registry: Any | None = None,
     daemon_config: Any | None = None,
     code_index: Any | None = None,

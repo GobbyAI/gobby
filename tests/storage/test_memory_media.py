@@ -9,20 +9,17 @@ import json
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a test database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
@@ -110,9 +107,13 @@ class TestMediaColumnMigration:
 
     def test_memories_table_has_media_column(self, db) -> None:
         """Test that memories table has a media column after migration."""
-        # Query table schema
-        cursor = db.execute("PRAGMA table_info(memories)")
-        columns = {row[1] for row in cursor.fetchall()}
+        columns = {
+            row["column_name"]
+            for row in db.fetchall(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                ("memories",),
+            )
+        }
         assert "media" in columns
 
     def test_media_column_allows_null(self, db) -> None:
@@ -125,7 +126,7 @@ class TestMediaColumnMigration:
         # Should not raise - media defaults to NULL
         cursor = db.execute("SELECT media FROM memories WHERE id = 'mm-test'")
         row = cursor.fetchone()
-        assert row[0] is None
+        assert row["media"] is None
 
 
 # =============================================================================

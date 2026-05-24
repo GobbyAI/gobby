@@ -40,7 +40,7 @@ from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class SessionMessageProcessor:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         poll_interval: float = 2.0,
         websocket_server: "WebSocketServer | None" = None,
         session_manager: "SessionManager | None" = None,

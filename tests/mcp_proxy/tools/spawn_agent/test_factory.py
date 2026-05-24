@@ -9,10 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -584,13 +583,12 @@ class TestRegisterAgentStepWorkflow:
     """Regression tests for _register_agent_step_workflow self-healing behavior."""
 
     @pytest.fixture
-    def db(self, tmp_path) -> LocalDatabase:
-        database = LocalDatabase(tmp_path / "factory_test.db")
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
+        database = temp_db
         return database
 
     def test_self_heals_workflow_type_when_existing_row_is_corrupted(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         """A pre-existing `<agent>-steps` row with workflow_type='pipeline' must be
         repaired to 'workflow' on the next spawn. Without this, a single corrupted

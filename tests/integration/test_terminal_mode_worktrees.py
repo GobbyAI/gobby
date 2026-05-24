@@ -30,7 +30,7 @@ from gobby.agents.spawn import (
 )
 from gobby.agents.spawners.base import SpawnResult
 from gobby.agents.tmux.spawner import TmuxSpawner
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.migrations import run_migrations
@@ -43,7 +43,7 @@ def temp_db():
     """Create a temporary database for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
-        db = LocalDatabase(str(db_path))
+        db = HubDatabase(str(db_path))
         run_migrations(db)
         yield db
 

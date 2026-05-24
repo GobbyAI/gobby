@@ -202,7 +202,7 @@ def test_postgres_transaction_execute_remaps_qmark_before_driver_call() -> None:
     assert conn.execute_calls == [("SELECT * FROM task_stages_registry WHERE name = %s", ("dev",))]
 
 
-def test_postgres_transaction_execute_rewrites_sqlite_boolean_literals() -> None:
+def test_postgres_transaction_execute_does_not_rewrite_boolean_literals() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
@@ -213,8 +213,8 @@ def test_postgres_transaction_execute_rewrites_sqlite_boolean_literals() -> None
 
     assert conn.execute_calls == [
         (
-            "SELECT * FROM mcp_servers WHERE enabled = TRUE "
-            "AND graph_synced = FALSE AND source = 'enabled = 1'",
+            "SELECT * FROM mcp_servers WHERE enabled = 1 AND graph_synced=0 "
+            "AND source = 'enabled = 1'",
             (),
         )
     ]
@@ -229,13 +229,13 @@ def test_postgres_transaction_execute_rewrites_boolean_assignment_literals() -> 
 
     assert conn.execute_calls == [
         (
-            "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
+            "UPDATE code_indexed_files SET vectors_synced = 1 WHERE id = %s",
             ("file-1",),
         )
     ]
 
 
-def test_postgres_transaction_execute_rewrites_sqlite_boolean_coalesce_literals() -> None:
+def test_postgres_transaction_execute_does_not_rewrite_boolean_coalesce_literals() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
@@ -247,14 +247,14 @@ def test_postgres_transaction_execute_rewrites_sqlite_boolean_coalesce_literals(
 
     assert conn.execute_calls == [
         (
-            "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, FALSE) = FALSE "
-            "OR COALESCE(tasks.allow_automation, TRUE) = TRUE",
+            "SELECT * FROM tasks WHERE COALESCE(tasks.is_escalated, 0) = 0 "
+            "OR COALESCE(tasks.allow_automation, 1) = 1",
             (),
         )
     ]
 
 
-def test_postgres_transaction_execute_coerces_boolean_filter_params() -> None:
+def test_postgres_transaction_execute_does_not_coerce_boolean_filter_params() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
@@ -267,24 +267,22 @@ def test_postgres_transaction_execute_coerces_boolean_filter_params() -> None:
     assert conn.execute_calls == [
         (
             "SELECT * FROM workflow_definitions WHERE name = %s AND enabled = %s",
-            ("rule", True),
+            ("rule", 1),
         )
     ]
 
 
-def test_postgres_transaction_execute_coerces_boolean_update_params() -> None:
+def test_postgres_transaction_execute_does_not_coerce_boolean_update_params() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
 
     tx.execute("UPDATE workflow_definitions SET enabled = ? WHERE id = ?", (0, "wf-1"))
 
-    assert conn.execute_calls == [
-        ("UPDATE workflow_definitions SET enabled = %s WHERE id = %s", (False, "wf-1"))
-    ]
+    assert conn.execute_calls == [("UPDATE workflow_definitions SET enabled = %s WHERE id = %s", (0, "wf-1"))]
 
 
-def test_postgres_transaction_execute_coerces_boolean_insert_params() -> None:
+def test_postgres_transaction_execute_does_not_coerce_boolean_insert_params() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
@@ -297,7 +295,7 @@ def test_postgres_transaction_execute_coerces_boolean_insert_params() -> None:
     assert conn.execute_calls == [
         (
             "INSERT INTO workflow_definitions (id, enabled, name) VALUES (%s, %s, %s)",
-            ("wf-1", True, "rule"),
+            ("wf-1", 1, "rule"),
         )
     ]
 
@@ -408,7 +406,7 @@ def test_postgres_transaction_executemany_reuses_qmark_rewrite() -> None:
     ]
 
 
-def test_postgres_transaction_executemany_coerces_boolean_rows() -> None:
+def test_postgres_transaction_executemany_keeps_row_values() -> None:
     module = _postgres_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
@@ -421,7 +419,7 @@ def test_postgres_transaction_executemany_coerces_boolean_rows() -> None:
         (
             "INSERT INTO task_stages_registry (name, requires_human, is_terminal) "
             "VALUES (%s, %s, %s)",
-            [("dev", False, True), ("merge", True, False)],
+            [("dev", 0, 1), ("merge", 1, 0)],
         )
     ]
 
@@ -464,7 +462,7 @@ class _FakeResult:
         return list(self._rows)
 
 
-def test_postgres_cursor_normalizes_jsonb_values_to_sqlite_contract() -> None:
+def test_postgres_cursor_normalizes_jsonb_values_to_json_text() -> None:
     module = _postgres_module()
     cursor = module._PostgresCursor(
         _FakeResult(
@@ -485,7 +483,7 @@ def test_postgres_cursor_normalizes_jsonb_values_to_sqlite_contract() -> None:
     }
 
 
-def test_postgres_cursor_normalizes_datetime_values_to_sqlite_contract() -> None:
+def test_postgres_cursor_normalizes_datetime_values_to_iso_text() -> None:
     module = _postgres_module()
     cursor = module._PostgresCursor(
         _FakeResult(

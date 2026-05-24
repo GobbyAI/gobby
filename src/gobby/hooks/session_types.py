@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class HookSessionManager(Protocol):
     """Protocol for session operations used by the hooks subsystem."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def get(self, session_id: str) -> Session | None: ...
 

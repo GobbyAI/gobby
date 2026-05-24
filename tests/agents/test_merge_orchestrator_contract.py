@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
@@ -75,13 +75,13 @@ FORBIDDEN_EXECUTE_TOOLS = {
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_merge_orchestrator_contract.db")
+def db(tmp_path: Path) -> HubDatabase:
+    database = HubDatabase(tmp_path / "test_merge_orchestrator_contract.db")
     _create_contract_schema(database)
     return database
 
 
-def _create_contract_schema(db: LocalDatabase) -> None:
+def _create_contract_schema(db: HubDatabase) -> None:
     """Create the narrow workflow schema this contract test exercises."""
     statements = [
         """
@@ -200,7 +200,7 @@ def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _create_session(db: LocalDatabase, session_id: str = "agent-session") -> None:
+def _create_session(db: HubDatabase, session_id: str = "agent-session") -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
         ("project-1", "test-project"),
@@ -214,7 +214,7 @@ def _create_session(db: LocalDatabase, session_id: str = "agent-session") -> Non
 
 
 def _install_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     current_step: str,
     session_id: str = "agent-session",
@@ -372,23 +372,23 @@ def test_merge_orchestrator_plan_can_refresh_read_only_survey_state() -> None:
     assert "gobby-tasks-ops:get_artifacts" in plan_tools
 
 
-def test_merge_orchestrator_loads_monitoring_skill_before_agent_queries() -> None:
+def test_merge_orchestrator_loads_build_coordinator_skill_before_agent_queries() -> None:
     agent = _agent()
     instructions = agent["instructions"]
     load_skill = _step(agent, "load_skill")
 
     assert 'get_skill(name="merge-expert")' in instructions
-    assert 'get_skill(name="agent-monitoring")' in instructions
+    assert 'get_skill(name="build-coordinator")' in instructions
     assert "gobby-skills:get_skill" in load_skill["allowed_mcp_tools"]
-    assert "vars.skill_loaded and vars.monitoring_skill_loaded" in {
+    assert "vars.skill_loaded and vars.build_coordinator_skill_loaded" in {
         transition["when"] for transition in load_skill["transitions"]
     }
-    assert agent["step_variables"]["monitoring_skill_loaded"] is False
+    assert agent["step_variables"]["build_coordinator_skill_loaded"] is False
 
 
 @pytest.mark.asyncio
 async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     _install_workflow(db, current_step="execute")
     engine = RuleEngine(db)
@@ -412,7 +412,7 @@ async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
 
 @pytest.mark.asyncio
 async def test_survey_empty_campaign_can_close_already_implemented(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="survey")
     engine = RuleEngine(db)
@@ -445,7 +445,7 @@ async def test_survey_empty_campaign_can_close_already_implemented(
 
 @pytest.mark.asyncio
 async def test_plan_empty_campaign_can_close_already_implemented(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="plan")
     engine = RuleEngine(db)
@@ -478,7 +478,7 @@ async def test_plan_empty_campaign_can_close_already_implemented(
 
 @pytest.mark.asyncio
 async def test_report_can_close_already_implemented_and_terminate(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="report")
     engine = RuleEngine(db)
@@ -510,8 +510,8 @@ async def test_report_can_close_already_implemented_and_terminate(
 
 
 @pytest.mark.asyncio
-async def test_load_skill_step_waits_for_merge_and_monitoring_skills(
-    db: LocalDatabase,
+async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="load_skill")
     engine = RuleEngine(db)
@@ -529,12 +529,12 @@ async def test_load_skill_step_waits_for_merge_and_monitoring_skills(
     assert instance is not None
     assert instance.current_step == "load_skill"
     assert instance.variables["skill_loaded"] is True
-    assert instance.variables["monitoring_skill_loaded"] is False
+    assert instance.variables["build_coordinator_skill_loaded"] is False
 
     await engine.evaluate(
         _after_mcp_tool(
             "gobby-skills:get_skill",
-            arguments={"name": "agent-monitoring"},
+            arguments={"name": "build-coordinator"},
         ),
         session_id="agent-session",
         variables=variables,
@@ -542,11 +542,11 @@ async def test_load_skill_step_waits_for_merge_and_monitoring_skills(
     instance = manager.get_instance("agent-session", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "survey"
-    assert instance.variables["monitoring_skill_loaded"] is True
+    assert instance.variables["build_coordinator_skill_loaded"] is True
 
 
 @pytest.mark.asyncio
-async def test_merge_orchestrator_survey_plan_execute_report_path(db: LocalDatabase) -> None:
+async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabase) -> None:
     manager = _install_workflow(db, current_step="survey")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -607,7 +607,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: LocalDatab
 
 @pytest.mark.asyncio
 async def test_execute_failure_report_can_record_merge_result_and_terminate(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="execute")
     engine = RuleEngine(db)
@@ -642,7 +642,7 @@ async def test_execute_failure_report_can_record_merge_result_and_terminate(
 
 
 @pytest.mark.asyncio
-async def test_execute_blocks_no_progress_worker_redispatch(db: LocalDatabase) -> None:
+async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> None:
     manager = _install_workflow(db, current_step="execute")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -730,7 +730,7 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: LocalDatabase) -
 
 @pytest.mark.asyncio
 async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     manager = _install_workflow(db, current_step="execute")
     engine = RuleEngine(db)

@@ -30,14 +30,14 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
     dep_manager.add_dependency(t2.id, t1.id)
 
     # Create orphan dependency by disabling FK checks temporarily
-    manager.db.execute("PRAGMA foreign_keys = OFF")
+    manager.db.execute("information_schema foreign_keys = OFF")
     try:
         manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             ("non_existent_task", t1.id, "blocks", "2023-01-01T00:00:00Z"),
         )
     finally:
-        manager.db.execute("PRAGMA foreign_keys = ON")
+        manager.db.execute("information_schema foreign_keys = ON")
 
     validator = TaskValidator(manager)
     orphans = validator.check_orphan_dependencies()
@@ -62,7 +62,7 @@ def test_invalid_projects(manager, sample_project):
     manager.create_task(proj_id, "Valid Task")
 
     # Create task with invalid project manually
-    manager.db.execute("PRAGMA foreign_keys = OFF")
+    manager.db.execute("information_schema foreign_keys = OFF")
     try:
         manager.db.execute(
             """
@@ -78,7 +78,7 @@ def test_invalid_projects(manager, sample_project):
             ),
         )
     finally:
-        manager.db.execute("PRAGMA foreign_keys = ON")
+        manager.db.execute("information_schema foreign_keys = ON")
 
     validator = TaskValidator(manager)
     invalid = validator.check_invalid_projects()

@@ -36,12 +36,12 @@ class ApprovalManager:
         self.execution_manager = execution_manager
         self.webhook_notifier = webhook_notifier
         self.event_callback = event_callback
-        self._run_db = run_db
+        self._db_runner = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._db_runner is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._db_runner(func, *args, **kwargs)
 
     async def _emit_event(self, event: str, execution_id: str, **kwargs: Any) -> None:
         """Emit a pipeline event via the callback if configured."""
@@ -91,7 +91,7 @@ class ApprovalManager:
 
         # Update step status to WAITING_APPROVAL and store token
         timeout_seconds = step.approval.timeout_seconds if step.approval else None
-        await self._run_sqlite(
+        await self._run_db(
             self.execution_manager.update_step_execution,
             step_execution_id=step_execution.id,
             status=StepStatus.WAITING_APPROVAL,
@@ -100,7 +100,7 @@ class ApprovalManager:
         )
 
         # Update execution status to WAITING_APPROVAL
-        await self._run_sqlite(
+        await self._run_db(
             self.execution_manager.update_execution_status,
             execution_id=execution.id,
             status=ExecutionStatus.WAITING_APPROVAL,

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from gobby.dispatch import rules as dispatch_rules
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task
@@ -22,7 +22,7 @@ from gobby.workflows.definitions import AgentDefinitionBody
 def reload_candidate(
     task_id: str,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
 ) -> Task | None:
     if db is None:
@@ -68,7 +68,7 @@ def reload_candidate(
 
 
 def build_context(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     *,
     services: object | None = None,
@@ -152,7 +152,7 @@ def _artifact_refs(value: str | None) -> dict[str, str] | None:
     return {str(key): str(item) for key, item in decoded.items()}
 
 
-def _latest_failure_context(db: DatabaseProtocol, task_id: str) -> str | None:
+def _latest_failure_context(db: HubDatabase, task_id: str) -> str | None:
     row = db.fetchone(
         """
         SELECT body
@@ -174,7 +174,7 @@ def _latest_failure_context(db: DatabaseProtocol, task_id: str) -> str | None:
     return body if isinstance(body, str) and body else None
 
 
-def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
+def _children(db: HubDatabase, task_id: str) -> list[Task]:
     rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = ?", (task_id,))
     children = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, children)
@@ -182,12 +182,12 @@ def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
     return children
 
 
-def _stage_registry(db: DatabaseProtocol) -> dict[str, StageRegistryEntry]:
+def _stage_registry(db: HubDatabase) -> dict[str, StageRegistryEntry]:
     return {entry.name: entry for entry in StageRegistryManager(db).list_all()}
 
 
 def _agent_definitions(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str | None,
 ) -> dict[str, SimpleNamespace]:

@@ -31,7 +31,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     log_rate_limited_warning,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         config: MemoryConfig,
         llm_service: LLMService | None = None,
         vector_store: VectorStore | None = None,

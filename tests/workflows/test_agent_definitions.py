@@ -178,7 +178,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     ("agent_name", "tool_words"),
     [
         ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
-        ("backend-developer", {"pytest", "mypy", "ruff", "sqlite3", "uv", "poetry"}),
+        ("backend-developer", {"pytest", "mypy", "ruff", "psql", "uv", "poetry"}),
         ("fullstack-developer", {"pytest", "ruff", "npm", "pnpm", "playwright", "uv"}),
     ],
 )

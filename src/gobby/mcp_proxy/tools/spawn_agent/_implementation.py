@@ -262,7 +262,7 @@ async def spawn_agent_impl(
     project_path: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     session_manager: Any | None = None,  # SessionManager
-    db: Any | None = None,  # DatabaseProtocol
+    db: Any | None = None,  # HubDatabase
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
 ) -> dict[str, Any]:
@@ -295,7 +295,7 @@ async def spawn_agent_impl(
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
         session_manager: SessionManager for mode=self
-        db: DatabaseProtocol for mode=self
+        db: HubDatabase for mode=self
 
     Returns:
         Dict with success status, run_id, child_session_id, isolation metadata

@@ -45,7 +45,7 @@ CREATE TABLE session_transcripts (
 );
 ```
 
-**Why a separate table:** SQLite reads entire rows even when selecting one column. Keeping blobs out of `sessions` means listing/querying sessions stays fast.
+**Why a separate table:** PostgreSQL reads entire rows even when selecting one column. Keeping blobs out of `sessions` means listing/querying sessions stays fast.
 
 ### 2. New file: `src/gobby/storage/session_transcripts.py` (~120 lines)
 
@@ -53,7 +53,7 @@ CREATE TABLE session_transcripts (
 
 ```python
 class LocalSessionTranscriptManager:
-    def __init__(self, db: LocalDatabase): ...
+    def __init__(self, db: HubDatabase): ...
 
     def store_transcript(self, session_id: str, raw_content: bytes) -> dict:
         """Compress and store raw JSONL content. Returns size stats."""

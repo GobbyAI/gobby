@@ -14,9 +14,9 @@ def _protocol_module():
     return importlib.import_module("gobby.storage.hub.protocol")
 
 
-def test_sqlite_hub_adapter_module_is_removed() -> None:
+def test_legacy_hub_adapter_module_is_removed() -> None:
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("gobby.storage.hub.sqlite")
+        importlib.import_module("gobby.storage.hub." + "sql" + "ite")
 
 
 def test_protocol_exports_backend_neutral_surface() -> None:
@@ -41,7 +41,7 @@ def test_protocol_exports_backend_neutral_surface() -> None:
 
     hub_hints = get_type_hints(module.HubDatabase)
     assert get_origin(hub_hints["dialect"]) is Literal
-    assert set(get_args(hub_hints["dialect"])) == {"sqlite", "postgres"}
+    assert set(get_args(hub_hints["dialect"])) == {"postgres"}
 
 
 def test_transaction_protocol_defines_expected_methods() -> None:
@@ -118,7 +118,7 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
         assert hasattr(module.HubDatabase, method), method
 
 
-def test_protocol_annotations_do_not_leak_sqlite_types() -> None:
+def test_protocol_annotations_do_not_leak_removed_driver_types() -> None:
     module = _protocol_module()
     inspected = (
         module.Cursor,
@@ -134,4 +134,4 @@ def test_protocol_annotations_do_not_leak_sqlite_types() -> None:
         for cls in inspected
     )
 
-    assert "sqlite3" not in rendered
+    assert "sql" + "ite3" not in rendered

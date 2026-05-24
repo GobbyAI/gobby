@@ -3,14 +3,14 @@
 import pytest
 
 from gobby.savings.tracker import CHARS_PER_TOKEN, VALID_CATEGORIES, SavingsTracker
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path) -> HubDatabase:
     """Create a temporary database with savings tables."""
     db_path = str(tmp_path / "test.db")
-    db = LocalDatabase(db_path)
+    db = HubDatabase(db_path)
     db.execute("""CREATE TABLE savings_ledger (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT,
@@ -31,7 +31,7 @@ def db(tmp_path) -> LocalDatabase:
 
 
 @pytest.fixture
-def tracker(db: LocalDatabase) -> SavingsTracker:
+def tracker(db: HubDatabase) -> SavingsTracker:
     return SavingsTracker(db=db)
 
 

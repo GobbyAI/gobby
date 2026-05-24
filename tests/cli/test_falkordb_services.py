@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 def _seed_falkordb_config(db_path: Path) -> None:
-    db = LocalDatabase(db_path)
+    db = HubDatabase(db_path)
     try:
         run_migrations(db)
         store = ConfigStore(db)
@@ -53,9 +53,9 @@ class TestIsFalkorDBInstalled:
     def test_uses_runtime_hub_for_requested_home(self, tmp_path: Path) -> None:
         import gobby.cli.services as services
 
-        db_path = tmp_path / "gobby-hub.db"
+        db_path = tmp_path / "hub-postgres.db"
         _seed_falkordb_config(db_path)
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         try:
             with patch(
                 "gobby.storage.hub.runtime.open_runtime_hub_database",
@@ -75,9 +75,9 @@ class TestIsFalkorDBInstalled:
     ) -> None:
         import gobby.cli.services as services
 
-        db_path = tmp_path / "gobby-hub.db"
+        db_path = tmp_path / "hub-postgres.db"
         _seed_falkordb_config(db_path)
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         monkeypatch.setattr(services, "get_gobby_home", lambda: tmp_path)
         try:
             with patch(
@@ -128,8 +128,8 @@ class TestFalkorDBHealthAndStatus:
     async def test_status_reports_installed_health_and_endpoint(self, tmp_path: Path) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        _seed_falkordb_config(tmp_path / "gobby-hub.db")
-        db = LocalDatabase(tmp_path / "gobby-hub.db")
+        _seed_falkordb_config(tmp_path / "hub-postgres.db")
+        db = HubDatabase(tmp_path / "hub-postgres.db")
 
         try:
             with (

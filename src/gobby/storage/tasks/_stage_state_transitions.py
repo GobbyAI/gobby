@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Literal
@@ -179,7 +178,7 @@ class StageStateTransitions:
 
     def reset_holistic_failure_targets(
         self,
-        conn: Transaction | sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         cited_subtasks: Sequence[str],
         *,
@@ -227,7 +226,7 @@ class StageStateTransitions:
 
     def reactivate_cited_worktrees(
         self,
-        conn: Transaction | sqlite3.Connection,
+        conn: Transaction,
         cited_subtasks: Sequence[str],
         *,
         now: str,
@@ -250,7 +249,7 @@ class StageStateTransitions:
 
     def append_holistic_failure_comments(
         self,
-        conn: Transaction | sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         cited_subtasks: Sequence[str],
         *,
@@ -283,7 +282,7 @@ class StageStateTransitions:
 
     def append_task_comment(
         self,
-        conn: Transaction | sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         *,
         body: str,
@@ -302,7 +301,7 @@ class StageStateTransitions:
 
     def reset_task_from_stage(
         self,
-        conn: Transaction | sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         stage_name: str,
         *,
@@ -585,7 +584,7 @@ def illegal(row: StageState, verb: str) -> IllegalStageTransitionError:
 
 
 def terminal_after_done(
-    conn: Transaction | sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     stage_name: str,
 ) -> bool:

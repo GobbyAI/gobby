@@ -9,7 +9,7 @@ import pytest
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEventStore
@@ -41,7 +41,7 @@ def _message(
 
 @pytest.mark.asyncio
 async def test_non_claude_transcript_events_keep_source_and_session_model_attribution(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     """Codex/Gemini token events should aggregate under their source and model names."""

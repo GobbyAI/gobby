@@ -274,7 +274,7 @@ For urgent situations, notify the human user:
 
 ### Storage
 Extend `session_messages.py` or create new `inter_session_messages.py`:
-- SQLite table for messages
+- PostgreSQL table for messages
 - Cleanup on session end
 - Max message age (24h default)
 

@@ -8,23 +8,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_tool_proxy_invalid_arguments_schema.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    return database
+def temp_db(postgres_db: HubDatabase) -> HubDatabase:
+    return postgres_db
 
 
 @pytest.fixture
-def proxy_parts(temp_db: LocalDatabase):
+def proxy_parts(temp_db: HubDatabase):
     mcp_manager = MagicMock()
     mcp_manager.project_id = "test-project"
     mcp_manager.has_server.return_value = True

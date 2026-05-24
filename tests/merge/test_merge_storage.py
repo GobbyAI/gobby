@@ -1,12 +1,12 @@
 """Tests for merge resolution storage (TDD Red Phase).
 
-Tests for MergeResolution and MergeConflict persistence in SQLite database.
+Tests for MergeResolution and MergeConflict persistence in PostgreSQL database.
 Tests should fail initially as the storage module does not exist yet.
 """
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
@@ -59,13 +59,13 @@ class TestMergeResolutionsTableExists:
     def test_merge_resolutions_table_created(self, tmp_path) -> None:
         """Test that merge_resolutions table exists after migrations."""
         db_path = tmp_path / "merge.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
         # Check table exists
         row = db.fetchone(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='merge_resolutions'"
+            "SELECT name FROM postgres_master WHERE type='table' AND name='merge_resolutions'"
         )
         assert row is not None, "merge_resolutions table not created"
 
@@ -76,12 +76,12 @@ class TestMergeResolutionsSchema:
     def test_has_required_columns(self, tmp_path) -> None:
         """Test that merge_resolutions has all required columns."""
         db_path = tmp_path / "merge_schema.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
         # Get table info
-        rows = db.fetchall("PRAGMA table_info(merge_resolutions)")
+        rows = db.fetchall("information_schema table_info(merge_resolutions)")
         columns = {row["name"] for row in rows}
 
         # Verify required columns exist
@@ -101,11 +101,11 @@ class TestMergeResolutionsSchema:
     def test_id_is_primary_key(self, tmp_path) -> None:
         """Test that id is the primary key."""
         db_path = tmp_path / "merge_pk.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
-        rows = db.fetchall("PRAGMA table_info(merge_resolutions)")
+        rows = db.fetchall("information_schema table_info(merge_resolutions)")
         id_col = next((r for r in rows if r["name"] == "id"), None)
         assert id_col is not None
         assert id_col["pk"] == 1, "id column is not primary key"
@@ -113,11 +113,11 @@ class TestMergeResolutionsSchema:
     def test_worktree_id_not_null(self, tmp_path) -> None:
         """Test that worktree_id is NOT NULL."""
         db_path = tmp_path / "merge_notnull.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
-        rows = db.fetchall("PRAGMA table_info(merge_resolutions)")
+        rows = db.fetchall("information_schema table_info(merge_resolutions)")
         worktree_col = next((r for r in rows if r["name"] == "worktree_id"), None)
         assert worktree_col is not None
         assert worktree_col["notnull"] == 1, "worktree_id should be NOT NULL"
@@ -134,13 +134,13 @@ class TestMergeConflictsTableExists:
     def test_merge_conflicts_table_created(self, tmp_path) -> None:
         """Test that merge_conflicts table exists after migrations."""
         db_path = tmp_path / "conflicts.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
         # Check table exists
         row = db.fetchone(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='merge_conflicts'"
+            "SELECT name FROM postgres_master WHERE type='table' AND name='merge_conflicts'"
         )
         assert row is not None, "merge_conflicts table not created"
 
@@ -151,12 +151,12 @@ class TestMergeConflictsSchema:
     def test_has_required_columns(self, tmp_path) -> None:
         """Test that merge_conflicts has all required columns."""
         db_path = tmp_path / "conflicts_schema.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
         # Get table info
-        rows = db.fetchall("PRAGMA table_info(merge_conflicts)")
+        rows = db.fetchall("information_schema table_info(merge_conflicts)")
         columns = {row["name"] for row in rows}
 
         # Verify required columns exist
@@ -177,13 +177,13 @@ class TestMergeConflictsSchema:
     def test_foreign_key_to_resolutions(self, tmp_path) -> None:
         """Test that merge_conflicts has foreign key to merge_resolutions."""
         db_path = tmp_path / "conflicts_fk.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
 
         run_migrations(db)
 
         # Get table SQL
         row = db.fetchone(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='merge_conflicts'"
+            "SELECT sql FROM postgres_master WHERE type='table' AND name='merge_conflicts'"
         )
         assert row is not None
         sql_lower = row["sql"].lower()
@@ -227,7 +227,7 @@ class TestMergeResolutionDataclass:
         from gobby.storage.merge_resolutions import MergeResolution
 
         db_path = tmp_path / "resolution_from_row.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -311,7 +311,7 @@ class TestMergeConflictDataclass:
         from gobby.storage.merge_resolutions import MergeConflict
 
         db_path = tmp_path / "conflict_from_row.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -378,7 +378,7 @@ class TestMergeResolutionManagerCreate:
         from gobby.storage.merge_resolutions import MergeResolution, MergeResolutionManager
 
         db_path = tmp_path / "create_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -411,7 +411,7 @@ class TestMergeResolutionManagerCreate:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "persist_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -446,7 +446,7 @@ class TestMergeResolutionManagerGet:
         from gobby.storage.merge_resolutions import MergeResolution, MergeResolutionManager
 
         db_path = tmp_path / "get_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -478,7 +478,7 @@ class TestMergeResolutionManagerGet:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "get_none.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         manager = MergeResolutionManager(db)
@@ -494,7 +494,7 @@ class TestMergeResolutionManagerMergeLookup:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / db_name
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
         db.execute(
             "INSERT INTO projects (id, name) VALUES (?, ?)",
@@ -600,7 +600,7 @@ class TestMergeResolutionManagerUpdate:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "update_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -636,7 +636,7 @@ class TestMergeResolutionManagerUpdate:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "persist_update.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -672,7 +672,7 @@ class TestMergeResolutionManagerDelete:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "delete_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -703,7 +703,7 @@ class TestMergeResolutionManagerDelete:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "delete_none.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         manager = MergeResolutionManager(db)
@@ -725,7 +725,7 @@ class TestMergeResolutionManagerCreateConflict:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolutionManager
 
         db_path = tmp_path / "create_conflict.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -767,7 +767,7 @@ class TestMergeResolutionManagerUpdateConflict:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "update_conflict.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -818,7 +818,7 @@ class TestConflictStateTransitions:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "transition_resolved.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -860,7 +860,7 @@ class TestConflictStateTransitions:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "transition_failed.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -896,7 +896,7 @@ class TestConflictStateTransitions:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "transition_human.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -941,7 +941,7 @@ class TestQueryResolutionsByFile:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "query_file.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -989,7 +989,7 @@ class TestQueryResolutionsByBranch:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "query_branch.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1025,7 +1025,7 @@ class TestQueryResolutionsByBranch:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "query_target_branch.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1065,7 +1065,7 @@ class TestQueryResolutionsByStatus:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "query_status.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1103,7 +1103,7 @@ class TestQueryResolutionsByStatus:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "query_conflict_status.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1158,7 +1158,7 @@ class TestResolutionHistoryTracking:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "timestamps.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1188,7 +1188,7 @@ class TestResolutionHistoryTracking:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "update_timestamp.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1220,7 +1220,7 @@ class TestResolutionHistoryTracking:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "conflicts_for_resolution.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisites
@@ -1263,7 +1263,7 @@ class TestResolutionHistoryTracking:
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
         db_path = tmp_path / "resolutions_by_worktree.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create multiple worktrees

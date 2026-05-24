@@ -16,7 +16,7 @@ from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
@@ -36,7 +36,7 @@ RESERVED_STEP_WORKFLOW_VARIABLES = frozenset({"step_workflow_complete", "_step_w
 class EnforcementMixin:
     """Mixin providing tool enforcement methods for RuleEngine."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
     instance_manager: WorkflowInstanceManager
     definition_manager: LocalWorkflowDefinitionManager
     workflow_audit: WorkflowAuditManager

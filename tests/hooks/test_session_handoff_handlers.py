@@ -17,7 +17,7 @@ from gobby.sessions.compact_continuation import (
     consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.migrations import run_migrations
 
@@ -29,8 +29,8 @@ pytestmark = pytest.mark.unit
 class TestSessionStartHandoff:
     """Test session handoff context injection on /clear and /compact."""
 
-    def _make_db(self, tmp_path) -> LocalDatabase:
-        db = LocalDatabase(tmp_path / "compact-continuation.db")
+    def _make_db(self, tmp_path) -> HubDatabase:
+        db = HubDatabase(tmp_path / "compact-continuation.db")
         run_migrations(db)
         return db
 
@@ -47,7 +47,7 @@ class TestSessionStartHandoff:
 
     def _fake_compact_self_consumer(self, scheduled: list[tuple[object, str]]):
         def _consume(
-            db: LocalDatabase,
+            db: HubDatabase,
             *,
             pending_session_id: str | None,
             target_session: object,

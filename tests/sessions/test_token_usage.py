@@ -6,7 +6,7 @@ import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.migrations import run_migrations
 
@@ -14,10 +14,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
+def db(tmp_path: Path) -> Iterator[HubDatabase]:
     """Initialize database with migrations."""
-    db_path = tmp_path / "gobby-hub.db"
-    database = LocalDatabase(str(db_path))
+    db_path = tmp_path / "hub-postgres.db"
+    database = HubDatabase(str(db_path))
     run_migrations(database)
     # Create dummy project required for sessions
     database.execute(
@@ -29,12 +29,12 @@ def db(tmp_path: Path) -> Iterator[LocalDatabase]:
 
 
 @pytest.fixture
-def session_manager(db: LocalDatabase) -> SessionManager:
+def session_manager(db: HubDatabase) -> SessionManager:
     return SessionManager(db)
 
 
 @pytest.fixture
-def lifecycle_manager(db: LocalDatabase) -> SessionLifecycleManager:
+def lifecycle_manager(db: HubDatabase) -> SessionLifecycleManager:
     config = SessionLifecycleConfig()
     return SessionLifecycleManager(db, config)
 
@@ -42,7 +42,7 @@ def lifecycle_manager(db: LocalDatabase) -> SessionLifecycleManager:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_token_usage_aggregation(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     lifecycle_manager: SessionLifecycleManager,
     tmp_path: Path,

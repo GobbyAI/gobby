@@ -2,14 +2,13 @@
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import (
     ChangeEvent,
     LocalSkillManager,
     Skill,
     SkillChangeNotifier,
 )
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -50,12 +49,10 @@ class TestSkillSourceType:
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture

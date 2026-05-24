@@ -1,23 +1,17 @@
 """Tests for SkillManager coordinator class (TDD - written before implementation)."""
 
-from collections.abc import Generator
-
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db(tmp_path) -> Generator[LocalDatabase]:
-    """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Create a fresh database for skill manager tests."""
+    return temp_db
 
 
 @pytest.fixture

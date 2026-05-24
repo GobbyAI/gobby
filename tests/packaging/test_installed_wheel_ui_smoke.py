@@ -87,7 +87,7 @@ def _write_config(config_path: Path, db_path: Path, http_port: int, ws_port: int
     config_path.write_text(
         "\n".join(
             [
-                f'database_path: "{db_path}"',
+                f'database_url: "{db_path}"',
                 f"daemon_port: {http_port}",
                 'bind_host: "127.0.0.1"',
                 f"websocket_port: {ws_port}",
@@ -158,7 +158,7 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
     home = tmp_path / "home"
     gobby_home = home / ".gobby"
     gobby_home.mkdir(parents=True)
-    db_path = gobby_home / "gobby-hub.db"
+    db_path = gobby_home / "hub-postgres.db"
     config_path = tmp_path / "config.yaml"
     http_port, ws_port = _allocate_distinct_high_ports()
     _write_config(config_path, db_path, http_port, ws_port)

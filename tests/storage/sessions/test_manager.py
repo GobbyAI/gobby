@@ -6,7 +6,7 @@ from importlib import import_module
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
@@ -20,7 +20,7 @@ def _storage_session_manager_cls():
 
 
 @pytest.fixture
-def project_id(temp_db: LocalDatabase) -> str:
+def project_id(temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
     return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
 
@@ -34,7 +34,7 @@ def test_storage_package_exports_internal_session_manager() -> None:
     assert internal_module.SessionManager is session_manager_cls
 
 
-def test_update_session_status_returns_bool(temp_db: LocalDatabase, project_id: str) -> None:
+def test_update_session_status_returns_bool(temp_db: HubDatabase, project_id: str) -> None:
     session_mgr = _storage_session_manager_cls()(temp_db)
     session_id = session_mgr.register_session(
         external_id="status-session",

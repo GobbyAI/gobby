@@ -3,7 +3,7 @@
 Use this runbook during the post-cutover validation window when a regression
 cannot be fixed forward within 2 hours, or when any data corruption is detected.
 
-Phase 7 does not support restarting Gobby against the legacy SQLite hub runtime.
+Phase 7 does not support restarting Gobby against the legacy PostgreSQL hub runtime.
 This runbook captures PostgreSQL-side writes before a fix-forward or
 operator-managed PostgreSQL restore path. `gobby postgres uninstall` removes or
 disconnects PostgreSQL service artifacts only; it is not a runtime fallback.

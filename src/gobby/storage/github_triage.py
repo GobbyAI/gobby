@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import psycopg
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -271,7 +271,7 @@ class GitHubTriageStore:
                 ),
             )
             inserted = True
-        except (sqlite3.IntegrityError, UniqueViolation):
+        except (psycopg.IntegrityError, UniqueViolation):
             inserted = False
 
         delivery = self.get_delivery(project_id, delivery_id)

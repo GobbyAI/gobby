@@ -2,7 +2,7 @@
 
 ## Context
 
-An agent working in session #3069 reported that inner MCP calls receiving the session's external_id (`b530868c-310f-40ed-a1d5-d8f282d018c6`) failed resolution and forced it to use raw SQLite for task create/close. Observable artifact: task `530d31ae-…` was closed with `closed_in_session_id = NULL`.
+An agent working in session #3069 reported that inner MCP calls receiving the session's external_id (`b530868c-310f-40ed-a1d5-d8f282d018c6`) failed resolution and forced it to use raw PostgreSQL for task create/close. Observable artifact: task `530d31ae-…` was closed with `closed_in_session_id = NULL`.
 
 **Root cause has two layers, both needed:**
 
@@ -43,7 +43,7 @@ New resolution order:
   3. Any `id` match wins (primary-key-first for backward compatibility).
   4. Multiple `external_id` prefix matches → `ValueError("Ambiguous …")`.
 
-No schema change — `idx_sessions_external_id` already exists. Query via `DatabaseProtocol` consistent with the rest of the file; do not pull in `LocalSessionManager.find_by_external_id*` (those require `machine_id` the resolver doesn't have).
+No schema change — `idx_sessions_external_id` already exists. Query via `HubDatabase` consistent with the rest of the file; do not pull in `LocalSessionManager.find_by_external_id*` (those require `machine_id` the resolver doesn't have).
 
 ### Change 2 — Shared helper + single resolve-and-propagate path in each dispatcher
 
@@ -65,7 +65,7 @@ def resolve_and_seed_contexts(
     *,
     project_ref: str | None = None,            # UUID or name; helper canonicalizes
     project_ref_is_fallback: bool = False,     # True for HTTP header semantics (see modes below)
-    db: "DatabaseProtocol | None" = None,      # project lookup; None triggers minimal fallback path
+    db: "HubDatabase | None" = None,      # project lookup; None triggers minimal fallback path
 ) -> SeededContextTokens:
     """Resolve session and project refs, set SessionContext and project context, return tokens.
 

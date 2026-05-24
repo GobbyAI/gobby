@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
@@ -104,7 +104,7 @@ def _build_pipeline_update_fields(
     return fields
 
 
-def sync_bundled_pipelines(db: DatabaseProtocol) -> dict[str, Any]:
+def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled pipeline definitions from install/shared/workflows/ to the database.
 
     Creates installed rows directly from template files. Installed rows are

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.skills.metadata import get_skill_category, get_skill_tags
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def format_skills_markdown_table(skills_list: list[Any]) -> str:
 
 def recommend_skills_for_task(
     task: dict[str, Any] | None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
 ) -> list[str]:
     """Recommend relevant skills based on task category.

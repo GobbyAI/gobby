@@ -11,29 +11,25 @@ Verifies that:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    db_path = tmp_path / "test_subagent_rules.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: HubDatabase) -> RuleEngine:
     """Sync bundled rules and enable only the ones we're testing."""
     sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")

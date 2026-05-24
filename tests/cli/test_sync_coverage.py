@@ -53,7 +53,7 @@ class TestSyncDevMode:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -76,7 +76,7 @@ class TestSyncDevMode:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -99,7 +99,7 @@ class TestSyncDevMode:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -126,7 +126,7 @@ class TestSyncDevMode:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -188,7 +188,7 @@ class TestSyncProductionMode:
         mock_verify.return_value = integrity_result
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -321,7 +321,7 @@ class TestSyncProductionMode:
             source="manifest",
         )
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
         mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
@@ -356,7 +356,7 @@ class TestSyncProductionMode:
             ],
         )
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
         mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
@@ -386,7 +386,7 @@ class TestSyncTypeFilter:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -415,7 +415,7 @@ class TestSyncDbNotFound:
         runner: CliRunner,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = "/nonexistent/path/db.sqlite"
+        mock_config.database_url = "/nonexistent/path/db.postgres"
         mock_load.return_value = mock_config
         mock_runtime_hub_database.side_effect = RuntimeError("not found")
 
@@ -442,7 +442,7 @@ class TestSyncForce:
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 

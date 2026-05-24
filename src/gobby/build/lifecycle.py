@@ -50,7 +50,7 @@ from gobby.storage.build_history import (
     best_effort_record_event,
     best_effort_start_run,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
     LocalTaskManager,
     ManifestAlreadyInitializedError,
@@ -80,7 +80,7 @@ async def build(
     input_ref: str,
     opts: BuildOptions,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildResult:
@@ -152,7 +152,7 @@ async def _build_dry_run(
     input_ref: str,
     opts: BuildOptions,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildResult:
@@ -179,7 +179,7 @@ async def _build_impl(
     input_ref: str,
     opts: BuildOptions,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildResult:
@@ -264,7 +264,7 @@ async def _build_plan_file(
     warnings: list[str],
     project_id: str,
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
 ) -> BuildResult:
     task = task_manager.create_task(
@@ -352,7 +352,7 @@ async def _build_leaf(
     skip_stages: list[str],
     warnings: list[str],
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
 ) -> BuildResult:
@@ -405,7 +405,7 @@ async def _build_epic(
     skip_stages: list[str],
     warnings: list[str],
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
 ) -> BuildResult:
@@ -506,7 +506,7 @@ async def _resume_existing_lifecycle(
     opts: BuildOptions,
     skip_stages: list[str],
     warnings: list[str],
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
     target_branch: str | None,
@@ -741,7 +741,7 @@ def _quick_tick_limit(opts: BuildOptions) -> int | None:
 
 
 async def _build_dispatcher_tick(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     opts: BuildOptions,
     *,

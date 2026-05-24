@@ -407,7 +407,7 @@ def test_load_full_config_from_db_no_db(tmp_path: Path) -> None:
     from gobby.cli.utils import load_full_config_from_db
 
     mock_config = MagicMock()
-    mock_config.database_path = str(tmp_path / "nonexistent.db")
+    mock_config.database_url = str(tmp_path / "nonexistent.db")
 
     with patch("gobby.cli.utils.load_config", return_value=mock_config) as mock_load:
         result = load_full_config_from_db()

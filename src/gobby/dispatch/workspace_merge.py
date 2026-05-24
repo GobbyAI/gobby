@@ -19,7 +19,7 @@ from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
@@ -60,7 +60,7 @@ class _GuideRow:
 async def execute_merge_workspace(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None = None,
 ) -> str | None:
     """Merge source workspace into the target integration workspace."""
@@ -75,7 +75,7 @@ async def execute_merge_workspace(
 def _execute_merge_workspace_sync(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None = None,
 ) -> str | None:
     """Merge source workspace into the target integration workspace."""
@@ -150,7 +150,7 @@ def _execute_merge_workspace_sync(
 def _resolve_paths(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
 ) -> _WorkspacePaths:
     artifacts = TaskArtifactManager(db).get_artifacts(action.task_id)
@@ -281,14 +281,14 @@ def _resolve_paths(
     )
 
 
-def _project_id_for_task(db: DatabaseProtocol, task_id: str) -> str:
+def _project_id_for_task(db: HubDatabase, task_id: str) -> str:
     row = db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return str(row["project_id"])
 
 
-def _is_root_task(db: DatabaseProtocol, task_id: str) -> bool:
+def _is_root_task(db: HubDatabase, task_id: str) -> bool:
     row = db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
@@ -296,7 +296,7 @@ def _is_root_task(db: DatabaseProtocol, task_id: str) -> bool:
 
 
 def _repair_parent_integration_workspace(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     backend: WorkspaceBackend,
@@ -509,7 +509,7 @@ def _abort_merge(path: str) -> None:
     _git(Path(path), ["merge", "--abort"])
 
 
-def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -> None:
+def _complete_merge_stage(db: HubDatabase, task_id: str, commit_sha: str) -> None:
     StageStatesManager(db, TaskLifecycleEventManager(db)).complete_stage(
         task_id,
         "merge",
@@ -528,7 +528,7 @@ def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -
 
 
 def _fail_merge_stage(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     reason: str,
     *,
@@ -544,7 +544,7 @@ def _fail_merge_stage(
 
 
 def _mark_workspace_merge_conflict_for_recovery(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     reason: str,
 ) -> None:
@@ -556,7 +556,7 @@ def _mark_workspace_merge_conflict_for_recovery(
     )
 
 
-def _append_merge_failure_audit(db: DatabaseProtocol, task_id: str, reason: str) -> None:
+def _append_merge_failure_audit(db: HubDatabase, task_id: str, reason: str) -> None:
     task_manager = LocalTaskManager(db)
     task = task_manager.get_task(task_id)
     description = task.description or ""
@@ -569,7 +569,7 @@ def _append_merge_failure_audit(db: DatabaseProtocol, task_id: str, reason: str)
 def _mark_source_merged(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     source_id: str,
 ) -> None:
     if action.backend == "worktree":
@@ -580,7 +580,7 @@ def _mark_source_merged(
 
 
 def _sync_source_repo_branch(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     target_path: str,
     target_branch: str,
@@ -589,7 +589,7 @@ def _sync_source_repo_branch(
     _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
 
 
-def _repo_path_for_task(db: DatabaseProtocol, task_id: str) -> Path:
+def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
     project_id = _project_id_for_task(db, task_id)
     project = LocalProjectManager(db).get(project_id)
     if project is None or not project.repo_path:
@@ -598,7 +598,7 @@ def _repo_path_for_task(db: DatabaseProtocol, task_id: str) -> Path:
 
 
 def _local_target_path_if_checked_out(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     target_branch: str,
 ) -> Path | None:
@@ -609,7 +609,7 @@ def _local_target_path_if_checked_out(
     return None
 
 
-def _acquire_integration_mutex(db: DatabaseProtocol, key: str) -> bool:
+def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
     now = datetime.now(UTC)
     until = now + timedelta(seconds=MERGE_TTL_SECONDS)
     with db.transaction_immediate() as conn:
@@ -635,7 +635,7 @@ def _acquire_integration_mutex(db: DatabaseProtocol, key: str) -> bool:
         return True
 
 
-def _release_integration_mutex(db: DatabaseProtocol, key: str) -> None:
+def _release_integration_mutex(db: HubDatabase, key: str) -> None:
     with db.transaction() as conn:
         conn.execute(
             "DELETE FROM integration_workspace_mutex WHERE integration_key = ? AND lease_holder = ?",

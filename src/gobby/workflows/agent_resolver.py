@@ -3,7 +3,7 @@ import logging
 
 from pydantic import ValidationError
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -29,7 +29,7 @@ class AgentResolutionError(Exception):
 
 def resolve_agent(
     name: str,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     cli_source: str | None = None,
     project_id: str | None = None,
 ) -> AgentDefinitionBody | None:

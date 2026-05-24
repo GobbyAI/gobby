@@ -25,7 +25,6 @@ skills:
     - mypy
     - ruff
     - psql
-    - sqlite3
     - uv
     - npm
     - pnpm

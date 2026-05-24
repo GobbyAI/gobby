@@ -29,7 +29,7 @@ def mock_vector_store() -> MagicMock:
 
 @pytest.fixture
 def mock_storage() -> MagicMock:
-    """Mock LocalMemoryManager (SQLite storage)."""
+    """Mock LocalMemoryManager (PostgreSQL storage)."""
     storage = MagicMock()
     storage.get_memory = MagicMock(return_value=None)
     return storage
@@ -181,7 +181,7 @@ class TestProcess:
         )
         mock_storage.get_memory.return_value = mock_existing
 
-        richer = "Memory DB: ~/.gobby/gobby-hub.db; scope=project; task #14567."
+        richer = "Memory DB: ~/.gobby/hub-postgres.db; scope=project; task #14567."
         mock_updated = MagicMock()
         mock_updated.id = "mem-old"
         mock_updated.content = richer

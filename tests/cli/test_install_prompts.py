@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
     """Build a mock DaemonConfig exposing just the fields the prompt reads."""
     config = MagicMock()
-    config.database_path = "~/.gobby/test.db"
+    config.database_url = "~/.gobby/test.db"
     config.skills = SkillsConfig(hubs=hubs)
     return config
 
@@ -198,10 +198,10 @@ class TestPromptHubApiKeys:
             "unresolved": [],
         }
 
-    def test_opens_runtime_hub_without_sqlite_path(self, patched_deps) -> None:
-        """Prompt setup opens the active runtime hub instead of a configured SQLite path."""
+    def test_opens_runtime_hub_without_removed_path(self, patched_deps) -> None:
+        """Prompt setup opens the active runtime hub instead of a configured PostgreSQL path."""
         config = MagicMock()
-        config.database_path = "/custom/path/to.db"
+        config.database_url = "/custom/path/to.db"
         config.skills = SkillsConfig(hubs={})
         patched_deps["load"].return_value = config
 
@@ -371,7 +371,7 @@ class TestInstallCommandSharedStores:
 
     def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path: Path) -> None:
         config = MagicMock()
-        config.database_path = str(tmp_path / "shared.db")
+        config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
         secret_store = MagicMock()
 
@@ -434,7 +434,7 @@ class TestInstallCommandSharedStores:
         self, tmp_path: Path
     ) -> None:
         config = MagicMock()
-        config.database_path = str(tmp_path / "shared.db")
+        config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
         secret_store = MagicMock()
 

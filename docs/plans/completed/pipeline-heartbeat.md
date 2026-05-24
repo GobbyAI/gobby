@@ -97,7 +97,7 @@ class PipelineHeartbeat:
         completion_registry: CompletionEventRegistry,
         agent_registry: RunningAgentRegistry,
         agent_run_manager: LocalAgentRunManager,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         stall_threshold_seconds: float = 120.0,
     ): ...
 

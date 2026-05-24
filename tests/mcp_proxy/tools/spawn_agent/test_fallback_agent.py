@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -40,7 +40,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_fallback_triggered_on_provider_failure(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When primary provider has failed, factory loads fallback agent."""
         self._create_agent(manager, "dev-gemini", provider="gemini", fallback_agent="dev-claude")
@@ -85,7 +85,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_provider_not_failed(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When primary provider has NOT failed, use primary agent."""
         self._create_agent(manager, "dev-gemini2", provider="gemini", fallback_agent="dev-claude2")
@@ -128,7 +128,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_no_fallback_agent_set(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Agent without fallback_agent doesn't attempt rotation."""
         self._create_agent(manager, "dev-solo", provider="gemini")  # no fallback
@@ -164,7 +164,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_explicit_provider_override(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Explicit provider= param skips fallback (caller chose the provider)."""
         self._create_agent(manager, "dev-explicit", provider="gemini", fallback_agent="dev-fb")

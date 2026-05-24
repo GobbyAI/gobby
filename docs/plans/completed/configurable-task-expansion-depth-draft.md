@@ -64,7 +64,7 @@ Nullable because historical runs didn't have this field; they should keep compil
 Follow the existing pattern in `migrations.py`: append a new numbered migration (increment from the most recent), guard idempotently per the existing harness idiom. Register the migration in the ordered list.
 
 Confirm:
-- `PRAGMA table_info(expansion_runs)` after `gobby start` on a fresh DB shows `max_depth` column.
+- `information_schema table_info(expansion_runs)` after `gobby start` on a fresh DB shows `max_depth` column.
 - Upgrading an existing DB with rows in `expansion_runs` runs cleanly and leaves pre-existing rows with `max_depth IS NULL`.
 
 ### 1.3 Thread max_depth through ExpansionRun and its manager [category: code]

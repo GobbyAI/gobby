@@ -188,7 +188,7 @@ Remove fallback, remove Python CLI package, update distribution.
 
 ### Bootstrap Config (`~/.gobby/bootstrap.yaml`)
 ```yaml
-database_path: "~/.gobby/gobby-hub.db"
+database_url: "~/.gobby/PostgreSQL hub"
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888

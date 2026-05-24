@@ -7,11 +7,11 @@ as well as install_default_mcp_servers.
 from __future__ import annotations
 
 import json
-import sqlite3
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.cli.installers.mcp_config import (
@@ -959,7 +959,7 @@ class TestInstallDefaultMCPServers:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Expected SQLite failures should skip optional secret-backed MCP args."""
+        """Expected PostgreSQL failures should skip optional secret-backed MCP args."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
 
         with (
@@ -972,7 +972,7 @@ class TestInstallDefaultMCPServers:
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch(
                 "gobby.storage.secrets.SecretStore",
-                side_effect=sqlite3.OperationalError("database is locked"),
+                side_effect=psycopg.OperationalError("database is locked"),
             ),
         ):
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
@@ -999,15 +999,15 @@ class TestInstallDefaultMCPServers:
             with pytest.raises(TypeError, match="bad init"):
                 install_default_mcp_servers()
 
-    def test_optional_secret_read_sqlite_error_skips_extra_args(
+    def test_optional_secret_read_postgres_error_skips_extra_args(
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Expected SQLite read failures should omit optional extra args."""
+        """Expected PostgreSQL read failures should omit optional extra args."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
         mock_secret_store = MagicMock()
-        mock_secret_store.exists.side_effect = sqlite3.DatabaseError("read failed")
+        mock_secret_store.exists.side_effect = psycopg.DatabaseError("read failed")
 
         with (
             caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),

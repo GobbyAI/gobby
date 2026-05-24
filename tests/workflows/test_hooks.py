@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests._timing import wait_forever
@@ -626,14 +627,9 @@ class TestVariablePersistence:
     """
 
     @pytest.fixture
-    def db(self, tmp_path):
+    def db(self, temp_db: HubDatabase):
         """Create a real database with migrations."""
-        from gobby.storage.database import LocalDatabase
-        from tests.fixtures.migrations import run_migrations
-
-        db_path = tmp_path / "test_var_persist.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -1016,13 +1012,8 @@ class TestBaselineDirtyFilesSubtraction:
     """
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from tests.fixtures.migrations import run_migrations
-
-        db_path = tmp_path / "test_baseline.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -1324,13 +1315,8 @@ class TestStopFailsClosedOnVariableLoadError:
     """Test that STOP events fail closed when session variables can't be loaded."""
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from tests.fixtures.migrations import run_migrations
-
-        db_path = tmp_path / "test_var_load.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -1592,13 +1578,8 @@ class TestProjectPathResolution:
     """Workflow hook evaluation should recover project_path when only project_id is known."""
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from tests.fixtures.migrations import run_migrations
-
-        db_path = tmp_path / "test_project_path.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.mark.asyncio

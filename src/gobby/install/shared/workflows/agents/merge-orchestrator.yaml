@@ -5,7 +5,7 @@ description: |
   and submits the stage verdict. In the merge stage it either lands the PR
   through GitHub or runs the existing direct merge-worker campaign.
   Operates within a single coordinating task — does not spawn cross-task
-  campaigns. Loads merge-expert and agent-monitoring skills on start.
+  campaigns. Loads merge-expert and build-coordinator skills on start.
 
 version: "1.0"
 enabled: true
@@ -32,13 +32,13 @@ instructions: |
 
   METHODOLOGY:
   After claiming the task, your first actions MUST be to load the
-  `merge-expert` and `agent-monitoring` skills. Call
-  get_skill(name="merge-expert") and get_skill(name="agent-monitoring") on
+  `merge-expert` and `build-coordinator` skills. Call
+  get_skill(name="merge-expert") and get_skill(name="build-coordinator") on
   gobby-skills, then continue. Follow merge-expert exactly:
   Survey -> Plan -> Execute -> Recover -> Verify -> Output (campaign report).
 
   PR STAGE WORKFLOW:
-  - Claim the assigned task and load merge-expert plus agent-monitoring.
+  - Claim the assigned task and load merge-expert plus build-coordinator.
   - Survey the relevant worktrees and target branch.
   - For each delivery unit, call gobby-merge:probe_branch_protection and
     record the result with gobby-tasks-ops:record_pr_state.
@@ -64,7 +64,7 @@ instructions: |
 
   MERGE STAGE WORKFLOW:
   - Claim the assigned campaign task and read its description.
-  - Load merge-expert and agent-monitoring before doing anything else.
+  - Load merge-expert and build-coordinator before doing anything else.
   - Read gobby-tasks-ops:get_delivery_state. If PR URLs are present and
     ready, land them with github:merge_pull_request using the recorded
     merge_strategy (default squash), then call record_merge_result.
@@ -181,7 +181,7 @@ workflows:
 step_variables:
   task_claimed: false
   skill_loaded: false
-  monitoring_skill_loaded: false
+  build_coordinator_skill_loaded: false
   survey_complete: false
   execution_complete: false
   report_complete: false
@@ -216,10 +216,10 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
-    description: "Load required merge and monitoring skills"
+    description: "Load required merge and build coordinator skills"
     status_message: |
       Call get_skill(name="merge-expert") and
-      get_skill(name="agent-monitoring") on gobby-skills, then continue.
+      get_skill(name="build-coordinator") on gobby-skills, then continue.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -236,13 +236,13 @@ steps:
         value: true
       - server: gobby-skills
         tool: get_skill
-        when: "tool_input.name == 'agent-monitoring'"
+        when: "tool_input.name == 'build-coordinator'"
         action: set_variable
-        variable: monitoring_skill_loaded
+        variable: build_coordinator_skill_loaded
         value: true
     transitions:
       - to: survey
-        when: "vars.skill_loaded and vars.monitoring_skill_loaded"
+        when: "vars.skill_loaded and vars.build_coordinator_skill_loaded"
 
   - name: survey
     description: "Survey unmerged worktrees and predict conflicts"

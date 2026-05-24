@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -15,13 +15,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db: LocalDatabase) -> str:
+def project_id(temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
     return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
 
 
 @pytest.fixture
-def session_mgr(temp_db: LocalDatabase) -> SessionManager:
+def session_mgr(temp_db: HubDatabase) -> SessionManager:
     """Create the canonical storage SessionManager under test."""
     return SessionManager(temp_db)
 

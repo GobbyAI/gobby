@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_lifecycle import _build_empty_session_prune_reference_guards
 from gobby.storage.sessions import SessionManager
@@ -13,13 +13,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db: LocalDatabase) -> str:
+def project_id(temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
     return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
 
 
 @pytest.fixture
-def session_mgr(temp_db: LocalDatabase) -> SessionManager:
+def session_mgr(temp_db: HubDatabase) -> SessionManager:
     """Create the canonical storage SessionManager under test."""
     return SessionManager(temp_db)
 
@@ -43,7 +43,6 @@ def test_empty_session_prune_reference_guards_use_postgres_information_schema() 
     guards = _build_empty_session_prune_reference_guards(db)  # type: ignore[arg-type]
 
     assert any("information_schema.columns" in query for query, _params in db.queries)
-    assert not any("PRAGMA" in query for query, _params in db.queries)
     assert guards == (
         "NOT EXISTS (SELECT 1 FROM sessions ref WHERE ref.parent_session_id = sessions.id)",
     )

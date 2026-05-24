@@ -3,29 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from tests.fixtures.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
     yield database
-    database.close()
 
 
-def _ensure_session(db: LocalDatabase, session_id: str) -> None:
+def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
@@ -33,7 +29,7 @@ def _ensure_session(db: LocalDatabase, session_id: str) -> None:
     )
 
 
-def test_save_and_get_instance(db: LocalDatabase) -> None:
+def test_save_and_get_instance(db: HubDatabase) -> None:
     """Test saving and retrieving a workflow instance."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -60,7 +56,7 @@ def test_save_and_get_instance(db: LocalDatabase) -> None:
     assert result.enabled is True
 
 
-def test_get_instance_not_found(db: LocalDatabase) -> None:
+def test_get_instance_not_found(db: HubDatabase) -> None:
     """Test get_instance returns None for non-existent instance."""
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -69,7 +65,7 @@ def test_get_instance_not_found(db: LocalDatabase) -> None:
     assert result is None
 
 
-def test_save_instance_upsert(db: LocalDatabase) -> None:
+def test_save_instance_upsert(db: HubDatabase) -> None:
     """Test that save_instance updates existing row on conflict."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -98,7 +94,7 @@ def test_save_instance_upsert(db: LocalDatabase) -> None:
     assert result.step_action_count == 5
 
 
-def test_get_active_instances(db: LocalDatabase) -> None:
+def test_get_active_instances(db: HubDatabase) -> None:
     """Test get_active_instances returns enabled instances sorted by priority."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -151,7 +147,7 @@ def test_get_active_instances(db: LocalDatabase) -> None:
     assert active[2].workflow_name == "auto-task"  # priority=25
 
 
-def test_get_active_instances_empty(db: LocalDatabase) -> None:
+def test_get_active_instances_empty(db: HubDatabase) -> None:
     """Test get_active_instances returns empty list for no instances."""
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -160,7 +156,7 @@ def test_get_active_instances_empty(db: LocalDatabase) -> None:
     assert result == []
 
 
-def test_delete_instance(db: LocalDatabase) -> None:
+def test_delete_instance(db: HubDatabase) -> None:
     """Test deleting a workflow instance."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -183,7 +179,7 @@ def test_delete_instance(db: LocalDatabase) -> None:
     assert mgr.get_instance("s1", "auto-task") is None
 
 
-def test_delete_instance_nonexistent(db: LocalDatabase) -> None:
+def test_delete_instance_nonexistent(db: HubDatabase) -> None:
     """Test that deleting a non-existent instance doesn't raise."""
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -193,7 +189,7 @@ def test_delete_instance_nonexistent(db: LocalDatabase) -> None:
     assert mgr.get_instance("nonexistent", "nonexistent") is None
 
 
-def test_delete_instances_for_session(db: LocalDatabase) -> None:
+def test_delete_instances_for_session(db: HubDatabase) -> None:
     """Test deleting all workflow instances for one session returns row count."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -233,7 +229,7 @@ def test_delete_instances_for_session(db: LocalDatabase) -> None:
     assert remaining[0].workflow_name == "plan-adversary-steps"
 
 
-def test_set_enabled(db: LocalDatabase) -> None:
+def test_set_enabled(db: HubDatabase) -> None:
     """Test toggling enabled state on an instance."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -263,7 +259,7 @@ def test_set_enabled(db: LocalDatabase) -> None:
     assert result.enabled is True
 
 
-def test_set_enabled_nonexistent(db: LocalDatabase) -> None:
+def test_set_enabled_nonexistent(db: HubDatabase) -> None:
     """Test set_enabled on non-existent instance doesn't raise."""
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -273,7 +269,7 @@ def test_set_enabled_nonexistent(db: LocalDatabase) -> None:
     assert mgr.get_instance("nonexistent", "nonexistent") is None
 
 
-def test_multiple_sessions_isolated(db: LocalDatabase) -> None:
+def test_multiple_sessions_isolated(db: HubDatabase) -> None:
     """Test that instances from different sessions are isolated."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -308,7 +304,7 @@ def test_multiple_sessions_isolated(db: LocalDatabase) -> None:
     assert s2_inst.variables["key"] == "session2"
 
 
-def test_save_instance_preserves_variables(db: LocalDatabase) -> None:
+def test_save_instance_preserves_variables(db: HubDatabase) -> None:
     """Test that variables dict is correctly serialized and deserialized."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager

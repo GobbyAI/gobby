@@ -192,10 +192,10 @@ def test_split_statements_respecting_dollar_quotes_handles_checked_in_postgres_d
 
 
 def test_migration_runner_rejects_non_postgres_hubs_after_cutover() -> None:
-    class SqliteHub:
-        dialect = "sqlite"
+    class LegacyHub:
+        dialect = "legacy"
 
     migration_module = _migration_module()
 
     with pytest.raises(MigrationUnsupportedError, match="only supports PostgreSQL"):
-        migration_module.MigrationRunner(SqliteHub())
+        migration_module.MigrationRunner(LegacyHub())

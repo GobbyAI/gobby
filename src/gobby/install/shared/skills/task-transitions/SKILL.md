@@ -36,10 +36,12 @@ All changes must be committed before status transitions.
 
 ```bash
 git add <specific-files>
-git commit -m "[project-#N] type: description"
+git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 ```
 
-Prefer staging specific files over `git add -A`. Include the task reference in the commit message.
+Prefer staging specific files over `git add -A`. Include the task reference in the
+commit message. `project_name` is a placeholder for the real project name, never
+a literal prefix. In this repo, use `[gobby-#N] type: description`.
 
 ## Gate 2: Close with Commit SHA
 
@@ -106,7 +108,7 @@ Do NOT create memories for bugs or errors — create tasks instead.
 ## Complete Close Sequence (interactive sessions)
 
 ```
-1. git add + git commit (with [project-#N] in message)
+1. git add + git commit (with [<project_name>-#<task_number>] in the message, e.g. [gobby-#N])
 2. Run verification commands from .gobby/project.json on touched files → fix everything
 3. set_variable(errors_resolved=true)
 4. Review memories → save/delete/clear gate

@@ -29,7 +29,7 @@ from gobby.storage.agents import LocalAgentRunManager
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -249,7 +249,7 @@ async def _refresh_compact_handoff_context(
     session_id: str,
     session: Any,
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     llm_service: Any | None,
 ) -> dict[str, Any]:
     """Refresh summary_markdown before compact_self can trigger same-session resume."""
@@ -374,7 +374,7 @@ async def _compact_live_web_chat_fallback(
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     llm_service: Any | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:

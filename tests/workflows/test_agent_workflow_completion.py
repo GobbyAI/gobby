@@ -14,26 +14,24 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_agent_workflow_completion.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
-def _create_session(db: LocalDatabase, session_id: str) -> None:
+def _create_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         ("project-1", "test-project"),
@@ -46,7 +44,7 @@ def _create_session(db: LocalDatabase, session_id: str) -> None:
 
 
 def _register_agent_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
@@ -117,7 +115,7 @@ def _register_agent_workflow(
 
 
 def _register_qa_reviewer_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     session_id: str = "agent-session",
 ) -> WorkflowInstanceManager:
@@ -209,7 +207,7 @@ def _after_tool_event(
 class TestAgentWorkflowCompletion:
     @pytest.mark.asyncio
     async def test_exit_condition_terminalizes_agent_run_through_lifecycle_cleanup(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()
@@ -243,7 +241,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_holistic_review_complete_stage_success_transitions_to_terminate(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
@@ -280,7 +278,7 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_exit_condition_noops_for_non_agent_session(self, db: LocalDatabase) -> None:
+    async def test_exit_condition_noops_for_non_agent_session(self, db: HubDatabase) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()
         runner.run_storage = MagicMock()
@@ -305,7 +303,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_failed_codex_mcp_envelope_keeps_review_step_open(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
@@ -376,7 +374,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_closed_review_target_error_completes_plan_adversary_workflow(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
@@ -428,7 +426,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_qa_reviewer_stale_get_task_result_transitions_to_terminate(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         instance_manager = _register_qa_reviewer_workflow(db)
         engine = RuleEngine(db)
@@ -465,7 +463,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()
@@ -489,7 +487,7 @@ class TestAgentWorkflowCompletion:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_workflow_termination_cleans_child_not_dispatcher_launcher(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         db.execute(
             "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -576,7 +574,7 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     async def test_on_mcp_success_when_condition_checks_tool_argument(
-        self, db: LocalDatabase
+        self, db: HubDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,

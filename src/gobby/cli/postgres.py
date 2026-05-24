@@ -144,8 +144,7 @@ def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
     help=(
         "Docker mode: also delete the gobby_postgres_data and gobby_pgaudit_log "
         "named volumes. Native mode: print manual data-directory deletion steps. "
-        "External mode: refuses; Gobby never deletes server-side data. "
-        "Does not restore the removed SQLite hub runtime."
+        "External mode: refuses; Gobby never deletes server-side data."
     ),
 )
 def uninstall_cmd(remove_data: bool) -> None:

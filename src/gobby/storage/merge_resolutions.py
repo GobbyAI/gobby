@@ -5,12 +5,13 @@ Stores merge resolutions and conflicts for worktree merge operations.
 """
 
 import logging
-import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
@@ -254,7 +255,7 @@ class MergeResolutionManager:
                 ),
                 True,
             )
-        except sqlite3.IntegrityError:
+        except psycopg.IntegrityError:
             existing = self.get_resolution_for_merge(
                 worktree_id=worktree_id,
                 source_branch=source_branch,

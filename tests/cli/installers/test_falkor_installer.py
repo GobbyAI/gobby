@@ -178,16 +178,16 @@ class TestInstallFalkorDB:
     def test_update_config_removes_legacy_neo4j_keys(self, tmp_path: Path) -> None:
         from gobby.cli.installers.falkor import _update_config
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.protocol import HubDatabase
         from tests.fixtures.migrations import run_migrations
 
-        db_path = tmp_path / "gobby-hub.db"
+        db_path = tmp_path / "hub-postgres.db"
 
-        def open_db(_home: Path, *, apply_migrations: bool = True) -> LocalDatabase:
+        def open_db(_home: Path, *, apply_migrations: bool = True) -> HubDatabase:
             _ = apply_migrations
-            return LocalDatabase(db_path)
+            return HubDatabase(db_path)
 
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         try:
             run_migrations(db)
             store = ConfigStore(db)
@@ -204,7 +204,7 @@ class TestInstallFalkorDB:
                 gobby_home=tmp_path,
             )
 
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         try:
             store = ConfigStore(db)
             assert store.get("databases.neo4j.url") is None

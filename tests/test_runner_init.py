@@ -172,11 +172,11 @@ class TestInitHubDatabase:
     """Tests for hub database initialization helpers."""
 
     def test_rejects_non_postgres_backend(self) -> None:
-        """SQLite hub backend is rejected by the PostgreSQL-only runtime."""
+        """Non-PostgreSQL hub backends are rejected by the runtime."""
         from gobby.runner_init import helpers
 
         config = SimpleNamespace(
-            hub_backend="sqlite",
+            hub_backend="local",
             database_url=None,
         )
 
@@ -191,7 +191,6 @@ class TestInitHubDatabase:
             db = MagicMock()
             postgres_database.return_value = db
             config = SimpleNamespace(
-                database_path="/unused/sqlite.db",
                 hub_backend="postgres",
                 database_url="postgresql://gobby:secret@localhost:60891/gobby",
             )
@@ -207,7 +206,6 @@ class TestInitHubDatabase:
         from gobby.runner_init import helpers
 
         config = SimpleNamespace(
-            database_path="/unused/sqlite.db",
             hub_backend="postgres",
             database_url=None,
         )

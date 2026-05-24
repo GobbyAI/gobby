@@ -22,7 +22,7 @@ from gobby.paths import get_gobby_home
 from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 if TYPE_CHECKING:
@@ -249,7 +249,7 @@ def _get_config_store(server: HTTPServer) -> ConfigStore:
 
 
 def _resolve_upload_project_id(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     requested_project_id: str | None,
     service_project_id: str | None,
 ) -> str:

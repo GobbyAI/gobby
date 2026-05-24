@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
     return models
 
 
-def lookup_context_window(model: str, db: DatabaseProtocol | None = None) -> int | None:
+def lookup_context_window(model: str, db: HubDatabase | None = None) -> int | None:
     """Look up context window size for a model.
 
     Uses ModelCostStore for DB-backed lookup with prefix matching.

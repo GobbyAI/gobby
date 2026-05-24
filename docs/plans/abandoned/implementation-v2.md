@@ -57,7 +57,7 @@ Infrastructure work (small — most of the plumbing exists):
 
 New skill files under `src/gobby/install/shared/skills/` (or wherever bundled skills live — verify at execution time):
 - `frontend-dev.md` — router skill: reads `tag:frontend` task tag, instructs agent to `get_skill` the `typescript` / `react` / `web-accessibility` skills as relevant. Style: mirrors `/gobby` skill router.
-- `backend-dev.md` — router skill: reads `tag:backend`, instructs agent to `get_skill` `python` / `sqlite` / `fastapi` / whatever the task touches.
+- `backend-dev.md` — router skill: reads `tag:backend`, instructs agent to `get_skill` `python` / `PostgreSQL` / `fastapi` / whatever the task touches.
 
 Tagging — one generic plumbing change, then pure config forever:
 
@@ -86,7 +86,7 @@ Rename files and DB rows:
 - Update `delivery-orchestrator.yaml` `invoke_pipeline:` refs to the new names.
 - Update `dev-orchestrator.yaml` if it references the old names.
 - Grep for `orchestrator` / `front-half-orchestrator` across `src/gobby/` and `tests/` — expected hits: loader comments, test fixtures, any MCP tool or pipeline YAML that references pipeline by name.
-- DB rename: one-off SQL against `~/.gobby/gobby-hub.db` — no migration file (pre-launch, no users). Two UPDATE statements against `workflow_definitions.name`, run manually after the YAML rename commit. Pipeline sync (`src/gobby/workflows/sync_pipelines.py:91`) keys on the YAML `name` field — renamed rows match renamed YAMLs and sync-update normally.
+- DB rename: one-off SQL against `~/.gobby/PostgreSQL hub` — no migration file (pre-launch, no users). Two UPDATE statements against `workflow_definitions.name`, run manually after the YAML rename commit. Pipeline sync (`src/gobby/workflows/sync_pipelines.py:91`) keys on the YAML `name` field — renamed rows match renamed YAMLs and sync-update normally.
 
 Verification:
 - Stop daemon; run the two `UPDATE workflow_definitions SET name=...` statements; start daemon; `uv run gobby install` re-syncs.

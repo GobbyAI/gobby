@@ -121,14 +121,14 @@ class PipelineHeartbeat:
         self._stall_threshold_seconds = stall_threshold_seconds
         self._task_manager = task_manager
         self._session_manager = session_manager
-        self._run_db = run_db
+        self._db_runner = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._db_runner is None:
             import asyncio
 
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._db_runner(func, *args, **kwargs)
 
     async def __call__(self, job: CronJob) -> PipelineHeartbeatResult:
         """Cron handler entry point."""
@@ -153,7 +153,7 @@ class PipelineHeartbeat:
         Returns:
             Number of stalled executions handled
         """
-        stalled = await self._run_sqlite(
+        stalled = await self._run_db(
             self._execution_manager.get_stalled_executions,
             int(self._stall_threshold_seconds),
         )
@@ -174,11 +174,11 @@ class PipelineHeartbeat:
         Returns 1 if action was taken, 0 otherwise.
         """
         # Check if any agents are alive for this execution's session
-        has_alive_agents = await self._run_sqlite(self._has_alive_agents, execution)
+        has_alive_agents = await self._run_db(self._has_alive_agents, execution)
 
         if has_alive_agents:
             # Agents still working — touch updated_at so we don't re-flag
-            await self._run_sqlite(
+            await self._run_db(
                 self._execution_manager.update_execution_status,
                 execution.id,
                 ExecutionStatus.RUNNING,
@@ -189,7 +189,7 @@ class PipelineHeartbeat:
             return 1
 
         # No alive agents — truly dead
-        await self._run_sqlite(
+        await self._run_db(
             self._execution_manager.update_execution_status,
             execution.id,
             ExecutionStatus.FAILED,
@@ -261,7 +261,7 @@ class PipelineHeartbeat:
             if owner_session_id is None:
                 continue
             try:
-                has_active = await self._run_sqlite(
+                has_active = await self._run_db(
                     agent_run_manager.has_active_run_for_task, task.id
                 )
                 if has_active:
@@ -269,44 +269,44 @@ class PipelineHeartbeat:
 
                 # No active agent run — check if the owning session is still alive.
                 # Interactive CLI sessions don't create agent runs.
-                session_alive = await self._run_sqlite(self._is_session_alive, owner_session_id)
+                session_alive = await self._run_db(self._is_session_alive, owner_session_id)
                 if session_alive:
                     continue
 
                 # No active agent run and no live session — task ownership is orphaned.
                 has_commits = bool(getattr(task, "commits", None))
-                current_stage = await self._run_sqlite(
+                current_stage = await self._run_db(
                     task_manager.stage_states.current_stage,
                     task.id,
                 )
                 if current_stage and current_stage.state == "in_progress" and has_commits:
-                    await self._run_sqlite(
+                    await self._run_db(
                         _submit_current_stage_for_review,
                         task_manager,
                         task.id,
                         current_stage.stage_name,
                     )
-                    await self._run_sqlite(task_manager.release_task_claim, task.id)
+                    await self._run_db(task_manager.release_task_claim, task.id)
                     logger.info(
                         "Heartbeat: submitted stale task %s (#%s) for review",
                         task.id,
                         task.seq_num,
                     )
                 elif current_stage and current_stage.state == "in_progress":
-                    await self._run_sqlite(
+                    await self._run_db(
                         _fail_current_stage,
                         task_manager,
                         task.id,
                         current_stage.stage_name,
                     )
-                    await self._run_sqlite(task_manager.release_task_claim, task.id)
+                    await self._run_db(task_manager.release_task_claim, task.id)
                     logger.warning(
                         "Heartbeat: failed stale task %s (#%s) for retry",
                         task.id,
                         task.seq_num,
                     )
                 else:
-                    await self._run_sqlite(
+                    await self._run_db(
                         task_manager.release_task_claim,
                         task.id,
                     )
@@ -323,7 +323,7 @@ class PipelineHeartbeat:
     async def count_running_executions(self) -> int:
         """Count running pipeline executions that need heartbeat monitoring."""
         return int(
-            await self._run_sqlite(
+            await self._run_db(
                 self._execution_manager.count_executions,
                 status=ExecutionStatus.RUNNING,
             )
@@ -340,7 +340,7 @@ class PipelineHeartbeat:
             return []
 
         try:
-            active_claims = await self._run_sqlite(
+            active_claims = await self._run_db(
                 task_manager.list_tasks,
                 current_stage_state=list(ACTIVE_STAGE_STATES),
                 closed=False,

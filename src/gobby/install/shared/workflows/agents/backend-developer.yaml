@@ -18,7 +18,7 @@ blocked_mcp_tools:
 skills:
   baseline:
     - Python backend and daemon implementation
-    - storage, migrations, sqlite3, psql, and database clients
+    - storage, migrations, psql, and database clients
     - pytest, mypy, ruff, and task-focused validation
     - uv, pip, poetry, container tools, and infrastructure debugging
     - docs and test leaves that do not require a specialized agent
@@ -27,7 +27,6 @@ skills:
     - mypy
     - ruff
     - psql
-    - sqlite3
     - uv
     - pip
     - poetry
@@ -47,7 +46,7 @@ instructions: |
   ## Agent Selection
   Defaulted to `backend-developer`
 
-  Prefer the backend toolchain: pytest, mypy, ruff, psql, sqlite3, uv, pip,
+  Prefer the backend toolchain: pytest, mypy, ruff, psql, uv, pip,
   poetry, and container tools. Use repository-specific validation commands
   rather than broad full-suite runs.
 

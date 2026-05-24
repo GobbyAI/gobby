@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
 
@@ -171,7 +171,7 @@ class RegistryContext:
 def resolve_project_filter_standalone(
     project: str | None,
     all_projects: bool,
-    db: "DatabaseProtocol",
+    db: "HubDatabase",
 ) -> str | None:
     """Standalone project filter resolver for tools without RegistryContext.
 

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
@@ -21,21 +21,18 @@ from gobby.workflows.definitions import (
     RuleTriggerEvent,
 )
 from gobby.workflows.engine.core import RuleEngine
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_rule_engine.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -102,7 +99,7 @@ def _insert_agent(
 
 
 async def _assert_evaluation(
-    db: LocalDatabase,
+    db: HubDatabase,
     event: HookEvent,
     expected_decision: str,
     variables: dict[str, Any] | None = None,
@@ -124,7 +121,7 @@ async def _assert_evaluation(
 class TestRuleEngineLoadRules:
     @pytest.mark.asyncio
     async def test_loads_rules_by_event(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """RuleEngine should load only rules matching the event type."""
 
@@ -150,7 +147,7 @@ class TestRuleEngineLoadRules:
 
     @pytest.mark.asyncio
     async def test_skips_disabled_rules(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Disabled rules should not be evaluated."""
 
@@ -171,7 +168,7 @@ class TestRuleEngineLoadRules:
 class TestBlockEffect:
     @pytest.mark.asyncio
     async def test_block_returns_deny(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Block effect should return a block/deny decision."""
 
@@ -189,7 +186,7 @@ class TestBlockEffect:
 
     @pytest.mark.asyncio
     async def test_block_non_matching_tool_allows(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Block rule with tools filter should not block non-matching tools."""
 
@@ -207,7 +204,7 @@ class TestBlockEffect:
 
     @pytest.mark.asyncio
     async def test_first_block_wins(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When multiple rules block, the first (by priority) wins."""
 
@@ -237,7 +234,7 @@ class TestBlockEffect:
 class TestSetVariableEffect:
     @pytest.mark.asyncio
     async def test_set_variable_literal(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """set_variable with a literal value should update variables."""
 
@@ -258,7 +255,7 @@ class TestSetVariableEffect:
 
     @pytest.mark.asyncio
     async def test_set_variable_expression(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """set_variable with a string expression should evaluate it."""
 
@@ -286,7 +283,7 @@ class TestSetVariableEffect:
 
     @pytest.mark.asyncio
     async def test_set_variable_jinja2_template(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """set_variable with Jinja2 template should render and coerce to native type."""
 
@@ -316,7 +313,7 @@ class TestSetVariableEffect:
 class TestInjectContextEffect:
     @pytest.mark.asyncio
     async def test_inject_context_adds_system_message(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """inject_context should add template to response context."""
 
@@ -341,7 +338,7 @@ class TestInjectContextEffect:
 
     @pytest.mark.asyncio
     async def test_multiple_inject_context_accumulate(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Multiple inject_context effects should accumulate."""
 
@@ -374,7 +371,7 @@ class TestInjectContextEffect:
 class TestWhenConditions:
     @pytest.mark.asyncio
     async def test_when_true_fires(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule with when=True condition should fire."""
 
@@ -393,7 +390,7 @@ class TestWhenConditions:
 
     @pytest.mark.asyncio
     async def test_when_false_skips(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule with when=False condition should not fire."""
 
@@ -412,7 +409,7 @@ class TestWhenConditions:
 
     @pytest.mark.asyncio
     async def test_when_none_always_fires(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule without a when condition should always fire."""
 
@@ -436,7 +433,7 @@ class TestWhenConditions:
 class TestPriorityOrdering:
     @pytest.mark.asyncio
     async def test_rules_evaluated_in_priority_order(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules should be evaluated from lowest priority number (highest priority) first."""
 
@@ -473,7 +470,7 @@ class TestPriorityOrdering:
 class TestSessionOverrides:
     @pytest.mark.asyncio
     async def test_session_override_disables_rule(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """A session override with enabled=False should skip the rule."""
 
@@ -501,7 +498,7 @@ class TestSessionOverrides:
 
     @pytest.mark.asyncio
     async def test_session_override_only_affects_that_session(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Override for one session should not affect another session."""
 
@@ -531,7 +528,7 @@ class TestSessionOverrides:
 class TestObserveEffect:
     @pytest.mark.asyncio
     async def test_observe_appends_to_observations(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """observe effect should append an entry to _observations in variables."""
 
@@ -563,7 +560,7 @@ class TestObserveEffect:
 
     @pytest.mark.asyncio
     async def test_observe_accumulates(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Multiple observe effects should accumulate entries."""
 
@@ -597,7 +594,7 @@ class TestObserveEffect:
 
     @pytest.mark.asyncio
     async def test_observe_defaults_category_to_general(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """observe with no category should default to 'general'."""
 
@@ -619,7 +616,7 @@ class TestObserveEffect:
 
     @pytest.mark.asyncio
     async def test_observe_with_template_message(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """observe with Jinja template in message should render it."""
 
@@ -649,7 +646,7 @@ class TestObserveEffect:
 class TestMcpCallEffect:
     @pytest.mark.asyncio
     async def test_mcp_call_records_pending_call(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """mcp_call effect should record the call for later execution."""
 
@@ -681,7 +678,7 @@ class TestMcpCallEffect:
 class TestVariableRebuild:
     @pytest.mark.asyncio
     async def test_later_rules_see_earlier_variable_changes(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """A rule that sets a variable should affect subsequent rule conditions."""
 
@@ -718,7 +715,7 @@ class TestMcpCallToolUnwrapping:
     """Tests for unwrapping nested MCP call_tool arguments in _build_eval_context."""
 
     @pytest.mark.asyncio
-    async def test_call_tool_unwraps_dict_arguments(self, db: LocalDatabase) -> None:
+    async def test_call_tool_unwraps_dict_arguments(self, db: HubDatabase) -> None:
         """_build_eval_context should unwrap inner arguments for call_tool events."""
 
         engine = RuleEngine(db)
@@ -742,7 +739,7 @@ class TestMcpCallToolUnwrapping:
         }
 
     @pytest.mark.asyncio
-    async def test_mcp_prefixed_call_tool_unwraps(self, db: LocalDatabase) -> None:
+    async def test_mcp_prefixed_call_tool_unwraps(self, db: HubDatabase) -> None:
         """_build_eval_context should unwrap for mcp__gobby__call_tool too."""
 
         engine = RuleEngine(db)
@@ -766,7 +763,7 @@ class TestMcpCallToolUnwrapping:
         }
 
     @pytest.mark.asyncio
-    async def test_call_tool_unwraps_json_string_arguments(self, db: LocalDatabase) -> None:
+    async def test_call_tool_unwraps_json_string_arguments(self, db: HubDatabase) -> None:
         """_build_eval_context should parse JSON string arguments for call_tool."""
 
         engine = RuleEngine(db)
@@ -790,7 +787,7 @@ class TestMcpCallToolUnwrapping:
         }
 
     @pytest.mark.asyncio
-    async def test_regular_tool_not_unwrapped(self, db: LocalDatabase) -> None:
+    async def test_regular_tool_not_unwrapped(self, db: HubDatabase) -> None:
         """_build_eval_context should NOT unwrap arguments for regular tools."""
 
         engine = RuleEngine(db)
@@ -803,7 +800,7 @@ class TestMcpCallToolUnwrapping:
         assert ctx["tool_input"] == original_input
 
     @pytest.mark.asyncio
-    async def test_non_dict_tool_input_becomes_empty_mapping(self, db: LocalDatabase) -> None:
+    async def test_non_dict_tool_input_becomes_empty_mapping(self, db: HubDatabase) -> None:
         """Rule conditions can safely call tool_input.get() for malformed hook input."""
 
         engine = RuleEngine(db)
@@ -818,7 +815,7 @@ class TestMcpCallToolUnwrapping:
 
     @pytest.mark.asyncio
     async def test_rule_condition_sees_unwrapped_args(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """End-to-end: a rule checking tool_input.get('commit_sha') should work on inner args."""
 
@@ -874,7 +871,7 @@ class TestMcpCallToolUnwrapping:
 
 class TestToggleRuleRejectsTemplate:
     def test_toggle_rule_works_for_installed(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """toggle_rule should work for installed rules."""
         from gobby.mcp_proxy.tools.workflows._rules import toggle_rule
@@ -900,7 +897,7 @@ class TestMultipleEffects:
 
     @pytest.mark.asyncio
     async def test_block_and_set_variable(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Multi-effect rule with block + set_variable: variable set AND block fires."""
 
@@ -928,7 +925,7 @@ class TestMultipleEffects:
 
     @pytest.mark.asyncio
     async def test_set_variable_and_inject_context(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Multi-effect rule with set_variable + inject_context: both apply."""
 
@@ -955,7 +952,7 @@ class TestMultipleEffects:
 
     @pytest.mark.asyncio
     async def test_per_effect_when_skips_false(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Per-effect when=false should skip that effect but fire others."""
 
@@ -990,7 +987,7 @@ class TestMultipleEffects:
 
     @pytest.mark.asyncio
     async def test_per_effect_when_fires_true(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Per-effect when=true should fire that effect."""
 
@@ -1045,7 +1042,7 @@ class TestMultipleEffects:
 
     @pytest.mark.asyncio
     async def test_multiple_mcp_calls(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Multi-effect rule with multiple mcp_call effects should record all."""
 
@@ -1077,7 +1074,7 @@ class TestBeforeToolBlockTracking:
 
     @pytest.mark.asyncio
     async def test_before_tool_block_records_last_blocked_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """A before_tool block should record the blocked tool name only."""
 
@@ -1100,7 +1097,7 @@ class TestBeforeToolBlockTracking:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_not_set_on_stop_block(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending should NOT be set on stop event blocks."""
 
@@ -1122,7 +1119,7 @@ class TestBeforeToolBlockTracking:
 
     @pytest.mark.asyncio
     async def test_before_tool_block_with_multi_effect_tracks_tool_name(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """A multi-effect before_tool block should still track the blocked tool."""
 
@@ -1149,7 +1146,7 @@ class TestBeforeToolBlockTracking:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_cleared_on_successful_after_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending should be auto-cleared by the engine on successful after_tool."""
 
@@ -1162,7 +1159,7 @@ class TestBeforeToolBlockTracking:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_not_cleared_on_failed_after_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending should NOT be cleared on failed after_tool."""
 
@@ -1180,7 +1177,7 @@ class TestConsecutiveToolBlocks:
 
     @pytest.mark.asyncio
     async def test_counter_increments_on_consecutive_block(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Counter should increment when the same blocked tool is retried."""
 
@@ -1202,7 +1199,7 @@ class TestConsecutiveToolBlocks:
 
     @pytest.mark.asyncio
     async def test_short_circuit_fires_at_threshold(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """At the configured threshold, engine should short-circuit without evaluating rules."""
 
@@ -1235,7 +1232,7 @@ class TestConsecutiveToolBlocks:
         assert variables.get("rule_ran") is None
 
     @pytest.mark.asyncio
-    async def test_counter_resets_on_successful_after_tool(self, db: LocalDatabase) -> None:
+    async def test_counter_resets_on_successful_after_tool(self, db: HubDatabase) -> None:
         """Counter should reset to 0 on successful after_tool."""
 
         engine = RuleEngine(db)
@@ -1250,7 +1247,7 @@ class TestConsecutiveToolBlocks:
         assert variables["_last_blocked_tool"] == ""
 
     @pytest.mark.asyncio
-    async def test_counter_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+    async def test_counter_resets_on_turn_start_boundary(self, db: HubDatabase) -> None:
         """Counter should reset to 0 on the semantic turn_start boundary."""
 
         engine = RuleEngine(db)
@@ -1262,7 +1259,7 @@ class TestConsecutiveToolBlocks:
 
     @pytest.mark.asyncio
     async def test_counter_not_incremented_when_block_pending_false(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """First block should NOT touch the counter when no blocked tool is tracked."""
 
@@ -1283,7 +1280,7 @@ class TestConsecutiveToolBlocks:
         assert variables.get("consecutive_tool_blocks", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_counter_not_reset_on_failed_after_tool(self, db: LocalDatabase) -> None:
+    async def test_counter_not_reset_on_failed_after_tool(self, db: HubDatabase) -> None:
         """Counter should NOT reset on failed after_tool."""
 
         engine = RuleEngine(db)
@@ -1301,7 +1298,7 @@ class TestConsecutiveToolBlocks:
 
 class TestNoRules:
     @pytest.mark.asyncio
-    async def test_no_matching_rules_allows(self, db: LocalDatabase) -> None:
+    async def test_no_matching_rules_allows(self, db: HubDatabase) -> None:
         """When no rules match the event, the response should allow."""
 
         engine = RuleEngine(db)
@@ -1316,7 +1313,7 @@ class TestOverrideCollectsMcpCalls:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_still_collects_mcp_calls(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When tool_block_pending blocks a stop, mcp_call effects should still be collected."""
 
@@ -1354,7 +1351,7 @@ class TestOverrideCollectsMcpCalls:
 
     @pytest.mark.asyncio
     async def test_force_allow_stop_still_collects_mcp_calls(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When force_allow_stop allows a stop, mcp_call effects should still be collected."""
 
@@ -1389,7 +1386,7 @@ class TestOverrideCollectsMcpCalls:
 
     @pytest.mark.asyncio
     async def test_override_block_trumps_rule_evaluated_allow(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending override should block even when no rules produce a block."""
 
@@ -1413,7 +1410,7 @@ class TestOverrideCollectsMcpCalls:
 
     @pytest.mark.asyncio
     async def test_force_allow_trumps_rule_evaluated_block(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """force_allow_stop override should allow even when rules produce a block."""
 
@@ -1439,7 +1436,7 @@ class TestMcpCallTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_mcp_call_template_rendering(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Template expressions in mcp_call arguments should be rendered."""
 
@@ -1477,7 +1474,7 @@ class TestMcpCallTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_mcp_call_static_args_passthrough(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Non-template arguments should pass through unchanged."""
 
@@ -1513,7 +1510,7 @@ class TestToolBlockPendingScopeAware:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_clears_for_any_successful_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending SHOULD clear when any tool succeeds (scope-agnostic)."""
 
@@ -1531,7 +1528,7 @@ class TestToolBlockPendingScopeAware:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_clears_for_matching_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending should clear when the same tool succeeds."""
 
@@ -1548,7 +1545,7 @@ class TestToolBlockPendingScopeAware:
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_clears_when_no_last_blocked_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """tool_block_pending should clear when _last_blocked_tool is empty (legacy compat)."""
 
@@ -1564,7 +1561,7 @@ class TestToolBlockPendingScopeAware:
 
     @pytest.mark.asyncio
     async def test_parallel_scenario_edit_fails_read_succeeds(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Parallel calls: Edit pre-tool fires, Edit fails, Read succeeds — edit_write_pending stays True."""
 
@@ -1597,7 +1594,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_on_before_tool(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """edit_write_pending should be set True when Edit/Write pre-tool fires."""
 
@@ -1610,7 +1607,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_write(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """edit_write_pending should be set for Write tool too."""
 
@@ -1623,7 +1620,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_apply_patch(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Normalized apply_patch should participate in edit-write recovery."""
 
@@ -1644,7 +1641,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_shell_write(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """High-confidence shell writes should participate in edit recovery."""
 
@@ -1660,7 +1657,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_not_set_for_read(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """edit_write_pending should NOT be set for non-edit tools like Read."""
 
@@ -1673,7 +1670,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_on_success(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """edit_write_pending should clear on successful Edit/Write post-tool."""
 
@@ -1686,7 +1683,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_on_apply_patch_success(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Successful normalized apply_patch should clear edit_write_pending."""
 
@@ -1707,7 +1704,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_not_cleared_on_failure(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """edit_write_pending should NOT clear on failed Edit/Write post-tool."""
 
@@ -1721,7 +1718,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_blocks_stop(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Stop should be blocked when edit_write_pending is True."""
 
@@ -1735,7 +1732,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_stop_allowed_after_success(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Stop should be allowed after edit_write_pending is cleared by success."""
 
@@ -1754,7 +1751,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_circuit_breaker(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Circuit breaker: after 3 stop blocks, allow stop and clear flag."""
 
@@ -1778,7 +1775,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_when_blocked_by_rule(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Edit blocked by a declarative rule should clear edit_write_pending.
 
@@ -1815,7 +1812,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_by_non_edit_success(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Any successful non-edit tool should clear a stale edit_write_pending flag.
 
@@ -1840,7 +1837,7 @@ class TestEditWritePending:
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_not_cleared_by_failed_non_edit(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Failed non-edit tool should NOT clear edit_write_pending."""
         engine = RuleEngine(db)
@@ -1859,7 +1856,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_inline_dispatch_success_formats_get_skill_as_directive(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Daemon-side get_skill inject_result should format a fetch directive."""
         _insert_rule(
@@ -1905,7 +1902,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_inline_dispatch_failure_aborts_set_variable(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When inline dispatch fails, sibling set_variable should NOT fire."""
         _insert_rule(
@@ -1945,7 +1942,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_inline_dispatch_exception_aborts_set_variable(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When inline dispatch raises, sibling set_variable should NOT fire."""
         _insert_rule(
@@ -1983,7 +1980,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_non_inject_mcp_call_still_deferred(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """mcp_call without inject_result should still be deferred."""
         _insert_rule(
@@ -2019,7 +2016,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_no_dispatcher_falls_back_to_deferred(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """inject_result mcp_call without dispatcher falls back to deferred."""
         _insert_rule(
@@ -2049,7 +2046,7 @@ class TestInlineMcpCallDispatch:
 
     @pytest.mark.asyncio
     async def test_background_inject_result_still_deferred(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Background mcp_call with inject_result should still be deferred."""
         _insert_rule(
@@ -2194,29 +2191,29 @@ class TestRuleEngineHelpers:
         assert RuleEngine._coerce_rendered_value("hello") == "hello"
         assert RuleEngine._coerce_rendered_value("  True  ") is True
 
-    def test_render_template_no_braces(self, db: LocalDatabase) -> None:
+    def test_render_template_no_braces(self, db: HubDatabase) -> None:
         """Template without {{ }} is returned as-is."""
         engine = RuleEngine(db)
         result = engine._render_template("plain text", {}, {})
         assert result == "plain text"
 
-    def test_has_pending_messages_empty_session(self, db: LocalDatabase) -> None:
+    def test_has_pending_messages_empty_session(self, db: HubDatabase) -> None:
         """_has_pending_messages returns False for empty session_id."""
         engine = RuleEngine(db)
         assert engine._has_pending_messages("") is False
 
-    def test_pending_message_count_empty_session(self, db: LocalDatabase) -> None:
+    def test_pending_message_count_empty_session(self, db: HubDatabase) -> None:
         """_pending_message_count returns 0 for empty session_id."""
         engine = RuleEngine(db)
         assert engine._pending_message_count("") == 0
 
-    def test_has_pending_messages_no_messages(self, db: LocalDatabase) -> None:
+    def test_has_pending_messages_no_messages(self, db: HubDatabase) -> None:
         """_has_pending_messages returns False when no messages exist."""
         engine = RuleEngine(db)
         result = engine._has_pending_messages("sess-nonexistent")
         assert result is False
 
-    def test_pending_message_count_no_messages(self, db: LocalDatabase) -> None:
+    def test_pending_message_count_no_messages(self, db: HubDatabase) -> None:
         """_pending_message_count returns 0 when no messages exist."""
         engine = RuleEngine(db)
         result = engine._pending_message_count("sess-nonexistent")
@@ -2227,7 +2224,7 @@ class TestCatastrophicFailure:
     """Tests for catastrophic failure detection."""
 
     @pytest.mark.asyncio
-    async def test_catastrophic_failure_sets_force_allow_stop(self, db: LocalDatabase) -> None:
+    async def test_catastrophic_failure_sets_force_allow_stop(self, db: HubDatabase) -> None:
         """Catastrophic failure in tool output should set force_allow_stop."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
@@ -2241,7 +2238,7 @@ class TestCatastrophicFailure:
         assert variables.get("force_allow_stop") is True
 
     @pytest.mark.asyncio
-    async def test_non_catastrophic_failure_no_force_allow(self, db: LocalDatabase) -> None:
+    async def test_non_catastrophic_failure_no_force_allow(self, db: HubDatabase) -> None:
         """Non-catastrophic failure should NOT set force_allow_stop."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
@@ -2255,7 +2252,7 @@ class TestCatastrophicFailure:
         assert variables.get("force_allow_stop") is not True
 
     @pytest.mark.asyncio
-    async def test_catastrophic_patterns(self, db: LocalDatabase) -> None:
+    async def test_catastrophic_patterns(self, db: HubDatabase) -> None:
         """All catastrophic patterns should be detected."""
         engine = RuleEngine(db)
         for pattern in ["out of usage", "quota exceeded", "billing", "account suspended"]:
@@ -2273,7 +2270,7 @@ class TestStopAttempts:
     """Tests for automatic stop_attempts counter."""
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_increments(self, db: LocalDatabase) -> None:
+    async def test_stop_attempts_increments(self, db: HubDatabase) -> None:
         """stop_attempts should increment on each STOP event."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
@@ -2284,7 +2281,7 @@ class TestStopAttempts:
             assert variables["stop_attempts"] == i + 1
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+    async def test_stop_attempts_resets_on_turn_start_boundary(self, db: HubDatabase) -> None:
         """stop_attempts should reset on the semantic turn_start boundary."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"stop_attempts": 5}
@@ -2299,7 +2296,7 @@ class TestEnforcementToggle:
 
     @pytest.mark.asyncio
     async def test_enforcement_disabled_allows_everything(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When enforcement is globally disabled, all events are allowed."""
         from gobby.storage.config_store import ConfigStore
@@ -2330,7 +2327,7 @@ class TestUnmappedEventType:
     """Tests for unmapped event types."""
 
     @pytest.mark.asyncio
-    async def test_unmapped_event_type_allows(self, db: LocalDatabase) -> None:
+    async def test_unmapped_event_type_allows(self, db: HubDatabase) -> None:
         """Event types not in _EVENT_TYPE_MAP should be allowed."""
         engine = RuleEngine(db)
         # Use a custom event type that's not mapped
@@ -2344,7 +2341,7 @@ class TestUnmappedEventType:
 class TestTurnEndResolution:
     @pytest.mark.asyncio
     async def test_before_agent_resolves_to_raw_and_semantic_start(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -2372,7 +2369,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_turn_start_rule_fires_for_before_agent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -2391,7 +2388,7 @@ class TestTurnEndResolution:
         assert variables["stop_attempts"] == 0
 
     @pytest.mark.asyncio
-    async def test_turn_end_rule_fires_for_stop(self, db: LocalDatabase, manager) -> None:
+    async def test_turn_end_rule_fires_for_stop(self, db: HubDatabase, manager) -> None:
         _insert_rule(
             manager,
             "turn-end-stop",
@@ -2409,7 +2406,7 @@ class TestTurnEndResolution:
         assert variables["stop_attempts"] == 1
 
     @pytest.mark.asyncio
-    async def test_turn_end_rule_fires_for_after_agent(self, db: LocalDatabase, manager) -> None:
+    async def test_turn_end_rule_fires_for_after_agent(self, db: HubDatabase, manager) -> None:
         _insert_rule(
             manager,
             "turn-end-after-agent",
@@ -2428,7 +2425,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_raw_stop_rule_does_not_fire_for_after_agent(
-        self, db: LocalDatabase, manager
+        self, db: HubDatabase, manager
     ) -> None:
         _insert_rule(
             manager,
@@ -2447,7 +2444,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_raw_after_agent_rule_does_not_fire_for_stop(
-        self, db: LocalDatabase, manager
+        self, db: HubDatabase, manager
     ) -> None:
         _insert_rule(
             manager,
@@ -2470,7 +2467,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_stale_active_rule_names_do_not_hide_new_default_rule(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Resolve default rules from live selectors even when session names are stale."""
         _insert_agent(manager, "default", include=["tag:default"])
@@ -2497,7 +2494,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_non_default_agent_excludes_rules_outside_live_selectors(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Exclude default-only rules when the current live agent selector differs."""
         _insert_agent(manager, "backend-developer", include=["tag:worker-safety"])
@@ -2534,7 +2531,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_project_scoped_agent_definition_wins_for_event_project(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Resolve live agent rules from the event's project-scoped agent row first."""
         project = LocalProjectManager(db).create(name="project-one", repo_path="/tmp/project-one")
@@ -2571,7 +2568,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_global_agent_definition_is_fallback_for_event_project(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Resolve global live agent rules when no project-scoped agent row exists."""
         project = LocalProjectManager(db).create(name="project-two", repo_path="/tmp/project-two")
@@ -2599,7 +2596,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_agent_definition_cache_refreshes_after_definition_update(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Workflow-definition mutations invalidate per-engine agent selector cache."""
         agent_id = _insert_agent(manager, "default", include=["tag:old"])
@@ -2647,7 +2644,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Fall back to stored active rule names when the live agent is missing."""
         _insert_rule(
@@ -2681,7 +2678,7 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_active_rule_names_remain_fallback_when_agent_json_is_invalid(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Fall back to stored active rule names when the live agent JSON is invalid."""
         manager.create(
@@ -2725,7 +2722,7 @@ class TestAgentScope:
 
     @pytest.mark.asyncio
     async def test_agent_scope_wildcard_matches_any(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with agent_scope=['*'] should match any agent type."""
         _insert_rule(
@@ -2746,7 +2743,7 @@ class TestAgentScope:
 
     @pytest.mark.asyncio
     async def test_agent_scope_no_agent_type_excludes(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with agent_scope should be excluded when no _agent_type is set."""
         _insert_rule(
@@ -2771,7 +2768,7 @@ class TestObserveEffectExtended:
 
     @pytest.mark.asyncio
     async def test_observe_effect_records_observation(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """observe effect should record an observation in variables."""
         _insert_rule(
@@ -2806,7 +2803,7 @@ class TestConsecutiveBlockDifferentTool:
 
     @pytest.mark.asyncio
     async def test_different_tool_resets_counter(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Using a different tool should reset consecutive_tool_blocks counter."""
         _insert_rule(
@@ -2839,7 +2836,7 @@ class TestSessionOverridesExtended:
 
     @pytest.mark.asyncio
     async def test_override_disables_rule(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Session override can disable a specific rule."""
         _insert_rule(
@@ -2886,7 +2883,7 @@ class TestLoadSkillEffect:
 
     @pytest.mark.asyncio
     async def test_load_skill_emits_fetch_directive(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """load_skill should emit a get_skill directive without skill content."""
         _insert_rule(
@@ -2910,7 +2907,7 @@ class TestLoadSkillEffect:
 
     @pytest.mark.asyncio
     async def test_load_skill_missing_skill_still_emits_directive(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """load_skill does not resolve skills daemon-side."""
         _insert_rule(
@@ -2935,7 +2932,7 @@ class TestLoadSkillEffect:
 
     @pytest.mark.asyncio
     async def test_load_skill_no_skill_manager_still_emits_directive(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """load_skill without skill_manager should still direct the agent."""
         _insert_rule(
@@ -2957,7 +2954,7 @@ class TestLoadSkillEffect:
 
     @pytest.mark.asyncio
     async def test_load_skill_with_per_effect_when(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """load_skill with per-effect when=false should be skipped."""
         _insert_rule(
@@ -2986,7 +2983,7 @@ class TestLoadSkillEffect:
 
     @pytest.mark.asyncio
     async def test_load_skill_with_set_variable(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """load_skill alongside set_variable in multi-effect rule."""
         _insert_rule(
@@ -3030,7 +3027,7 @@ class TestVerboseOnceBlockReason:
 
     @pytest.mark.asyncio
     async def test_first_block_emits_full_reason(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -3053,7 +3050,7 @@ class TestVerboseOnceBlockReason:
 
     @pytest.mark.asyncio
     async def test_second_block_same_rule_collapses_to_terse(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -3077,7 +3074,7 @@ class TestVerboseOnceBlockReason:
 
     @pytest.mark.asyncio
     async def test_different_rule_still_emits_full_reason(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -3129,7 +3126,7 @@ class TestVerboseOnceBlockReason:
 
     @pytest.mark.asyncio
     async def test_turn_start_clears_shown_set(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,

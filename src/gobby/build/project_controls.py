@@ -9,12 +9,12 @@ from gobby.build.results import BuildControlResult, BuildLifecycleEvent
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage, compute_next_run
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def build_stop(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
 ) -> BuildControlResult:
     """Stop future dispatcher ticks for the project build queue."""
@@ -23,7 +23,7 @@ def build_stop(
 
 def build_resume(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
 ) -> BuildControlResult:
     """Resume dispatcher ticks for the project build queue."""
@@ -32,7 +32,7 @@ def build_resume(
 
 def _set_dispatcher_enabled(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     enabled: bool,
 ) -> BuildControlResult:
@@ -86,7 +86,7 @@ def _set_dispatcher_enabled(
 
 
 def _record_project_build_event(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str,
     event: str,

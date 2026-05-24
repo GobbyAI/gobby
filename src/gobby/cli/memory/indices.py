@@ -79,7 +79,7 @@ def reconcile(ctx: click.Context, dry_run: bool) -> None:
 
     qdrant = result.get("qdrant", {})
     falkordb = result.get("falkordb", {})
-    storage_count = result.get("storage_count", result.get("sqlite_count", "?"))
+    storage_count = result.get("storage_count", "?")
     click.echo(f"Hub memories: {storage_count}")
     click.echo(
         f"Qdrant: {qdrant.get('orphans_found', 0)} orphans found, "

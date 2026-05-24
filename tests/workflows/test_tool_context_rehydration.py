@@ -8,13 +8,12 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -32,9 +31,8 @@ PROGRESSIVE_DISCOVERY_RULES = {
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_tool_context_rehydration.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -47,7 +45,7 @@ def clean_dirty_files(monkeypatch) -> None:
 
 
 @pytest.fixture
-def handler(db: LocalDatabase) -> WorkflowHookHandler:
+def handler(db: HubDatabase) -> WorkflowHookHandler:
     sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
     db.execute("UPDATE workflow_definitions SET enabled = 0 WHERE workflow_type = 'rule'")
@@ -164,7 +162,7 @@ def test_pending_tool_context_matches_direct_proxy_event(
 @pytest.mark.asyncio
 async def test_cli_after_tool_rehydrates_schema_lookup_context(
     handler: WorkflowHookHandler,
-    db: LocalDatabase,
+    db: HubDatabase,
     mcp_tool: str,
     schema_input: dict[str, Any],
     source: SessionSource,

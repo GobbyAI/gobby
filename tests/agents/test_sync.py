@@ -8,15 +8,15 @@ import pytest
 import yaml
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.migrations import run_migrations
 
 
-def _setup_db(tmp_path: Path) -> LocalDatabase:
+def _setup_db(tmp_path: Path) -> HubDatabase:
     """Create a fresh database with migrations applied."""
-    db = LocalDatabase(tmp_path / "test.db")
+    db = HubDatabase(tmp_path / "test.db")
     run_migrations(db)
     return db
 

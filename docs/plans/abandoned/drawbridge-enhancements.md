@@ -170,7 +170,7 @@ Path resolution: `./screenshots/...` → `.moat/screenshots/...`
 
 ### Why labels?
 
-- Labels are queryable via `list_tasks(label="drawbridge:...")` using SQLite's `json_each` — exact match
+- Labels are queryable via `list_tasks(label="drawbridge:...")` using PostgreSQL's `jsonb_array_elements_text` — exact match
 - No schema changes needed
 - Labels survive task updates, renames, and re-parenting
 - Title-based dedup unreliable since comments can be similar across annotations

@@ -16,8 +16,8 @@ from gobby.sessions.summarize import (
     _generate_full_summary,
     generate_session_summaries,
 )
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -79,9 +79,9 @@ class TestGenerateSessionSummaries:
         assert "No session found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_repeated_summary_persistence_keeps_sqlite_connections_bounded(
+    async def test_repeated_summary_persistence_keeps_postgres_connections_bounded(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Session get/update_summary/update_status calls use the bounded DB runner."""
         sm = SessionManager(temp_db)

@@ -25,7 +25,7 @@ from gobby.build.dispatch_tick import (
 )
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
@@ -88,7 +88,7 @@ class BuildTargetControlResult:
 async def build_stop_target(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildTargetControlResult:
@@ -127,7 +127,7 @@ async def build_stop_target(
 async def build_resume_target(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildTargetControlResult:
@@ -163,7 +163,7 @@ async def build_resume_target(
 async def build_clean_target(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     dry_run: bool = False,
     force: bool = False,
@@ -236,7 +236,7 @@ async def build_clean_target(
 
 
 def cleanup_successful_merge_artifacts(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     project_id: str | None = None,
@@ -301,7 +301,7 @@ def cleanup_successful_merge_artifacts(
 async def build_restart_target(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     dry_run: bool = False,
     force: bool = False,
@@ -423,7 +423,7 @@ def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
     ]
 
 
-def _active_agents(db: DatabaseProtocol, task_ids: list[str]) -> list[AgentRun]:
+def _active_agents(db: HubDatabase, task_ids: list[str]) -> list[AgentRun]:
     return LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
 
 
@@ -442,7 +442,7 @@ def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
 
 
 async def _cancel_active_agents(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     agents: list[AgentRun],
     *,
     services: object | None,
@@ -476,7 +476,7 @@ async def _cancel_active_agents(
 
 
 def _clear_stale_dispatch_mutexes(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_ids: list[str],
     *,
     now: datetime | None = None,
@@ -521,7 +521,7 @@ def _parse_mutex_timestamp(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _clear_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
+def _clear_dispatch_mutexes(db: HubDatabase, task_ids: list[str]) -> int:
     mutexes = TaskDispatchMutexManager(db)
     cleared = int(mutexes.sweep_expired())
     for task_id in task_ids:
@@ -532,7 +532,7 @@ def _clear_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
 
 def _release_stale_agent_claims(
     task_manager: LocalTaskManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     tasks: list[Task],
 ) -> int:
     active_session_ids = {
@@ -553,7 +553,7 @@ def _release_stale_agent_claims(
     return released
 
 
-def _has_terminal_agent_claim(db: DatabaseProtocol, task_id: str, session_id: str) -> bool:
+def _has_terminal_agent_claim(db: HubDatabase, task_id: str, session_id: str) -> bool:
     rows = db.fetchall(
         """
         SELECT status
@@ -570,7 +570,7 @@ def _has_terminal_agent_claim(db: DatabaseProtocol, task_id: str, session_id: st
     return any(row["status"] not in ACTIVE_AGENT_RUN_STATUSES for row in rows)
 
 
-def _reset_current_stages(db: DatabaseProtocol, tasks: list[Task], *, reason: str) -> int:
+def _reset_current_stages(db: HubDatabase, tasks: list[Task], *, reason: str) -> int:
     reset = 0
     for task in tasks:
         if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
@@ -627,7 +627,7 @@ def _is_build_owned_escalation(reason: str | None) -> bool:
     )
 
 
-def _reset_restart_stage_manifests(db: DatabaseProtocol, tasks: list[Task]) -> int:
+def _reset_restart_stage_manifests(db: HubDatabase, tasks: list[Task]) -> int:
     task_manager = LocalTaskManager(db)
     reset = 0
     for task in tasks:
@@ -644,7 +644,7 @@ def _reset_restart_stage_manifests(db: DatabaseProtocol, tasks: list[Task]) -> i
 
 
 def _restart_stage_specs(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task: Task,
     rows: list[StageState],
 ) -> list[StageManifestSpec]:
@@ -676,7 +676,7 @@ def _task_uses_isolated_workspace(task: Task) -> bool:
     return isolation in {"worktree", "clone"}
 
 
-def _has_children(db: DatabaseProtocol, task_id: str) -> bool:
+def _has_children(db: HubDatabase, task_id: str) -> bool:
     return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1", (task_id,)))
 
 
@@ -714,7 +714,7 @@ def _clean_blockers(
 
 
 def _record_target_history(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     result: BuildTargetControlResult,
     *,
     input_ref: str,

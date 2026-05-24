@@ -27,9 +27,6 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
 
-DB_NAME = "gobby-hub.db"  # Legacy SQLite pack members are no longer restored.
-
-
 # Directories to include in pack (relative to ~/.gobby/)
 PACK_DIRS = [
     "session_transcripts",
@@ -235,7 +232,6 @@ def _archive_would_overwrite(members: list[tarfile.TarInfo]) -> bool:
     for member in members:
         if (
             member.name == "gobby/manifest.json"
-            or member.name == f"gobby/{DB_NAME}"
             or member.name.startswith("gobby/docker-volumes/")
             or member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
             or not member.name.startswith("gobby/")
@@ -527,13 +523,6 @@ def unpack(
 
             if member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/"):
                 postgres_members.append(member)
-                continue
-
-            if member.name == f"gobby/{DB_NAME}":
-                click.echo(
-                    f"  Skipped legacy SQLite archive member: {DB_NAME}; "
-                    "PostgreSQL backups are restored from gobby/postgres/."
-                )
                 continue
 
             if member.name.startswith("project-gobby"):

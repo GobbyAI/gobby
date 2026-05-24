@@ -4,7 +4,7 @@
 
 Remove all gobby_server dependencies from gobby_client. The daemon should work standalone with:
 
-- Local session tracking (SQLite)
+- Local session tracking (PostgreSQL)
 - MCP proxy with lazy tool acquisition (no remote sync)
 - Hooks (already local)
 - Session handoff/pickup via MCP tools
@@ -48,7 +48,7 @@ Create `src/gobby/` fresh, then selectively port modules based on their coupling
 | File | Purpose |
 |------|---------|
 | `gobby/storage/__init__.py` | Package exports |
-| `gobby/storage/database.py` | SQLite connection manager |
+| `gobby/storage/database.py` | PostgreSQL connection manager |
 | `gobby/storage/migrations.py` | Schema versioning |
 | `gobby/storage/sessions.py` | `LocalSessionManager` |
 | `gobby/storage/projects.py` | `LocalProjectManager` |
@@ -80,7 +80,7 @@ Create `src/gobby/` fresh, then selectively port modules based on their coupling
 
 ---
 
-## SQLite Schema
+## PostgreSQL Schema
 
 ```sql
 CREATE TABLE projects (
@@ -141,7 +141,7 @@ CREATE TABLE tools (
 ```text
 ~/.gobby/
 ├── config.yaml          # Global config (human-editable, keep as-is)
-├── gobby-hub.db         # SQLite database
+├── PostgreSQL hub         # PostgreSQL database
 └── projects/
     └── {project_name}/
         └── summaries/
@@ -186,9 +186,9 @@ CREATE TABLE tools (
 
 - [x] 2.1 Create `gobby/storage/__init__.py`
 - [x] 2.2 Create `gobby/storage/database.py`
-  - [x] 2.2.1 `LocalDatabase` class with connection pooling
+  - [x] 2.2.1 `HubDatabase` class with connection pooling
   - [x] 2.2.2 Context manager for transactions
-  - [x] 2.2.3 Auto-create `~/.gobby/gobby-hub.db` on first access
+  - [x] 2.2.3 Auto-create `~/.gobby/PostgreSQL hub` on first access
 - [x] 2.3 Create `gobby/storage/migrations.py`
   - [x] 2.3.1 Schema version tracking table
   - [x] 2.3.2 Migration 001: Create projects table
@@ -232,7 +232,7 @@ CREATE TABLE tools (
   - [x] 3.2.1 Remove `platform_url` from config
   - [x] 3.2.2 Remove `platform_api_key` from config
   - [x] 3.2.3 Remove platform-related validation
-  - [x] 3.2.4 Add `database_path` config (default: `~/.gobby/gobby-hub.db`)
+  - [x] 3.2.4 Add `database_url` config (default: `~/.gobby/PostgreSQL hub`)
 - [x] 3.3 Skip `config/mcp.py` - obsolete (LocalMCPManager in storage/ replaces it)
 - [x] 3.4 All imports use `gobby` package
 - [x] 3.5 Verified config loads without platform settings
@@ -325,7 +325,7 @@ CREATE TABLE tools (
   - [x] 8.1.4 Removed `logout` command entirely
   - [x] 8.1.5 Removed `sync` command entirely
   - [x] 8.1.6 Update `start` command:
-    - [x] 8.1.6.1 Initialize `LocalDatabase` on startup via `_init_local_storage()`
+    - [x] 8.1.6.1 Initialize `HubDatabase` on startup via `_init_local_storage()`
     - [x] 8.1.6.2 Run migrations via `run_migrations()`
     - [x] 8.1.6.3 `.mcp.json` import deferred to Phase 10
     - [x] 8.1.6.4 Storage managers created in runner.py
@@ -334,7 +334,7 @@ CREATE TABLE tools (
   - [x] 8.1.8 Keep `install` commands as-is (install/uninstall)
   - [x] 8.1.9 All imports updated to gobby package
 - [x] 8.2 Update `gobby/runner.py`
-  - [x] 8.2.1 Initializes LocalDatabase and LocalSessionManager
+  - [x] 8.2.1 Initializes HubDatabase and LocalSessionManager
   - [x] 8.2.2 Passes session_manager to HTTPServer
   - [x] 8.2.3 All imports use gobby package
 - [x] 8.3 Added `gobby/config/mcp.py` (MCPConfigManager) - was missing
@@ -407,7 +407,7 @@ src/gobby/
 ├── cli.py                    # Daemon lifecycle commands
 ├── runner.py                 # Async runner
 │
-├── storage/                  # NEW: Local SQLite storage
+├── storage/                  # NEW: Local PostgreSQL storage
 │   ├── __init__.py
 │   ├── database.py           # Connection manager
 │   ├── migrations.py         # Schema versioning
@@ -447,8 +447,8 @@ src/gobby/
 - [ ] **No success logging** - `logger.info` only for startup/shutdown, not "X worked"
 - [ ] Daemon starts without platform URL configured
 - [ ] Daemon starts without auth token
-- [ ] Sessions persist in SQLite
-- [ ] MCP servers persist in SQLite
+- [ ] Sessions persist in PostgreSQL
+- [ ] MCP servers persist in PostgreSQL
 - [ ] Tools cached on connection
 - [ ] Handoff creates summary file
 - [ ] Pickup reads summary and creates child session

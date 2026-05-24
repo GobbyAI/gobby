@@ -56,7 +56,7 @@ class LocalCheckpointManager:
         """Insert a new checkpoint record.
 
         Raises:
-            sqlite3.IntegrityError: If a checkpoint with the same ID already exists.
+            psycopg.IntegrityError: If a checkpoint with the same ID already exists.
         """
         self.db.execute(
             """INSERT INTO checkpoints

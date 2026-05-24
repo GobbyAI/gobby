@@ -30,7 +30,7 @@ from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
     TokenEvent,
@@ -63,7 +63,7 @@ class SessionLifecycleManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         config: SessionLifecycleConfig,
         memory_manager: Any | None = None,
         llm_service: Any | None = None,

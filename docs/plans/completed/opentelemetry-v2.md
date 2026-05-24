@@ -4,7 +4,7 @@
 
 Gobby has custom logging (`utils/logging.py`, 377 lines) and metrics (`utils/metrics.py`, 606 lines) infrastructure that works but doesn't correlate across boundaries. Sessions, agents, pipelines, tool calls, and rule evaluations are all observable individually but can't be traced as a connected flow. The existing `docs/plans/opentelemetry.md` plan focused on logging + metrics migration with tracing as "future work" — this plan supersedes it with a full-stack approach: logs, metrics, and tracing together.
 
-**Goal**: Replace custom logging/metrics with OpenTelemetry, add distributed tracing, migrate ToolMetricsManager to a dual-backend model (OTel for observability + SQLite for queryable analytics), and build a trace viewer into the Gobby web UI.
+**Goal**: Replace custom logging/metrics with OpenTelemetry, add distributed tracing, migrate ToolMetricsManager to a dual-backend model (OTel for observability + PostgreSQL for queryable analytics), and build a trace viewer into the Gobby web UI.
 
 ## Architecture
 
@@ -44,12 +44,12 @@ Session root span
 
 ### ToolMetricsManager migration
 
-Dual-backend: OTel for real-time counters/histograms, SQLite for queryable history.
+Dual-backend: OTel for real-time counters/histograms, PostgreSQL for queryable history.
 
-1. Extract SQLite logic from `ToolMetricsManager` into `ToolMetricsStore` (new file: `mcp_proxy/metrics_store.py`)
-2. `ToolMetricsManager.record_call()` writes to both OTel instruments and SQLite
-3. All 9+1 `gobby-metrics` MCP tools continue querying SQLite unchanged
-4. `ToolFallbackResolver` and discovery endpoint continue reading SQLite unchanged
+1. Extract PostgreSQL logic from `ToolMetricsManager` into `ToolMetricsStore` (new file: `mcp_proxy/metrics_store.py`)
+2. `ToolMetricsManager.record_call()` writes to both OTel instruments and PostgreSQL
+3. All 9+1 `gobby-metrics` MCP tools continue querying PostgreSQL unchanged
+4. `ToolFallbackResolver` and discovery endpoint continue reading PostgreSQL unchanged
 
 ### Configuration
 
@@ -83,20 +83,20 @@ telemetry:
 "opentelemetry-semantic-conventions>=0.49b0"
 ```
 
-No auto-instrumentation for FastAPI/httpx/sqlite — custom middleware gives domain-specific attributes (session_id, project_id, agent_id).
+No auto-instrumentation for FastAPI/httpx/PostgreSQL — custom middleware gives domain-specific attributes (session_id, project_id, agent_id).
 
 ### Span storage (built-in trace viewer)
 
-Spans are persisted to SQLite via a custom `SpanExporter` for the built-in trace viewer. This makes Gobby self-contained — no external Jaeger/Grafana required.
+Spans are persisted to PostgreSQL via a custom `SpanExporter` for the built-in trace viewer. This makes Gobby self-contained — no external Jaeger/Grafana required.
 
 **Backend:**
-- `src/gobby/telemetry/span_store.py` — Custom `SpanExporter` that writes completed spans to SQLite `spans` table
+- `src/gobby/telemetry/span_store.py` — Custom `SpanExporter` that writes completed spans to PostgreSQL `spans` table
 - `src/gobby/storage/spans.py` — `SpanStorage` class (CRUD + queries: by trace_id, by session, recent traces, etc.)
 - `src/gobby/servers/routes/traces.py` — REST endpoints: `GET /api/traces`, `GET /api/traces/{trace_id}`
 - WebSocket event `trace_event` for real-time span updates in the UI
 - Retention: 7-day default, cleaned alongside tool metrics in `runner_maintenance.py`
 
-**SQLite schema (`spans` table):**
+**PostgreSQL schema (`spans` table):**
 ```sql
 CREATE TABLE spans (
     span_id TEXT PRIMARY KEY,
@@ -196,13 +196,13 @@ Add span instrumentation across key flows.
 
 ### Phase 5: Span storage + API
 
-Persist spans to SQLite and expose REST/WebSocket endpoints for the trace viewer.
+Persist spans to PostgreSQL and expose REST/WebSocket endpoints for the trace viewer.
 
 | Task | Files |
 |------|-------|
 | Add `spans` table migration | `storage/migrations.py` |
 | Create `storage/spans.py` with `SpanStorage` (query by trace_id, session, recent) | New file |
-| Create `telemetry/span_store.py` with custom `SpanExporter` writing to SQLite | New file |
+| Create `telemetry/span_store.py` with custom `SpanExporter` writing to PostgreSQL | New file |
 | Wire `SpanExporter` into `TracerProvider` in `providers.py` | `telemetry/providers.py` |
 | Create `servers/routes/traces.py` with `GET /api/traces`, `GET /api/traces/{trace_id}` | New file |
 | Register trace routes in HTTP server | `servers/http.py` |
@@ -260,9 +260,9 @@ Build the trace visualization page in the web UI.
 | `src/gobby/telemetry/tracing.py` | Span helpers + decorator |
 | `src/gobby/telemetry/context.py` | Context propagation |
 | `src/gobby/telemetry/middleware.py` | FastAPI middleware |
-| `src/gobby/telemetry/span_store.py` | Custom SpanExporter → SQLite |
-| `src/gobby/mcp_proxy/metrics_store.py` | SQLite query layer (extracted from ToolMetricsManager) |
-| `src/gobby/storage/spans.py` | SpanStorage (query traces from SQLite) |
+| `src/gobby/telemetry/span_store.py` | Custom SpanExporter → PostgreSQL |
+| `src/gobby/mcp_proxy/metrics_store.py` | PostgreSQL query layer (extracted from ToolMetricsManager) |
+| `src/gobby/storage/spans.py` | SpanStorage (query traces from PostgreSQL) |
 | `src/gobby/servers/routes/traces.py` | Trace REST API endpoints |
 | `web/src/hooks/useTraces.ts` | Trace data fetching + WebSocket |
 | `web/src/components/traces/TracesPage.tsx` | Trace list + detail page |
@@ -279,7 +279,7 @@ Build the trace visualization page in the web UI.
 | `src/gobby/config/app.py:292` | `logging: LoggingSettings` → `telemetry: TelemetrySettings` |
 | `src/gobby/hooks/hook_manager.py:227-262` | Delete `_setup_logging()`, add span instrumentation |
 | `src/gobby/mcp_proxy/manager.py:636` | Add span wrapping in `call_tool()` |
-| `src/gobby/mcp_proxy/metrics.py` | Refactor to facade over OTel + SQLite store |
+| `src/gobby/mcp_proxy/metrics.py` | Refactor to facade over OTel + PostgreSQL store |
 | `src/gobby/servers/http.py` | Add TelemetryMiddleware, remove shutdown metrics |
 | `src/gobby/servers/routes/admin/_health.py` | Use `prometheus_client.generate_latest()` |
 | `src/gobby/workflows/pipeline_executor.py` | Add step-level spans |
@@ -295,7 +295,7 @@ Build the trace visualization page in the web UI.
 
 1. **Tracing is opt-in** (`traces_enabled: false`). Local-first means no assumption of external infra. Logging + metrics work without a collector.
 2. **Custom middleware over auto-instrumentation**. Gobby needs domain-specific span attributes (session_id, project_id, agent_id) that generic auto-instrumentors don't provide.
-3. **ToolMetricsManager becomes a facade**, not replaced. SQLite stays for queryable analytics; OTel handles real-time observability. The 10 MCP tools keep working unchanged.
+3. **ToolMetricsManager becomes a facade**, not replaced. PostgreSQL stays for queryable analytics; OTel handles real-time observability. The 10 MCP tools keep working unchanged.
 4. **request_id_var → trace_id**. OTel trace context replaces the custom ContextVar. `get_trace_id()` in `context.py` provides the migration bridge.
 5. **PrometheusMetricReader for /admin/metrics**. Uses `opentelemetry-exporter-prometheus` which integrates with `prometheus_client`. Preserves the existing endpoint contract.
 6. **Clean break for config**. The `logging:` key is removed from `DaemonConfig`. No deprecation validator, no migration shim. Old configs with `logging:` will fail loudly on load — users update their YAML.
@@ -304,7 +304,7 @@ Build the trace visualization page in the web UI.
 
 1. **Logging**: `uv run gobby start --verbose` — logs appear in `~/.gobby/logs/gobby.log` with `trace_id=` fields
 2. **Metrics**: `curl http://localhost:60887/admin/metrics` — Prometheus text format output with all current metric names
-3. **Tracing**: Trigger a tool call, verify span written to SQLite `spans` table
+3. **Tracing**: Trigger a tool call, verify span written to PostgreSQL `spans` table
 4. **Trace API**: `curl http://localhost:60887/api/traces` — returns recent traces as JSON
 5. **Trace detail**: `curl http://localhost:60887/api/traces/{trace_id}` — returns full span tree
 6. **Trace viewer UI**: Open web UI → Traces tab → see waterfall visualization of spans with correct nesting and timing

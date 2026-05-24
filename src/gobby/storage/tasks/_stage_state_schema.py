@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import is_postgres, table_column_names
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_utils import _now
 
@@ -15,16 +15,7 @@ class StageStateSchema:
 
     def ensure_phase2_columns(self) -> None:
         columns = self.columns("task_stage_states")
-        table_sql = (
-            None
-            if is_postgres(self.db)
-            else self.db.fetchone(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='task_stage_states'"
-            )
-        )
-        if "attempt_count" in columns or (
-            table_sql is not None and "needs_review" not in str(table_sql["sql"])
-        ):
+        if "attempt_count" in columns:
             self.rebuild_stage_states_table()
             return
         additions = {

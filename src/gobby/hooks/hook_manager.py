@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 
@@ -58,7 +58,7 @@ class HookManager:
         task_sync_manager: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
-        database: "DatabaseProtocol | None" = None,
+        database: "HubDatabase | None" = None,
         session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
     ) -> None:

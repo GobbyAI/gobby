@@ -5,30 +5,27 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_step_runtime_transitions.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
-def _create_session(db: LocalDatabase, session_id: str = "test-session") -> None:
+def _create_session(db: HubDatabase, session_id: str = "test-session") -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         ("project-1", "test-project"),
@@ -112,7 +109,7 @@ def _set_variable_workflow(step_variables: dict[str, Any] | None = None) -> dict
 
 
 def _setup_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     current_step: str = "claim",
     variables: dict[str, Any] | None = None,
@@ -223,7 +220,7 @@ def _before_mcp_set_variable(name: str, value: object) -> HookEvent:
 
 
 @pytest.mark.asyncio
-async def test_successful_claim_advances_through_empty_skill_gate(db: LocalDatabase) -> None:
+async def test_successful_claim_advances_through_empty_skill_gate(db: HubDatabase) -> None:
     instance_manager = _setup_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -245,7 +242,7 @@ async def test_successful_claim_advances_through_empty_skill_gate(db: LocalDatab
 
 @pytest.mark.asyncio
 async def test_required_additional_skills_gate_exact_loaded_skill_names(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     instance_manager = _setup_workflow(
         db,
@@ -282,7 +279,7 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
 
 
 @pytest.mark.asyncio
-async def test_step_workflow_complete_user_write_is_blocked(db: LocalDatabase) -> None:
+async def test_step_workflow_complete_user_write_is_blocked(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -298,7 +295,7 @@ async def test_step_workflow_complete_user_write_is_blocked(db: LocalDatabase) -
 
 
 @pytest.mark.asyncio
-async def test_step_workflow_complete_call_tool_write_is_blocked(db: LocalDatabase) -> None:
+async def test_step_workflow_complete_call_tool_write_is_blocked(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -314,7 +311,7 @@ async def test_step_workflow_complete_call_tool_write_is_blocked(db: LocalDataba
 
 
 @pytest.mark.asyncio
-async def test_non_reserved_set_variable_remains_allowed(db: LocalDatabase) -> None:
+async def test_non_reserved_set_variable_remains_allowed(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
@@ -330,7 +327,7 @@ async def test_non_reserved_set_variable_remains_allowed(db: LocalDatabase) -> N
 
 @pytest.mark.asyncio
 async def test_missing_session_scoped_transition_variable_waits_without_error(
-    db: LocalDatabase,
+    db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     workflow = _set_variable_workflow()
@@ -354,7 +351,7 @@ async def test_missing_session_scoped_transition_variable_waits_without_error(
 
 @pytest.mark.asyncio
 async def test_native_set_variable_advances_session_scoped_transition(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     workflow = _set_variable_workflow()
     instance_manager = _setup_workflow(db, current_step="plan", workflow=workflow)
@@ -378,7 +375,7 @@ async def test_native_set_variable_advances_session_scoped_transition(
 
 @pytest.mark.asyncio
 async def test_native_set_variable_does_not_shadow_workflow_local_variable(
-    db: LocalDatabase,
+    db: HubDatabase,
 ) -> None:
     workflow = _set_variable_workflow({"merge_plan": False})
     instance_manager = _setup_workflow(

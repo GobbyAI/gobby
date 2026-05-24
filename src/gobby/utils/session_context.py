@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ class SeededContextTokens:
 
 def _canonicalize_project_ref(
     project_ref: str | None,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> str | None:
     """Resolve a project UUID-or-name to its canonical UUID.
 
@@ -182,7 +182,7 @@ def resolve_and_seed_contexts(
     project_ref: str | None = None,
     session_scope_ref: str | None = None,
     project_ref_is_fallback: bool = False,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> SeededContextTokens:
     """Resolve session and project refs, seed both ContextVars, return tokens.
 

@@ -2,35 +2,42 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.agents._selectors import _AgentRunSelectorMixin
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
-def test_baseline_schema_includes_local_flag_columns(tmp_path: Path) -> None:
-    db = LocalDatabase(tmp_path / "local-flags.db")
-    run_migrations(db)
+def test_baseline_schema_includes_local_flag_columns(temp_db: HubDatabase) -> None:
+    db = temp_db
 
-    agent_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
-    session_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(sessions)")}
+    agent_columns = {
+        row["column_name"]
+        for row in db.fetchall(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            ("agent_runs",),
+        )
+    }
+    session_columns = {
+        row["column_name"]
+        for row in db.fetchall(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            ("sessions",),
+        )
+    }
 
     assert "is_local" in agent_columns
     assert "is_local" in session_columns
 
 
-def test_agent_run_manager_persists_is_local_flag(tmp_path: Path) -> None:
-    db = LocalDatabase(tmp_path / "agent-local.db")
-    run_migrations(db)
+def test_agent_run_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
+    db = temp_db
     project = LocalProjectManager(db).create(name="agent-local-project")
     session = SessionManager(db).register(
         external_id="parent-ext",
@@ -51,9 +58,8 @@ def test_agent_run_manager_persists_is_local_flag(tmp_path: Path) -> None:
     assert run.to_dict()["is_local"] is True
 
 
-def test_session_manager_persists_is_local_flag(tmp_path: Path) -> None:
-    db = LocalDatabase(tmp_path / "session-local.db")
-    run_migrations(db)
+def test_session_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
+    db = temp_db
     project = LocalProjectManager(db).create(name="session-local-project")
 
     session = SessionManager(db).create_web_chat_session(

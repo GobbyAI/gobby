@@ -11,7 +11,7 @@ The Party system v1 (`docs/plans/party-time.md`) designs heterogeneous multi-age
 - `spawn_agent_impl()` spawns agents with isolation, workflows, sessions (`mcp_proxy/tools/spawn_agent.py`)
 - Pipeline approval system: token-based pause/resume (`workflows/pipeline_executor.py:619-809`)
 - `InterSessionMessageManager` for P2P messaging (`storage/inter_session_messages.py`)
-- SQLite `transaction_immediate()` for atomic operations (`storage/database.py`)
+- PostgreSQL `transaction_immediate()` for atomic operations (`storage/database.py`)
 
 **Naming note:** V1's `is_coordinator` / `coordinator_session_id` is renamed to `is_leader` / `leader_session_id` throughout both v1 and v2. The coordinator concept was confusing with the generic term — "leader" clearly denotes the party orchestration role.
 
@@ -137,7 +137,7 @@ Three mechanisms:
 
 ### Atomic Claiming
 
-SQLite `transaction_immediate()` prevents double-claims:
+PostgreSQL `transaction_immediate()` prevents double-claims:
 
 ```python
 def claim_next(self, party_id, queue_name, member_id) -> WorkItem | None:
@@ -352,7 +352,7 @@ CLI: `gobby parties approve <token>`, `gobby parties reject <token>`
 - **Dynamic gate after from_role completed but before to_role spawned**: Gate activates immediately (`waiting`). If to_role already spawned: creation rejected with error.
 - **Gate rejection cascade**: Rejected gate blocks `to_role` and all transitive dependents. Executor checks if any path to all terminal roles still exists; if not, party fails.
 - **Auto-approve with crashed leader**: Falls back to manual approval. `activate_gate` checks if auto-approve role's session is alive before sending P2P.
-- **Concurrent approval**: SQLite transaction isolation — first `UPDATE` wins, second call finds gate already approved and raises.
+- **Concurrent approval**: PostgreSQL transaction isolation — first `UPDATE` wins, second call finds gate already approved and raises.
 
 ---
 

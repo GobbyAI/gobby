@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
 from gobby.storage.tasks._models import TaskNotFoundError
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def real_session_manager(temp_db: LocalDatabase) -> SessionManager:
+def real_session_manager(temp_db: HubDatabase) -> SessionManager:
     """Create a real SessionManager backed by a temp database."""
     from gobby.storage.sessions import SessionManager
 
@@ -165,7 +165,7 @@ class TestResolveSessionTaskValueHashRef:
 
     def test_hash_ref_resolved_with_real_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         real_session_manager: SessionManager,
         sample_project: dict,
         sample_session: MagicMock,
@@ -190,7 +190,7 @@ class TestResolveSessionTaskValueHashRef:
 
     def test_numeric_ref_resolved_with_real_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         real_session_manager: SessionManager,
         sample_project: dict,
         sample_session: MagicMock,
@@ -224,7 +224,7 @@ class TestResolveSessionTaskValueNoSession:
     def test_session_not_found_returns_original(
         self,
         real_session_manager: SessionManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         result = resolve_session_task_value(
             "#42",

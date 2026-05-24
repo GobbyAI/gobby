@@ -113,7 +113,7 @@ Note: `get_session_tasks` and `get_task_sessions` already exist in `gobby-tasks`
                                  |
                                  v
                         +------------------+
-                        |   SQLite DB      |
+                        |   PostgreSQL DB      |
                         |   sessions       |
                         |   session_tasks  |
                         |   session_messages|

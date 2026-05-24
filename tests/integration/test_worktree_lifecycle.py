@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -26,7 +26,7 @@ def temp_db():
     """Create a temporary database for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
-        db = LocalDatabase(str(db_path))
+        db = HubDatabase(str(db_path))
         run_migrations(db)
         yield db
         db.close()

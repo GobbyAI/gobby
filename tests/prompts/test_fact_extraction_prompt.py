@@ -6,7 +6,7 @@ import pytest
 
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.sync import sync_bundled_prompts
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
@@ -23,7 +23,7 @@ class TestFactExtractionPrompt:
     @pytest.fixture
     def loader(self, tmp_path) -> PromptLoader:
         """Create a DB-backed PromptLoader with bundled prompts synced."""
-        db = LocalDatabase(tmp_path / "test.db")
+        db = HubDatabase(tmp_path / "test.db")
         run_migrations(db)
         sync_bundled_prompts(db)
         return PromptLoader(db=db)

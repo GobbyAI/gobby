@@ -510,7 +510,7 @@ class TestPersistEmbeddingConfig:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load_config.return_value = mock_config
 
         mock_db = MagicMock()
@@ -555,7 +555,7 @@ class TestPersistEmbeddingConfig:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
@@ -590,7 +590,7 @@ class TestPersistEmbeddingConfig:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
@@ -628,7 +628,7 @@ class TestPersistEmbeddingConfig:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)

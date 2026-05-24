@@ -14,7 +14,7 @@ from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
@@ -43,8 +43,8 @@ _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test.db")
+def db(tmp_path) -> HubDatabase:
+    database = HubDatabase(tmp_path / "test.db")
     run_migrations(database)
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
@@ -55,7 +55,7 @@ def db(tmp_path) -> LocalDatabase:
 
 
 def _insert_session(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     session_id: str,
     external_id: str,
@@ -122,7 +122,7 @@ def _make_session_end_event(session_id: str) -> HookEvent:
 )
 @pytest.mark.asyncio
 async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
-    db: LocalDatabase,
+    db: HubDatabase,
     tool_name: str,
     expected_fragment: str,
 ) -> None:

@@ -9,39 +9,37 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_step_error_codes.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: HubDatabase) -> RuleEngine:
     return RuleEngine(db)
 
 
 @pytest.fixture
-def instance_mgr(db: LocalDatabase) -> WorkflowInstanceManager:
+def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
-def _create_session(db: LocalDatabase, session_id: str = "test-session") -> None:
+def _create_session(db: HubDatabase, session_id: str = "test-session") -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         ("project-1", "test-project"),
@@ -55,7 +53,7 @@ def _create_session(db: LocalDatabase, session_id: str = "test-session") -> None
 
 
 def _setup_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
     workflow_data: dict[str, Any],
@@ -106,7 +104,7 @@ def _after_call_tool_event(tool_output: dict[str, Any]) -> HookEvent:
 
 @pytest.mark.asyncio
 async def test_on_mcp_error_when_branches_on_error_code(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
     instance_mgr: WorkflowInstanceManager,

@@ -3,7 +3,7 @@
 import pytest
 
 from gobby.skills.search import SearchFilters, SkillSearch, SkillSearchResult
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import Skill
 from tests.fixtures.migrations import run_migrations
 
@@ -12,8 +12,8 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def db(tmp_path):
-    """Create a temporary LocalDatabase fixture."""
-    database = LocalDatabase(tmp_path / "test.db")
+    """Create a temporary HubDatabase fixture."""
+    database = HubDatabase(tmp_path / "test.db")
     run_migrations(database)
     yield database
     database.close()

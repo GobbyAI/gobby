@@ -35,7 +35,6 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
         "hub_backend: postgres\n"
         f"database_url: {database_url}\n"
         "postgres_install_mode: docker\n"
-        "database_path: /tmp/sqlite.db\n",
     )
 
     bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
@@ -43,7 +42,6 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url == database_url
     assert bootstrap.postgres_install_mode == "docker"
-    assert bootstrap.database_path == "/tmp/sqlite.db"
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["database_url"] == database_url
@@ -138,7 +136,7 @@ def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: sqlite\n"
+        "hub_backend: local\n"
         "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
         "postgres_install_mode: docker\n",
     )
@@ -147,7 +145,7 @@ def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -
         clear_postgres_fields(temp_dir)
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
-    assert persisted["hub_backend"] == "sqlite"
+    assert persisted["hub_backend"] == "local"
     assert persisted["database_url"] == "postgresql://gobby:secret@localhost:60891/gobby"
 
 
@@ -186,7 +184,7 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("content", "expected_message"),
     [
-        ("hub_backend: sqlite\n", "hub_backend"),
+        ("hub_backend: local\n", "hub_backend"),
         ("hub_backend: mysql\n", "hub_backend"),
         ("database_url: 123\n", "database_url"),
         ("postgres_install_mode: managed\n", "postgres_install_mode"),

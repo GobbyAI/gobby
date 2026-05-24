@@ -9,7 +9,7 @@ import pytest
 from gobby.mcp_proxy.metrics import ToolMetrics, ToolMetricsManager
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +24,7 @@ def mock_telemetry():
 
 
 @pytest.fixture
-def metrics_manager(temp_db: "LocalDatabase", mock_telemetry) -> ToolMetricsManager:
+def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManager:
     """Create a metrics manager with temp database."""
     # Create test projects for foreign key constraints
     temp_db.execute(
@@ -480,7 +480,7 @@ class TestCleanupOldMetrics:
     """Tests for cleanup_old_metrics method."""
 
     def test_cleanup_old_metrics(
-        self, metrics_manager: ToolMetricsManager, temp_db: "LocalDatabase"
+        self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:
         """Test cleanup deletes old metrics."""
         # Insert a metric with old timestamp
@@ -558,7 +558,7 @@ class TestGetDailyMetrics:
         assert result["summary"]["total_days"] == 0
 
     def test_get_daily_metrics_with_filters(
-        self, metrics_manager: ToolMetricsManager, temp_db: "LocalDatabase"
+        self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:
         """Test get_daily_metrics with filters."""
         # Insert daily metrics directly

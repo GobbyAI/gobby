@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager, Task
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
@@ -165,7 +165,7 @@ def test_expansion_rule_does_not_refire_after_handler_advances(
 
 
 def _stage_pipeline_task(
-    temp_db: DatabaseProtocol,
+    temp_db: HubDatabase,
     sample_project: dict[str, Any],
     *,
     review_policy: str = "required",

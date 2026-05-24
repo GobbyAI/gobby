@@ -69,7 +69,7 @@ Add a `gobby-skills` internal MCP server with:
 **In Scope (Full SkillPort Parity):**
 
 - SKILL.md file format with YAML frontmatter (Agent Skills spec)
-- SQLite storage for skill metadata
+- PostgreSQL storage for skill metadata
 - `gobby-skills` MCP registry with all SkillPort tools
 - Import from GitHub repos, local paths, ZIP archives
 - TF-IDF search + optional embeddings (multi-provider)
@@ -156,7 +156,7 @@ Add a `gobby-skills` internal MCP server with:
 ┌───▼─────────┐ ┌───▼─────────┐ ┌─▼───────────┐ ┌▼────────────┐ ┌▼──────────┐
 │ LocalSkill  │ │ SkillLoader │ │ SkillSearch │ │ SkillUpdate │ │ Validator │
 │ Manager     │ │ (parse/load)│ │ (TF-IDF +   │ │ r (refresh) │ │ (spec     │
-│ (SQLite)    │ │             │ │ embeddings) │ │             │ │ checks)   │
+│ (PostgreSQL)    │ │             │ │ embeddings) │ │             │ │ checks)   │
 └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘
 ```
 
@@ -264,7 +264,7 @@ LocalSkillManager accepts an optional `notifier` in `__init__` and calls `_fire_
 **Key Gobby advantage over SkillPort**: Name uniqueness is enforced per-project, not globally.
 
 ```sql
--- SQLite constraint
+-- PostgreSQL constraint
 UNIQUE(name, project_id)
 ```
 
@@ -374,7 +374,7 @@ def update_skill(self, name: str) -> UpdateResult:
 
 **Acceptance Criteria:**
 
-- [ ] Can create, read, update, delete skills in SQLite
+- [ ] Can create, read, update, delete skills in PostgreSQL
 - [ ] Name validation rejects: uppercase, leading/trailing hyphens, consecutive hyphens, >64 chars
 - [ ] Description validation rejects: empty, >1024 chars
 - [ ] Parser extracts all frontmatter fields correctly
@@ -386,7 +386,7 @@ Change Listener Pattern:
 ```python
 # LocalSkillManager implementation
 class LocalSkillManager:
-    def __init__(self, db: LocalDatabase, notifier: SkillChangeNotifier | None = None):
+    def __init__(self, db: HubDatabase, notifier: SkillChangeNotifier | None = None):
         self.db = db
         self._notifier = notifier
 

@@ -80,7 +80,7 @@ class TestAdminRoutes:
         server.services = SimpleNamespace(
             config=SimpleNamespace(
                 databases=DatabasesConfig(),
-                hub_backend="sqlite",
+                hub_backend="postgres",
                 postgres_install_mode=None,
             ),
             database=MagicMock(),

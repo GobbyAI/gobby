@@ -2367,7 +2367,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     sample_session: dict,
     temp_db: HubDatabase,
 ) -> None:
-    """Repeated lifecycle DB reads and task recovery do not grow SQLite handles."""
+    """Repeated lifecycle DB reads and task recovery do not grow PostgreSQL handles."""
     executor = DatabaseExecutor(max_workers=2, thread_name_prefix="lifecycle-db")
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(

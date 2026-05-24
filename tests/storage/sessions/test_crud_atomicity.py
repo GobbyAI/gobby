@@ -7,14 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 def test_register_assigns_unique_seq_nums_under_concurrency(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     sample_project: dict[str, str],
 ) -> None:
     barrier = threading.Barrier(4)

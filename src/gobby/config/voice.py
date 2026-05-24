@@ -110,7 +110,6 @@ class VoiceConfig(BaseModel):
             "WebSocket",
             "Redis",
             "MongoDB",
-            "SQLite",
             "OAuth",
             "JWT",
             "REST",

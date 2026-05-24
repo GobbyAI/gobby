@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import subprocess  # nosec B404 # used for fixed git push/current-branch commands.
 from typing import Any
 
 import httpx
+import psycopg
 
 from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -567,7 +567,7 @@ def _github_token(db: Any) -> str | None:
             if token:
                 logger.debug("Using GitHub token from secret store entry %s", name)
                 return token
-    except (AttributeError, LookupError, OSError, RuntimeError, sqlite3.Error) as exc:
+    except (AttributeError, LookupError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.debug("GitHub token lookup from secret store failed: %s", exc, exc_info=True)
         return None
     logger.debug("No GitHub token found in environment or stored secrets")

@@ -8,26 +8,23 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
-    database = LocalDatabase(tmp_path / "skill_loaded_call_tool_path.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    database = temp_db
     sync_bundled_rules(database, get_bundled_rules_path())
     database.execute(
         "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
     )
     yield database
-    database.close()
 
 
 def _event(
@@ -50,7 +47,7 @@ def _event(
 
 @pytest.mark.asyncio
 async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_path(
-    db: LocalDatabase,
+    db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     platform_session_id = "skill-loaded-call-tool-session"
@@ -74,11 +71,11 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
             "tool_input": {
                 "server_name": "gobby-skills",
                 "tool_name": "get_skill",
-                "arguments": {"name": "agent-monitoring"},
+                "arguments": {"name": "build-coordinator"},
             },
             "tool_output": {
                 "success": True,
-                "result": {"skill": {"name": "agent-monitoring"}},
+                "result": {"skill": {"name": "build-coordinator"}},
             },
         },
     )
@@ -122,4 +119,4 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
     assert call_response.decision == "allow"
 
     variables = session_vars.get_variables(platform_session_id)
-    assert variables["loaded_skills"] == ["agent-monitoring"]
+    assert variables["loaded_skills"] == ["build-coordinator"]

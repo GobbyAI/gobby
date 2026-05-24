@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from gobby.servers.routes.chat import create_chat_router
 from gobby.storage import chat_attachments, chat_messages
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_delete_messages_removes_message_bound_attachment_file(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -65,7 +65,7 @@ def test_delete_messages_removes_message_bound_attachment_file(
 
 
 def test_delete_messages_skips_attachment_paths_outside_managed_storage(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

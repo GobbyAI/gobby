@@ -11,7 +11,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -26,16 +26,16 @@ class MockWebSocketServer:
 
 
 @pytest.fixture
-def mock_db(tmp_path: Path) -> LocalDatabase:
+def mock_db(tmp_path: Path) -> HubDatabase:
     # Use file-based DB for tests (in-memory doesn't work with asyncio.to_thread))
-    db = LocalDatabase(tmp_path / "test.db")
+    db = HubDatabase(tmp_path / "test.db")
     return db
 
 
 @pytest.fixture
 async def env(tmp_path: Path) -> AsyncGenerator[dict[str, Any]]:
     # Use file-based DB because each to_thread connection would get a separate in-memory DB.
-    db = LocalDatabase(tmp_path / "test.db")
+    db = HubDatabase(tmp_path / "test.db")
 
     # Initialize migrations manually for this memory DB
     # Using run_migrations to ensure schema is correct
@@ -43,8 +43,8 @@ async def env(tmp_path: Path) -> AsyncGenerator[dict[str, Any]]:
 
     run_migrations(db)
 
-    # Patch LocalDatabase in hook_manager to return our shared db instance
-    with patch("gobby.storage.database.LocalDatabase", return_value=db):
+    # Patch HubDatabase in hook_manager to return our shared db instance
+    with patch("gobby.storage.database.HubDatabase", return_value=db):
         # Mock WebSocket
         ws = MockWebSocketServer()
 

@@ -6,7 +6,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import session_context_for_test
 
@@ -31,7 +31,7 @@ def _register_session(
 
 
 def _set_session_stats(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_id: str,
     *,
     tool_calls_count: int,
@@ -49,7 +49,7 @@ def _set_session_stats(
 
 @pytest.mark.asyncio
 async def test_list_running_agents_includes_live_activity_counters(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
 ) -> None:
@@ -89,7 +89,7 @@ async def test_list_running_agents_includes_live_activity_counters(
 
 @pytest.mark.asyncio
 async def test_list_running_agents_default_scope_sees_non_child_runs(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
 ) -> None:
@@ -128,7 +128,7 @@ async def test_list_running_agents_default_scope_sees_non_child_runs(
 
 @pytest.mark.asyncio
 async def test_list_running_agents_running_status_matches_cli_query(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
 ) -> None:

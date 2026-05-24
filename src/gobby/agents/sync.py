@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 from gobby.agents.step_workflow import register_agent_step_workflow
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -93,13 +93,13 @@ def get_bundled_agents_path() -> Path:
     return get_install_dir() / "shared" / "workflows" / "agents"
 
 
-def _refresh_step_workflow(body: AgentDefinitionBody, db: DatabaseProtocol) -> None:
+def _refresh_step_workflow(body: AgentDefinitionBody, db: HubDatabase) -> None:
     """Refresh the generated step workflow row for agents with inline steps."""
     if body.steps:
         register_agent_step_workflow(body, db)
 
 
-def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
+def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled agent definitions from install/shared/workflows/agents/ to the database.
 
     Creates installed rows directly from template files. Installed rows are

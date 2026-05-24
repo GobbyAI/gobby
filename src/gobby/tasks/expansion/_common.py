@@ -78,7 +78,6 @@ _BACKEND_SIGNALS = frozenset(
         "ruff",
         "scheduler",
         "server",
-        "sqlite",
         "storage",
         "workflow",
         "worker",

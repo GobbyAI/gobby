@@ -9,7 +9,7 @@ from gobby.build.claim_recovery import recover_safe_build_claims
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class DispatcherTickSummary:
 
 
 async def kick_dispatcher_tick(
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
     *,
     dispatcher_enabled: bool | None = None,
@@ -86,7 +86,7 @@ async def kick_dispatcher_tick(
     return summary
 
 
-def _wake_build_system_jobs(db: DatabaseProtocol, project_id: str) -> bool:
+def _wake_build_system_jobs(db: HubDatabase, project_id: str) -> bool:
     storage = CronJobStorage(db)
     dispatcher = install_dispatcher_cron_row(db, project_id=project_id)
     if not dispatcher.enabled:
@@ -104,7 +104,7 @@ def _wake_existing_system_job(storage: CronJobStorage, name: str) -> None:
 
 
 def _record_dispatcher_tick_history(
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     project_id: str | None,
     summary: DispatcherTickSummary,
 ) -> None:

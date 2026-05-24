@@ -223,7 +223,7 @@ These will be dropped automatically with their parent tables, but for documentat
 Follow existing migration patterns in `migrations.py`:
 
 ```python
-def migrate_NNN_drop_artifacts(conn: sqlite3.Connection) -> None:
+def migrate_NNN_drop_artifacts(conn: psycopg.Connection) -> None:
     """Drop artifact tables and related objects."""
     conn.execute("DROP TABLE IF EXISTS artifact_tags")
     conn.execute("DROP TABLE IF EXISTS session_artifacts_fts")

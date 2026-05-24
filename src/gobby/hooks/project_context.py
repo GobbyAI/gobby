@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from gobby.hooks.events import HookEvent
 from gobby.hooks.session_types import HookSessionManager
@@ -84,7 +85,7 @@ class ProjectIdResolver:
             db = self.session_manager.db
             project_manager = LocalProjectManager(db)
             project_manager.ensure_exists(project_id, project_name, repo_path)
-        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+        except (psycopg.Error, ValueError, RuntimeError) as exc:
             if self.logger:
                 self.logger.warning("Failed to ensure project in database: %s", exc)
 

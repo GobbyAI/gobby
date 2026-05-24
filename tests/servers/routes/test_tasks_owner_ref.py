@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.config import DaemonConfig
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -23,18 +23,18 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db: LocalDatabase) -> str:
+def project_id(temp_db: HubDatabase) -> str:
     pm = LocalProjectManager(temp_db)
     return pm.create(name="owner-ref", repo_path="/tmp/owner-ref").id
 
 
 @pytest.fixture
-def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
 @pytest.fixture
-def session(temp_db: LocalDatabase, project_id: str) -> Session:
+def session(temp_db: HubDatabase, project_id: str) -> Session:
     return SessionManager(temp_db).register(
         external_id="owner-ref-session",
         machine_id="test-machine",
@@ -46,7 +46,7 @@ def session(temp_db: LocalDatabase, project_id: str) -> Session:
 
 @pytest.fixture
 def client(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     task_manager: LocalTaskManager,
     project_id: str,
 ) -> Iterator[TestClient]:

@@ -44,7 +44,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.storage.database import LocalDatabase
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
@@ -140,7 +139,7 @@ def temp_db(postgres_db: "HubDatabase") -> Iterator["HubDatabase"]:
 
 
 class NonLocalHubDatabase:
-    """HubDatabase proxy that is deliberately not a LocalDatabase instance."""
+    """HubDatabase proxy that is deliberately not a HubDatabase instance."""
 
     dialect = "postgres"
 
@@ -177,7 +176,7 @@ class NonLocalHubDatabase:
 
 @pytest.fixture
 def non_local_hub_db(hub_db: "HubDatabase") -> NonLocalHubDatabase:
-    """Wrap hub_db in an adapter that fails LocalDatabase isinstance checks."""
+    """Wrap hub_db in an adapter that fails HubDatabase isinstance checks."""
     return NonLocalHubDatabase(hub_db)
 
 
@@ -195,7 +194,7 @@ def hub_db(
 
 
 @pytest.fixture
-def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
+def session_manager(temp_db: "HubDatabase") -> "SessionManager":
     """Create a session manager with temp database."""
     from gobby.storage.sessions import SessionManager
 
@@ -203,7 +202,7 @@ def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
 
 
 @pytest.fixture
-def project_manager(temp_db: "LocalDatabase") -> "LocalProjectManager":
+def project_manager(temp_db: "HubDatabase") -> "LocalProjectManager":
     """Create a project manager with temp database."""
     from gobby.storage.projects import LocalProjectManager
 
@@ -211,7 +210,7 @@ def project_manager(temp_db: "LocalDatabase") -> "LocalProjectManager":
 
 
 @pytest.fixture
-def mcp_manager(temp_db: "LocalDatabase") -> "LocalMCPManager":
+def mcp_manager(temp_db: "HubDatabase") -> "LocalMCPManager":
     """Create an MCP manager with temp database."""
     from gobby.storage.mcp import LocalMCPManager
 
@@ -317,17 +316,14 @@ def mock_daemon_config() -> "MagicMock":
 def protect_production_resources(
     request: pytest.FixtureRequest,
     temp_dir: Path,
-    safe_db_dir: Path,
     safe_gobby_home_dir: Path,
 ) -> Iterator[None]:
     """
     Defensive fixture to prevent tests from touching production resources.
 
-    Forces all tests to use temporary paths for database and logging,
+    Forces all tests to use temporary paths for home and logging,
     unless explicitly opting out with @pytest.mark.no_config_protection.
 
-    Uses a session-scoped directory for the database to avoid race conditions
-    where the database file gets deleted before all tests finish using it.
     """
     if request.node.get_closest_marker("no_config_protection"):
         yield
@@ -337,9 +333,7 @@ def protect_production_resources(
 
     from gobby.config.app import DaemonConfig
 
-    # Use session-scoped directory for database (persists for entire test session)
     # Use function-scoped temp_dir for logs (per-test isolation)
-    safe_db_path = safe_db_dir / "test-safe.db"
     safe_logs_dir = temp_dir / "logs"
     safe_logs_dir.mkdir(exist_ok=True)
 
@@ -353,9 +347,8 @@ def protect_production_resources(
     # Set environment variables as a first line of defense
     safe_config_file = safe_logs_dir / "config-test.yaml"
     env_vars = {
-        "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py, database.py, and cli/utils.py
+        "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py and cli/utils.py
         "GOBBY_HOME": str(safe_gobby_home_dir),
-        "GOBBY_DATABASE_PATH": str(safe_db_path),
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
         "GOBBY_LOGGING_CLIENT": str(safe_log_client),
         "GOBBY_LOGGING_CLIENT_ERROR": str(safe_log_error),
@@ -384,7 +377,6 @@ def protect_production_resources(
             # If creating default, let it happen but in safe location if possible
             # But simpler is to just return a safe config object
             config = DaemonConfig(
-                database_path=str(safe_db_path),
                 telemetry={
                     "log_file": str(safe_log_client),
                     "log_file_error": str(safe_log_error),

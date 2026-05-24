@@ -45,7 +45,7 @@ ESLint.
 ### Backend indicators
 
 Prefer `backend-developer` for APIs, CLIs, storage, migrations, schedulers,
-workers, servers, daemon code, Python modules, pytest, mypy, Ruff, SQL, sqlite3,
+workers, servers, daemon code, Python modules, pytest, mypy, Ruff, SQL,
 psql, MCP tools, workflow engines, and infrastructure tests.
 
 ### Fullstack indicators

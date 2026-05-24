@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -23,15 +23,15 @@ from tests.fixtures.migrations import run_migrations
 pytestmark = pytest.mark.unit
 
 
-def _setup_db(tmp_path: Path) -> LocalDatabase:
+def _setup_db(tmp_path: Path) -> HubDatabase:
     """Create a fresh database with migrations."""
-    db = LocalDatabase(tmp_path / "test.db")
+    db = HubDatabase(tmp_path / "test.db")
     run_migrations(db)
     return db
 
 
 def _create_agent(
-    db: LocalDatabase,
+    db: HubDatabase,
     name: str = "test-agent",
     provider: str = "claude",
     isolation: str | None = None,

@@ -3,7 +3,7 @@
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def agent_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
+def agent_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
     """Create an agent run manager with temp database."""
     return LocalAgentRunManager(temp_db)
 
@@ -34,7 +34,7 @@ def _register_session(
 
 
 def _set_session_stats(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_id: str,
     *,
     tool_calls_count: int,
@@ -51,7 +51,7 @@ def _set_session_stats(
 
 
 def _set_persisted_run_stats(
-    db: LocalDatabase,
+    db: HubDatabase,
     run_id: str,
     *,
     tool_calls_count: int,
@@ -76,7 +76,7 @@ def test_active_read_methods_use_child_session_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Active run reads return live child-session counters over persisted zeros."""
     parent_id = _register_session(session_manager, sample_project, "parent-live")
@@ -114,7 +114,7 @@ def test_list_active_filters_by_task_ids_in_sql(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Task-scoped active-run lookup should only return matching task IDs."""
     parent_id = _register_session(session_manager, sample_project, "parent-filter")
@@ -152,7 +152,7 @@ def test_active_run_without_child_session_uses_parent_session_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Active runs fall back to parent-session counters when no child row exists."""
     parent_id = _register_session(session_manager, sample_project, "parent-fallback")
@@ -176,7 +176,7 @@ def test_terminal_run_without_child_session_keeps_persisted_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Terminal history remains based on persisted agent_runs counters."""
     parent_id = _register_session(session_manager, sample_project, "parent-terminal")
@@ -203,7 +203,7 @@ def test_to_brief_includes_activity_counters(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Brief agent-run payloads include the derived activity counters."""
     parent_id = _register_session(session_manager, sample_project, "parent-brief")

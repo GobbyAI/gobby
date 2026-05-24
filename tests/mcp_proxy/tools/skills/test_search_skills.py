@@ -3,41 +3,36 @@
 import asyncio
 import time
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def storage(db: LocalDatabase) -> LocalSkillManager:
+def storage(db: HubDatabase) -> LocalSkillManager:
     """Create a LocalSkillManager for storage operations."""
     return LocalSkillManager(db)
 
 
 @pytest.fixture
-def populated_db(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+def populated_db(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
     """Create database with test skills for search."""
     storage.create_skill(
         name="git-commit",
@@ -115,7 +110,7 @@ class TestSearchSkillsTool:
         assert len(result["results"]) > 0
 
     @pytest.mark.asyncio
-    async def test_repeated_search_skills_keeps_sqlite_connections_bounded(self, populated_db):
+    async def test_repeated_search_skills_keeps_postgres_connections_bounded(self, populated_db):
         """Search index refresh and result hydration use the injected DB runner."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 

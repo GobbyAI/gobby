@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
     resolve_session_task_value,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -62,7 +62,7 @@ def _coerce_value(
 
 def set_variable(
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str,
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
     session_id: str,
@@ -139,7 +139,7 @@ def set_variable(
 
 def get_variable(
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str | None = None,
     session_id: str = "",
     workflow: str | None = None,
@@ -231,7 +231,7 @@ def get_variable(
 
 
 def save_variable_template(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str,
     definition: dict[str, Any],
     *,

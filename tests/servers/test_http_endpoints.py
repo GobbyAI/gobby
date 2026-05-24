@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -53,7 +53,7 @@ class TestAdminEndpoints:
         assert data["daemon"] is None
 
     def test_status_check_with_task_manager(
-        self, session_storage: SessionManager, temp_db: LocalDatabase
+        self, session_storage: SessionManager, temp_db: HubDatabase
     ) -> None:
         """Test status check includes task stats."""
         from gobby.storage.tasks import LocalTaskManager
@@ -82,7 +82,7 @@ class TestAdminEndpoints:
         assert "in_progress" in data["tasks"]
 
     def test_status_check_with_memory_manager(
-        self, session_storage: SessionManager, temp_db: LocalDatabase
+        self, session_storage: SessionManager, temp_db: HubDatabase
     ) -> None:
         """Test status check includes memory stats."""
         mock_memory_manager = MagicMock()

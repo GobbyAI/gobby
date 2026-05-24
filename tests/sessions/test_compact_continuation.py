@@ -13,7 +13,7 @@ from gobby.sessions.compact_continuation import (
     mark_compact_self_continuation_pending,
     schedule_compact_self_continuation_fallback,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.migrations import run_migrations
@@ -30,8 +30,8 @@ class _FakeTmux:
         return True
 
 
-def _make_db(tmp_path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "compact-continuation.db")
+def _make_db(tmp_path) -> HubDatabase:
+    db = HubDatabase(tmp_path / "compact-continuation.db")
     run_migrations(db)
     return db
 

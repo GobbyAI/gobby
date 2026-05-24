@@ -24,13 +24,13 @@ from gobby.storage.cron_models import CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 
@@ -66,7 +66,7 @@ async def test_scheduler_advances_dispatcher_next_run_at(
     mock_executor: CronExecutor,
     config: CronConfig,
 ) -> None:
-    columns = {row["name"] for row in cron_storage.db.fetchall("PRAGMA table_info(cron_jobs)")}
+    columns = {row["name"] for row in cron_storage.db.fetchall("information_schema table_info(cron_jobs)")}
     if "is_system" not in columns:
         cron_storage.db.execute(
             "ALTER TABLE cron_jobs ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0"
@@ -616,7 +616,7 @@ async def test_run_now(
 async def test_run_now_executes_in_empty_session_context(
     cron_storage: CronJobStorage,
     config: CronConfig,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     sample_project,
 ) -> None:
     """Manual cron ticks must not inherit the caller session context."""

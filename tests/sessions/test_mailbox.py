@@ -11,7 +11,7 @@ import pytest
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -57,7 +57,7 @@ def _register_session(
 
 
 def _mailbox(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     wake_dispatcher: WakeDispatcherProtocol | None = None,
 ) -> MailboxService:
@@ -70,7 +70,7 @@ def _mailbox(
 
 
 def _setup_broadcast_scenario(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     project_manager: LocalProjectManager,
     session_manager: SessionManager,
     project_id: str,
@@ -154,7 +154,7 @@ def _setup_broadcast_scenario(
 
 
 async def _send_project_broadcast(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sender_id: str,
     project_id: str,
@@ -173,7 +173,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_direct_send_creates_durable_row_and_wakes(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -215,7 +215,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_session_target_requires_target_id(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -231,7 +231,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_wake_unavailable_preserves_delivery_shape(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -260,7 +260,7 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_wake_exception_reports_error_code_and_message(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -295,7 +295,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_with_no_recipients_logs_empty_fanout(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
@@ -332,7 +332,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_fans_out_to_active_agent_run_sessions(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -360,7 +360,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_uses_active_parent_when_child_session_expired(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -384,7 +384,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_enforces_project_scope_and_sender_exclusion(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -410,7 +410,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_writes_selector_metadata(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -449,7 +449,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_all_target_rejects_target_id(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -466,7 +466,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_all_target_reaches_every_deliverable_non_system_session(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -495,7 +495,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_agent_target_resolves_active_agent_run_recipient(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -529,7 +529,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_build_target_only_includes_active_agents_in_task_subtree(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -610,7 +610,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_rejects_unknown_target(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -626,7 +626,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_rejects_unknown_target_id(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
@@ -643,7 +643,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_rejects_empty_content(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:

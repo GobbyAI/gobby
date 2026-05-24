@@ -21,7 +21,7 @@ from gobby.skills.parser import ParsedSkill
 
 if TYPE_CHECKING:
     from gobby.skills.loader import LoadedSkillFile
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
 __all__: list[str] = ["sync_bundled_skills", "get_bundled_skills_path"]
@@ -191,7 +191,7 @@ def _handle_existing_gobby_skill(
     result["updated"] += 1
 
 
-def sync_bundled_skills(db: DatabaseProtocol) -> dict[str, Any]:
+def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled skills from install/shared/skills/ to the database.
 
     Creates/updates skills as source='installed', enabled=True with

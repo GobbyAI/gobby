@@ -10,7 +10,7 @@ from typing import Literal, cast
 
 from gobby.clones.git import CloneGitManager
 from gobby.storage.clones import Clone, LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._artifacts import TaskArtifacts
@@ -200,7 +200,7 @@ class _WorkspaceServices:
     def resolve(
         cls,
         *,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         project_id: str,
         repo_path: Path,
         services: object | None,
@@ -436,7 +436,7 @@ def _is_recoverable_workspace(
     return True
 
 
-def _project_repo_path(db: DatabaseProtocol, project_id: str) -> Path:
+def _project_repo_path(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is None or not project.repo_path:
         raise BuildWorkspaceError("project repo_path is required for integration workspaces")
@@ -461,7 +461,7 @@ def _service_git_manager(services: object | None, project_id: str) -> WorktreeGi
     return manager
 
 
-def _subtree_tasks(db: DatabaseProtocol, root_task_id: str) -> list[Task]:
+def _subtree_tasks(db: HubDatabase, root_task_id: str) -> list[Task]:
     rows = db.fetchall(
         """
         WITH RECURSIVE subtree(id, depth) AS (
@@ -552,7 +552,7 @@ def _nearest_ancestor_integration_branch(
     return None
 
 
-def _task_by_id(db: DatabaseProtocol, task_id: str) -> Task | None:
+def _task_by_id(db: HubDatabase, task_id: str) -> Task | None:
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     return Task.from_row(row) if row is not None else None
 

@@ -16,7 +16,7 @@ from gobby.hooks.dispatchers.webhook import evaluate_blocking_webhooks
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -26,26 +26,26 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> Iterator[LocalDatabase]:
+def db(tmp_path) -> Iterator[HubDatabase]:
     db_path = tmp_path / "test_block_observability.db"
-    database = LocalDatabase(db_path)
+    database = HubDatabase(db_path)
     run_migrations(database)
     yield database
     database.close()
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: HubDatabase) -> RuleEngine:
     return RuleEngine(db)
 
 
 @pytest.fixture
-def instance_mgr(db: LocalDatabase) -> WorkflowInstanceManager:
+def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
@@ -66,7 +66,7 @@ def _make_event(
     )
 
 
-def _create_session_row(db: LocalDatabase, session_id: str = "test-session") -> None:
+def _create_session_row(db: HubDatabase, session_id: str = "test-session") -> None:
     db.execute(
         "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
         ("project-1", "test-project"),
@@ -80,7 +80,7 @@ def _create_session_row(db: LocalDatabase, session_id: str = "test-session") -> 
 
 
 def _insert_block_rule(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     name: str,
     event: str,
@@ -106,7 +106,7 @@ def _insert_block_rule(
 
 
 def _setup_step_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
     *,
@@ -182,7 +182,7 @@ class ChatLifecycleHost(ChatMixin):
 
 @pytest.mark.asyncio
 async def test_rule_block_reason_and_log_are_structured(
-    db: LocalDatabase,
+    db: HubDatabase,
     engine: RuleEngine,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -210,7 +210,7 @@ async def test_rule_block_reason_and_log_are_structured(
 
 @pytest.mark.asyncio
 async def test_step_enforcement_block_logs_structured_reason(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
     instance_mgr: WorkflowInstanceManager,

@@ -78,7 +78,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 limit_value: int,
                 offset_value: int = 0,
             ) -> list[Skill]:
-                return await ctx.run_sqlite(
+                return await ctx.run_db(
                     ctx.storage.list_skills,
                     project_id=ctx.project_id,
                     category=category,

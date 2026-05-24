@@ -8,18 +8,15 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_rule_engine_call_tool_context.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -33,7 +30,7 @@ def _make_event(data: dict[str, Any]) -> HookEvent:
     )
 
 
-def test_call_tool_eval_context_does_not_mutate_target_arguments(db: LocalDatabase) -> None:
+def test_call_tool_eval_context_does_not_mutate_target_arguments(db: HubDatabase) -> None:
     engine = RuleEngine(db)
     target_arguments = {"task_id": "#1", "commit_sha": "abc123"}
     event = _make_event(

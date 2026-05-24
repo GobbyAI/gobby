@@ -92,7 +92,7 @@ class TestServerManagementServiceImport:
                 return_value=mock_importer,
             ),
             patch(
-                "gobby.storage.database.LocalDatabase",
+                "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
             result = await service.import_server(
@@ -124,7 +124,7 @@ class TestServerManagementServiceImport:
                 return_value=mock_importer,
             ),
             patch(
-                "gobby.storage.database.LocalDatabase",
+                "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
             result = await service.import_server(
@@ -153,7 +153,7 @@ class TestServerManagementServiceImport:
                 return_value=mock_importer,
             ),
             patch(
-                "gobby.storage.database.LocalDatabase",
+                "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
             result = await service.import_server(query="supabase mcp server")
@@ -175,7 +175,7 @@ class TestServerManagementServiceImport:
                 side_effect=Exception("Connection failed"),
             ),
             patch(
-                "gobby.storage.database.LocalDatabase",
+                "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
             result = await service.import_server(from_project="test")
@@ -202,7 +202,7 @@ class TestServerManagementServiceImport:
                 return_value=mock_importer,
             ),
             patch(
-                "gobby.storage.database.LocalDatabase",
+                "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
             await service.import_server(

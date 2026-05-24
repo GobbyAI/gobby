@@ -11,12 +11,12 @@ Tests verify:
 
 import os
 import signal
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import httpx
+import psycopg
 import pytest
 
 from tests._timing import wait_for_condition
@@ -34,12 +34,12 @@ def _database_has_schema(db_path: Path) -> bool:
     if not db_path.exists():
         return False
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with psycopg.connect(str(db_path)) as conn:
             cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects', 'tasks')"
+                "SELECT name FROM postgres_master WHERE type='table' AND name IN ('projects', 'tasks')"
             )
             return {row[0] for row in cursor.fetchall()} == {"projects", "tasks"}
-    except sqlite3.Error:
+    except psycopg.Error:
         return False
 
 
@@ -82,10 +82,10 @@ def _register_test_project(
 
 
 def _create_test_task(db_path: Path, *, project_id: str, title: str) -> str:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
 
-    db = LocalDatabase(db_path)
+    db = HubDatabase(db_path)
     try:
         task = LocalTaskManager(db).create_task(
             project_id=project_id,
@@ -98,9 +98,9 @@ def _create_test_task(db_path: Path, *, project_id: str, title: str) -> str:
         db.close()
 
 
-def _read_task_row(db_path: Path, task_id: str) -> sqlite3.Row | None:
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.row_factory = sqlite3.Row
+def _read_task_row(db_path: Path, task_id: str) -> dict[str, object] | None:
+    with psycopg.connect(str(db_path)) as conn:
+        conn.row_factory = dict[str, object]
         return conn.execute(
             "SELECT id, project_id, title, closed_at FROM tasks WHERE id = ?",
             (task_id,),
@@ -119,7 +119,7 @@ class TestCrashRecovery:
         config_path, http_port, ws_port = e2e_config
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
-        db_path = gobby_home / "gobby-hub.db"
+        db_path = gobby_home / "hub-postgres.db"
 
         env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
@@ -158,10 +158,10 @@ class TestCrashRecovery:
             assert db_path.exists(), "Database file should survive crash"
 
             # Verify database is readable (not corrupted)
-            conn = sqlite3.connect(str(db_path))
+            conn = psycopg.connect(str(db_path))
             try:
                 # Should be able to read tables
-                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                cursor = conn.execute("SELECT name FROM postgres_master WHERE type='table'")
                 tables = [row[0] for row in cursor.fetchall()]
                 assert len(tables) > 0, "Database should have tables"
             finally:
@@ -180,7 +180,7 @@ class TestCrashRecovery:
         config_path, http_port, ws_port = e2e_config
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
-        db_path = gobby_home / "gobby-hub.db"
+        db_path = gobby_home / "hub-postgres.db"
 
         env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
@@ -319,7 +319,7 @@ class TestStalePIDFile:
             assert wait_for_daemon_health(http_port, timeout=20.0), (
                 "Daemon should start despite stale PID file"
             )
-            _wait_for_database_ready(gobby_home / "gobby-hub.db")
+            _wait_for_database_ready(gobby_home / "hub-postgres.db")
 
             # Verify it's running
             response = httpx.get(f"http://localhost:{http_port}/api/admin/status", timeout=5.0)
@@ -363,7 +363,7 @@ class TestClientReconnection:
 
         try:
             assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
-            _wait_for_database_ready(gobby_home / "gobby-hub.db")
+            _wait_for_database_ready(gobby_home / "hub-postgres.db")
 
             # Create a client and make a request
             with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
@@ -396,7 +396,7 @@ class TestClientReconnection:
 
             try:
                 assert wait_for_daemon_health(http_port, timeout=20.0), "Second daemon should start"
-                _wait_for_database_ready(gobby_home / "gobby-hub.db")
+                _wait_for_database_ready(gobby_home / "hub-postgres.db")
 
                 # New client should be able to connect
                 with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
@@ -422,7 +422,7 @@ class TestTaskStatePersistence:
         config_path, http_port, ws_port = e2e_config
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
-        db_path = gobby_home / "gobby-hub.db"
+        db_path = gobby_home / "hub-postgres.db"
 
         env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
@@ -504,7 +504,7 @@ class TestTaskStatePersistence:
         config_path, http_port, ws_port = e2e_config
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
-        db_path = gobby_home / "gobby-hub.db"
+        db_path = gobby_home / "hub-postgres.db"
 
         env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)

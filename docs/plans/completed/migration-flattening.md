@@ -36,7 +36,7 @@ Phase 5: Remove old path (only after confidence period)
 
 **Tasks:**
 
-- [x] Create timestamped backup of gobby-hub.db (category: manual) - #6179
+- [x] Create timestamped backup of PostgreSQL hub (category: manual) - #6179
 - [x] Dump current schema to src/gobby/storage/schema_dump.sql (category: manual) - #6180
 - [x] Review schema_dump.sql for correctness (category: manual) - #6181
 - [x] Add BASELINE_SCHEMA_V2 constant with v75 schema (category: code) - #6182

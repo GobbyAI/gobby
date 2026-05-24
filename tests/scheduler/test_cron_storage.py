@@ -11,7 +11,7 @@ from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     """Create a CronJobStorage with the temp database."""
     return CronJobStorage(temp_db)
 
@@ -27,21 +27,21 @@ def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
 # --- Migration tests (#7620) ---
 
 
-def test_cron_jobs_table_exists(temp_db: LocalDatabase) -> None:
+def test_cron_jobs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_jobs table."""
-    row = temp_db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='cron_jobs'")
+    row = temp_db.fetchone("SELECT name FROM postgres_master WHERE type='table' AND name='cron_jobs'")
     assert row is not None
 
 
-def test_cron_runs_table_exists(temp_db: LocalDatabase) -> None:
+def test_cron_runs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_runs table."""
-    row = temp_db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='cron_runs'")
+    row = temp_db.fetchone("SELECT name FROM postgres_master WHERE type='table' AND name='cron_runs'")
     assert row is not None
 
 
-def test_cron_jobs_has_expected_columns(temp_db: LocalDatabase) -> None:
+def test_cron_jobs_has_expected_columns(temp_db: HubDatabase) -> None:
     """cron_jobs table has all required columns."""
-    columns = {row["name"] for row in temp_db.fetchall("PRAGMA table_info(cron_jobs)")}
+    columns = {row["name"] for row in temp_db.fetchall("information_schema table_info(cron_jobs)")}
     expected = {
         "id",
         "project_id",

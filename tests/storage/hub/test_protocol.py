@@ -28,4 +28,4 @@ def test_lock_target_priority_contract_is_class_level() -> None:
 def test_hub_database_dialect_contract_names_supported_backends() -> None:
     hints = get_type_hints(HubDatabase, include_extras=True)
 
-    assert hints["dialect"] == Literal["sqlite", "postgres"]
+    assert hints["dialect"] == Literal["postgres"]

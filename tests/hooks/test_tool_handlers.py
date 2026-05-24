@@ -295,14 +295,14 @@ class TestSkillToolInterception:
         from gobby.skills.parser import ParsedSkill
 
         return ParsedSkill(
-            name="agent-monitoring",
+            name="build-coordinator",
             description="Inspect Gobby agent progress through supported MCP tools.",
             content="# Agent Monitoring\nInspect agent progress.",
         )
 
     @pytest.fixture
     def skill_manager(self, parsed_skill: Any) -> MagicMock:
-        """Create a mock skill manager that resolves agent-monitoring."""
+        """Create a mock skill manager that resolves build-coordinator."""
         manager = MagicMock()
         manager.resolve_skill_name.return_value = parsed_skill
         return manager
@@ -321,17 +321,17 @@ class TestSkillToolInterception:
         """Skill tool call with a gobby skill name blocks with fetch directive."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.' in (
+        assert 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.' in (
             response.context or ""
         )
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
-        skill_manager.resolve_skill_name.assert_called_once_with("agent-monitoring")
+        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
 
     def test_skill_tool_with_gobby_prefix(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -339,15 +339,15 @@ class TestSkillToolInterception:
         """Skill tool call with gobby: prefix strips it before resolving."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "gobby:agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "gobby:build-coordinator"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.' in (
+        assert 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.' in (
             response.context or ""
         )
-        skill_manager.resolve_skill_name.assert_called_once_with("agent-monitoring")
+        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
 
     def test_skill_tool_with_args(self, handlers_with_skills: EventHandlers) -> None:
         """Skill tool call with args includes them in context."""
@@ -355,7 +355,7 @@ class TestSkillToolInterception:
             HookEventType.BEFORE_TOOL,
             data={
                 "tool_name": "Skill",
-                "tool_input": {"skill": "agent-monitoring", "args": "status"},
+                "tool_input": {"skill": "build-coordinator", "args": "status"},
             },
         )
         response = handlers_with_skills.handle_before_tool(event)
@@ -408,7 +408,7 @@ class TestSkillToolInterception:
         handlers = EventHandlers(**mock_dependencies)  # no skill_manager
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
         response = handlers.handle_before_tool(event)
 
@@ -423,7 +423,7 @@ class TestSkillToolInterception:
         skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
 
         with pytest.raises(RuntimeError, match="boom"):
@@ -440,7 +440,7 @@ class TestSkillToolInterception:
         caplog.set_level(logging.WARNING)
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
@@ -457,7 +457,7 @@ class TestSkillToolInterception:
         skill_manager.resolve_skill_name.side_effect = OSError("disk full")
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
 
         with pytest.raises(OSError, match="disk full"):
@@ -472,7 +472,7 @@ class TestSkillToolInterception:
         skill_manager.resolve_skill_name.side_effect = ValueError("bad skill payload")
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "build-coordinator"}},
         )
 
         with pytest.raises(ValueError, match="bad skill payload"):

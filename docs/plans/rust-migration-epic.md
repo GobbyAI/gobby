@@ -269,7 +269,7 @@ daemon migration without destabilizing them.
 - `R2-04` Extract project root helpers into `gobby-core`
 - `R2-05` Extract project metadata helpers into `gobby-core`
 - `R2-06` Extract daemon HTTP client utilities into `gobby-core`
-- `R2-07` Extract SQLite connection helpers into `gobby-core`
+- `R2-07` Extract PostgreSQL connection helpers into `gobby-core`
 - `R2-08` Migrate `gcode` to the extracted `gobby-core` helpers
 - `R2-09` Migrate `gsqz` to the extracted `gobby-core` helpers
 - `R2-10` Verify `gcode` and `gsqz` test coverage stays green after extraction

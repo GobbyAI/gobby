@@ -10,7 +10,7 @@ import pytest
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.storage import chat_messages
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 def _create_attachment(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     attachment_id: str = "attachment-1",
 ) -> str:
@@ -38,7 +38,7 @@ def _create_attachment(
 
 
 def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -71,7 +71,7 @@ def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
 
 
 def test_bind_attachments_is_idempotent_for_same_targets(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -95,7 +95,7 @@ def test_bind_attachments_is_idempotent_for_same_targets(
 
 
 def test_bind_attachments_allows_partial_binding_completion(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -113,7 +113,7 @@ def test_bind_attachments_allows_partial_binding_completion(
 
 
 def test_bind_attachments_rejects_conflicting_binding(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -127,7 +127,7 @@ def test_bind_attachments_rejects_conflicting_binding(
 
 
 def test_bind_attachments_preserves_bound_at_on_later_partial_updates(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -145,7 +145,7 @@ def test_bind_attachments_preserves_bound_at_on_later_partial_updates(
 
 
 def test_create_attachment_fetches_created_row_inside_transaction(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     with patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transaction:
@@ -165,7 +165,7 @@ def test_create_attachment_fetches_created_row_inside_transaction(
 
 
 def test_delete_unbound_attachment_uses_immediate_transaction(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -185,7 +185,7 @@ def test_delete_unbound_attachment_uses_immediate_transaction(
 
 
 def test_delete_unbound_attachment_keeps_bound_attachment(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
@@ -203,7 +203,7 @@ def test_delete_unbound_attachment_keeps_bound_attachment(
 
 
 def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     old_unbound = _create_attachment(temp_db, tmp_path, "old-unbound")
@@ -258,7 +258,7 @@ def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
 
 
 def test_delete_attachments_for_conversations_removes_conversation_and_message_links(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     conversation_attachment = _create_attachment(temp_db, tmp_path, "conversation-attachment")

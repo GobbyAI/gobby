@@ -1,23 +1,19 @@
 """Tests for AuthStore session management and secret key detection."""
 
 import hashlib
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from gobby.storage.auth import AuthStore
 from gobby.storage.config_store import is_secret_key_name
-from gobby.storage.database import LocalDatabase
-from tests.fixtures.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -33,11 +29,17 @@ class TestAuthStoreCreateSession:
         assert len(token) == 64  # 32 bytes hex
         assert expires_at is not None
 
-    def test_create_session_stores_only_token_hash(self, db: LocalDatabase) -> None:
+    def test_create_session_stores_only_token_hash(self, db: HubDatabase) -> None:
         auth_store = AuthStore(db)
         token, _ = auth_store.create_session()
 
-        columns = {row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")}
+        columns = {
+            row["column_name"]
+            for row in db.fetchall(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                ("auth_sessions",),
+            )
+        }
         row = db.fetchone("SELECT token_hash FROM auth_sessions")
 
         assert "token" not in columns
@@ -71,7 +73,7 @@ class TestAuthStoreDeleteSession:
 
 
 class TestAuthStoreExpiry:
-    def test_expired_session_is_invalid(self, db: LocalDatabase) -> None:
+    def test_expired_session_is_invalid(self, db: HubDatabase) -> None:
         auth_store = AuthStore(db)
         token, _ = auth_store.create_session()
         # Manually expire the session
@@ -84,56 +86,6 @@ class TestAuthStoreExpiry:
             (hashlib.sha256(token.encode("utf-8")).hexdigest(),),
         )
         assert auth_store.validate_session(token) is False
-
-
-class TestAuthStoreLegacyRepair:
-    def test_legacy_sqlite_plaintext_tokens_are_repaired(self, db: LocalDatabase) -> None:
-        token = "legacy-token"
-        expires_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
-        db.execute("DROP TABLE auth_sessions")
-        db.execute(
-            """
-            CREATE TABLE auth_sessions (
-                token TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                expires_at TEXT NOT NULL,
-                remember_me INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        db.execute(
-            "INSERT INTO auth_sessions (token, expires_at, remember_me) VALUES (?, ?, ?)",
-            (token, expires_at, 0),
-        )
-
-        run_migrations(db)
-        auth_store = AuthStore(db)
-        columns = {row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")}
-        row = db.fetchone("SELECT token_hash FROM auth_sessions")
-
-        assert "token" not in columns
-        assert row is not None
-        assert row["token_hash"] == hashlib.sha256(token.encode("utf-8")).hexdigest()
-        assert auth_store.validate_session(token) is True
-
-    def test_constructor_does_not_repair_legacy_sqlite_tokens(self, db: LocalDatabase) -> None:
-        db.execute("DROP TABLE auth_sessions")
-        db.execute(
-            """
-            CREATE TABLE auth_sessions (
-                token TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                expires_at TEXT NOT NULL,
-                remember_me INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-
-        AuthStore(db)
-        columns = {row["name"] for row in db.fetchall("PRAGMA table_info(auth_sessions)")}
-
-        assert "token" in columns
-        assert "token_hash" not in columns
 
 
 class TestSecretKeyDetection:

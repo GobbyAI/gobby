@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -242,7 +242,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         skill_manager: Any | None = None,
         metrics_event_store: "MetricsEventStore | None" = None,
         mcp_dispatcher: Any | None = None,

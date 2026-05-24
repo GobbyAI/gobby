@@ -7,10 +7,7 @@ rules:
     enabled: true
     priority: 23
     when: >
-      not (
-        skill_loaded('build-coordinator')
-        or skill_loaded('agent-monitoring')
-      )
+      not skill_loaded('build-coordinator')
       and (
         (
           (
@@ -65,10 +62,6 @@ rules:
             or 'tmux list-panes' in (tool_input.get('command') or '').lower()
             or 'tmux list-sessions' in (tool_input.get('command') or '').lower()
             or 'tmux display-message' in (tool_input.get('command') or '').lower()
-            or (
-              'sqlite3' in (tool_input.get('command') or '').lower()
-              and 'gobby-hub.db' in (tool_input.get('command') or '').lower()
-            )
           )
         )
       )

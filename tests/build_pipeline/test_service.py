@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
@@ -40,7 +40,7 @@ def _options(**overrides: object) -> BuildOptions:
     return BuildOptions(**values)
 
 
-def _project(temp_db: LocalDatabase, tmp_path: Path) -> tuple[str, Path]:
+def _project(temp_db: HubDatabase, tmp_path: Path) -> tuple[str, Path]:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     project = LocalProjectManager(temp_db).create(name="phase-3", repo_path=str(repo_path))
@@ -56,7 +56,7 @@ def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", no_tick)
 
 
-def _table_counts(temp_db: LocalDatabase, *tables: str) -> dict[str, int]:
+def _table_counts(temp_db: HubDatabase, *tables: str) -> dict[str, int]:
     return {
         table: int(temp_db.fetchone(f"SELECT COUNT(*) AS count FROM {table}")["count"])
         for table in tables

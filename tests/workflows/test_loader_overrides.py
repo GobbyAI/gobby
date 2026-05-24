@@ -3,28 +3,25 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.loader import WorkflowLoader
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "loader-overrides.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def def_manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -40,7 +37,7 @@ def _workflow_json(name: str, *, override: bool = False) -> str:
 
 @pytest.mark.asyncio
 async def test_conflict_without_override_label_fails_loud(
-    db: LocalDatabase,
+    db: HubDatabase,
     def_manager: LocalWorkflowDefinitionManager,
 ) -> None:
     project = LocalProjectManager(db).create(name="test-project", repo_path="/tmp/test-project")
@@ -67,7 +64,7 @@ async def test_conflict_without_override_label_fails_loud(
 
 @pytest.mark.asyncio
 async def test_conflict_with_override_label_loads_project_copy(
-    db: LocalDatabase,
+    db: HubDatabase,
     def_manager: LocalWorkflowDefinitionManager,
 ) -> None:
     project = LocalProjectManager(db).create(name="test-project", repo_path="/tmp/test-project")

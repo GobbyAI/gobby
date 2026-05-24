@@ -163,7 +163,7 @@ class TestMergeStatePersistence:
 
     def test_merge_resolution_persists(self, tmp_path) -> None:
         """Merge resolution should persist in database."""
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.protocol import HubDatabase
         from gobby.storage.merge_resolutions import MergeResolutionManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.worktrees import LocalWorktreeManager
@@ -171,7 +171,7 @@ class TestMergeStatePersistence:
 
         # Create real database
         db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
+        db = HubDatabase(db_path)
         run_migrations(db)
 
         # Create prerequisite data (project and worktree for foreign key)

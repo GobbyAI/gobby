@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -14,20 +14,17 @@ from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_plan_artifact_scope.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
-def _sync_bundled(db: LocalDatabase) -> RuleDefinitionBody:
+def _sync_bundled(db: HubDatabase) -> RuleDefinitionBody:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
@@ -62,7 +59,7 @@ def _evaluate_when(
     return SafeExpressionEvaluator(ctx, funcs).evaluate(when)
 
 
-def test_rule_syncs_and_uses_helper_wiring(db: LocalDatabase) -> None:
+def test_rule_syncs_and_uses_helper_wiring(db: HubDatabase) -> None:
     body = _sync_bundled(db)
     assert body.event.value == "before_tool"
     assert body.effects[0].type == "block"
@@ -71,7 +68,7 @@ def test_rule_syncs_and_uses_helper_wiring(db: LocalDatabase) -> None:
 
 
 def test_delegated_path_blocks_non_artifact_and_allows_artifact(
-    db: LocalDatabase, tmp_path
+    db: HubDatabase, tmp_path
 ) -> None:
     body = _sync_bundled(db)
     engine = RuleEngine(db)
@@ -93,7 +90,7 @@ def test_delegated_path_blocks_non_artifact_and_allows_artifact(
 
 
 def test_planner_path_blocks_until_task_reaches_review_approved(
-    db: LocalDatabase, tmp_path
+    db: HubDatabase, tmp_path
 ) -> None:
     body = _sync_bundled(db)
     project = LocalProjectManager(db).create(name="planner-project", repo_path=str(tmp_path))
@@ -132,7 +129,7 @@ def test_planner_path_blocks_until_task_reaches_review_approved(
     )
 
 
-def test_missing_artifact_path_fails_closed_for_delegated_mode(db: LocalDatabase, tmp_path) -> None:
+def test_missing_artifact_path_fails_closed_for_delegated_mode(db: HubDatabase, tmp_path) -> None:
     body = _sync_bundled(db)
     engine = RuleEngine(db)
     variables: dict[str, object] = {
@@ -153,7 +150,7 @@ def test_missing_artifact_path_fails_closed_for_delegated_mode(db: LocalDatabase
 
 
 def test_absolute_artifact_write_uses_platform_session_project_path(
-    db: LocalDatabase,
+    db: HubDatabase,
     tmp_path,
 ) -> None:
     body = _sync_bundled(db)

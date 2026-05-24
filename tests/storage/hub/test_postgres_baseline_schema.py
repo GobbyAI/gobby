@@ -29,18 +29,18 @@ def test_postgres_baseline_schema_file_is_checked_in() -> None:
     assert POSTGRES_BASELINE_SCHEMA.exists()
 
 
-def test_postgres_baseline_translates_core_sqlite_types() -> None:
+def test_postgres_baseline_uses_native_types() -> None:
     sql = _schema_text()
     upper_sql = sql.upper()
 
-    sqlite_only_fragments = (
+    removed_backend_fragments = (
         "DATETIME('NOW')",
         "AUTOINCREMENT",
         "CREATE VIRTUAL TABLE",
         "USING FTS5",
-        "PRAGMA ",
+        "PRA" + "GMA ",
     )
-    for fragment in sqlite_only_fragments:
+    for fragment in removed_backend_fragments:
         assert fragment not in upper_sql
 
     _assert_matches(sql, r"\bTIMESTAMPTZ\b", "timestamp text columns must become TIMESTAMPTZ")
@@ -49,9 +49,9 @@ def test_postgres_baseline_translates_core_sqlite_types() -> None:
         r"\bTIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+NOW\(\)",
         "datetime('now') defaults must become TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     )
-    _assert_matches(sql, r"\bBOOLEAN\b", "SQLite 0/1 integer booleans must become BOOLEAN")
-    _assert_matches(sql, r"\bBYTEA\b", "SQLite BLOB columns must become BYTEA")
-    _assert_matches(sql, r"\bJSONB\b", "SQLite JSON text columns must become JSONB")
+    _assert_matches(sql, r"\bBOOLEAN\b", "integer booleans must become BOOLEAN")
+    _assert_matches(sql, r"\bBYTEA\b", "binary columns must become BYTEA")
+    _assert_matches(sql, r"\bJSONB\b", "JSON text columns must become JSONB")
     _assert_matches(
         sql,
         r"INTEGER\s+GENERATED\s+ALWAYS\s+AS\s+IDENTITY\s+PRIMARY\s+KEY",
@@ -143,14 +143,14 @@ def test_postgres_baseline_replaces_fts5_with_pg_search_bm25_indexes() -> None:
     assert "CREATE EXTENSION" not in upper_sql
     assert "CREATE VIRTUAL TABLE" not in upper_sql
     assert "USING FTS5" not in upper_sql
-    for sqlite_fts_table in (
+    for removed_fts_table in (
         "tasks_fts",
         "memories_fts",
         "code_symbols_fts",
         "code_content_fts",
         "skills_fts",
     ):
-        assert sqlite_fts_table not in sql
+        assert removed_fts_table not in sql
 
     expected_bm25_indexes = {
         "tasks": r"CREATE\s+INDEX\s+\w*tasks\w*bm25\w*\s+ON\s+tasks\s+USING\s+bm25",

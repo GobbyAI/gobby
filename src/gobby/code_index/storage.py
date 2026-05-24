@@ -15,7 +15,7 @@ from gobby.code_index.models import (
     Symbol,
 )
 from gobby.search.keyword import fetch_all, pick_search_backend, placeholder
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 class CodeIndexStorage:
     """Storage for code symbols, indexed files, and projects in the runtime hub."""
 
-    def __init__(self, db: DatabaseProtocol | HubDatabase) -> None:
+    def __init__(self, db: HubDatabase | HubDatabase) -> None:
         """Initialize storage against a legacy DB or HubDatabase seam."""
-        self.db: DatabaseProtocol = db
+        self.db: HubDatabase = db
 
     # ── Symbols ──────────────────────────────────────────────────────
 

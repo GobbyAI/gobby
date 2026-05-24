@@ -19,7 +19,7 @@ class TestSessionManagerPruning:
     ) -> None:
         """Test expiring stale sessions."""
         # Create a stale session (simulated by mocking updated_at in query or just rely on db time)
-        # Since we use SQLite CURRENT_TIMESTAMP in queries, we can't easily mock time without
+        # Since we use PostgreSQL CURRENT_TIMESTAMP in queries, we can't easily mock time without
         # deeper mocking. Instead, we'll verify the SQL generation and execution flow
         # or use a very short timeout.
 

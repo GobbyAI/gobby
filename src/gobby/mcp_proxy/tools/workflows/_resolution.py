@@ -8,7 +8,7 @@ formats (#N, N, UUID, prefix) to canonical UUIDs.
 import logging
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
@@ -28,7 +28,7 @@ def resolve_session_task_value(
     value: Any,
     session_id: str | None,
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> Any:
     """
     Resolve a session_task value from seq_num reference (#N or N) to UUID.

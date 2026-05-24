@@ -121,7 +121,7 @@ After extraction, `MemoryManager` becomes a thin facade that delegates to the ne
 class MemoryManager:
     """Facade for memory operations. Delegates to specialized coordinators/services."""
 
-    def __init__(self, config: MemoryConfig, db: LocalDatabase):
+    def __init__(self, config: MemoryConfig, db: HubDatabase):
         self._db = db
         self._config = config
         # Initialize coordinators/services

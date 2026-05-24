@@ -3,36 +3,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def test_db(tmp_path):
+def test_db(temp_db: HubDatabase) -> HubDatabase:
     """Create a temporary database for testing."""
-    db_path = tmp_path / "test_audit.db"
-    db = LocalDatabase(str(db_path))
-    # Create the table manually as we don't have migrations in this test context
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS workflow_audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            step TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            tool_name TEXT,
-            rule_id TEXT,
-            condition TEXT,
-            result TEXT NOT NULL,
-            reason TEXT,
-            context TEXT
-        )
-    """
-    )
-    return db
+    return temp_db
 
 
 @pytest.fixture
@@ -132,8 +112,8 @@ def test_cleanup_entries(audit_manager, test_db) -> None:
 def test_log_error_handling(audit_manager) -> None:
     """Test error handling in log method."""
     # Break the DB connection to force error
-    # By convention, if we close the connection inside LocalDatabase, generic execute might check.
-    # But LocalDatabase manages connections per execute usually? No, it holds conn.
+    # By convention, if we close the connection inside HubDatabase, generic execute might check.
+    # But HubDatabase manages connections per execute usually? No, it holds conn.
     # We can mock db.execute to raise Exception.
 
     original_execute = audit_manager.db.execute

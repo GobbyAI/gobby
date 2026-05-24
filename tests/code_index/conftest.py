@@ -8,7 +8,7 @@ import pytest
 
 from gobby.code_index.models import Symbol
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -126,15 +126,15 @@ CREATE INDEX IF NOT EXISTS idx_ccc_file ON code_content_chunks(project_id, file_
 
 
 @pytest.fixture
-def code_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalDatabase:
+def code_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> HubDatabase:
     """Database with the code index tables needed by these unit tests."""
-    db = LocalDatabase(tmp_path / "code-test.db")
+    db = HubDatabase(tmp_path / "code-test.db")
     conn = db.connection
     conn.executescript(_CODE_INDEX_SCHEMA)
     conn.commit()
 
     def _raise_keyword_backend(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("PostgreSQL keyword backend is not available in LocalDatabase tests")
+        raise RuntimeError("PostgreSQL keyword backend is not available in HubDatabase tests")
 
     monkeypatch.setattr("gobby.code_index.storage.pick_search_backend", _raise_keyword_backend)
     yield db
@@ -142,7 +142,7 @@ def code_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalDatabase:
 
 
 @pytest.fixture
-def code_storage(code_db: LocalDatabase) -> CodeIndexStorage:
+def code_storage(code_db: HubDatabase) -> CodeIndexStorage:
     """CodeIndexStorage wired to the test database."""
     return CodeIndexStorage(code_db)
 

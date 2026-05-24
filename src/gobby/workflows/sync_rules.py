@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.native_bin import resolve_native_bin
@@ -59,7 +59,7 @@ def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
 
 
 def sync_bundled_rules(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     rules_path: Path | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:

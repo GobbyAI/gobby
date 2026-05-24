@@ -1,4 +1,4 @@
-"""Tests for secrets store with real Fernet encryption and SQLite.
+"""Tests for secrets store with real Fernet encryption and PostgreSQL.
 
 Uses temp_db fixture for real database operations and mock_machine_id
 for deterministic key derivation. Only external I/O (machine ID lookup)
@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import (
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
@@ -42,7 +42,7 @@ def salt_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def store(temp_db: LocalDatabase, salt_dir: Path, mock_machine_id: str) -> SecretStore:
+def store(temp_db: HubDatabase, salt_dir: Path, mock_machine_id: str) -> SecretStore:
     """SecretStore backed by real DB, real encryption, temp salt, mocked machine ID."""
     return SecretStore(temp_db)
 
@@ -183,7 +183,7 @@ class TestGetFernet:
         f2 = store._get_fernet()
         assert f1 is f2
 
-    def test_raises_when_no_machine_id(self, temp_db: LocalDatabase, salt_dir: Path) -> None:
+    def test_raises_when_no_machine_id(self, temp_db: HubDatabase, salt_dir: Path) -> None:
         with patch("gobby.storage.secrets.get_machine_id", return_value=None):
             s = SecretStore(temp_db)
             with pytest.raises(RuntimeError, match="machine ID unavailable"):
@@ -233,7 +233,7 @@ class TestSecretStoreSet:
         assert info.description is None
 
     def test_set_raises_if_row_vanishes_after_upsert(
-        self, store: SecretStore, temp_db: LocalDatabase
+        self, store: SecretStore, temp_db: HubDatabase
     ) -> None:
         """Defensive guard: if the row is missing after upsert, raise ValueError."""
         original_fetchone = temp_db.fetchone
@@ -256,7 +256,7 @@ class TestSecretStoreSet:
         finally:
             setattr(temp_db, "fetchone", original_fetchone)  # noqa: B010
 
-    def test_set_encrypts_value(self, store: SecretStore, temp_db: LocalDatabase) -> None:
+    def test_set_encrypts_value(self, store: SecretStore, temp_db: HubDatabase) -> None:
         """The stored value in the DB should NOT be the plaintext."""
         store.set("SENSITIVE", "super-secret-value")
         row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = ?", ("sensitive",))
@@ -285,7 +285,7 @@ class TestSecretStoreGet:
         store.set("KEY", "new")
         assert store.get("KEY") == "new"
 
-    def test_get_invalid_token_returns_none(self, temp_db: LocalDatabase, salt_dir: Path) -> None:
+    def test_get_invalid_token_returns_none(self, temp_db: HubDatabase, salt_dir: Path) -> None:
         """If the machine ID changes, decryption fails gracefully."""
         # Store with one machine ID
         with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._runtime_mutex import RuntimeStageSnapshotState
@@ -282,7 +281,7 @@ class StageStatesManager:
 
     @staticmethod
     def _terminal_after_done(
-        conn: sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         stage_name: str,
     ) -> bool:

@@ -960,7 +960,7 @@ class TestMarkLoopComplete:
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
-            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.hub.protocol.HubDatabase"),
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
             mock_svm_class.return_value = mock_svm
@@ -998,7 +998,7 @@ class TestMarkLoopComplete:
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
-            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.hub.protocol.HubDatabase"),
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
             mock_svm_class.return_value = mock_svm

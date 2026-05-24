@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
@@ -458,7 +458,7 @@ class TestProjectRoutes:
     # Error: session_manager unavailable
     # -----------------------------------------------------------------
 
-    def test_session_manager_unavailable(self, temp_db: LocalDatabase) -> None:
+    def test_session_manager_unavailable(self, temp_db: HubDatabase) -> None:
         """503 when session_manager is None."""
         server = create_http_server(session_manager=None, database=temp_db)
         client = TestClient(server.app)

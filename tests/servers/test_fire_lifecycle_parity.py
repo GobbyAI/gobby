@@ -15,7 +15,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.servers.websocket.chat import ChatMixin
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -61,9 +61,9 @@ def host() -> ChatMixinHost:
 
 
 @pytest.fixture
-def rules_db(tmp_path) -> LocalDatabase:
+def rules_db(tmp_path) -> HubDatabase:
     db_path = tmp_path / "test_fire_lifecycle_parity.db"
-    database = LocalDatabase(db_path)
+    database = HubDatabase(db_path)
     run_migrations(database)
     return database
 
@@ -569,7 +569,7 @@ class TestFireLifecycleRequireUvRule:
 
     @pytest.mark.asyncio
     async def test_real_synced_require_uv_blocks_shell_alias_without_modified_input(
-        self, host: ChatMixinHost, rules_db: LocalDatabase
+        self, host: ChatMixinHost, rules_db: HubDatabase
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
         sync_bundled_rules(rules_db, get_bundled_rules_path())

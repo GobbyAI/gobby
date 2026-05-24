@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from tests.fixtures.migrations import run_migrations
 
@@ -12,16 +12,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path) -> HubDatabase:
     """Create a fresh in-memory database with migrations applied."""
     db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
+    database = HubDatabase(db_path)
     run_migrations(database)
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalPipelineExecutionManager:
+def manager(db: HubDatabase) -> LocalPipelineExecutionManager:
     return LocalPipelineExecutionManager(db=db, project_id="test-project")
 
 

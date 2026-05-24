@@ -16,7 +16,7 @@ from gobby.servers.routes.chat_attachments import (
 )
 from gobby.storage.chat_attachments import bind_attachments, create_attachment
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from tests.servers.conftest import create_http_server
 
@@ -25,7 +25,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def client(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
@@ -41,7 +41,7 @@ def client(
     return TestClient(app)
 
 
-def test_upload_persists_metadata_and_file(client: TestClient, temp_db: LocalDatabase) -> None:
+def test_upload_persists_metadata_and_file(client: TestClient, temp_db: HubDatabase) -> None:
     project = LocalProjectManager(temp_db).create(name="attachment-project")
 
     response = client.post(
@@ -71,7 +71,7 @@ def test_upload_persists_metadata_and_file(client: TestClient, temp_db: LocalDat
 
 
 def test_upload_without_project_id_uses_server_project(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -112,7 +112,7 @@ def test_upload_without_project_id_falls_back_to_personal(client: TestClient) ->
 
 def test_upload_rejects_unknown_project_id_without_persisting(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     response = client.post(
@@ -129,7 +129,7 @@ def test_upload_rejects_unknown_project_id_without_persisting(
 
 def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
 
@@ -144,7 +144,7 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
 
 def test_upload_sanitizes_traversal_filename_preserving_extension(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     response = client.post(
         "/api/chat/attachments",
@@ -160,7 +160,7 @@ def test_upload_sanitizes_traversal_filename_preserving_extension(
 
 def test_upload_truncates_oversized_filename_suffix_to_safe_path_part(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     filename = f"a.{'x' * 300}"
 
@@ -200,7 +200,7 @@ def test_upload_checks_disk_space_once_using_known_file_size(
 
 def test_upload_rejects_mismatched_mime_without_persisting(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     response = client.post(
@@ -221,7 +221,7 @@ def test_resolve_mime_type_prefers_content_type_and_guesses_filename() -> None:
 
 def test_upload_rejects_late_invalid_utf8_text(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level("WARNING", logger="gobby.servers.routes.chat_attachments")
@@ -272,7 +272,7 @@ def test_content_route_sets_disposition_by_mime_type(
 
 def test_content_route_returns_404_when_content_path_is_directory(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     content_dir = tmp_path / "directory-backed-attachment"
@@ -303,7 +303,7 @@ def test_content_route_rejects_invalid_attachment_id(client: TestClient) -> None
 
 def test_delete_only_removes_unbound_uploads(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     first = client.post(
         "/api/chat/attachments",
@@ -334,7 +334,7 @@ def test_delete_only_removes_unbound_uploads(
 
 def test_delete_reports_file_removal_failure_after_metadata_delete(
     client: TestClient,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     uploaded = client.post(

@@ -1,7 +1,6 @@
 """Focused tests for session storage behavior."""
 
 import inspect
-import sqlite3
 from collections.abc import Sequence
 
 import pytest
@@ -41,22 +40,10 @@ def test_session_had_edits_updates_use_boolean_literals() -> None:
 def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
     """Session unique-conflict matching must use exception args, not masked str()."""
 
-    class MaskedIntegrityError(sqlite3.IntegrityError):
+    class MaskedIntegrityError(Exception):
         def __str__(self) -> str:
             return "masked"
 
-    assert session_upsert.is_session_unique_conflict(
-        sqlite3.IntegrityError(
-            "UNIQUE constraint failed: sessions.external_id, sessions.machine_id, "
-            "sessions.source, sessions.project_id"
-        )
-    )
-    assert session_upsert.is_session_unique_conflict(
-        MaskedIntegrityError(
-            "UNIQUE constraint failed: sessions.external_id, sessions.machine_id, "
-            "sessions.source, sessions.project_id, sessions.session_type"
-        )
-    )
     assert session_upsert.is_session_unique_conflict(
         MaskedIntegrityError('duplicate key value violates unique constraint "idx_sessions_unique"')
     )

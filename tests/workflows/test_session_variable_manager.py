@@ -4,22 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from tests.fixtures.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase):
+    database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
     yield database
-    database.close()
 
 
 def _ensure_session(db, session_id: str) -> None:

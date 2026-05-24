@@ -123,7 +123,7 @@ Follow `TaskDependencyManager` pattern (`src/gobby/storage/task_dependencies.py`
 
 ```python
 class TaskAffectedFileManager:
-    def __init__(self, db: DatabaseProtocol)
+    def __init__(self, db: HubDatabase)
     def set_files(self, task_id: str, files: list[str], source: str = "expansion") -> None
     def get_files(self, task_id: str) -> list[TaskAffectedFile]
     def add_file(self, task_id: str, file_path: str, source: str) -> TaskAffectedFile
@@ -156,7 +156,7 @@ In `_create_node()`, after `task_manager.create_task(...)`:
 - Call `TaskAffectedFileManager.set_files(task.id, affected_files)`
 - ~5-10 lines of new code
 
-Store `parallel_group` as a task label with `parallel:` prefix (e.g., `parallel:group-a`). Tasks have `labels: list[str]` as a JSON column — no schema change needed. Query with `json_each(labels)` in SQLite.
+Store `parallel_group` as a task label with `parallel:` prefix (e.g., `parallel:group-a`). Tasks have `labels: list[str]` as a JSON column — no schema change needed. Query with `jsonb_array_elements_text(labels)` in PostgreSQL.
 
 ### 2e. MCP tools for affected files
 

@@ -61,6 +61,8 @@ class ExpansionRun:
             raw = row[field]
             if not raw:
                 return None
+            if isinstance(raw, dict | list):
+                return raw
             try:
                 return json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -337,22 +339,20 @@ class LocalExpansionRunManager:
     ) -> ExpansionRun | None:
         """Append a structured log entry to a run."""
         now = datetime.now(UTC).isoformat()
-        entry_json = json.dumps(
-            {
-                "timestamp": now,
-                "level": level,
-                "message": message,
-                "extra": extra or {},
-            }
-        )
+        entry = {
+            "timestamp": now,
+            "level": level,
+            "message": message,
+            "extra": extra or {},
+        }
         cursor = self.db.execute(
             """
             UPDATE expansion_runs
-            SET logs_json = json_insert(COALESCE(NULLIF(logs_json, ''), '[]'), '$[#]', json(?)),
+            SET logs_json = COALESCE(logs_json, '[]'::jsonb) || ?::jsonb,
                 updated_at = ?
             WHERE id = ?
             """,
-            (entry_json, now, run_id),
+            (json.dumps([entry]), now, run_id),
         )
         if cursor.rowcount == 0:
             return None

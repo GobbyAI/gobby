@@ -9,7 +9,7 @@ from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -56,7 +56,7 @@ async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_
 
 
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -128,7 +128,7 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
 
 
 async def test_execute_merge_workspace_completes_already_merged_worktree(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -201,7 +201,7 @@ async def test_execute_merge_workspace_completes_already_merged_worktree(
 
 
 async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -315,7 +315,7 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
 
 
 async def test_execute_merge_workspace_lands_child_epic_integration_on_local_branch(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -383,7 +383,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
 
 
 async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -458,7 +458,7 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
 
 
 async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -522,7 +522,7 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
 
 
 async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -595,7 +595,7 @@ async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
 
 
 async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_merge(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -673,7 +673,7 @@ async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_mer
 
 
 async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -758,7 +758,7 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
 
 
 async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -850,7 +850,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
 
 
 async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -967,7 +967,7 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
 
 
 async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"

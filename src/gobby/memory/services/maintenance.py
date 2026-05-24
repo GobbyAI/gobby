@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.memories import LocalMemoryManager, Memory
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def get_stats(
     storage: LocalMemoryManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     vector_store: VectorStore | None = None,
 ) -> dict[str, Any]:
@@ -497,7 +497,7 @@ async def _classify_stale_memories(
 
 
 def find_stale_memories(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     max_age_days: int = 30,
     project_id: str | None = None,
     limit: int = 500,
@@ -665,7 +665,7 @@ def find_code_derivable_memories(
 
 
 def find_orphaned_memories(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     min_age_days: int = 30,
     project_id: str | None = None,
     limit: int = 500,

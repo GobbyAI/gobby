@@ -39,8 +39,8 @@ PostgresInstallMode = Literal["docker", "native", "external"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
     'hub_backend must be postgres (hub_backend (Literal["postgres"]) only supports '
-    '"postgres"; "sqlite" was removed). Run `gobby postgres install` to write '
-    f"PostgreSQL bootstrap settings; see {HUB_BACKEND_MIGRATION_DOCS}. "
+    f'"postgres"). Run `gobby postgres install` to write PostgreSQL bootstrap settings; '
+    f"see {HUB_BACKEND_MIGRATION_DOCS}. "
     "Enforcement: _parse_hub_backend() raises BootstrapConfigError."
 )
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
@@ -59,7 +59,6 @@ class BootstrapConfigError(Exception):
 class BootstrapConfig:
     """Minimal settings needed before the database is available."""
 
-    database_path: str = "~/.gobby/gobby-hub.db"
     daemon_port: int = DEFAULT_DAEMON_PORT
     bind_host: str = DEFAULT_DAEMON_BIND_HOST
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
@@ -75,7 +74,6 @@ class BootstrapConfig:
         Maps bootstrap fields into the nested structure DaemonConfig expects.
         """
         data: dict[str, Any] = {
-            "database_path": self.database_path,
             "daemon_port": self.daemon_port,
             "bind_host": self.bind_host,
             "websocket": {"port": self.websocket_port},
@@ -138,7 +136,6 @@ def load_bootstrap(
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
         return BootstrapConfig(
-            database_path=str(data.get("database_path", BootstrapConfig.database_path)),
             daemon_port=int(data.get("daemon_port", BootstrapConfig.daemon_port)),
             bind_host=str(data.get("bind_host", BootstrapConfig.bind_host)),
             websocket_port=int(data.get("websocket_port", BootstrapConfig.websocket_port)),

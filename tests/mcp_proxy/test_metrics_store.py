@@ -8,14 +8,13 @@ import pytest
 from gobby.mcp_proxy.metrics_store import ToolMetricsStore
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
     from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def metrics_store(temp_db: "LocalDatabase") -> ToolMetricsStore:
+def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
     """Create a metrics store with temp database."""
     # Create test projects for foreign key constraints
     temp_db.execute(
@@ -50,7 +49,7 @@ class TestToolMetricsStore:
     """Tests for ToolMetricsStore class."""
 
     def test_record_call(self, metrics_store: ToolMetricsStore) -> None:
-        """Test recording a call in SQLite."""
+        """Test recording a call in PostgreSQL."""
         metrics_store.record_call(
             server_name="test-server",
             tool_name="test_tool",
@@ -124,7 +123,7 @@ class TestToolMetricsStore:
         assert len(metrics_store.get_metrics()) == 0
 
     def test_cleanup_and_aggregate(
-        self, metrics_store: ToolMetricsStore, temp_db: "LocalDatabase"
+        self, metrics_store: ToolMetricsStore, temp_db: "HubDatabase"
     ) -> None:
         """Test aggregation to daily and cleanup."""
         old_time = (datetime.now(UTC) - timedelta(days=10)).isoformat()

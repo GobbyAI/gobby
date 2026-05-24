@@ -55,7 +55,7 @@ _FRONTEND_SIGNAL_RE = re.compile(
 )
 _BACKEND_SIGNAL_RE = re.compile(
     r"\b(?:api|backend|cache|database|daemon|endpoint|migration|model|postgres|"
-    r"queue|schema|server|service|sqlite|storage|worker)\b",
+    r"queue|schema|server|service|storage|worker)\b",
     flags=re.IGNORECASE,
 )
 _DEFAULT_CATEGORY = "code"

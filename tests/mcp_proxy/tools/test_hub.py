@@ -94,7 +94,7 @@ class TestListAllProjects:
     """Tests for list_all_projects tool."""
 
     def test_list_all_projects_uses_supplied_hub_database(self, non_local_hub_db) -> None:
-        """Hub registry queries the active adapter, even when it is not LocalDatabase."""
+        """Hub registry queries the active adapter, even when it is not HubDatabase."""
         non_local_hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)

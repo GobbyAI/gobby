@@ -129,11 +129,11 @@ class TestMemoryConfigBackendValidator:
             MemoryConfig(backend="invalid_backend")
         assert "invalid_backend" in str(exc_info.value).lower()
 
-    def test_backend_sqlite_alias(self) -> None:
-        """Test that 'sqlite' is accepted as alias for 'local'."""
+    def test_backend_postgres_alias(self) -> None:
+        """Test that 'postgres' is accepted as alias for 'local'."""
         from gobby.config.persistence import MemoryConfig
 
-        config = MemoryConfig(backend="sqlite")
+        config = MemoryConfig(backend="postgres")
         assert config.backend == "local"
 
 

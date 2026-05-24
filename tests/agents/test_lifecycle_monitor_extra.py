@@ -8,7 +8,7 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
@@ -803,7 +803,7 @@ class TestDispatchFailureCountCRUD:
         assert brief["dispatch_failure_count"] == 3
 
     def test_update_task_sets_dispatch_failure_count(
-        self, temp_db: LocalDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict
     ) -> None:
         """update_task can set dispatch_failure_count."""
 
@@ -813,7 +813,7 @@ class TestDispatchFailureCountCRUD:
         assert updated.dispatch_failure_count == 2
 
     def test_reopen_resets_dispatch_failure_count(
-        self, temp_db: LocalDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict
     ) -> None:
         """Reopening a task resets dispatch_failure_count to 0."""
 
@@ -937,7 +937,7 @@ class TestTerminalizeCancelledRun:
     @pytest.mark.asyncio
     async def test_cancelled_task_linked_run_cleans_child_session_claim_state(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         sample_project: dict,
     ) -> None:
         session_manager = SessionManager(temp_db)
@@ -1019,7 +1019,7 @@ class TestTerminalizeCancelledRun:
     @pytest.mark.asyncio
     async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         sample_project: dict,
     ) -> None:
         session_manager = SessionManager(temp_db)

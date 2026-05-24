@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import inspect
 import re
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -365,13 +364,9 @@ def _insert_skill(
     project_id: str | None,
     source: str,
     metadata_json: str | None,
-    dialect: str,
 ) -> None:
-    """Insert a skill row using a dialect-aware metadata cast."""
-    if dialect == "postgres":
-        metadata_clause = "CAST($5 AS JSONB)"
-    else:
-        metadata_clause = "$5"
+    """Insert a skill row using an explicit JSONB metadata cast."""
+    metadata_clause = "CAST($5 AS JSONB)"
     txn.execute(
         f"""
         INSERT INTO skills (
@@ -386,13 +381,7 @@ def _insert_skill(
 
 
 def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
-    """`ON CONFLICT DO NOTHING` skips duplicates the same way on both backends.
-
-    SQLite legacy code uses `INSERT OR IGNORE`; Postgres requires
-    `ON CONFLICT DO NOTHING`. The ported SQL prefers the portable spelling, and
-    this test pins that both dialects accept it and skip the duplicate row
-    silently.
-    """
+    """`ON CONFLICT DO NOTHING` skips duplicate rows."""
     db = hub_db
 
     with db.transaction() as txn:
@@ -439,12 +428,7 @@ def test_returning_clause_dialect_parity(hub_db: Any) -> None:
 
 
 def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
-    """`json_text_expr` extracts the same scalar JSON value on both backends.
-
-    SQLite uses `json_extract(col, '$.k')`; Postgres uses `col #>> '{k}'` (the
-    same family as `col->>'k'`). Both must round-trip the same payload to the
-    same scalar text.
-    """
+    """`json_text_expr` extracts scalar JSON values with the JSONB path operator."""
     from gobby.storage.sql_dialect import json_text_expr
 
     db = hub_db
@@ -458,7 +442,6 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
             project_id=None,
             source="installed",
             metadata_json=payload_json,
-            dialect=db.dialect,
         )
 
         top_expr = json_text_expr(db, "metadata", "category")
@@ -475,12 +458,7 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
 
 
 def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
-    """Default-valued timestamp columns produce timezone-aware UTC moments.
-
-    The hub adapter normalizes PostgreSQL timestamps to ISO text; SQLite
-    returns its own UTC text format. Both must decode to a UTC moment within
-    seconds of `now()`.
-    """
+    """Default-valued timestamp columns produce timezone-aware UTC moments."""
     db = hub_db
     before = datetime.datetime.now(datetime.UTC)
 
@@ -513,20 +491,12 @@ def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
         moment = moment.replace(tzinfo=datetime.UTC)
     assert moment.utcoffset() == datetime.timedelta(0)
 
-    # Allow second-rounding on the SQLite side: clamp the lower edge to the
-    # whole-second floor of `before`.
     floor_before = before.replace(microsecond=0)
     assert floor_before <= moment <= after
 
 
 def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
-    """Two rows that share ``(name, NULL project_id, source)`` collide on both backends.
-
-    Postgres expresses this with `UNIQUE NULLS NOT DISTINCT (name, project_id, source)`;
-    SQLite expresses it with `UNIQUE (name, COALESCE(project_id, '__global__'), source)`.
-    The two should be semantically interchangeable: a second insert with a NULL
-    `project_id` and matching `(name, source)` must raise an integrity error.
-    """
+    """Two rows that share ``(name, NULL project_id, source)`` collide."""
     db = hub_db
 
     with db.transaction() as txn:
@@ -537,17 +507,11 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
             project_id=None,
             source="installed",
             metadata_json=None,
-            dialect=db.dialect,
         )
 
-    if db.dialect == "postgres":
-        import psycopg.errors
+    import psycopg.errors
 
-        expected_exc: type[Exception] = psycopg.errors.UniqueViolation
-    else:
-        expected_exc = sqlite3.IntegrityError
-
-    with pytest.raises(expected_exc):
+    with pytest.raises(psycopg.errors.UniqueViolation):
         with db.transaction() as txn:
             _insert_skill(
                 txn,
@@ -556,7 +520,6 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
                 project_id=None,
                 source="installed",
                 metadata_json=None,
-                dialect=db.dialect,
             )
 
     # A row with a non-NULL project_id remains accepted.
@@ -572,7 +535,6 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
             project_id="proj-unique",
             source="installed",
             metadata_json=None,
-            dialect=db.dialect,
         )
 
     with db.transaction() as txn:

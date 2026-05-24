@@ -257,7 +257,7 @@ Per the established retired-template tombstone pattern (`src/gobby/install/share
 ## Concurrency, recovery, edge cases
 
 - **Per-project lock:** `get_active_for_project` (statuses `pending/running/cleaning/planning/applying`) + `transaction_immediate()` give application- and storage-level mutual exclusion. The cron handler also checks this before firing. A manual run while the nightly cron holds the project is rejected with the active run id.
-- **Crash during apply:** single `transaction_immediate` → SQLite auto-rolls back. On daemon restart, an `init_orchestration` reconciliation step (added beside the cron wiring) finds runs stuck in `cleaning/planning/applying` with no persisted result: if no snapshot rows → mark `failed` (DB already consistent via rollback); if snapshot rows exist but result missing → auto-revert from snapshot, then mark `failed` (safety-first).
+- **Crash during apply:** single `transaction_immediate` → PostgreSQL auto-rolls back. On daemon restart, an `init_orchestration` reconciliation step (added beside the cron wiring) finds runs stuck in `cleaning/planning/applying` with no persisted result: if no snapshot rows → mark `failed` (DB already consistent via rollback); if snapshot rows exist but result missing → auto-revert from snapshot, then mark `failed` (safety-first).
 - **Empty / all-singleton project:** Stage 0/2 short-circuit; zero LLM calls; no snapshot; a minimal changelog noting "nothing to consolidate."
 - **LLM failure:** total provider failure before apply → `run_manager.fail`, status `failed`, no snapshot, DB untouched, lock released. Per-window failure → that window degrades to `keep`.
 - **Partial reconcile failure:** apply already committed + snapshot-protected; run `completed` with `reconcile_warnings`; recoverable via `gobby memory reconcile` or revert.
@@ -298,7 +298,7 @@ Unit:
 - `tests/storage/test_memory_dream_runs.py` — status transitions, `get_active_for_project`, `get_latest_successful_for_project`.
 - `tests/storage/test_migrations.py` — new migration creates both tables+indexes, idempotent re-run.
 
-Integration (in-memory `LocalDatabase`, fake embed fn, mocked `LLMService.call_feature`):
+Integration (in-memory `HubDatabase`, fake embed fn, mocked `LLMService.call_feature`):
 - End-to-end `dream()` with cleanup+consolidation: seed stale + near-dup + contradictory + singleton memories + session digests → assert cleanup deletions and merge/supersede/keep counts, Qdrant/crossref reconcile, single snapshot covering both phases.
 - `--dry-run`: zero writes, plan persisted, dry-run changelog, no snapshot.
 - `revert_dream()` round-trip: dream then revert → DB + vector store byte-identical to pre-dream (both phases undone).

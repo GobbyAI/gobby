@@ -9,8 +9,8 @@ from typing import Protocol
 from gobby.github_triage.service import create_github_triage_handler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
-from gobby.storage.database import DatabaseProtocol
 from gobby.storage.github_triage import GitHubTriageStore
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 
@@ -72,7 +72,7 @@ def register_github_triage_cron(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     mcp_manager: GitHubMCPCallProtocol | None,
     task_manager: LocalTaskManager,
     project_manager: LocalProjectManager | None = None,

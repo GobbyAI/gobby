@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.tasks.validation_models import Issue
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,11 @@ class ValidationHistoryManager:
     Stores and retrieves validation history from the task_validation_history table.
     """
 
-    def __init__(self, db: "DatabaseProtocol"):
+    def __init__(self, db: "HubDatabase"):
         """Initialize ValidationHistoryManager.
 
         Args:
-            db: LocalDatabase instance for database operations.
+            db: HubDatabase instance for database operations.
         """
         self.db = db
 

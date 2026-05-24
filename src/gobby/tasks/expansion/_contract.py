@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from gobby.plans.parser import (
     Kind,
@@ -381,7 +382,7 @@ def _registry_plan_id_for_run(
     root_ref = f"#{task.seq_num}" if task.seq_num is not None else None
     try:
         records = manager.list_plans(state="active", project_id=task.project_id)
-    except (sqlite3.Error, LookupError, KeyError, TypeError, ValueError) as exc:
+    except (psycopg.Error, LookupError, KeyError, TypeError, ValueError) as exc:
         logger.debug(
             "Could not resolve plan registry id for expansion run",
             extra={

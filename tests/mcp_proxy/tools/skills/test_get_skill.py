@@ -1,31 +1,26 @@
 """Tests for get_skill MCP tool (TDD - written before implementation)."""
 
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def project_id(db: LocalDatabase) -> str:
+def project_id(db: HubDatabase) -> str:
     """Create a test project and return its ID."""
     project_mgr = LocalProjectManager(db)
     project = project_mgr.create(name="test-project", repo_path="/tmp/test-skills")
@@ -33,13 +28,13 @@ def project_id(db: LocalDatabase) -> str:
 
 
 @pytest.fixture
-def storage(db: LocalDatabase) -> LocalSkillManager:
+def storage(db: HubDatabase) -> LocalSkillManager:
     """Create a LocalSkillManager for storage operations."""
     return LocalSkillManager(db)
 
 
 @pytest.fixture
-def populated_db(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+def populated_db(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
     """Create database with test skills."""
     storage.create_skill(
         name="git-commit",
@@ -308,7 +303,7 @@ class TestGetSkillTool:
 
     @pytest.mark.asyncio
     async def test_get_skill_resolves_internal_skill_by_name(
-        self, db: LocalDatabase, storage: LocalSkillManager
+        self, db: HubDatabase, storage: LocalSkillManager
     ) -> None:
         """get_skill must still resolve internal skills — they're loaded by other skills."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry

@@ -10,28 +10,25 @@ import pytest
 
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
     yield database
-    database.close()
 
 
-def _ensure_session(db: LocalDatabase, session_id: str) -> None:
+def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
@@ -51,7 +48,7 @@ def _make_event(session_id: str) -> HookEvent:
 
 
 class _SessionEndHandler(SessionEndMixin):
-    def __init__(self, db: LocalDatabase) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.logger = MagicMock()
         self._session_manager = None
         self._workflow_handler = SimpleNamespace(rule_engine=RuleEngine(db=db))
@@ -92,7 +89,7 @@ def _save_instance(
     )
 
 
-def test_session_end_deletes_workflow_instances_for_ending_session(db: LocalDatabase) -> None:
+def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDatabase) -> None:
     _ensure_session(db, "s1")
     instance_manager = WorkflowInstanceManager(db)
     _save_instance(
@@ -111,7 +108,7 @@ def test_session_end_deletes_workflow_instances_for_ending_session(db: LocalData
     assert instance_manager.get_active_instances("s1") == []
 
 
-def test_session_end_only_deletes_instances_for_target_session(db: LocalDatabase) -> None:
+def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) -> None:
     _ensure_session(db, "s1")
     _ensure_session(db, "s2")
     instance_manager = WorkflowInstanceManager(db)

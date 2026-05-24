@@ -6,7 +6,6 @@ the rewrite into the dispatched arguments.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -18,17 +17,16 @@ from gobby.mcp_proxy.services.result_handling import (
     apply_before_tool_enforcement,
     build_before_tool_event,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
-def _load_strip_skip_validation_rule(db: LocalDatabase) -> None:
+def _load_strip_skip_validation_rule(db: HubDatabase) -> None:
     """Insert only the strip-skip-validation rule so other bundled rules don't interfere."""
     yaml_path = (
         get_bundled_rules_path() / "task-enforcement" / "strip-skip-validation-with-commit.yaml"
@@ -119,7 +117,9 @@ class _StubService:
 
 
 @pytest.mark.asyncio
-async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Path) -> None:
+async def test_apply_before_tool_enforcement_strips_skip_validation(
+    temp_db: HubDatabase,
+) -> None:
     """End-to-end regression for #13048.
 
     Builds the same before_tool event the proxy emits, runs it through the real
@@ -127,8 +127,7 @@ async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Pa
     ``apply_before_tool_enforcement`` helper. The dispatched arguments must
     have ``skip_validation: False`` after the rewrite is applied.
     """
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+    db = temp_db
     _load_strip_skip_validation_rule(db)
 
     engine = RuleEngine(db)
@@ -154,11 +153,10 @@ async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_apply_before_tool_enforcement_passthrough_without_commits(
-    tmp_path: Path,
+    temp_db: HubDatabase,
 ) -> None:
     """Without commits, the rule does not fire and arguments pass through."""
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+    db = temp_db
     _load_strip_skip_validation_rule(db)
 
     engine = RuleEngine(db)
@@ -184,10 +182,9 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
 
 @pytest.mark.asyncio
 async def test_apply_before_tool_enforcement_marks_duplicate_pending_cli_context(
-    tmp_path: Path,
+    temp_db: HubDatabase,
 ) -> None:
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+    db = temp_db
 
     service = _StubService(
         engine=RuleEngine(db),

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
@@ -25,35 +25,31 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    from tests.fixtures.migrations import run_migrations
-
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture(autouse=True)
-def _clean_bundled_workflows(db: LocalDatabase) -> None:
+def _clean_bundled_workflows(db: HubDatabase) -> None:
     """Remove bundled workflows imported by migrations so tests start clean."""
     db.execute("DELETE FROM workflow_definitions WHERE source = 'template'")
 
 
 @pytest.fixture
-def project(db: LocalDatabase):
+def project(db: HubDatabase):
     """Create a test project for FK-safe project-scoped workflow tests."""
     pm = LocalProjectManager(db)
     return pm.create(name="test-project", repo_path="/test/project")
 
 
 @pytest.fixture
-def def_manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def loader(db: LocalDatabase) -> WorkflowLoader:
+def loader(db: HubDatabase) -> WorkflowLoader:
     return WorkflowLoader(db=db)
 
 

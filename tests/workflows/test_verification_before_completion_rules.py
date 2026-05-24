@@ -6,29 +6,26 @@ from collections.abc import Iterator
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import sync_bundled_rules
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> Iterator[LocalDatabase]:
-    database = LocalDatabase(tmp_path / "verification_rules.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
-def _sync_bundled(db: LocalDatabase) -> None:
+def _sync_bundled(db: HubDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())

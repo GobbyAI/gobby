@@ -15,12 +15,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from gobby.servers.http import HTTPServer
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-def _get_session_stats(db: "DatabaseProtocol", session: Any) -> dict[str, int]:
+def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     """Get activity stats for a session (tasks closed, memories, commits).
 
     Args:

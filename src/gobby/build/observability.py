@@ -22,7 +22,7 @@ from gobby.dispatch.actions import (
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
@@ -32,7 +32,7 @@ MAX_ACTIVE_AGENTS = 10
 def get_build_status(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     history_limit: int = 5,
 ) -> dict[str, Any]:
@@ -69,7 +69,7 @@ def get_build_status(
 def explain_dispatch(
     task_id: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     max_active_agents: int | None = None,
     services: object | None = None,
@@ -112,7 +112,7 @@ def explain_dispatch(
 def list_build_history(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     limit: int = 20,
 ) -> dict[str, Any]:
@@ -140,7 +140,7 @@ def list_build_history(
 def _resolve_root(
     input_ref: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     task_manager: LocalTaskManager,
 ) -> Task:
@@ -153,7 +153,7 @@ def _resolve_root(
     raise ValueError(f"build input not found: {input_ref}")
 
 
-def _try_resolve_root(input_ref: str, *, db: DatabaseProtocol, project_id: str) -> Task | None:
+def _try_resolve_root(input_ref: str, *, db: HubDatabase, project_id: str) -> Task | None:
     try:
         return LocalTaskManager(db).get_task(input_ref, project_id=project_id)
     except Exception:
@@ -287,7 +287,7 @@ def _agent_summary(run: Any) -> dict[str, Any]:
     }
 
 
-def _count_active_agents(db: DatabaseProtocol, project_id: str | None) -> int:
+def _count_active_agents(db: HubDatabase, project_id: str | None) -> int:
     if project_id:
         row = db.fetchone(
             """
@@ -310,7 +310,7 @@ def _count_active_agents(db: DatabaseProtocol, project_id: str | None) -> int:
     return int(row["count"]) if row is not None else 0
 
 
-def _mutex_summaries(db: DatabaseProtocol, task_ids: Sequence[str]) -> list[dict[str, Any]]:
+def _mutex_summaries(db: HubDatabase, task_ids: Sequence[str]) -> list[dict[str, Any]]:
     return [
         diagnosis
         for task_id in task_ids
@@ -318,7 +318,7 @@ def _mutex_summaries(db: DatabaseProtocol, task_ids: Sequence[str]) -> list[dict
     ]
 
 
-def _mutex_diagnosis(db: DatabaseProtocol, task_id: str) -> dict[str, Any]:
+def _mutex_diagnosis(db: HubDatabase, task_id: str) -> dict[str, Any]:
     mutex = TaskDispatchMutexManager(db).get_mutex(task_id)
     if mutex is None:
         return {"task_id": task_id, "state": "none", "blocks_dispatch": False}
@@ -371,7 +371,7 @@ def _artifact_health(task_manager: LocalTaskManager, tasks: Sequence[Task]) -> d
 
 
 def _recent_lifecycle_events(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_ids: Sequence[str],
     *,
     limit: int,
@@ -488,7 +488,7 @@ def _action_summary(action: object | None) -> dict[str, Any] | None:
     return {"action": type(action).__name__}
 
 
-def _latest_failure_comment(db: DatabaseProtocol, task_id: str) -> dict[str, Any] | None:
+def _latest_failure_comment(db: HubDatabase, task_id: str) -> dict[str, Any] | None:
     row = db.fetchone(
         """
         SELECT id, task_id, author, author_type, body, created_at

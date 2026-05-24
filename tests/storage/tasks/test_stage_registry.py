@@ -176,5 +176,4 @@ def test_stage_registry_uses_information_schema_for_postgres_columns() -> None:
     assert len(db.fetchall_calls) == 1
     sql, params = db.fetchall_calls[0]
     assert "information_schema.columns" in sql
-    assert "PRAGMA" not in sql
     assert params == ("task_stages_registry",)

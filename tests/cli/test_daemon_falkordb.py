@@ -10,14 +10,14 @@ import pytest
 from gobby.cli.daemon import _services_start
 from gobby.config.app import load_config
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
 
 def _seed_falkordb_config(home: Path, password: str) -> None:
-    db = LocalDatabase(home / "gobby-hub.db")
+    db = HubDatabase(home / "hub-postgres.db")
     db.apply_migrations()
     try:
         config_store = ConfigStore(db)
@@ -37,7 +37,7 @@ def test_load_config_resolves_falkordb_secret_with_secret_store_get(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    db = LocalDatabase(tmp_path / "gobby-hub.db")
+    db = HubDatabase(tmp_path / "hub-postgres.db")
     db.apply_migrations()
     try:
         config_store = ConfigStore(db)
@@ -64,7 +64,7 @@ def test_services_start_uses_falkordb_config_store_password(
     (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     _seed_falkordb_config(tmp_path, "config-secret")
-    db = LocalDatabase(tmp_path / "gobby-hub.db")
+    db = HubDatabase(tmp_path / "hub-postgres.db")
 
     try:
         with (

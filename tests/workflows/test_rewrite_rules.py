@@ -4,33 +4,29 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
-    db_path = tmp_path / "test_rewrite.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -65,7 +61,7 @@ def _insert_rule(
     return row.id
 
 
-def _sync_bundled_rules(db: LocalDatabase) -> None:
+def _sync_bundled_rules(db: HubDatabase) -> None:
     """Sync the real bundled rule set into the test database."""
     sync_bundled_rules(db, get_bundled_rules_path())
 
@@ -103,7 +99,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_nests_inside_arguments(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -145,7 +141,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_native_tool_stays_flat(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """For native tools (not call_tool), updates should remain top-level."""
         _insert_rule(
@@ -180,7 +176,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_mcp_string_arguments(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When arguments is a JSON string, it should be parsed before merging."""
         _insert_rule(
@@ -223,7 +219,7 @@ class TestStripSkipValidation:
 
     @pytest.mark.asyncio
     async def test_strips_skip_validation_with_commits(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _load_bundled_rule(manager, "strip-skip-validation-with-commit")
 
@@ -251,7 +247,7 @@ class TestStripSkipValidation:
 
     @pytest.mark.asyncio
     async def test_passthrough_without_commits(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule should NOT fire when no commits are attached."""
         _load_bundled_rule(manager, "strip-skip-validation-with-commit")
@@ -277,7 +273,7 @@ class TestStripSkipValidation:
 
     @pytest.mark.asyncio
     async def test_does_not_fire_for_other_servers(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule must scope to gobby-tasks::close_task, not any close_task lookalike."""
         _load_bundled_rule(manager, "strip-skip-validation-with-commit")
@@ -387,7 +383,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_blocks_bare_python(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -408,7 +404,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_blocks_shell_alias_via_normalized_bash(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -428,7 +424,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_passthrough_uv_command(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Commands already using uv should not block or rewrite."""
         _insert_require_uv_block_rule(manager)
@@ -448,7 +444,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_compound_command_blocks(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Compound commands should block instead of rewriting python/pip parts."""
         _insert_require_uv_block_rule(manager)
@@ -469,7 +465,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_non_python_command_no_block(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Non-python Bash commands should not block or rewrite."""
         _insert_require_uv_block_rule(manager)
@@ -493,7 +489,7 @@ class TestCompressBashOutputBundledRule:
 
     @pytest.mark.asyncio
     async def test_codex_does_not_rewrite_plain_bash(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _sync_bundled_rules(db)
 
@@ -514,7 +510,7 @@ class TestCompressBashOutputBundledRule:
         assert response.modified_input is None
 
     @pytest.mark.asyncio
-    async def test_claude_still_rewrites_bash_through_gsqz(self, db: LocalDatabase) -> None:
+    async def test_claude_still_rewrites_bash_through_gsqz(self, db: HubDatabase) -> None:
         _sync_bundled_rules(db)
 
         event = _make_event(
@@ -535,7 +531,7 @@ class TestPermissionResponseEffects:
 
     @pytest.mark.asyncio
     async def test_permission_response_keeps_empty_payloads(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -567,7 +563,7 @@ class TestPermissionResponseEffects:
 
     @pytest.mark.asyncio
     async def test_set_retry_preserves_explicit_false(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,

@@ -6,12 +6,13 @@ integration, and helper function construction.
 
 import json
 import logging
-import sqlite3
 from collections.abc import Callable
 from typing import Any
 
+import psycopg
+
 from gobby.hooks.events import HookEvent
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.enforcement.blocking import (
     get_touched_file_paths,
     is_current_plan_artifact,
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 class TemplatingMixin:
     """Mixin providing templating and condition evaluation methods for RuleEngine."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _build_eval_context(
         self,
@@ -109,7 +110,7 @@ class TemplatingMixin:
                                 "path": proj.repo_path or project_info.get("path", ""),
                             }
                         )
-            except (OSError, sqlite3.Error) as e:
+            except (OSError, psycopg.Error) as e:
                 logger.warning("Storage failure resolving project info for template context: %s", e)
             except (AttributeError, KeyError, TypeError, ValueError) as e:
                 logger.debug("Failed to resolve project info for template context: %s", e)

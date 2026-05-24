@@ -74,54 +74,6 @@ _BaselineState = Literal[
     "corrupt_partial",
 ]
 _PLACEHOLDER_SCAN_CACHE = threading.local()
-_BOOLEAN_COLUMNS: frozenset[str] = frozenset(
-    {
-        "allow_automation",
-        "always_apply",
-        "context_injected",
-        "enabled",
-        "floor_drift",
-        "graph_processed",
-        "graph_synced",
-        "had_edits",
-        "is_dev",
-        "is_escalated",
-        "is_high_value",
-        "is_local",
-        "is_secret",
-        "is_system",
-        "is_terminal",
-        "pr_required",
-        "reasoning_required",
-        "remember_me",
-        "requires_human",
-        "sandbox_enabled",
-        "success",
-        "transcript_processed",
-        "unattended",
-        "vectors_synced",
-        "webhook_enabled",
-    }
-)
-_BOOLEAN_COLUMN_ALTERNATION = "|".join(sorted(_BOOLEAN_COLUMNS, key=len, reverse=True))
-_BOOLEAN_LITERAL_RE = re.compile(
-    rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
-    r"\s*=\s*(?P<value>[01])\b"
-)
-_BOOLEAN_COALESCE_RE = re.compile(
-    r"COALESCE\(\s*"
-    rf"(?P<column>\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b)"
-    r"\s*,\s*(?P<default>[01])\s*\)\s*=\s*(?P<value>[01])\b"
-)
-_BOOLEAN_PARAM_COMPARISON_RE = re.compile(
-    rf"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:{_BOOLEAN_COLUMN_ALTERNATION})\b"
-    r"\s*(?:=|IS)\s*%s\b"
-)
-_INSERT_VALUES_RE = re.compile(
-    r"\bINSERT\s+INTO\s+(?:\"?[A-Za-z_][A-Za-z0-9_]*\"?\.)?\"?[A-Za-z_][A-Za-z0-9_]*\"?"
-    r"\s*\((?P<columns>.*?)\)\s*VALUES\s*\((?P<values>.*?)\)",
-    re.IGNORECASE | re.DOTALL,
-)
 _NULL_TEST_PARAM_RE = re.compile(r"%s\s+IS(?P<not>\s+NOT)?\s+NULL", re.IGNORECASE)
 
 
@@ -130,13 +82,11 @@ def _remap_placeholders_to_psycopg(
     params: Sequence[Any],
 ) -> tuple[str, tuple[Any, ...]]:
     """Translate top-level hub placeholders to psycopg ``%s`` placeholders."""
-    sql = _rewrite_sqlite_boolean_literals(sql)
     if params and "?" in sql and "$" not in sql:
         new_sql, new_params, indexes = remap_qmark_placeholders(sql, params, "%s")
     else:
         new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
     new_sql = _cast_null_test_placeholders(new_sql)
-    new_params = _coerce_boolean_params(new_sql, new_params)
     new_sql = _escape_literal_percent_for_psycopg(new_sql)
     _cache_param_permutation(sql, len(params), indexes)
     return new_sql, new_params
@@ -191,7 +141,7 @@ def _prepare_params(
     params: Sequence[Any] | Mapping[str, Any],
 ) -> tuple[str, Sequence[Any] | Mapping[str, Any]]:
     if isinstance(params, Mapping):
-        new_sql = _cast_null_test_placeholders(_rewrite_sqlite_boolean_literals(sql))
+        new_sql = _cast_null_test_placeholders(sql)
         return _escape_literal_percent_for_psycopg(new_sql), params
     return _remap_placeholders_to_psycopg(sql, params)
 
@@ -222,108 +172,6 @@ def _escape_literal_percent_for_psycopg(sql: str) -> str:
     return "".join(out)
 
 
-def _rewrite_sqlite_boolean_literals(sql: str) -> str:
-    """Translate SQLite-style boolean integer predicates for Postgres boolean columns."""
-    out: list[str] = []
-    segment_start = 0
-    i = 0
-    n = len(sql)
-    while i < n:
-        if sql[i] == "-" and i + 1 < n and sql[i + 1] == "-":
-            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-            end = sql.find("\n", i)
-            end = n if end < 0 else end
-            out.append(sql[i:end])
-            i = end
-            segment_start = i
-            continue
-        if sql[i] == "/" and i + 1 < n and sql[i + 1] == "*":
-            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-            i = _copy_block_comment_segment(sql, i, out)
-            segment_start = i
-            continue
-        if sql[i] == "'":
-            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-            i = _copy_quoted_segment(sql, i, "'", out)
-            segment_start = i
-            continue
-        if sql[i] == '"':
-            i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-            i = _copy_quoted_segment(sql, i, '"', out)
-            segment_start = i
-            continue
-        if sql[i] == "$":
-            dollar_end = _dollar_quote_end(sql, i)
-            if dollar_end is not None:
-                i = _copy_rewritten_plain_segment(sql, segment_start, i, out)
-                out.append(sql[i:dollar_end])
-                i = dollar_end
-                segment_start = i
-                continue
-        i += 1
-
-    _copy_rewritten_plain_segment(sql, segment_start, n, out)
-    return "".join(out)
-
-
-def _copy_rewritten_plain_segment(sql: str, start: int, end: int, out: list[str]) -> int:
-    if end > start:
-        out.append(_rewrite_boolean_literals_in_plain_sql(sql[start:end]))
-    return end
-
-
-def _rewrite_boolean_literals_in_plain_sql(sql: str) -> str:
-    """Rewrite boolean integer predicates in a SQL segment with no strings/comments."""
-
-    def replace_coalesce(match: re.Match[str]) -> str:
-        default = "TRUE" if match.group("default") == "1" else "FALSE"
-        value = "TRUE" if match.group("value") == "1" else "FALSE"
-        return f"COALESCE({match.group('column')}, {default}) = {value}"
-
-    def replace(match: re.Match[str]) -> str:
-        literal = "TRUE" if match.group("value") == "1" else "FALSE"
-        return f"{match.group('column')} = {literal}"
-
-    return _BOOLEAN_LITERAL_RE.sub(replace, _BOOLEAN_COALESCE_RE.sub(replace_coalesce, sql))
-
-
-def _copy_block_comment_segment(sql: str, start: int, out: list[str]) -> int:
-    end = sql.find("*/", start + 2)
-    end = len(sql) if end < 0 else end + 2
-    out.append(sql[start:end])
-    return end
-
-
-def _copy_quoted_segment(sql: str, start: int, quote: str, out: list[str]) -> int:
-    i = start + 1
-    n = len(sql)
-    while i < n:
-        if sql[i] == quote:
-            if i + 1 < n and sql[i + 1] == quote:
-                i += 2
-                continue
-            i += 1
-            out.append(sql[start:i])
-            return i
-        i += 1
-    out.append(sql[start:n])
-    return n
-
-
-def _dollar_quote_end(sql: str, start: int) -> int | None:
-    tag_end = start + 1
-    n = len(sql)
-    while tag_end < n and (sql[tag_end].isalnum() or sql[tag_end] == "_"):
-        tag_end += 1
-    if tag_end >= n or sql[tag_end] != "$":
-        return None
-    tag = sql[start : tag_end + 1]
-    close = sql.find(tag, tag_end + 1)
-    if close < 0:
-        return None
-    return close + len(tag)
-
-
 def _cast_null_test_placeholders(sql: str) -> str:
     """Give bare ``%s IS NULL`` checks a type so Postgres can plan NULL params."""
 
@@ -334,108 +182,10 @@ def _cast_null_test_placeholders(sql: str) -> str:
     return _NULL_TEST_PARAM_RE.sub(replace, sql)
 
 
-def _coerce_boolean_params(sql: str, params: tuple[Any, ...]) -> tuple[Any, ...]:
-    if not params:
-        return params
-
-    coerced = list(params)
-    for index in _boolean_param_indexes(sql):
-        if index < len(coerced):
-            coerced[index] = _coerce_boolean_param(coerced[index])
-    return tuple(coerced)
-
-
-def _coerce_boolean_param(value: Any) -> Any:
-    if type(value) is int and value in (0, 1):
-        return bool(value)
-    return value
-
-
-def _boolean_param_indexes(sql: str) -> set[int]:
-    indexes: set[int] = set()
-    for match in _BOOLEAN_PARAM_COMPARISON_RE.finditer(sql):
-        index = _placeholder_index_at(sql, match.end() - 2)
-        if index is not None:
-            indexes.add(index)
-    indexes.update(_insert_boolean_param_indexes(sql))
-    return indexes
-
-
-def _placeholder_index_at(sql: str, placeholder_start: int) -> int | None:
-    seen = 0
-    for match in re.finditer(r"%s", sql):
-        if match.start() == placeholder_start:
-            return seen
-        seen += 1
-    return None
-
-
-def _insert_boolean_param_indexes(sql: str) -> set[int]:
-    indexes: set[int] = set()
-    for match in _INSERT_VALUES_RE.finditer(sql):
-        columns = _split_top_level_csv(match.group("columns"))
-        values = _split_top_level_csv(match.group("values"))
-        if len(columns) != len(values):
-            continue
-        value_start = match.start("values")
-        offset = 0
-        for column, value in zip(columns, values, strict=True):
-            raw_column = _unquote_identifier(column)
-            token = value.strip()
-            token_start = sql.find(value, value_start + offset)
-            if token_start >= 0:
-                offset = token_start - value_start + len(value)
-            if raw_column not in _BOOLEAN_COLUMNS or token != "%s" or token_start < 0:
-                continue
-            index = _placeholder_index_at(sql, token_start + value.index("%s"))
-            if index is not None:
-                indexes.add(index)
-    return indexes
-
-
-def _split_top_level_csv(text: str) -> list[str]:
-    items: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    i = 0
-    while i < len(text):
-        char = text[i]
-        if quote:
-            if char == quote:
-                if i + 1 < len(text) and text[i + 1] == quote:
-                    i += 2
-                    continue
-                quote = None
-            i += 1
-            continue
-        if char in {"'", '"'}:
-            quote = char
-        elif char == "(":
-            depth += 1
-        elif char == ")" and depth:
-            depth -= 1
-        elif char == "," and depth == 0:
-            items.append(text[start:i].strip())
-            start = i + 1
-        i += 1
-    items.append(text[start:].strip())
-    return items
-
-
-def _unquote_identifier(text: str) -> str:
-    text = text.strip()
-    if "." in text:
-        text = text.rsplit(".", 1)[1]
-    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
-        return text[1:-1].replace('""', '"')
-    return text
-
-
 class PostgresHubDatabase:
     """Hub database adapter backed by psycopg and PostgreSQL."""
 
-    dialect: Literal["sqlite", "postgres"] = "postgres"
+    dialect: Literal["postgres"] = "postgres"
 
     def __init__(self, dsn: str) -> None:
         self._pool = ConnectionPool(
@@ -630,7 +380,7 @@ class _PostgresTransaction:
         )
         permuted_rows = [first_permuted]
         permuted_rows.extend(
-            _coerce_boolean_params(new_sql, _params_from_indexes(row, permutation))
+            _params_from_indexes(row, permutation)
             for row in materialized[1:]
         )
         driver_executemany = getattr(self._conn, "executemany", None)

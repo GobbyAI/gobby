@@ -213,7 +213,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         "You must commit your changes and link them to the task before closing."
                     ),
                     "suggestion": (
-                        f"Commit your changes with `[{ctx.get_current_project_name() or 'project'}-#task_id]` in the message, "
+                        "Commit your changes with "
+                        "`[<project_name>-#<task_number>] <type>: <description>` "
+                        "in the message "
+                        f"(for example, `[{ctx.get_current_project_name() or 'gobby'}-#N]`), "
                         "or pass `commit_sha` to `close_task`."
                     ),
                 }
@@ -397,7 +400,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
     registry.register(
         name="close_task",
-        description="Close a task. Pass commit_sha to link and close in one call: close_task(task_id, commit_sha='abc123'). Or include [project-#N] in commit message for auto-linking. Parent tasks require all children closed. Validation auto-skipped for: duplicate, already_implemented, wont_fix, obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and the basic commit-linked check; commits are still required if the session edited in-repo files (session.had_edits enforcement).",
+        description=(
+            "Close a task. Pass commit_sha to link and close in one call: "
+            "close_task(task_id, commit_sha='abc123'). Or include "
+            "[<project_name>-#<task_number>] in commit message for auto-linking, "
+            "e.g. [gobby-#123]. Parent tasks require all children closed. "
+            "Validation auto-skipped for: duplicate, already_implemented, wont_fix, "
+            "obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and "
+            "the basic commit-linked check; commits are still required if the session "
+            "edited in-repo files (session.had_edits enforcement)."
+        ),
         input_schema={
             "type": "object",
             "properties": {

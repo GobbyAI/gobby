@@ -22,7 +22,6 @@ from gobby.storage.skills import (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -60,7 +59,7 @@ class SkillManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol | HubDatabase,
+        db: HubDatabase | HubDatabase,
         project_id: str | None = None,
         search_config: SearchConfig | None = None,
         embedding_model: str = "nomic-embed-text",

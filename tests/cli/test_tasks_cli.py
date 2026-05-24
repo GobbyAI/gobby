@@ -133,10 +133,10 @@ def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> N
     manager_cls.assert_called_once_with(db)
 
 
-def test_get_task_manager_rejects_sqlite_bootstrap(
+def test_get_task_manager_rejects_removed_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Task CLI does not fall back to removed SQLite runtime storage."""
+    """Task CLI does not fall back to removed PostgreSQL runtime storage."""
     monkeypatch.setattr(
         task_config_utils,
         "open_runtime_hub_database",

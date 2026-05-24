@@ -18,7 +18,7 @@ from gobby.cli.services import (
     try_autoload_embedding_model,
 )
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from tests.fixtures.migrations import run_migrations
 
@@ -29,7 +29,7 @@ class TestIsFalkorDBInstalled:
     """Tests for is_falkordb_installed()."""
 
     def test_installed_when_config_store_host_and_port_exist(self, tmp_path: Path) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -40,14 +40,14 @@ class TestIsFalkorDBInstalled:
             db.close()
 
     def test_not_installed_when_connection_keys_missing(self, tmp_path: Path) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             assert is_falkordb_installed(db=db) is False
         finally:
             db.close()
 
     def test_gobby_home_without_bootstrap_uses_home_database(self, tmp_path: Path) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -57,7 +57,7 @@ class TestIsFalkorDBInstalled:
 
         assert is_falkordb_installed(gobby_home=tmp_path) is True
 
-    def test_gobby_home_with_bootstrap_uses_bootstrap_database_path(self, tmp_path: Path) -> None:
+    def test_gobby_home_with_bootstrap_uses_bootstrap_database_url(self, tmp_path: Path) -> None:
         db_path = tmp_path / "nested" / "custom-hub.db"
         db_path.parent.mkdir()
         db = _make_config_db(db_path)
@@ -69,7 +69,7 @@ class TestIsFalkorDBInstalled:
             db.close()
 
         bootstrap = tmp_path / "bootstrap.yaml"
-        bootstrap.write_text(f"database_path: {db_path}\n")
+        bootstrap.write_text(f"database_url: {db_path}\n")
         bootstrap.chmod(0o600)
 
         assert is_falkordb_installed(gobby_home=tmp_path) is True
@@ -102,8 +102,8 @@ async def _run_inline(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-def _make_config_db(path: Path) -> LocalDatabase:
-    db = LocalDatabase(path)
+def _make_config_db(path: Path) -> HubDatabase:
+    db = HubDatabase(path)
     run_migrations(db)
     return db
 
@@ -206,7 +206,7 @@ class TestGetFalkorDBStatus:
 
     @pytest.mark.asyncio
     async def test_status_installed_and_healthy(self, tmp_path: Path) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -232,7 +232,7 @@ class TestGetFalkorDBStatus:
     async def test_status_uses_config_store_endpoint_when_args_omitted(
         self, tmp_path: Path
     ) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")
@@ -251,7 +251,7 @@ class TestGetFalkorDBStatus:
 
     @pytest.mark.asyncio
     async def test_status_resolves_config_store_secret_password(self, tmp_path: Path) -> None:
-        db = _make_config_db(tmp_path / "gobby-hub.db")
+        db = _make_config_db(tmp_path / "hub-postgres.db")
         try:
             store = ConfigStore(db)
             store.set("databases.falkordb.host", "127.0.0.1")

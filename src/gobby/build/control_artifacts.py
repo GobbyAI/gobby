@@ -10,7 +10,7 @@ from gobby.build.branch_cleanup import default_task_branch_name
 from gobby.clones.git import CloneGitManager
 from gobby.storage.agents import AgentRun
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -86,7 +86,7 @@ def defer_dirty_descendant_worktree_artifacts(
 
 
 def collect_clean_artifacts(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     tasks: list[Task],
 ) -> list[BuildArtifactSummary]:
@@ -170,7 +170,7 @@ def collect_clean_artifacts(
 
 
 def delete_artifacts(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     artifacts: list[BuildArtifactSummary],
     *,
@@ -218,7 +218,7 @@ def delete_artifacts(
             artifact.error = str(exc)
 
 
-def get_project_path(db: DatabaseProtocol, project_id: str) -> Path:
+def get_project_path(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is not None and project.repo_path:
         return Path(project.repo_path)
@@ -255,7 +255,7 @@ def _append_artifact(
 
 
 def _detect_orphan_artifacts(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     tasks: list[Task],
     seen: set[tuple[str, str]],

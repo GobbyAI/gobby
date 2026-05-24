@@ -319,7 +319,7 @@ flowchart LR
         A[Running Agents Dict]
     end
 
-    subgraph SQLite
+    subgraph PostgreSQL
         B[agent_runs table]
         C[sessions table]
         D[workflow_states table]
@@ -383,7 +383,7 @@ src/gobby/
 │   ├── git.py                # WorktreeGitManager - git operations
 │   └── spawn.py              # Terminal spawning logic
 ├── storage/
-│   └── worktrees.py          # LocalWorktreeManager - SQLite CRUD
+│   └── worktrees.py          # LocalWorktreeManager - PostgreSQL CRUD
 └── mcp_proxy/tools/
     ├── agents.py             # gobby-agents MCP tool implementations
     └── worktrees.py          # gobby-worktrees MCP tool implementations
@@ -1071,9 +1071,9 @@ Add CLI command groups for agents and worktrees.
 | 4 | **Default agent depth** | max_depth=1 (no nesting by default) | Prevent recursive spawning; workflows can opt-in |
 | 5 | **Completion mechanism** | Explicit `complete()` tool call | Structured output, workflow can define schema |
 | 6 | **Naming** | `start_agent` not `spawn_agent` | Matches CLI `gobby agents start` |
-| 7 | **State persistence** | SQLite for all state (agents + worktrees) | Consistent with Gobby architecture, daemon-level coordination |
+| 7 | **State persistence** | PostgreSQL for all state (agents + worktrees) | Consistent with Gobby architecture, daemon-level coordination |
 | 8 | **Tool availability in subagents** | `complete` always, `start_agent` blocked by default | Safety first, opt-in for orchestration workflows |
-| 9 | **Worktree storage** | SQLite `worktrees` table | Centralized registry, consistent with other managers |
+| 9 | **Worktree storage** | PostgreSQL `worktrees` table | Centralized registry, consistent with other managers |
 | 10 | **Worktree ownership** | Session-based claiming | Track which agent owns which worktree |
 | 11 | **Stale detection** | Configurable threshold (default 24h) | Prevent worktree sprawl |
 | 12 | **Task-worktree linking** | Optional but encouraged | Traceability without forcing overhead |

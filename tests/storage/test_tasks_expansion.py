@@ -1,21 +1,13 @@
 import pytest
 
-from gobby.storage.database import LocalDatabase
 from gobby.storage.tasks import LocalTaskManager
-from tests.fixtures.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db_path(tmp_path):
-    return tmp_path / "test.db"
-
-
-@pytest.fixture
-def db(db_path):
-    database = LocalDatabase(str(db_path))
-    run_migrations(database)
+def db(temp_db):
+    database = temp_db
     with database.transaction() as conn:
         conn.execute("INSERT INTO projects (id, name) VALUES (?, ?)", ("p1", "test_project"))
     return database

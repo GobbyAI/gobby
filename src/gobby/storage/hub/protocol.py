@@ -145,7 +145,7 @@ class Cursor(Protocol):
 
     @property
     def lastrowid(self) -> int | None:
-        """Return the SQLite insert row id when the backend exposes one."""
+        """Return the inserted row id when the backend exposes one."""
         ...
 
 
@@ -195,9 +195,7 @@ class Transaction(Protocol):
         held by this transaction. Implementations raise
         ``LockAcquisitionOrderError`` with both priority values and lock-key
         strings when the check fails. PostgreSQL adapters then acquire the
-        matching advisory or row lock inside the existing transaction; SQLite
-        adapters still enforce priority tracking for parity even though
-        ``BEGIN IMMEDIATE`` already holds the write-intent lock.
+        matching advisory or row lock inside the existing transaction.
         """
         ...
 
@@ -205,7 +203,7 @@ class Transaction(Protocol):
 class HubDatabase(Protocol):
     """Backend-neutral database adapter contract for hub storage."""
 
-    dialect: Literal["sqlite", "postgres"]
+    dialect: Literal["postgres"]
 
     def transaction(self) -> AbstractContextManager[Transaction]:
         """Open a transaction and yield a backend-neutral executor."""

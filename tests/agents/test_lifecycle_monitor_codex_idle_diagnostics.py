@@ -12,7 +12,7 @@ from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION, Idl
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def agent_run_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
+def agent_run_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
     return LocalAgentRunManager(temp_db)
 
 
@@ -128,7 +128,7 @@ async def test_read_recent_codex_response_items_keeps_tail(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_idle_reprompt_logs_codex_response_items(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
     agent_run_manager: LocalAgentRunManager,
@@ -189,7 +189,7 @@ async def test_idle_reprompt_logs_codex_response_items(
 
 @pytest.mark.asyncio
 async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
     agent_run_manager: LocalAgentRunManager,
@@ -274,7 +274,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
 
 @pytest.mark.asyncio
 async def test_idle_failure_logs_codex_response_items(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
     agent_run_manager: LocalAgentRunManager,

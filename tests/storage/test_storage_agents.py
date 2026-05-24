@@ -5,14 +5,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def agent_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
+def agent_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
     """Create an agent run manager with temp database."""
     return LocalAgentRunManager(temp_db)
 

@@ -11,12 +11,12 @@ from gobby.utils.validation import TaskValidator
 pytestmark = pytest.mark.integration
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
 
 
 @pytest.fixture
-def task_manager(temp_db: "LocalDatabase") -> LocalTaskManager:
+def task_manager(temp_db: "HubDatabase") -> LocalTaskManager:
     """Create a task manager with temp database."""
     return LocalTaskManager(temp_db)
 
@@ -93,12 +93,12 @@ class TestCheckOrphanDependencies:
         )
 
         # Create orphan dependency (task_id doesn't exist) - disable FK to allow
-        task_manager.db.execute("PRAGMA foreign_keys = OFF")
+        task_manager.db.execute("information_schema foreign_keys = OFF")
         task_manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             ("nonexistent-task-id", task1.id, "blocks", _now_iso()),
         )
-        task_manager.db.execute("PRAGMA foreign_keys = ON")
+        task_manager.db.execute("information_schema foreign_keys = ON")
 
         result = validator.check_orphan_dependencies()
         assert len(result) == 1
@@ -123,12 +123,12 @@ class TestCheckOrphanDependencies:
         )
 
         # Create orphan dependency (depends_on doesn't exist) - disable FK to allow
-        task_manager.db.execute("PRAGMA foreign_keys = OFF")
+        task_manager.db.execute("information_schema foreign_keys = OFF")
         task_manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             (task1.id, "nonexistent-dep-id", "blocks", _now_iso()),
         )
-        task_manager.db.execute("PRAGMA foreign_keys = ON")
+        task_manager.db.execute("information_schema foreign_keys = ON")
 
         result = validator.check_orphan_dependencies()
         assert len(result) == 1
@@ -171,7 +171,7 @@ class TestCheckInvalidProjects:
     ) -> None:
         """Detects task with non-existent project_id."""
         # Insert task directly with invalid project_id - disable FK to allow
-        task_manager.db.execute("PRAGMA foreign_keys = OFF")
+        task_manager.db.execute("information_schema foreign_keys = OFF")
         task_manager.db.execute(
             """
             INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
@@ -179,7 +179,7 @@ class TestCheckInvalidProjects:
             """,
             ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
         )
-        task_manager.db.execute("PRAGMA foreign_keys = ON")
+        task_manager.db.execute("information_schema foreign_keys = ON")
 
         result = validator.check_invalid_projects()
         assert len(result) == 1
@@ -280,7 +280,7 @@ class TestCleanOrphans:
         task1 = task_manager.create_task(title="Task 1", task_type="task", project_id=project.id)
 
         # Create orphan dependencies - disable FK to allow
-        task_manager.db.execute("PRAGMA foreign_keys = OFF")
+        task_manager.db.execute("information_schema foreign_keys = OFF")
         task_manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             ("nonexistent-1", task1.id, "blocks", _now_iso()),
@@ -289,7 +289,7 @@ class TestCleanOrphans:
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             (task1.id, "nonexistent-2", "blocks", _now_iso()),
         )
-        task_manager.db.execute("PRAGMA foreign_keys = ON")
+        task_manager.db.execute("information_schema foreign_keys = ON")
 
         # Verify orphans exist
         assert len(validator.check_orphan_dependencies()) == 2
@@ -338,7 +338,7 @@ class TestValidateAll:
     ) -> None:
         """Returns all issues found across validation checks."""
         # Disable FK constraints to create orphan data
-        task_manager.db.execute("PRAGMA foreign_keys = OFF")
+        task_manager.db.execute("information_schema foreign_keys = OFF")
 
         # Create task with invalid project
         task_manager.db.execute(
@@ -355,7 +355,7 @@ class TestValidateAll:
             ("orphan-task", "nonexistent-dep", "blocks", _now_iso()),
         )
 
-        task_manager.db.execute("PRAGMA foreign_keys = ON")
+        task_manager.db.execute("information_schema foreign_keys = ON")
 
         result = validator.validate_all()
 
