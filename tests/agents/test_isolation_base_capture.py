@@ -22,7 +22,7 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(
+    ctx = await _prepare_with_git_head(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
         expected_git_cwd=worktree_path,
@@ -32,6 +32,7 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     assert artifacts.worktree_path == worktree_path
     assert artifacts.worktree_id == "wt-123"
     assert artifacts.base_commit_sha == "abc123"
+    assert ctx.extra["base_commit_sha"] == "abc123"
 
 
 @pytest.mark.asyncio
@@ -42,7 +43,7 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     )
     handler, clone_path = _clone_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(
+    ctx = await _prepare_with_git_head(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
         expected_git_cwd=clone_path,
@@ -52,6 +53,7 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     assert artifacts.clone_path == clone_path
     assert artifacts.clone_id == "clone-123"
     assert artifacts.base_commit_sha == "abc123"
+    assert ctx.extra["base_commit_sha"] == "abc123"
 
 
 @pytest.mark.asyncio
@@ -89,16 +91,17 @@ async def _prepare_with_git_head(
     config: SpawnConfig,
     *,
     expected_git_cwd: str,
-) -> None:
+) -> object:
     with (
         patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
         patch("gobby.agents.isolation.subprocess.run", return_value=_git_head("abc123")) as run,
     ):
-        await handler.prepare_environment(config)
+        ctx = await handler.prepare_environment(config)
 
     run.assert_called_once()
     assert run.call_args.args[0] == ["git", "-C", expected_git_cwd, "rev-parse", "HEAD"]
+    return ctx
 
 
 def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler, str]:

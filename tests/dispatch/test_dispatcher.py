@@ -1855,6 +1855,46 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
     assert resolved == ["main"]
 
 
+def test_persist_spawn_artifacts_writes_base_commit_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch.spawn import _persist_spawn_artifacts
+
+    task = _task(temp_db, sample_project, isolation="worktree")
+
+    _persist_spawn_artifacts(
+        temp_db,
+        task.id,
+        {
+            "worktree_id": "wt-1",
+            "worktree_path": "/tmp/worktree",
+            "base_commit_sha": "base-sha",
+        },
+    )
+
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_path == "/tmp/worktree"
+    assert artifacts.base_commit_sha == "base-sha"
+
+    clone_task = _task(temp_db, sample_project, isolation="clone", title="Clone dispatch task")
+    _persist_spawn_artifacts(
+        temp_db,
+        clone_task.id,
+        {
+            "clone_id": "clone-1",
+            "clone_path": "/tmp/clone",
+            "base_commit_sha": "clone-base",
+        },
+    )
+
+    clone_artifacts = TaskArtifactManager(temp_db).get_artifacts(clone_task.id)
+    assert clone_artifacts.clone_id == "clone-1"
+    assert clone_artifacts.clone_path == "/tmp/clone"
+    assert clone_artifacts.base_commit_sha == "clone-base"
+
+
 async def test_create_isolation_action_missing_target_branch_escalates(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

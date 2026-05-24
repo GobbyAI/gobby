@@ -297,6 +297,7 @@ class TestSpawnAgentImplErrorBranches:
 
     @pytest.mark.asyncio
     async def test_reused_worktree_repairs_isolation_before_spawn(self, tmp_path) -> None:
+        from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -319,7 +320,13 @@ class TestSpawnAgentImplErrorBranches:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult(
+                        status="already_current",
+                        base_ref="main",
+                        base_commit_sha="base-sha",
+                    )
+                ),
             ) as sync,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
@@ -359,6 +366,7 @@ class TestSpawnAgentImplErrorBranches:
             )
 
         assert result["success"] is True
+        assert result["base_commit_sha"] == "base-sha"
         sync.assert_awaited_once_with(
             git_manager=git_manager,
             worktree_path=str(worktree_path),

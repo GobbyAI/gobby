@@ -33,7 +33,7 @@ async def prepare_reused_worktree(
 ) -> tuple[IsolationContext, Any]:
     """Prepare an explicit reused worktree, falling back to a fresh retry branch on conflict."""
     try:
-        await sync_reused_worktree_to_base(
+        sync_result = await sync_reused_worktree_to_base(
             git_manager=git_manager,
             worktree_path=existing_worktree.worktree_path,
             base_branch=spawn_config.base_branch,
@@ -54,13 +54,17 @@ async def prepare_reused_worktree(
             conflict=exc,
         )
 
+    extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
+    base_commit_sha = getattr(sync_result, "base_commit_sha", None)
+    if isinstance(base_commit_sha, str) and base_commit_sha:
+        extra["base_commit_sha"] = base_commit_sha
     return (
         IsolationContext(
             cwd=existing_worktree.worktree_path,
             branch_name=existing_worktree.branch_name,
             worktree_id=existing_worktree.id,
             isolation_type="worktree",
-            extra={"main_repo_path": main_repo_path, "reused_worktree": True},
+            extra=extra,
         ),
         get_isolation_handler("none"),
     )

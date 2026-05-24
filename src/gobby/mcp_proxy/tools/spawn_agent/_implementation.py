@@ -664,6 +664,9 @@ async def spawn_agent_impl(
         effective_initial_variables["worktree_id"] = isolation_ctx.worktree_id
     if isolation_ctx.branch_name:
         effective_initial_variables["branch_name"] = isolation_ctx.branch_name
+    base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
+    if isinstance(base_commit_sha, str) and base_commit_sha:
+        effective_initial_variables["base_commit_sha"] = base_commit_sha
 
     # 11. Build a meaningful session title from agent name and/or task
     agent_display_name = requested_agent_name
@@ -943,6 +946,8 @@ async def spawn_agent_impl(
         "worktree_id": isolation_ctx.worktree_id,
         "worktree_path": isolation_ctx.cwd if effective_isolation == "worktree" else None,
         "clone_id": isolation_ctx.clone_id,
+        "clone_path": isolation_ctx.cwd if effective_isolation == "clone" else None,
+        "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
         "pid": spawn_result.pid,
         "tmux_session_name": tmux_session_name,
         "tmux_socket_name": tmux_socket_name,

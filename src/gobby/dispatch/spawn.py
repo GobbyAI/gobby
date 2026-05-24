@@ -567,6 +567,7 @@ def _persist_spawn_artifacts(
     worktree_id = result.get("worktree_id")
     worktree_path = result.get("worktree_path")
     clone_id = result.get("clone_id")
+    base_commit_sha = result.get("base_commit_sha")
     if (
         isinstance(worktree_id, str)
         and isinstance(worktree_path, str)
@@ -582,6 +583,8 @@ def _persist_spawn_artifacts(
     ):
         fields["clone_id"] = clone_id
         fields["clone_path"] = clone_path
+    if fields and isinstance(base_commit_sha, str) and base_commit_sha:
+        fields["base_commit_sha"] = base_commit_sha
     if fields:
         try:
             _set_artifacts_atomic(db, task_id, **fields)

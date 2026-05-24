@@ -13,12 +13,12 @@ This project is indexed. Use `gcode` via the shell for fast code search and navi
 
 ## Search
 
-- `gcode search "query"` — hybrid search: FTS + semantic + graph boost (best for fuzzy or natural-language queries)
+- `gcode search "query" [PATH ...]` — hybrid search: FTS + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name"` — exact-first symbol/name lookup with deterministic ranking (when you know most of the name)
-- `gcode search-text "query"` — full-text search on symbol names, signatures, and docstrings
-- `gcode search-content "query"` — full-text search across file content chunks (source, comments, CSS, SQL, config files)
+- `gcode search-text "query" [PATH ...]` — full-text search on symbol names, signatures, and docstrings
+- `gcode search-content "query" [PATH ...]` — full-text search across file content chunks (source, comments, CSS, SQL, config files)
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--path <glob>`, `--limit N`, and `--offset N` for scoped or paginated results.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--limit N`, and `--offset N`. Use positional path filters for scoped results, for example `gcode search "TaskArtifactManager" src/gobby/storage tests/storage` or `gcode search-content "base_commit_sha" src/gobby/dispatch/*.py`.
 
 ## Retrieval
 
@@ -34,7 +34,7 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 - `gcode tree` — whole-project file tree with symbol counts per file; it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
-For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with `--path <glob>`.
+For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional path filters.
 
 ## Impact Analysis
 
@@ -47,8 +47,8 @@ Use these **before making changes** to understand what you'll affect:
 
 ## Graph Lifecycle (Gobby daemon required)
 
-- `gcode graph clear` — clear the current project's graph projection
-- `gcode graph rebuild` — rebuild it through the PostgreSQL hub (cheaper than `gcode invalidate` + reindex)
+- `gcode graph clear` — clear the current project's code-index graph projection via the Gobby daemon
+- `gcode graph rebuild` — rebuild the current project's code-index graph projection via the Gobby daemon
 
 ## When to use which
 

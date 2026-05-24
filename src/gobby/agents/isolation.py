@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
+from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
@@ -219,7 +220,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.worktree_path).is_dir():
-                await sync_reused_worktree_to_base(
+                sync_result = await sync_reused_worktree_to_base(
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,
                     base_branch=base_branch,
@@ -229,13 +230,17 @@ class WorktreeIsolationHandler(IsolationHandler):
                     isolated_path=existing.worktree_path,
                     provider=config.provider,
                 )
+                extra = {"main_repo_path": str(self._git_manager.repo_path)}
+                existing_base_commit_sha = getattr(sync_result, "base_commit_sha", None)
+                if isinstance(existing_base_commit_sha, str) and existing_base_commit_sha:
+                    extra["base_commit_sha"] = existing_base_commit_sha
                 # Use existing worktree
                 return IsolationContext(
                     cwd=existing.worktree_path,
                     branch_name=existing.branch_name,
                     worktree_id=existing.id,
                     isolation_type="worktree",
-                    extra={"main_repo_path": str(self._git_manager.repo_path)},
+                    extra=extra,
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
@@ -289,14 +294,17 @@ class WorktreeIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_worktree_id = worktree.id
 
+        created_base_commit_sha: str | None = None
         if config.task_id is not None:
-            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, worktree_path)
+            created_base_commit_sha = await asyncio.to_thread(
+                _capture_base_commit_sha, worktree_path
+            )
             await asyncio.to_thread(
                 TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
                 config.task_id,
                 worktree_path=worktree_path,
                 worktree_id=worktree.id,
-                base_commit_sha=base_commit_sha,
+                base_commit_sha=created_base_commit_sha,
             )
 
         await repair_isolation_environment(
@@ -314,7 +322,10 @@ class WorktreeIsolationHandler(IsolationHandler):
             branch_name=worktree.branch_name,
             worktree_id=worktree.id,
             isolation_type="worktree",
-            extra={"main_repo_path": str(self._git_manager.repo_path)},
+            extra={
+                "main_repo_path": str(self._git_manager.repo_path),
+                **({"base_commit_sha": created_base_commit_sha} if created_base_commit_sha else {}),
+            },
         )
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
@@ -501,6 +512,7 @@ class CloneIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_clone_id = clone.id
 
+        base_commit_sha: str | None = None
         if config.task_id is not None:
             base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, clone_path)
             await asyncio.to_thread(
@@ -526,7 +538,10 @@ class CloneIsolationHandler(IsolationHandler):
             branch_name=clone.branch_name,
             clone_id=clone.id,
             isolation_type="clone",
-            extra={"source_repo": config.project_path},
+            extra={
+                "source_repo": config.project_path,
+                **({"base_commit_sha": base_commit_sha} if base_commit_sha else {}),
+            },
         )
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
@@ -612,6 +627,11 @@ async def repair_isolation_environment(
         main_repo_path=main_repo_path,
         isolated_path=isolated_path,
         provider=provider,
+    )
+    await asyncio.to_thread(
+        apply_isolation_git_hygiene,
+        isolated_path,
+        main_repo_path=main_repo_path,
     )
 
 

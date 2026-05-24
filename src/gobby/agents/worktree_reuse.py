@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from gobby.agents.isolation_git_hygiene import (
+    MCP_CONFIG_RELATIVE_PATH,
+    PROJECT_JSON_RELATIVE_PATH,
+    apply_isolation_git_hygiene,
+    is_generated_isolation_project_json,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,11 +117,14 @@ def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
 
 
 def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
+    main_repo_path = _main_repo_path(git_manager)
+    apply_isolation_git_hygiene(path, main_repo_path=main_repo_path)
     status = _run_git(git_manager, ["status", "--porcelain"], cwd=path)
     if status.returncode != 0:
         detail = _detail(status)
         raise RuntimeError(f"Failed to inspect reused worktree cleanliness: {detail}")
-    if status.stdout.strip():
+    blocking_lines = _blocking_status_lines(status.stdout, path, main_repo_path)
+    if blocking_lines:
         raise RuntimeError(
             "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
         )
@@ -155,3 +165,34 @@ def _run_git(
 
 def _detail(result: subprocess.CompletedProcess[str]) -> str:
     return result.stderr.strip() or result.stdout.strip() or "unknown git error"
+
+
+def _main_repo_path(git_manager: Any) -> str | Path | None:
+    repo_path = getattr(git_manager, "repo_path", None)
+    return cast(str | Path | None, repo_path)
+
+
+def _blocking_status_lines(
+    status_output: str,
+    worktree_path: Path,
+    main_repo_path: str | Path | None,
+) -> list[str]:
+    blocking: list[str] = []
+    for line in status_output.splitlines():
+        relative_path = _porcelain_path(line)
+        if relative_path == MCP_CONFIG_RELATIVE_PATH:
+            continue
+        if relative_path == PROJECT_JSON_RELATIVE_PATH and is_generated_isolation_project_json(
+            worktree_path / PROJECT_JSON_RELATIVE_PATH,
+            main_repo_path=main_repo_path,
+        ):
+            continue
+        blocking.append(line)
+    return blocking
+
+
+def _porcelain_path(line: str) -> str:
+    path = line[3:].strip() if len(line) > 3 else line.strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[1]
+    return path.strip('"')

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig
+from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig, repair_isolation_environment
 from gobby.code_index.trigger import CodeIndexTrigger
 
 pytestmark = pytest.mark.unit
@@ -20,6 +21,16 @@ def _make_mock_proc() -> AsyncMock:
     proc.returncode = 0
     proc.communicate = AsyncMock(return_value=(b"", b""))
     return proc
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -73,6 +84,73 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
     assert data["id"] == "parent-proj"
     assert data["parent_project_path"] == str(parent.resolve())
     assert data["parent_project_id"] == "parent-proj"
+
+
+@pytest.mark.asyncio
+async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    worktree = tmp_path / "worktree"
+    parent.mkdir()
+    (parent / ".gobby").mkdir()
+    (parent / ".gobby" / "project.json").write_text(
+        json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
+        encoding="utf-8",
+    )
+    _git(parent, "init", "-b", "main")
+    _git(parent, "config", "user.email", "test@example.com")
+    _git(parent, "config", "user.name", "Test User")
+    _git(parent, "add", ".gobby/project.json")
+    _git(parent, "commit", "-m", "initial")
+    _git(parent, "worktree", "add", "-b", "isolation", str(worktree), "main")
+
+    await repair_isolation_environment(
+        main_repo_path=str(parent),
+        isolated_path=str(worktree),
+        provider="codex",
+    )
+
+    data = json.loads((worktree / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    assert data["parent_project_path"] == str(parent.resolve())
+    assert data["parent_project_id"] == "parent-proj"
+    assert _git(worktree, "status", "--porcelain").stdout == ""
+    exclude_path = (
+        worktree / _git(worktree, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    )
+    assert ".mcp.json" in exclude_path.read_text(encoding="utf-8")
+    assert _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout.startswith("S ")
+
+
+@pytest.mark.asyncio
+async def test_repair_excludes_untracked_project_json(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    isolated = tmp_path / "isolated"
+    parent.mkdir()
+    isolated.mkdir()
+    (parent / ".gobby").mkdir()
+    (parent / ".gobby" / "project.json").write_text(
+        json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
+        encoding="utf-8",
+    )
+    _git(isolated, "init", "-b", "main")
+    _git(isolated, "config", "user.email", "test@example.com")
+    _git(isolated, "config", "user.name", "Test User")
+    (isolated / "README.md").write_text("# isolated\n", encoding="utf-8")
+    _git(isolated, "add", "README.md")
+    _git(isolated, "commit", "-m", "initial")
+
+    await repair_isolation_environment(
+        main_repo_path=str(parent),
+        isolated_path=str(isolated),
+        provider="codex",
+    )
+
+    assert _git(isolated, "status", "--porcelain").stdout == ""
+    exclude_path = (
+        isolated / _git(isolated, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    )
+    exclude_text = exclude_path.read_text(encoding="utf-8")
+    assert ".mcp.json" in exclude_text
+    assert ".gobby/project.json" in exclude_text
 
 
 @pytest.mark.asyncio
