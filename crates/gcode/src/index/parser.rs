@@ -526,6 +526,7 @@ fn extract_textual_dart_calls(
     let mut line_start_byte = 0usize;
 
     for (row, line) in text.lines().enumerate() {
+        let terminator_len = line_terminator_len(&text, line_start_byte, line.len());
         let trimmed = line.trim_start();
         if trimmed.starts_with("import ")
             || trimmed.starts_with("export ")
@@ -533,7 +534,7 @@ fn extract_textual_dart_calls(
             || trimmed.starts_with("enum ")
             || trimmed.starts_with("typedef ")
         {
-            line_start_byte += line.len() + 1;
+            line_start_byte += line.len() + terminator_len;
             continue;
         }
 
@@ -588,10 +589,24 @@ fn extract_textual_dart_calls(
             calls.push(call);
         }
 
-        line_start_byte += line.len() + 1;
+        line_start_byte += line.len() + terminator_len;
     }
 
     calls
+}
+
+fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> usize {
+    let terminator_start = line_start_byte + line_len;
+    let Some(rest) = text.as_bytes().get(terminator_start..) else {
+        return 0;
+    };
+    if rest.starts_with(b"\r\n") {
+        2
+    } else if rest.starts_with(b"\n") {
+        1
+    } else {
+        0
+    }
 }
 
 #[derive(Debug)]
@@ -1014,6 +1029,21 @@ mod tests {
             }
         }
         candidates
+    }
+
+    #[test]
+    fn line_terminator_len_tracks_lf_crlf_and_eof() {
+        let text = "import 'a';\r\nhttp.Client();\nlast()";
+        assert_eq!(line_terminator_len(text, 0, "import 'a';".len()), 2);
+
+        let second_start = "import 'a';\r\n".len();
+        assert_eq!(
+            line_terminator_len(text, second_start, "http.Client();".len()),
+            1
+        );
+
+        let last_start = "import 'a';\r\nhttp.Client();\n".len();
+        assert_eq!(line_terminator_len(text, last_start, "last()".len()), 0);
     }
 
     struct FakeSemanticResolver {

@@ -259,7 +259,18 @@ fn is_windows_drive_path(path: &str) -> bool {
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let decoded = urlencoding::decode(rest).ok()?;
-    Some(PathBuf::from(decoded.into_owned()))
+    let mut path = decoded.into_owned();
+    if cfg!(windows) {
+        let bytes = path.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+        {
+            path.remove(0);
+        }
+    }
+    Some(PathBuf::from(path))
 }
 
 struct ClangdResolver {
@@ -556,6 +567,24 @@ mod tests {
         let uri = path_to_uri(Path::new(r"C:\Users\Josh\gobby uri\a#b.rs"));
 
         assert_eq!(uri, "file:///C:/Users/Josh/gobby%20uri/a%23b.rs");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn file_uri_to_path_strips_windows_drive_leading_slash() {
+        let path =
+            file_uri_to_path("file:///C:/Users/Josh/gobby%20uri/a%23b.rs").expect("file uri path");
+
+        assert_eq!(path, PathBuf::from(r"C:/Users/Josh/gobby uri/a#b.rs"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn file_uri_to_path_keeps_decoded_path_on_non_windows() {
+        let path =
+            file_uri_to_path("file:///C:/Users/Josh/gobby%20uri/a%23b.rs").expect("file uri path");
+
+        assert_eq!(path, PathBuf::from("/C:/Users/Josh/gobby uri/a#b.rs"));
     }
 
     #[test]

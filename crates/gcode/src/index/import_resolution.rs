@@ -445,7 +445,7 @@ fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
                 }
             }
         }
-        for type_name in java_declared_types(&contents) {
+        for type_name in csharp_declared_types(&contents) {
             roots.insert(type_name);
         }
     }
@@ -1416,13 +1416,24 @@ fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<Stri
 }
 
 fn java_declared_types(contents: &str) -> Vec<String> {
+    declared_types(contents, &["class", "interface", "enum", "record"])
+}
+
+fn csharp_declared_types(contents: &str) -> Vec<String> {
+    declared_types(
+        contents,
+        &["class", "interface", "enum", "record", "struct"],
+    )
+}
+
+fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
     let mut names = Vec::new();
     let tokens: Vec<&str> = contents
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
         .filter(|token| !token.is_empty())
         .collect();
     for window in tokens.windows(2) {
-        if matches!(window[0], "class" | "interface" | "enum" | "record") {
+        if keywords.contains(&window[0]) {
             names.push(window[1].to_string());
         }
     }
@@ -1646,6 +1657,19 @@ serde = { version = "1.0" }
             go_default_package_alias("github.com/acme/api-client/"),
             "api_client"
         );
+    }
+
+    #[test]
+    fn csharp_declared_types_includes_structs() {
+        let names = csharp_declared_types(
+            "public struct Point {} class Sample {} interface IThing {} enum Mode {} record Data;",
+        );
+
+        assert!(names.iter().any(|name| name == "Point"));
+        assert!(names.iter().any(|name| name == "Sample"));
+        assert!(names.iter().any(|name| name == "IThing"));
+        assert!(names.iter().any(|name| name == "Mode"));
+        assert!(names.iter().any(|name| name == "Data"));
     }
 
     #[test]
