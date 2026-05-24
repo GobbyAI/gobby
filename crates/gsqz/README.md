@@ -25,7 +25,7 @@ AI coding assistants run shell commands and dump the full output into the contex
 
 ## The Fix
 
-gsqz wraps your shell commands and compresses their output using pattern-matched pipelines. It knows how to summarize `git status`, collapse test output, group lint errors by rule, and truncate walls of text — all configured in plain YAML.
+gsqz wraps your shell commands and compresses their output using pattern-matched pipelines. It knows how to collapse test output, group lint errors by rule, summarize builds, and truncate walls of text — all configured in plain YAML.
 
 ```text
 $ gsqz -- cargo test
@@ -91,7 +91,6 @@ gsqz is installed automatically as part of the [Gobby](https://github.com/GobbyA
 
 ```bash
 # Compress command output (backward-compatible form)
-gsqz -- git status
 gsqz -- cargo test
 gsqz -- npm run lint
 
@@ -167,9 +166,6 @@ pipelines:
 
 | Pipeline | Matches | What it does |
 |----------|---------|-------------|
-| `git-status` | `git status` | Groups by status code (Modified, Added, Untracked...) |
-| `git-diff` | `git diff` | Per-file section truncation |
-| `git-log` | `git log` | Head + tail with omission marker |
 | `pytest` | `pytest`, `uv run pytest` | Extracts failures + summary |
 | `cargo-test` | `cargo test` | Extracts failures + summary |
 | `generic-test` | `npm test`, `go test`, etc. | Failure grouping |
@@ -178,6 +174,8 @@ pipelines:
 | `cargo-build` | `cargo build`, `cargo clippy` | Errors/warnings grouping |
 
 ...and 10+ more. Run `gsqz --dump-config` to see the full list.
+
+Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are always surfaced raw with no compression header and no savings report.
 
 ### Step reference
 

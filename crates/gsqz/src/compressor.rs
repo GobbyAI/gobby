@@ -1,7 +1,7 @@
 use regex::Regex;
 
 use crate::command_split;
-use crate::config::{Config, Step};
+use crate::config::{BUILTIN_EXCLUDED_COMMANDS, Config, Step};
 use crate::primitives::{dedup, filter, group, match_output, prose, replace, truncate};
 
 pub struct CompressionResult {
@@ -31,6 +31,20 @@ impl CompressionResult {
             || self.strategy_name == "excluded"
             || self.strategy_name.ends_with("/no-op")
     }
+}
+
+fn first_command_token(segment: &str) -> Option<&str> {
+    segment
+        .split_whitespace()
+        .find(|token| !token.contains('='))
+}
+
+fn command_basename(token: &str) -> &str {
+    token
+        .trim_matches(|c| c == '\'' || c == '"')
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(token)
 }
 
 struct CompiledPipeline {
@@ -82,8 +96,28 @@ impl Compressor {
         }
     }
 
+    pub fn command_is_excluded(&self, command: &str) -> bool {
+        command_split::split_compound(command)
+            .iter()
+            .filter_map(|segment| first_command_token(segment))
+            .map(command_basename)
+            .any(|name| BUILTIN_EXCLUDED_COMMANDS.contains(&name))
+            || self.excluded.iter().any(|r| r.is_match(command))
+    }
+
     pub fn compress(&self, command: &str, output: &str) -> CompressionResult {
         let original_chars = output.len();
+
+        // Built-in and configured exclusions are raw passthrough. Check before
+        // length so excluded commands are always identified as `excluded`.
+        if self.command_is_excluded(command) {
+            return CompressionResult {
+                compressed: output.to_string(),
+                original_chars,
+                compressed_chars: original_chars,
+                strategy_name: "excluded".into(),
+            };
+        }
 
         // Skip if too short
         if original_chars < self.min_length {
@@ -92,16 +126,6 @@ impl Compressor {
                 original_chars,
                 compressed_chars: original_chars,
                 strategy_name: "passthrough".into(),
-            };
-        }
-
-        // Skip excluded commands
-        if self.excluded.iter().any(|r| r.is_match(command)) {
-            return CompressionResult {
-                compressed: output.to_string(),
-                original_chars,
-                compressed_chars: original_chars,
-                strategy_name: "excluded".into(),
             };
         }
 
@@ -315,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_git_status_pipeline() {
+    fn test_git_status_is_excluded() {
         let compressor = Compressor::new(&test_config());
         let mut lines = Vec::new();
         for i in 0..100 {
@@ -326,9 +350,64 @@ mod tests {
         }
         let output = lines.join("");
         let result = compressor.compress("git status", &output);
-        assert_eq!(result.strategy_name, "git-status");
-        assert!(result.compressed.contains("Modified"));
-        assert!(result.compressed.contains("Untracked"));
+        assert_eq!(result.strategy_name, "excluded");
+        assert_eq!(result.compressed, output);
+        assert_eq!(result.compressed_chars, result.original_chars);
+        assert!(result.is_passthrough());
+        assert!(!result.compressed.contains("[gsqz:"));
+    }
+
+    #[test]
+    fn test_builtin_excluded_commands_are_raw_passthrough() {
+        let compressor = Compressor::new(&test_config());
+        let output = (0..120)
+            .map(|i| format!("structured output line {}\n", i))
+            .collect::<String>();
+
+        for command in [
+            "gobby status",
+            "gobby-cli status",
+            "gcode search symbol",
+            "ghook --diagnose",
+            "gloc prompt",
+            "gsqz --stats -- cargo test",
+            "git diff",
+        ] {
+            let result = compressor.compress(command, &output);
+            assert_eq!(result.strategy_name, "excluded", "{command}");
+            assert_eq!(result.compressed, output, "{command}");
+            assert_eq!(result.compressed_chars, result.original_chars, "{command}");
+            assert!(result.is_passthrough(), "{command}");
+        }
+    }
+
+    #[test]
+    fn test_builtin_exclusion_runs_before_min_length() {
+        let compressor = Compressor::new(&test_config());
+        let result = compressor.compress("gcode search symbol", "ok");
+        assert_eq!(result.strategy_name, "excluded");
+        assert_eq!(result.compressed, "ok");
+    }
+
+    #[test]
+    fn test_builtin_exclusion_matches_compound_segments() {
+        let compressor = Compressor::new(&test_config());
+        let output = (0..120)
+            .map(|i| format!("line {}\n", i))
+            .collect::<String>();
+
+        let result = compressor.compress("cargo test && git status", &output);
+        assert_eq!(result.strategy_name, "excluded");
+
+        let result = compressor.compress("rg git README.md", &output);
+        assert_ne!(result.strategy_name, "excluded");
+    }
+
+    #[test]
+    fn test_builtin_exclusion_matches_binary_paths() {
+        let compressor = Compressor::new(&test_config());
+        let result = compressor.compress("/Users/josh/.gobby/bin/gcode search", "ok");
+        assert_eq!(result.strategy_name, "excluded");
     }
 
     #[test]
@@ -507,10 +586,10 @@ mod tests {
         // Pure passthrough cases — main.rs surfaces output verbatim.
         assert!(mk("passthrough").is_passthrough());
         assert!(mk("excluded").is_passthrough());
-        assert!(mk("git-mutation/no-op").is_passthrough());
+        assert!(mk("pytest/no-op").is_passthrough());
         assert!(mk("cargo-test/no-op").is_passthrough());
         // Real compression — main.rs prepends the header and reports to daemon.
-        assert!(!mk("git-status").is_passthrough());
+        assert!(!mk("pytest").is_passthrough());
         assert!(!mk("cargo-test/low-savings").is_passthrough());
         assert!(!mk("pytest/on_empty").is_passthrough());
         assert!(!mk("fallback").is_passthrough());
@@ -556,10 +635,12 @@ mod tests {
     fn test_compound_falls_back_to_earlier_segment() {
         let compressor = Compressor::new(&test_config());
         // Last segment doesn't match any pipeline, first does
-        let output = (0..200)
-            .map(|i| format!(" M src/file_{}.rs\n", i))
-            .collect::<String>();
-        let result = compressor.compress("git status && unknown-cmd", &output);
-        assert_eq!(result.strategy_name, "git-status");
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("test test_{} ... ok\n", i))
+            .collect();
+        lines.push("test result: ok. 100 passed; 0 failed\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("cargo test && unknown-cmd", &output);
+        assert_eq!(result.strategy_name, "cargo-test");
     }
 }

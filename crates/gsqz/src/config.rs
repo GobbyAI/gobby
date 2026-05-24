@@ -9,6 +9,16 @@ const DEFAULT_CONFIG: &str = include_str!("../config.yaml");
 /// The raw compiled-in config YAML, for `--init` to write to disk.
 pub const DEFAULT_CONFIG_YAML: &str = DEFAULT_CONFIG;
 
+pub const BUILTIN_EXCLUDED_COMMANDS: &[&str] = &[
+    "gobby",
+    "gobby-cli",
+    "gcode",
+    "ghook",
+    "gloc",
+    "gsqz",
+    "git",
+];
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -333,6 +343,10 @@ impl Config {
                 pipeline.steps.len()
             ));
         }
+        out.push_str(&format!(
+            "\nbuiltin_excluded_commands: {:?}\n",
+            BUILTIN_EXCLUDED_COMMANDS
+        ));
         if !self.excluded_commands.is_empty() {
             out.push_str(&format!(
                 "\nexcluded_commands: {:?}\n",
@@ -358,7 +372,6 @@ mod tests {
     #[test]
     fn test_default_config_has_expected_pipelines() {
         let config = Config::builtin();
-        assert!(config.pipelines.contains_key("git-status"));
         assert!(config.pipelines.contains_key("pytest"));
         assert!(config.pipelines.contains_key("cargo-test"));
     }
@@ -366,9 +379,9 @@ mod tests {
     #[test]
     fn test_pipeline_has_match_and_steps() {
         let config = Config::builtin();
-        let git_status = config.pipelines.get("git-status").unwrap();
-        assert!(!git_status.match_pattern.is_empty());
-        assert!(!git_status.steps.is_empty());
+        let pytest = config.pipelines.get("pytest").unwrap();
+        assert!(!pytest.match_pattern.is_empty());
+        assert!(!pytest.steps.is_empty());
     }
 
     #[test]
@@ -505,6 +518,7 @@ mod tests {
         assert!(dump.contains("min_output_length: 1000"));
         assert!(dump.contains("max_compressed_lines: 100"));
         assert!(dump.contains("pipelines:"));
+        assert!(dump.contains("builtin_excluded_commands:"));
     }
 
     #[test]

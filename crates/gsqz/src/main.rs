@@ -214,17 +214,22 @@ fn run_output_mode(cmd: &str, config: &Config, stats: bool) {
         return;
     }
 
-    // Try to get daemon config overrides
-    let mut compressor_config = config.clone();
     let daemon_url = daemon::resolve_daemon_url(config.settings.daemon_url.as_deref());
-    if let Some(ref url) = daemon_url
-        && let Some((min_length, max_lines)) = daemon::fetch_daemon_config(url)
-    {
-        compressor_config.settings.min_output_length = min_length;
-        compressor_config.settings.max_compressed_lines = max_lines;
-    }
 
-    let compressor = Compressor::new(&compressor_config);
+    let initial_compressor = Compressor::new(config);
+    let compressor = if initial_compressor.command_is_excluded(cmd) {
+        initial_compressor
+    } else {
+        // Try to get daemon config overrides only for commands gsqz may squeeze.
+        let mut compressor_config = config.clone();
+        if let Some(ref url) = daemon_url
+            && let Some((min_length, max_lines)) = daemon::fetch_daemon_config(url)
+        {
+            compressor_config.settings.min_output_length = min_length;
+            compressor_config.settings.max_compressed_lines = max_lines;
+        }
+        Compressor::new(&compressor_config)
+    };
     let result = compressor.compress(cmd, &raw_output);
 
     if stats {
