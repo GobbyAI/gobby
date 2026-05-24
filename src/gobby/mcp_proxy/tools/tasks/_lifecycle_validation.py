@@ -5,6 +5,7 @@ can be closed (commit checks, child completion, LLM validation).
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,47 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_FAILURE_FEEDBACK_FLAGS = re.IGNORECASE | re.DOTALL
+_REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:acceptance\s+)?criteri(?:on|a)\b.{0,80}"
+        r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b.{0,80}"
+        r"\b(?:acceptance\s+)?criteri(?:on|a)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate)\b.{0,100}"
+        r"\b(?:failed|failing|not\s+clean)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\b(?:failed|failing|not\s+clean)\b.{0,100}"
+        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\berrors?\b.{0,80}\bprevented\b.{0,80}\b(?:clean|pass(?:ing)?|valid)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\b(?:only|remaining)\s+gap\s+(?:is|remains)\b.{0,120}"
+        r"\b(?:mypy|ruff|lint|type(?:\s|-)?check|tests?|pytest|gate|criteri(?:on|a))\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\bmypy\b.{0,80}\b(?:incomplete|unresolved)\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+    re.compile(
+        r"\b(?:incomplete|unresolved)\b.{0,80}\bmypy\b",
+        _FAILURE_FEEDBACK_FLAGS,
+    ),
+)
+
 
 @dataclass
 class ValidationResult:
@@ -29,6 +71,18 @@ class ValidationResult:
     error_type: str | None = None
     message: str | None = None
     extra: dict[str, Any] | None = None
+
+
+def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
+    """Return True when validator feedback explicitly admits a required gate failed."""
+    if not feedback:
+        return False
+
+    normalized_feedback = " ".join(feedback.split())
+    return any(
+        pattern.search(normalized_feedback) is not None
+        for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS
+    )
 
 
 def validate_commit_requirements(
@@ -238,20 +292,24 @@ async def validate_leaf_task_with_llm(
         category=task.category,
     )
 
+    validation_status = result.status
+    if result.status == "valid" and feedback_admits_required_validation_failure(result.feedback):
+        validation_status = "invalid"
+
     # Store validation result regardless of pass/fail
     ctx.task_manager.update_task(
         resolved_id,
-        validation_status=result.status,
+        validation_status=validation_status,
         validation_feedback=result.feedback,
     )
 
-    if result.status != "valid":
+    if validation_status != "valid":
         # Block closing on invalid or pending (error during validation)
         return ValidationResult(
             can_close=False,
             error_type="validation_failed",
             message=result.feedback or "Validation did not pass",
-            extra={"validation_status": result.status},
+            extra={"validation_status": validation_status},
         )
 
     return ValidationResult(can_close=True)

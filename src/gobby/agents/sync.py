@@ -63,10 +63,12 @@ def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
 def _definition_json_equal(existing_json: Any, desired_json: str) -> bool:
     """Compare definition JSON semantically across text and Postgres JSONB formats."""
     try:
-        existing_payload = json.loads(existing_json) if isinstance(existing_json, str) else existing_json
-        return existing_payload == json.loads(desired_json)
+        existing_payload = (
+            json.loads(existing_json) if isinstance(existing_json, str) else existing_json
+        )
+        return bool(existing_payload == json.loads(desired_json))
     except (TypeError, json.JSONDecodeError):
-        return existing_json == desired_json
+        return bool(existing_json == desired_json)
 
 
 def _build_agent_update_fields(
@@ -172,9 +174,8 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     continue
 
                 if existing.deleted_at is not None:
-                    if (
-                        _is_sync_managed_bundled_agent(existing)
-                        and not _definition_json_equal(existing.definition_json, body_json)
+                    if _is_sync_managed_bundled_agent(existing) and not _definition_json_equal(
+                        existing.definition_json, body_json
                     ):
                         with db.transaction():
                             manager.restore(existing.id)
