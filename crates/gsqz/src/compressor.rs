@@ -36,7 +36,19 @@ impl CompressionResult {
 fn first_command_token(segment: &str) -> Option<&str> {
     segment
         .split_whitespace()
-        .find(|token| !token.contains('='))
+        .find(|token| !is_env_assignment_token(token))
+}
+
+fn is_env_assignment_token(token: &str) -> bool {
+    let Some((name, _value)) = token.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn command_basename(token: &str) -> &str {
@@ -96,6 +108,13 @@ impl Compressor {
         }
     }
 
+    /// Built-in exclusions inspect the first executable token in each compound
+    /// command segment; configured exclusion regexes match the full command.
+    /// Returns true if the command should be excluded from compression.
+    ///
+    /// Checks each segment of compound commands (split by &&, ||, ;) to see if:
+    /// - The command basename matches any built-in excluded command, or
+    /// - The full command string matches any configured exclusion regex.
     pub fn command_is_excluded(&self, command: &str) -> bool {
         command_split::split_compound(command)
             .iter()
@@ -408,6 +427,32 @@ mod tests {
         let compressor = Compressor::new(&test_config());
         let result = compressor.compress("/Users/josh/.gobby/bin/gcode search", "ok");
         assert_eq!(result.strategy_name, "excluded");
+    }
+
+    #[test]
+    fn test_first_command_token_skips_env_assignments() {
+        assert_eq!(
+            first_command_token("RUST_LOG=debug CARGO_TERM_COLOR=always cargo test"),
+            Some("cargo")
+        );
+        assert_eq!(
+            first_command_token("_TRACE=1 /usr/bin/git status"),
+            Some("/usr/bin/git")
+        );
+        assert_eq!(first_command_token("FOO=bar"), None);
+    }
+
+    #[test]
+    fn test_first_command_token_keeps_non_env_equals_tokens() {
+        assert_eq!(
+            first_command_token("--arg=value cargo test"),
+            Some("--arg=value")
+        );
+        assert_eq!(
+            first_command_token("1BAD=value cargo test"),
+            Some("1BAD=value")
+        );
+        assert_eq!(first_command_token("cargo foo=bar test"), Some("cargo"));
     }
 
     #[test]

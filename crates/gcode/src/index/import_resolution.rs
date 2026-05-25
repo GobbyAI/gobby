@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::models::{ImportRelation, Symbol};
 
@@ -15,10 +16,28 @@ pub struct ImportResolutionContext {
     csharp_local_roots: HashSet<String>,
     php_local_symbols: HashSet<String>,
     ruby_local_constant_roots: HashSet<String>,
+    ruby_require_root_overrides: HashMap<String, String>,
     dart_external_packages: HashSet<String>,
     dart_self_package_name: Option<String>,
     elixir_external_roots: HashMap<String, String>,
+    elixir_external_root_overrides: HashMap<String, String>,
     elixir_local_module_roots: HashSet<String>,
+}
+
+impl ImportResolutionContext {
+    fn ruby_require_root(&self, required: &str) -> Option<&str> {
+        self.ruby_require_root_overrides
+            .get(required)
+            .map(String::as_str)
+            .or_else(|| ruby_require_root(required))
+    }
+
+    fn elixir_external_root_module(&self, root: &str) -> Option<&str> {
+        self.elixir_external_root_overrides
+            .get(root)
+            .or_else(|| self.elixir_external_roots.get(root))
+            .map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +112,20 @@ pub fn build_import_resolution_context(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> ImportResolutionContext {
+    build_import_resolution_context_with_overrides(
+        root_path,
+        candidate_files,
+        HashMap::new(),
+        HashMap::new(),
+    )
+}
+
+pub fn build_import_resolution_context_with_overrides(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+    ruby_require_root_overrides: HashMap<String, String>,
+    elixir_external_root_overrides: HashMap<String, String>,
+) -> ImportResolutionContext {
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -104,9 +137,11 @@ pub fn build_import_resolution_context(
         csharp_local_roots: build_csharp_local_roots(candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),
         ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
+        ruby_require_root_overrides,
         dart_external_packages: load_dart_external_packages(root_path),
         dart_self_package_name: load_dart_self_package_name(root_path),
         elixir_external_roots: load_elixir_external_roots(root_path),
+        elixir_external_root_overrides,
         elixir_local_module_roots: build_elixir_local_module_roots(candidate_files),
     }
 }
@@ -159,6 +194,23 @@ pub(crate) fn seed_import_bindings(
         "elixir" => {
             for (root, module) in &import_context.elixir_external_roots {
                 if import_context.elixir_local_module_roots.contains(root) {
+                    continue;
+                }
+                let module = import_context
+                    .elixir_external_root_module(root)
+                    .unwrap_or(module);
+                bindings.external_roots.insert(
+                    root.clone(),
+                    ExternalRootBinding {
+                        module: module.to_string(),
+                        module_from_qualifier: true,
+                    },
+                );
+            }
+            for (root, module) in &import_context.elixir_external_root_overrides {
+                if import_context.elixir_external_roots.contains_key(root)
+                    || import_context.elixir_local_module_roots.contains(root)
+                {
                     continue;
                 }
                 bindings.external_roots.insert(
@@ -569,8 +621,10 @@ fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {
     let deps = load_elixir_dependency_names(root_path);
     let mut roots = HashMap::new();
     for dep in deps {
-        for root in elixir_dependency_roots(&dep) {
-            roots.insert(root.to_string(), root.to_string());
+        if let Some(dep_roots) = elixir_dependency_roots(&dep) {
+            for root in dep_roots {
+                roots.insert(root.clone(), root.clone());
+            }
         }
     }
     roots
@@ -1275,7 +1329,7 @@ fn parse_ruby_import_statement(
     let Some(required) = literal else {
         return;
     };
-    let Some(root) = ruby_require_root(&required) else {
+    let Some(root) = import_context.ruby_require_root(&required) else {
         return;
     };
     if import_context.ruby_local_constant_roots.contains(root) {
@@ -1352,7 +1406,7 @@ fn parse_elixir_import_statement(
     if import_context.elixir_local_module_roots.contains(root) {
         return;
     }
-    let Some(module) = import_context.elixir_external_roots.get(root) else {
+    let Some(module) = import_context.elixir_external_root_module(root) else {
         return;
     };
 
@@ -1364,7 +1418,7 @@ fn parse_elixir_import_statement(
     extracted.bindings.external_roots.insert(
         root.to_string(),
         ExternalRootBinding {
-            module: module.clone(),
+            module: module.to_string(),
             module_from_qualifier: true,
         },
     );
@@ -1650,16 +1704,15 @@ fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -
         || matches!(root, "std" | "core" | "alloc" | "proc_macro" | "test")
 }
 
+/// Returns a curated Ruby `require` to constant-root mapping.
+///
+/// Keep the bundled map small and documented in
+/// `assets/import_roots/ruby_require_roots.json`; use runtime overrides when
+/// constructing `ImportResolutionContext` for project-specific roots.
 fn ruby_require_root(required: &str) -> Option<&'static str> {
-    match required {
-        "json" => Some("JSON"),
-        "fileutils" => Some("FileUtils"),
-        "net/http" | "net/https" => Some("Net"),
-        "faraday" => Some("Faraday"),
-        "nokogiri" => Some("Nokogiri"),
-        "rspec" | "rspec/expectations" | "rspec/core" | "rspec/mocks" => Some("RSpec"),
-        _ => None,
-    }
+    bundled_ruby_require_roots()
+        .get(required)
+        .map(String::as_str)
 }
 
 fn is_ruby_constant_name(name: &str) -> bool {
@@ -1699,26 +1752,36 @@ fn is_external_dart_uri(uri: &str, import_context: &ImportResolutionContext) -> 
         && import_context.dart_external_packages.contains(package)
 }
 
-fn elixir_dependency_roots(dep: &str) -> &'static [&'static str] {
-    match dep {
-        "jason" => &["Jason"],
-        "httpoison" => &["HTTPoison"],
-        "tesla" => &["Tesla"],
-        "req" => &["Req"],
-        "finch" => &["Finch"],
-        "mint" => &["Mint"],
-        "ecto" => &["Ecto"],
-        "phoenix" => &["Phoenix"],
-        "plug" => &["Plug"],
-        "oban" => &["Oban"],
-        "broadway" => &["Broadway"],
-        "nimble_options" => &["NimbleOptions"],
-        "nimble_parsec" => &["NimbleParsec"],
-        "telemetry" => &["Telemetry"],
-        "benchee" => &["Benchee"],
-        "ex_doc" => &["ExDoc"],
-        _ => &[],
-    }
+/// Returns curated Elixir dependency module roots.
+///
+/// Hex package names do not mechanically map to Elixir module roots. Maintain
+/// the bundled map in `assets/import_roots/elixir_dependency_roots.json`; use
+/// runtime overrides when constructing `ImportResolutionContext` if discovery
+/// can provide more precise roots.
+fn elixir_dependency_roots(dep: &str) -> Option<&'static [String]> {
+    bundled_elixir_dependency_roots()
+        .get(dep)
+        .map(Vec::as_slice)
+}
+
+fn bundled_ruby_require_roots() -> &'static HashMap<String, String> {
+    static ROOTS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../assets/import_roots/ruby_require_roots.json"
+        ))
+        .expect("bundled Ruby require roots JSON parses")
+    })
+}
+
+fn bundled_elixir_dependency_roots() -> &'static HashMap<String, Vec<String>> {
+    static ROOTS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../assets/import_roots/elixir_dependency_roots.json"
+        ))
+        .expect("bundled Elixir dependency roots JSON parses")
+    })
 }
 
 fn is_elixir_alias(name: &str) -> bool {
@@ -2029,6 +2092,76 @@ name = "my-crate"
         assert!(deps.contains("httpoison"));
         assert!(!deps.contains("1"));
         assert!(!deps.contains("hexpm"));
+    }
+
+    #[test]
+    fn bundled_import_root_data_loads_known_mappings() {
+        assert_eq!(ruby_require_root("json"), Some("JSON"));
+        assert_eq!(ruby_require_root("unknown_gem"), None);
+
+        let roots = elixir_dependency_roots("jason").expect("jason roots");
+        assert_eq!(roots.first().map(String::as_str), Some("Jason"));
+        assert_eq!(roots.len(), 1);
+        assert!(elixir_dependency_roots("unknown_dep").is_none());
+    }
+
+    #[test]
+    fn runtime_import_root_overrides_take_precedence() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("mix.exs"),
+            r#"
+defp deps do
+  [
+    {:jason, "~> 1.4"}
+  ]
+end
+"#,
+        )
+        .expect("mix.exs");
+
+        let context = build_import_resolution_context_with_overrides(
+            tempdir.path(),
+            &[],
+            HashMap::from([("json".to_string(), "RuntimeJSON".to_string())]),
+            HashMap::from([
+                ("Jason".to_string(), "RuntimeJason".to_string()),
+                ("RuntimeOnly".to_string(), "RuntimeOnly".to_string()),
+            ]),
+        );
+
+        let mut extracted = ExtractedImports::default();
+        parse_import_statement(
+            "ruby",
+            r#"require "json""#,
+            "app.rb",
+            &context,
+            &mut extracted,
+        );
+        assert!(
+            extracted
+                .bindings
+                .external_roots
+                .contains_key("RuntimeJSON")
+        );
+        assert!(!extracted.bindings.external_roots.contains_key("JSON"));
+
+        let mut bindings = ImportBindings::default();
+        seed_import_bindings("elixir", &context, &mut bindings);
+        assert_eq!(
+            bindings
+                .external_roots
+                .get("Jason")
+                .map(|binding| binding.module.as_str()),
+            Some("RuntimeJason")
+        );
+        assert_eq!(
+            bindings
+                .external_roots
+                .get("RuntimeOnly")
+                .map(|binding| binding.module.as_str()),
+            Some("RuntimeOnly")
+        );
     }
 
     #[test]

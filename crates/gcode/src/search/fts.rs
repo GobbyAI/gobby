@@ -841,20 +841,14 @@ fn make_snippet(content: &str, query: &str) -> String {
         .map(str::to_lowercase)
         .filter(|token| !token.is_empty())
         .collect();
+    let (lower_content, lower_byte_to_original_char) = lowercase_with_original_char_map(content);
     let mut match_at = None;
     for token in tokens {
-        if let Some(index) =
-            content
-                .char_indices()
-                .enumerate()
-                .find_map(|(char_index, (byte_index, _))| {
-                    content[byte_index..]
-                        .to_lowercase()
-                        .starts_with(&token)
-                        .then_some(char_index)
-                })
-        {
-            match_at = Some(index);
+        if let Some(byte_index) = lower_content.find(&token) {
+            match_at = lower_byte_to_original_char
+                .get(byte_index)
+                .copied()
+                .or(Some(0));
             break;
         }
     }
@@ -862,6 +856,21 @@ fn make_snippet(content: &str, query: &str) -> String {
     let start = match_at.saturating_sub(60);
     let end = (match_at + 120).min(content.chars().count());
     content.chars().skip(start).take(end - start).collect()
+}
+
+fn lowercase_with_original_char_map(content: &str) -> (String, Vec<usize>) {
+    let mut lower = String::with_capacity(content.len());
+    let mut lower_byte_to_original_char = Vec::with_capacity(content.len());
+    for (original_char_index, ch) in content.chars().enumerate() {
+        for lower_ch in ch.to_lowercase() {
+            let mut buf = [0; 4];
+            let encoded = lower_ch.encode_utf8(&mut buf);
+            lower_byte_to_original_char
+                .extend(std::iter::repeat_n(original_char_index, encoded.len()));
+            lower.push(lower_ch);
+        }
+    }
+    (lower, lower_byte_to_original_char)
 }
 
 #[cfg(test)]

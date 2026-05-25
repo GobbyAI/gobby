@@ -42,6 +42,15 @@ jobs:
       - name: Clippy
         run: cargo clippy -p gobby-code -- -D warnings
 
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p gobby-code
+
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
+
       - name: Run tests
         run: cargo test -p gobby-code
 

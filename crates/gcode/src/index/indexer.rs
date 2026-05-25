@@ -229,9 +229,7 @@ pub fn index_files(
                     result.files_skipped += 1;
                 }
             }
-            ExplicitFileRoute::Skip => {
-                result.files_skipped += 1;
-            }
+            _ => unreachable!("skip routes are filtered before indexing"),
         }
     }
 
@@ -368,11 +366,6 @@ fn index_content_only(
         Err(_) => return Ok(false),
     };
 
-    let meta = match path.metadata() {
-        Ok(m) if m.len() > 0 && m.len() <= 10 * 1024 * 1024 => m,
-        _ => return Ok(false),
-    };
-
     let source = match std::fs::read(path) {
         Ok(s) => s,
         Err(_) => return Ok(false),
@@ -395,7 +388,7 @@ fn index_content_only(
             language: lang.clone(),
             content_hash,
             symbol_count: 0,
-            byte_size: meta.len() as usize,
+            byte_size: source.len(),
             indexed_at: epoch_secs_str(),
         },
     );
