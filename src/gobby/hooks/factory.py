@@ -535,6 +535,7 @@ class HookManagerFactory:
             task_manager=storage.task,
             session_manager=storage.session,
             session_task_manager=storage.session_task,
+            config=config,
         )
         return _WorkflowComponents(
             loader=loader,

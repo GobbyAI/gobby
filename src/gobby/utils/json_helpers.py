@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 import msgspec
 
@@ -131,7 +131,7 @@ def _decode_json_if_text(value: JSONValue) -> JSONValue:
     if not isinstance(value, str):
         return value
     try:
-        return json.loads(value)
+        return cast(JSONValue, json.loads(value))
     except json.JSONDecodeError:
         return value
 

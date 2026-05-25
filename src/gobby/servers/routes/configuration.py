@@ -27,6 +27,7 @@ from gobby.config.app import (
 from gobby.config.persistence import validate_falkordb_password
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
+from gobby.servers.routes import configuration_validation_detection as validation_detection_routes
 from gobby.servers.routes._database import require_hub_database
 from gobby.servers.routes.configuration_secrets import (
     FALKOR_REQUIREPASS_KEY,
@@ -132,14 +133,13 @@ class ImportConfigRequest(BaseModel):
     prompts: dict[str, str] | None = None
 
 
-# =============================================================================
 # Router
-# =============================================================================
 
 
 def create_configuration_router(server: "HTTPServer") -> APIRouter:
     """Create the configuration API router."""
     router = APIRouter(prefix="/api/config", tags=["configuration"])
+    validation_detection_routes.register_validation_detection_routes(router, server)
 
     def _get_secret_store() -> SecretStore:
         return SecretStore(require_hub_database(server.services.database))

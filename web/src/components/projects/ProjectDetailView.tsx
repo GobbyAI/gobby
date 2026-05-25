@@ -1,4 +1,4 @@
-import type { ProjectWithStats, ProjectSubTab } from '../../hooks/useProjects'
+import type { ProjectSubTab, ProjectUpdateFields, ProjectWithStats } from '../../hooks/useProjects'
 import { ProjectSummary } from './ProjectSummary'
 import { ProjectSettings } from './ProjectSettings'
 import { cn } from '../../lib/utils'
@@ -24,7 +24,7 @@ interface ProjectDetailViewProps {
   activeTab: ProjectSubTab
   onTabChange: (tab: ProjectSubTab) => void
   onBack: () => void
-  onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
+  onSave: (fields: ProjectUpdateFields) => Promise<boolean>
   onDelete: () => Promise<boolean>
   renderCodeTab?: () => React.ReactNode
 }

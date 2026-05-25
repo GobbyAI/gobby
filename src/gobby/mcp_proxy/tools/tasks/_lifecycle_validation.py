@@ -226,51 +226,51 @@ def gather_validation_context(
     """
     from gobby.tasks.commits import get_task_diff, summarize_diff_for_validation
 
-    validation_context = changes_summary
+    validation_context = ""
     raw_diff = None
 
-    if not validation_context:
-        # First try commit-based diff if task has linked commits
-        if task.commits:
-            try:
-                # Don't include uncommitted changes - they're likely unrelated to this task
-                # The linked commits ARE the work for this task
-                diff_result = get_task_diff(
-                    task_id=task.id,
-                    task_manager=task_manager,
-                    include_uncommitted=False,
-                    cwd=repo_path,
-                )
-                if diff_result.diff:
-                    raw_diff = diff_result.diff
-                    # Use smart summarization to ensure all files are visible
-                    summarized_diff = summarize_diff_for_validation(raw_diff)
-                    validation_context = (
-                        f"Commit-based diff ({len(diff_result.commits)} commits, "
-                        f"{diff_result.file_count} files):\n\n{summarized_diff}"
-                    )
-                else:
-                    logger.warning(
-                        f"get_task_diff returned empty for task {task.id} "
-                        f"with commits {task.commits}"
-                    )
-            except Exception as e:
-                logger.warning(f"get_task_diff failed for task {task.id}: {e}")
-
-        # Fall back to smart context ONLY if no linked commits
-        # (uncommitted changes are unrelated if we have specific commits linked)
-        if not validation_context and not task.commits:
-            from gobby.tasks.validation import get_validation_context_smart
-
-            # Smart context gathering: uncommitted changes + multi-commit window + file analysis
-            smart_context = get_validation_context_smart(
-                task_title=task.title,
-                validation_criteria=task.validation_criteria,
-                task_description=task.description,
+    # First try commit-based diff if task has linked commits. The linked
+    # commits are the authoritative implementation artifact; changes_summary
+    # is only supplemental prose.
+    if task.commits:
+        try:
+            diff_result = get_task_diff(
+                task_id=task.id,
+                task_manager=task_manager,
+                include_uncommitted=False,
                 cwd=repo_path,
             )
-            if smart_context:
-                validation_context = f"Validation context:\n\n{smart_context}"
+            if diff_result.diff:
+                raw_diff = diff_result.diff
+                summarized_diff = summarize_diff_for_validation(raw_diff)
+                validation_context = (
+                    f"Commit-based diff ({len(diff_result.commits)} commits, "
+                    f"{diff_result.file_count} files):\n\n{summarized_diff}"
+                )
+            else:
+                logger.warning(
+                    f"get_task_diff returned empty for task {task.id} with commits {task.commits}"
+                )
+        except Exception as e:
+            logger.warning(f"get_task_diff failed for task {task.id}: {e}")
+
+    if validation_context and changes_summary:
+        validation_context = f"{validation_context}\n\nAgent changes summary:\n{changes_summary}"
+    elif changes_summary:
+        validation_context = changes_summary
+
+    # Fall back to smart context ONLY if no linked commits.
+    if not validation_context and not task.commits:
+        from gobby.tasks.validation import get_validation_context_smart
+
+        smart_context = get_validation_context_smart(
+            task_title=task.title,
+            validation_criteria=task.validation_criteria,
+            task_description=task.description,
+            cwd=repo_path,
+        )
+        if smart_context:
+            validation_context = f"Validation context:\n\n{smart_context}"
 
     return validation_context, raw_diff
 

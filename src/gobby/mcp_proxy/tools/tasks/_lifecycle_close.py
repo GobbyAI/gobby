@@ -23,6 +23,7 @@ from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 validation_context, raw_diff = gather_validation_context(
                     task, changes_summary, repo_path, ctx.task_manager
                 )
+                validation_context = _append_verification_evidence_context(
+                    validation_context,
+                    ctx,
+                    resolved_session_id,
+                )
 
                 if validation_context:
                     # Run LLM validation
@@ -453,3 +459,41 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         },
         func=close_task,
     )
+
+
+def _append_verification_evidence_context(
+    validation_context: str | None,
+    ctx: RegistryContext,
+    resolved_session_id: str | None,
+) -> str | None:
+    """Append successful validation command evidence to LLM validation context."""
+    if not resolved_session_id:
+        return validation_context
+    try:
+        variables = ctx.session_var_manager.get_variables(resolved_session_id)
+    except Exception as exc:
+        logger.debug("Failed to load verification evidence for close validation: %s", exc)
+        return validation_context
+
+    evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
+    if not isinstance(evidence_items, list):
+        return validation_context
+
+    lines: list[str] = []
+    for item in evidence_items[-10:]:
+        if not isinstance(item, dict) or item.get("success") is not True:
+            continue
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip():
+            continue
+        matcher = item.get("matcher_id")
+        matcher_text = f" [{matcher}]" if isinstance(matcher, str) and matcher else ""
+        lines.append(f"- {command}{matcher_text}")
+
+    if not lines:
+        return validation_context
+
+    evidence_text = "Successful verification evidence:\n" + "\n".join(lines)
+    if validation_context:
+        return f"{validation_context}\n\n{evidence_text}"
+    return evidence_text

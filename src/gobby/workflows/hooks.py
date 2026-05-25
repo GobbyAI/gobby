@@ -91,11 +91,13 @@ class WorkflowHookHandler:
         task_manager: "LocalTaskManager | None" = None,
         session_manager: "SessionManager | None" = None,
         session_task_manager: "SessionTaskManager | None" = None,
+        config: Any | None = None,
     ):
         self.rule_engine = rule_engine
         self._task_manager = task_manager
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
+        self._config = config
         self._loop = loop
         self.timeout = timeout if timeout > 0 else None
         self._enabled = enabled
@@ -484,7 +486,7 @@ class WorkflowHookHandler:
             )
             detect_commit_link(event, variables, session_id)
             detect_bash_commit(event, variables, session_id)
-            detect_verification_evidence(event, variables, session_id)
+            detect_verification_evidence(event, variables, session_id, self._config)
             detect_mcp_call(event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary

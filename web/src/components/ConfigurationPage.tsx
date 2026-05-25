@@ -78,6 +78,7 @@ import {
 import { SchemaField, SchemaSection } from './ConfigurationPage.SchemaField'
 import { SecretsTab } from './ConfigurationPage.SecretsTab'
 import { TemplateTab } from './ConfigurationPage.TemplateTab'
+import { ValidationDetectionEditor } from './ValidationDetectionEditor'
 import { Heading } from './shared/Heading'
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
@@ -147,6 +148,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
 
   for (const [name, fieldSchema] of Object.entries(properties)) {
     const fs = fieldSchema as Record<string, unknown>
+    if (name === 'validation_detection') continue
 
     let resolved = fs
     if (fs.$ref) {
@@ -208,6 +210,12 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
             </div>
           </div>
         )}
+
+        <ValidationDetectionEditor
+          key={JSON.stringify(initialValues.validation_detection ?? null)}
+          value={localValues.validation_detection}
+          onChange={(value) => handleChange('validation_detection', value)}
+        />
 
         {primitiveFields.length > 0 && (
           <div className={FORM_SECTION_CLS}>

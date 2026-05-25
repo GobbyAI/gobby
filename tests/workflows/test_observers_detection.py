@@ -1254,6 +1254,9 @@ class TestDetectVerificationEvidence:
             "uv run ruff check src/gobby/workflows/observers.py",
             "uv run mypy src/gobby/workflows/observers.py",
             "npm test",
+            "cargo check --no-default-features",
+            "cargo clippy --no-default-features -- -D warnings",
+            "cargo fmt --all -- --check",
         ],
     )
     def test_successful_validation_records_evidence(self, variables, command: str) -> None:
@@ -1267,6 +1270,7 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
         assert variables["verification_evidence"][-1]["success"] is True
+        assert variables["verification_evidence"][-1]["matcher_id"]
 
     def test_successful_validation_log_omits_raw_command(
         self,

@@ -66,6 +66,10 @@ from gobby.config.ui import (
 from gobby.config.ui import (
     ToolApprovalPolicy as ToolApprovalPolicy,
 )
+from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
+    default_validation_detection_config,
+)
 from gobby.config.voice import VoiceConfig
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
@@ -355,6 +359,10 @@ class DaemonConfig(BaseModel):
     verification_defaults: ProjectVerificationConfig = Field(
         default_factory=ProjectVerificationConfig,
         description="Default verification commands for projects without auto-detected config",
+    )
+    validation_detection: ValidationDetectionConfig = Field(
+        default_factory=default_validation_detection_config,
+        description="Validation command detection matchers for completion evidence",
     )
     search: SearchConfig = Field(
         default_factory=SearchConfig,

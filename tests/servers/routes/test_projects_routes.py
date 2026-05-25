@@ -294,6 +294,42 @@ class TestProjectRoutes:
         )
         assert response.status_code == 400
 
+    def test_update_project_validation_detection(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        project = project_manager.create(
+            name="validation-detection-project",
+            repo_path=str(repo_path),
+            github_url="https://github.com/test/validation-detection-project",
+        )
+
+        payload = {
+            "builtin_matchers_enabled": False,
+            "custom_matchers": [
+                {
+                    "id": "project-ci",
+                    "label": "Project CI",
+                    "prefixes": ["./scripts/ci"],
+                }
+            ],
+        }
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"validation_detection": payload},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["validation_detection"]["builtin_matchers_enabled"] is False
+        project_file = repo_path / ".gobby" / "project.json"
+        saved = json.loads(project_file.read_text())
+        assert saved["validation_detection"]["custom_matchers"][0]["id"] == "project-ci"
+
     def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
         self,
         client: TestClient,

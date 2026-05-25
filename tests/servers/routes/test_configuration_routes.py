@@ -468,6 +468,42 @@ class TestGlobalToolApprovalRules:
         store = ConfigStore(temp_db)
         assert store.get("tool_approvals.global_rules") == ["tool:Write", "mcp:third-party:*"]
 
+
+class TestValidationDetectionPreview:
+    def test_preview_validation_detection_matches_builtin(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/validation-detection/preview",
+            json={"command": "cargo clippy --no-default-features -- -D warnings"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["matched"] is True
+        assert data["matcher_id"] == "rust-validation"
+
+    def test_preview_validation_detection_uses_supplied_config(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/validation-detection/preview",
+            json={
+                "command": "./scripts/ci --fast",
+                "config": {
+                    "builtin_matchers_enabled": False,
+                    "custom_matchers": [
+                        {
+                            "id": "project-ci",
+                            "label": "Project CI",
+                            "prefixes": ["./scripts/ci"],
+                        }
+                    ],
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["matched"] is True
+        assert data["matcher_id"] == "project-ci"
+
     def test_save_invalid_yaml_syntax(self, client: TestClient) -> None:
         response = client.put(
             "/api/config/template",

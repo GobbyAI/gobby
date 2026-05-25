@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
+from gobby.config.validation_detection import is_validation_command as _config_is_validation_command
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.verification_evidence import (
     VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
@@ -90,23 +91,7 @@ def is_task_complete(task: Any) -> bool:
 
 def is_validation_command(command: Any) -> bool:
     """Return whether a shell command invokes a validation tool."""
-    if not isinstance(command, str) or not command.strip():
-        return False
-
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
-
-    segment: list[str] = []
-    for token in [*tokens, ";"]:
-        if token in _SHELL_SEGMENT_SEPARATORS:
-            if _segment_invokes_validation(segment):
-                return True
-            segment = []
-            continue
-        segment.append(token)
-    return False
+    return _config_is_validation_command(command)
 
 
 def is_gobby_build_command(command: Any) -> bool:
@@ -168,7 +153,9 @@ def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
     if executable == "uv" and len(tokens) > 1 and tokens[1] == "run":
         return _segment_invokes_gobby_build(_strip_uv_run_options(tokens[2:]))
     if executable in {"python", "python3"} or executable.startswith("python3."):
-        return len(tokens) > 3 and tokens[1] == "-m" and tokens[2] == "gobby" and tokens[3] == "build"
+        return (
+            len(tokens) > 3 and tokens[1] == "-m" and tokens[2] == "gobby" and tokens[3] == "build"
+        )
     return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
 
 

@@ -6,8 +6,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from gobby.config.validation_detection import (
+    clear_project_validation_detection,
+    load_project_validation_detection,
+    save_project_validation_detection,
+)
 from gobby.servers.tool_approvals import (
     clear_project_approval_rules,
     load_project_approval_rules,
@@ -35,6 +40,7 @@ class ProjectUpdate(BaseModel):
     linear_team_id: str | None = None
     linear_project_id: str | None = None
     approval_rules: list[str] | None = None
+    validation_detection: dict[str, Any] | None = None
 
 
 class GitHubTriageConfigUpdate(BaseModel):
@@ -90,6 +96,9 @@ def _project_to_response(server: HTTPServer, project: Project) -> dict[str, Any]
     data["approval_rules"] = (
         load_project_approval_rules(project.repo_path) if project.repo_path else []
     )
+    data["validation_detection"] = (
+        load_project_validation_detection(project.repo_path) if project.repo_path else None
+    )
     return data
 
 
@@ -132,6 +141,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
 
         fields = body.model_dump(exclude_none=True)
         approval_rules = fields.pop("approval_rules", None)
+        validation_detection = fields.pop("validation_detection", None)
         original_repo_path = project.repo_path
         requested_repo_path = fields.get("repo_path", original_repo_path)
         repo_path_changed = requested_repo_path != original_repo_path
@@ -140,8 +150,13 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             if repo_path_changed and original_repo_path
             else []
         )
+        migrated_validation_detection = (
+            load_project_validation_detection(original_repo_path)
+            if repo_path_changed and original_repo_path
+            else None
+        )
         if not fields:
-            if approval_rules is None:
+            if approval_rules is None and validation_detection is None:
                 return _project_to_response(server, project)
 
         if fields:
@@ -165,12 +180,30 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         elif repo_path_changed and updated.repo_path and migrated_rules:
             migrate_project_approval_rules(original_repo_path, updated.repo_path)
 
+        if validation_detection is not None:
+            if not updated.repo_path:
+                raise HTTPException(
+                    400, "Project has no repo_path for project-scoped validation detection"
+                )
+            try:
+                save_project_validation_detection(updated.repo_path, validation_detection)
+            except ValidationError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        elif repo_path_changed and updated.repo_path and migrated_validation_detection is not None:
+            save_project_validation_detection(updated.repo_path, migrated_validation_detection)
+
         if (
             repo_path_changed
             and original_repo_path
             and (approval_rules is not None or migrated_rules)
         ):
             clear_project_approval_rules(original_repo_path)
+        if (
+            repo_path_changed
+            and original_repo_path
+            and (validation_detection is not None or migrated_validation_detection is not None)
+        ):
+            clear_project_validation_detection(original_repo_path)
 
         return _project_to_response(server, updated)
 

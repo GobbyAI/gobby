@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
-import type { ProjectWithStats } from '../../hooks/useProjects'
+import type { ProjectUpdateFields, ProjectWithStats } from '../../hooks/useProjects'
 import { isValidGithubRepoSlug } from '../../lib/githubRepo'
 import { cn } from '../../lib/utils'
+import { ValidationDetectionEditor } from '../ValidationDetectionEditor'
 import { Heading } from '../shared/Heading'
 
 const SETTINGS_CLS = 'flex max-w-[600px] flex-col gap-6'
@@ -45,7 +46,7 @@ function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
 
 interface ProjectSettingsProps {
   project: ProjectWithStats
-  onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
+  onSave: (fields: ProjectUpdateFields) => Promise<boolean>
   onDelete: () => Promise<boolean>
 }
 
@@ -57,6 +58,10 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const [approvalRules, setApprovalRules] = useState<ApprovalRuleRow[]>(
     () => toApprovalRuleRows(project.approval_rules ?? []),
   )
+  const [validationDetection, setValidationDetection] = useState<Record<string, unknown>>(
+    () => project.validation_detection ?? {},
+  )
+  const [validationDetectionChanged, setValidationDetectionChanged] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -72,20 +77,34 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
     }
     setSaving(true)
     setMessage(null)
-    const ok = await onSave({
+    const fields: ProjectUpdateFields = {
       github_url: githubUrl || null,
       github_repo: trimmedGithubRepo || null,
       linear_team_id: linearTeamId || null,
       linear_project_id: linearProjectId || null,
       approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),
-    })
+    }
+    if (validationDetectionChanged || project.validation_detection !== null) {
+      fields.validation_detection = validationDetection
+    }
+    const ok = await onSave(fields)
     setSaving(false)
     setMessage(ok
       ? { type: 'success', text: 'Settings saved' }
       : { type: 'error', text: 'Failed to save settings' }
     )
     if (ok) setTimeout(() => setMessage(null), 3000)
-  }, [approvalRules, githubUrl, githubRepo, linearTeamId, linearProjectId, onSave])
+  }, [
+    approvalRules,
+    githubUrl,
+    githubRepo,
+    linearTeamId,
+    linearProjectId,
+    onSave,
+    project.validation_detection,
+    validationDetection,
+    validationDetectionChanged,
+  ])
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) {
@@ -167,53 +186,64 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       </div>
 
       {project.repo_path && (
-        <div className={SECTION_CLS}>
-          <Heading level={3} className={HEADING_CLS}>Tool Approvals</Heading>
-          <p className={DESC_CLS}>
-            Project-scoped auto-allow rules live in <code>.gobby/project.json</code>.
-          </p>
+        <>
+          <div className={SECTION_CLS}>
+            <Heading level={3} className={HEADING_CLS}>Tool Approvals</Heading>
+            <p className={DESC_CLS}>
+              Project-scoped auto-allow rules live in <code>.gobby/project.json</code>.
+            </p>
 
-          <div className={RULES_CLS}>
-            {approvalRules.map((rule, index) => (
-              <div key={rule.id} className={RULE_ROW_CLS}>
-                <input
-                  type="text"
-                  className={cn(INPUT_CLS, 'flex-1')}
-                  value={rule.value}
-                  onChange={(e) =>
-                    setApprovalRules((prev) =>
-                      prev.map((ruleItem, i) =>
-                        i === index ? { ...ruleItem, value: e.target.value } : ruleItem,
-                      ),
-                    )
-                  }
-                  placeholder="tool:Write or mcp:gobby-tasks:*"
-                />
-                <button
-                  type="button"
-                  className={DELETE_BTN_CLS}
-                  onClick={() =>
-                    setApprovalRules((prev) => prev.filter((_, i) => i !== index))
-                  }
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
+            <div className={RULES_CLS}>
+              {approvalRules.map((rule, index) => (
+                <div key={rule.id} className={RULE_ROW_CLS}>
+                  <input
+                    type="text"
+                    className={cn(INPUT_CLS, 'flex-1')}
+                    value={rule.value}
+                    onChange={(e) =>
+                      setApprovalRules((prev) =>
+                        prev.map((ruleItem, i) =>
+                          i === index ? { ...ruleItem, value: e.target.value } : ruleItem,
+                        ),
+                      )
+                    }
+                    placeholder="tool:Write or mcp:gobby-tasks:*"
+                  />
+                  <button
+                    type="button"
+                    className={DELETE_BTN_CLS}
+                    onClick={() =>
+                      setApprovalRules((prev) => prev.filter((_, i) => i !== index))
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
 
-          <div className={ACTIONS_CLS}>
-            <button
-              type="button"
-              className={SAVE_BTN_CLS}
-              onClick={() =>
-                setApprovalRules((prev) => [...prev, createApprovalRuleRow('')])
-              }
-            >
-              Add Rule
-            </button>
+            <div className={ACTIONS_CLS}>
+              <button
+                type="button"
+                className={SAVE_BTN_CLS}
+                onClick={() =>
+                  setApprovalRules((prev) => [...prev, createApprovalRuleRow('')])
+                }
+              >
+                Add Rule
+              </button>
+            </div>
           </div>
-        </div>
+          <ValidationDetectionEditor
+            key={JSON.stringify(project.validation_detection ?? null)}
+            title="Project Validation Detection"
+            value={validationDetection}
+            onChange={(value) => {
+              setValidationDetection(value)
+              setValidationDetectionChanged(true)
+            }}
+          />
+        </>
       )}
 
       {!isProtected && (

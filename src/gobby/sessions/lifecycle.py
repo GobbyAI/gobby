@@ -135,7 +135,7 @@ class SessionLifecycleManager:
             f"kg_queue every {kg_interval}m)"
         )
 
-    async def stop(self) -> None:
+    async def stop(self, drain_timeout: float = 1.0) -> None:
         """Stop background jobs."""
         self._running = False
 
@@ -144,13 +144,31 @@ class SessionLifecycleManager:
             task.cancel()
 
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            done, pending = await asyncio.wait(tasks, timeout=drain_timeout)
+            if done:
+                await asyncio.gather(*done, return_exceptions=True)
+            for task in pending:
+                task.add_done_callback(self._consume_stopped_task)
+            if pending:
+                logger.debug(
+                    "SessionLifecycleManager stop continuing with %d cancelled task(s) draining",
+                    len(pending),
+                )
 
         self._expire_task = None
         self._process_task = None
         self._kg_queue_task = None
 
         logger.info("SessionLifecycleManager stopped")
+
+    @staticmethod
+    def _consume_stopped_task(task: asyncio.Task[Any]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug("SessionLifecycleManager background task ended during stop: %s", exc)
 
     async def _expire_loop(self) -> None:
         """Background loop for expiring stale sessions."""
