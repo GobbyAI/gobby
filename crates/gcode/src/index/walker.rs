@@ -153,6 +153,9 @@ mod tests {
         let excludes = vec!["target".to_string()];
         let (ast, content_only) = discover_files(root, &excludes);
 
+        // discover_files omits api_key.txt via the security module
+        // (SECRET_SUBSTRINGS matches "api_key"), image.bin via binary
+        // detection, and target/* via the explicit excludes vector.
         assert_eq!(
             rels(root, ast),
             vec!["README.md", "skills/gcode/SKILL.md", "src/lib.rs"]

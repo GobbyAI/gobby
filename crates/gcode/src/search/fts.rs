@@ -123,6 +123,10 @@ fn push_path_filter(
     paths: &[String],
 ) {
     let Some(prefixes) = path_like_prefixes(paths) else {
+        log::debug!(
+            "omitting SQL path filter for alias `{alias}` because path filters {:?} cannot be converted to LIKE prefixes; relying on post-query glob matching",
+            paths
+        );
         return;
     };
     if prefixes.is_empty() {

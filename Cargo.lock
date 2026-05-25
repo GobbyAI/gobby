@@ -772,6 +772,7 @@ dependencies = [
  "gobby-core",
  "hmac 0.12.1",
  "ignore",
+ "log",
  "openssl",
  "pbkdf2",
  "postgres",
