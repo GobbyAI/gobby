@@ -35,6 +35,24 @@ def test_append_verification_evidence_warns_for_malformed_existing_value(
     assert caplog.records[0].session_id == "sess-1"
 
 
+def test_append_verification_evidence_preserves_metadata_fields() -> None:
+    """Extra evidence metadata remains available to downstream observers."""
+    evidence = {
+        "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_x.py",
+        "cwd": "/repo",
+        "evidence_type": "validation_command",
+        "scope": "focused",
+        "success": True,
+        "supports": ["task-1"],
+        "task_id": "#15175",
+        "tool_name": "pytest",
+    }
+
+    result = append_verification_evidence([], evidence)
+
+    assert result == [evidence]
+
+
 def test_validate_verification_evidence_requires_type_and_success() -> None:
     assert validate_verification_evidence({"summary": "Reviewed diff", "success": True}) == (
         "verification evidence requires a non-empty evidence_type"

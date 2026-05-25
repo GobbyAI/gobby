@@ -132,18 +132,25 @@ async def send_literal_text_to_tmux_target(
             ),
             timeout=timeout,
         )
-        await _run_tmux_command(
-            (
-                *base_cmd,
-                "paste-buffer",
-                "-d",
-                "-b",
-                buffer_name,
-                "-t",
-                target,
-            ),
-            timeout=timeout,
-        )
+        try:
+            await _run_tmux_command(
+                (
+                    *base_cmd,
+                    "paste-buffer",
+                    "-d",
+                    "-b",
+                    buffer_name,
+                    "-t",
+                    target,
+                ),
+                timeout=timeout,
+            )
+        finally:
+            with suppress(Exception):
+                await _run_tmux_command(
+                    (*base_cmd, "delete-buffer", "-b", buffer_name),
+                    timeout=timeout,
+                )
 
     if send_enter:
         if literal_text and enter_delay_seconds > 0:

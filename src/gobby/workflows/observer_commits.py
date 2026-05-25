@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
@@ -14,17 +15,54 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.workflows.observers")
 
-# Pattern matching git's commit success output: [branch hash] message
-# e.g., "[main abc1234] Fix the bug" or "[feat/login 9a3b2c1e] Add auth"
-_GIT_COMMIT_RE = re.compile(r"^\[[\w/.#-]+ [a-f0-9]{7,}\]", re.MULTILINE)
+# Pattern matching git's commit success output: [branch hash] message.
+# Branch labels can contain spaces for detached HEAD output.
+_GIT_COMMIT_RE = re.compile(r"^\[[^\]\n]+ [a-f0-9]{7,}\]", re.MULTILINE)
 
-# Pattern matching git commit commands in Bash tool_input.command
-_GIT_COMMIT_CMD_RE = re.compile(r"\bgit\s+commit\b")
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+}
 
 
 def _is_git_commit_command(command: str) -> bool:
     """Check if a command string contains a ``git commit`` invocation."""
-    return bool(_GIT_COMMIT_CMD_RE.search(command))
+    if not command.strip():
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    for index, token in enumerate(tokens):
+        if token.rsplit("/", maxsplit=1)[-1] != "git":
+            continue
+        next_index = _skip_git_global_options(tokens, index + 1)
+        if next_index < len(tokens) and tokens[next_index] == "commit":
+            return True
+    return False
+
+
+def _skip_git_global_options(tokens: list[str], index: int) -> int:
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1
+        if token in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return index
+    return index
 
 
 def _looks_like_commit_success(output: str) -> bool:

@@ -12,6 +12,8 @@ import pytest
 
 from gobby.agents.isolation import (
     CloneIsolationHandler,
+    IsolationContext,
+    IsolationHandler,
     SpawnConfig,
     WorktreeIsolationHandler,
     repair_isolation_environment,
@@ -123,11 +125,11 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
 
 
 async def _prepare_with_git_head(
-    handler,
+    handler: IsolationHandler,
     config: SpawnConfig,
     *,
     expected_git_cwd: str,
-) -> object:
+) -> IsolationContext:
     with (
         patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),

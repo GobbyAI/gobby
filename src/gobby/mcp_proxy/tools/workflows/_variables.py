@@ -31,10 +31,12 @@ from gobby.workflows.state_manager import (
 
 logger = logging.getLogger(__name__)
 
-PROTECTED_VERIFICATION_VARIABLES = {
-    "verification_evidence",
-    "verification_evidence_recorded",
-}
+PROTECTED_VERIFICATION_VARIABLES: frozenset[str] = frozenset(
+    {
+        "verification_evidence",
+        "verification_evidence_recorded",
+    }
+)
 
 
 def _coerce_value(

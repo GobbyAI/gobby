@@ -53,7 +53,6 @@ def completion_subscriber_lineage(
             e,
             exc_info=True,
         )
-        raise
     return _dedupe(lineage_ids)
 
 
@@ -76,10 +75,10 @@ def subscribe_agent_completion(
         except ImportError:
             logger.debug("Could not load pipeline execution manager", exc_info=True)
         else:
+            manager = LocalPipelineExecutionManager(db=db, project_id="")
             try:
-                manager = LocalPipelineExecutionManager(db=db, project_id="")
                 manager.add_completion_subscribers(run_id, subscribers)
-            except (ValueError, sqlite3.DatabaseError, psycopg.Error):
+            except (sqlite3.DatabaseError, psycopg.Error):
                 logger.debug(
                     "Failed to persist completion subscribers for run %s",
                     run_id,

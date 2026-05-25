@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+import psycopg
+import pydantic
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.utils.datetime import parse_stored_datetime
@@ -80,7 +84,12 @@ class IdleCheckHandler:
             try:
                 handled += await self._handle_idle_check(run)
             except Exception as e:
-                logger.warning(f"Error checking idle state for agent {run.id}: {e}")
+                logger.warning(
+                    "Error checking idle state for agent %s: %s",
+                    run.id,
+                    e,
+                    exc_info=True,
+                )
 
         return handled
 
@@ -193,13 +202,29 @@ class IdleCheckHandler:
                 self.db,
                 run.child_session_id,
             )
-        except Exception:
+        except (sqlite3.DatabaseError, psycopg.Error):
             logger.warning(
-                "Failed to load active step workflow context for idle reprompt on run %s "
-                "session %s",
+                "Database error loading active step workflow context for idle reprompt on "
+                "run %s session %s",
                 run.id,
                 run.child_session_id,
                 exc_info=True,
+            )
+            return IdleDetector.REPROMPT_MESSAGE
+        except (json.JSONDecodeError, pydantic.ValidationError, TypeError, ValueError):
+            logger.warning(
+                "Malformed active step workflow context for idle reprompt on run %s session %s",
+                run.id,
+                run.child_session_id,
+                exc_info=True,
+            )
+            return IdleDetector.REPROMPT_MESSAGE
+        except Exception:
+            logger.exception(
+                "Unexpected error loading active step workflow context for idle reprompt "
+                "on run %s session %s",
+                run.id,
+                run.child_session_id,
             )
             return IdleDetector.REPROMPT_MESSAGE
         if step_context is None:

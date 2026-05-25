@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.build.service import BuildOptions, build
 from gobby.storage.build_profiles import BuildProfileLoader, BuildProfileManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -23,7 +26,9 @@ def _options(**overrides: object) -> BuildOptions:
     return BuildOptions(**values)
 
 
-async def test_quick_runs_one_step_and_disables_automation(temp_db, sample_project) -> None:
+async def test_quick_runs_one_step_and_disables_automation(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
         project_id=sample_project["id"],
@@ -46,8 +51,8 @@ async def test_quick_runs_one_step_and_disables_automation(temp_db, sample_proje
 
 
 async def test_default_build_skips_nothing(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
@@ -79,7 +84,9 @@ async def test_default_build_skips_nothing(
     ]
 
 
-async def test_research_leaf_defaults_to_research_stage(temp_db, sample_project) -> None:
+async def test_research_leaf_defaults_to_research_stage(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     leaf = task_manager.create_task(
         project_id=sample_project["id"],
@@ -98,7 +105,9 @@ async def test_research_leaf_defaults_to_research_stage(temp_db, sample_project)
     assert [row["stage_name"] for row in result.manifest or []] == ["research"]
 
 
-async def test_submit_profile_records_same_repo_delivery_campaign(temp_db, sample_project) -> None:
+async def test_submit_profile_records_same_repo_delivery_campaign(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
         project_id=sample_project["id"],
@@ -128,7 +137,9 @@ async def test_submit_profile_records_same_repo_delivery_campaign(temp_db, sampl
     assert row["target_repo"] == "test/test-project"
 
 
-async def test_submit_profile_records_cross_repo_delivery_campaign(temp_db, sample_project) -> None:
+async def test_submit_profile_records_cross_repo_delivery_campaign(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     BuildProfileLoader().sync(temp_db)
     BuildProfileManager(temp_db).create(
         name="submit",

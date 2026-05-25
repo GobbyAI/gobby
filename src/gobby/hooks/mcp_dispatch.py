@@ -88,12 +88,7 @@ async def _safe_call(
     logger: logging.Logger,
 ) -> None:
     """Execute a single MCP call, logging errors without propagating."""
-    session_id = arguments.get("session_id")
-    session_token: Token[SessionContext | None] | None = (
-        set_session_context(SessionContext(session_id=session_id))
-        if isinstance(session_id, str) and session_id
-        else None
-    )
+    session_token = _set_session_context_from_arguments(arguments)
     try:
         result = await call_tool_fn(server, tool, arguments)
         if isinstance(result, dict) and result.get("success") is False:
@@ -105,3 +100,13 @@ async def _safe_call(
     finally:
         if session_token is not None:
             reset_session_context(session_token)
+
+
+def _set_session_context_from_arguments(
+    arguments: dict[str, Any],
+) -> Token[SessionContext | None] | None:
+    """Seed SessionContext from MCP arguments when a non-empty session_id is present."""
+    session_id = arguments.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    return set_session_context(SessionContext(session_id=session_id))

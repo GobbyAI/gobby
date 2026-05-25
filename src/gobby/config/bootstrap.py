@@ -2,8 +2,7 @@
 
 These settings are needed before the PostgreSQL hub is available:
 daemon_port, bind_host, websocket_port, ui_port, falkordb_password, hub_backend,
-database_url, and postgres_install_mode. database_url_ref is limited to
-daemon-broker metadata for isolated gcode runtimes.
+database_url, and postgres_install_mode.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -29,14 +28,6 @@ DEFAULT_DAEMON_BIND_HOST = "localhost"
 DEFAULT_DAEMON_PORT = 60887
 DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
-POSTGRES_DATABASE_URL_REF_SERVICE = "gobby"
-POSTGRES_DATABASE_URL_REF_USERNAME = "postgres_database_url"
-POSTGRES_DATABASE_URL_KEYRING_REF = (
-    f"keyring:{POSTGRES_DATABASE_URL_REF_SERVICE}:{POSTGRES_DATABASE_URL_REF_USERNAME}"
-)
-POSTGRES_DATABASE_URL_DAEMON_REF = (
-    f"daemon:{POSTGRES_DATABASE_URL_REF_SERVICE}:{POSTGRES_DATABASE_URL_REF_USERNAME}"
-)
 
 HubBackend = Literal["postgres"]
 PostgresInstallMode = Literal["docker", "native", "external"]
@@ -48,8 +39,8 @@ HUB_BACKEND_POSTGRES_REQUIRED = (
     "Enforcement: _parse_hub_backend() raises BootstrapConfigError."
 )
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
-    "hub_backend=postgres requires database_url in bootstrap.yaml. database_url_ref is not "
-    f"resolved for root runtime bootstrap. Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}. "
+    "hub_backend=postgres requires database_url in bootstrap.yaml. "
+    f"Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}. "
     'Config type: hub_backend (Literal["postgres"]); enforcement is kept with '
     "_parse_hub_backend() and BootstrapConfigError."
 )
@@ -129,11 +120,10 @@ def load_bootstrap(
         explicit_hub_backend = "hub_backend" in data
         hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
-        database_url_ref = _parse_optional_str(data.get("database_url_ref"), "database_url_ref")
-        if database_url_ref:
-            _parse_supported_database_url_ref(database_url_ref)
-            if not database_url and resolve_database_url:
-                _reject_runtime_database_url_ref(database_url_ref)
+        if "database_url_ref" in data:
+            raise BootstrapConfigError(
+                "database_url_ref is no longer supported. Rewrite bootstrap.yaml with database_url."
+            )
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
         if explicit_hub_backend and resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
@@ -199,29 +189,3 @@ def _validate_bootstrap_file_permissions(path: Path) -> None:
             f"bootstrap.yaml permissions must be 0600 (owner read/write only): "
             f"{path} has {mode:#04o}"
         )
-
-
-def _parse_supported_database_url_ref(database_url_ref: str) -> None:
-    if database_url_ref == POSTGRES_DATABASE_URL_DAEMON_REF:
-        return
-    if database_url_ref == POSTGRES_DATABASE_URL_KEYRING_REF:
-        raise BootstrapConfigError(
-            f"database_url_ref {POSTGRES_DATABASE_URL_KEYRING_REF} is obsolete and is not "
-            "read from OS keyring/keychain. Rewrite bootstrap.yaml with database_url."
-        )
-    raise BootstrapConfigError(
-        f"database_url_ref must be {POSTGRES_DATABASE_URL_DAEMON_REF} for isolated "
-        "gcode runtimes, or replace it with database_url in bootstrap.yaml"
-    )
-
-
-def _reject_runtime_database_url_ref(database_url_ref: str) -> None:
-    if database_url_ref == POSTGRES_DATABASE_URL_DAEMON_REF:
-        raise BootstrapConfigError(
-            f"database_url_ref {POSTGRES_DATABASE_URL_DAEMON_REF} is broker-only and "
-            "cannot be resolved while starting the daemon"
-        )
-    raise BootstrapConfigError(
-        "database_url_ref cannot be resolved for root runtime bootstrap. Rewrite "
-        "bootstrap.yaml with database_url."
-    )

@@ -137,7 +137,7 @@ class TestCompactSelfTerminalPath:
         assert schema is not None
         input_schema = schema["inputSchema"]
         assert "session_id" not in input_schema["properties"]
-        assert "session_id" not in input_schema["required"]
+        assert "session_id" not in input_schema.get("required", [])
 
     def test_claude_session_fires_slash_compact_via_send_keys(self) -> None:
         session = _make_terminal_session("claude")

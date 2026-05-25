@@ -6,6 +6,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     feedback_admits_required_validation_failure,
+    matched_required_validation_failure_pattern,
 )
 
 pytestmark = pytest.mark.unit
@@ -42,6 +43,23 @@ def test_feedback_admits_required_validation_failure_across_languages(feedback: 
 def test_multiline_and_specific_pattern_variants(feedback: str, expected: bool) -> None:
     """Failure feedback detection handles multiline positives without near-miss matches."""
     assert feedback_admits_required_validation_failure(feedback) is expected
+
+
+def test_matched_pattern_helper_returns_the_triggering_pattern() -> None:
+    """The override path can log the concrete pattern that matched."""
+    feedback = "Required verification gate failed: cargo test failed."
+
+    pattern = matched_required_validation_failure_pattern(feedback)
+
+    assert pattern is not None
+    assert pattern.search("verification gate failed") is not None
+    assert feedback_admits_required_validation_failure(feedback) is True
+
+
+@pytest.mark.parametrize("feedback", [None, "", "   ", "All checks pass."])
+def test_matched_pattern_helper_returns_none_for_non_failures(feedback: str | None) -> None:
+    """Empty or successful feedback does not report a matched pattern."""
+    assert matched_required_validation_failure_pattern(feedback) is None
 
 
 @pytest.mark.parametrize(

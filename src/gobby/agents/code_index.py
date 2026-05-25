@@ -17,10 +17,8 @@ from pathlib import Path
 from gobby.config.bootstrap import (
     DEFAULT_DAEMON_BIND_HOST,
     DEFAULT_DAEMON_PORT,
-    POSTGRES_DATABASE_URL_DAEMON_REF,
 )
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
-from gobby.config.local_cli_token import ensure_local_cli_token
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -127,20 +125,11 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
-    try:
-        ensure_local_cli_token(source_home)
-    except Exception:
-        logger.error(
-            "Failed to prepare local CLI token for gcode runtime at %s",
-            source_home,
-            exc_info=True,
-        )
-        raise
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
             "hub_backend": "postgres",
-            "database_url_ref": POSTGRES_DATABASE_URL_DAEMON_REF,
+            "database_url": database_url,
             "daemon_port": daemon_port or DEFAULT_DAEMON_PORT,
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
             "postgres_install_mode": "external",
@@ -218,7 +207,7 @@ def _prepend_path(path: Path) -> str:
 
 
 def _link_runtime_assets(source_home: Path, runtime_home: Path) -> None:
-    for name in ("machine_id", ".secret_salt", "local_cli_token", "models", "services"):
+    for name in ("machine_id", ".secret_salt", "models", "services"):
         source = source_home / name
         target = runtime_home / name
         if target.exists() or target.is_symlink() or not source.exists():

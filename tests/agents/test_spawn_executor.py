@@ -483,6 +483,56 @@ class TestExecuteSpawn:
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
+    async def test_codex_preapprove_runs_after_command_and_env_setup(self) -> None:
+        """Workspace trust is seeded after Codex command and environment setup."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            agent_run_id="run-abc123def456",
+            session_manager=MagicMock(),
+        )
+        call_order: list[str] = []
+        spawn_context = MagicMock(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123def456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.side_effect = lambda **_kwargs: call_order.append("spawn") or MagicMock(
+            success=True, pid=12345, terminal_type="tmux"
+        )
+
+        def fake_apply_extra_env(_env: dict[str, str], _request: SpawnRequest) -> None:
+            call_order.append("env")
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.build_cli_command",
+                side_effect=lambda **_kwargs: call_order.append("command")
+                or (["codex", "Test"], {}),
+            ),
+            patch("gobby.agents.spawn_executor._apply_extra_env", fake_apply_extra_env),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch(
+                "gobby.agents.spawn_executor.pre_approve_directory",
+                side_effect=lambda *_args, **_kwargs: call_order.append("preapprove"),
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        assert call_order == ["prepare", "command", "env", "preapprove", "spawn"]
+
+    @pytest.mark.asyncio
     async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
         """Test that Codex terminal spawn applies sandbox flags."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")

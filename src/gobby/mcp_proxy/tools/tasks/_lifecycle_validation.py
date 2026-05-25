@@ -98,14 +98,19 @@ class ValidationResult:
 
 def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
     """Return True when validator feedback explicitly admits a required gate failed."""
+    return matched_required_validation_failure_pattern(feedback) is not None
+
+
+def matched_required_validation_failure_pattern(feedback: str | None) -> re.Pattern[str] | None:
+    """Return the validation-failure pattern matched by feedback, if any."""
     if not feedback:
-        return False
+        return None
 
     normalized_feedback = " ".join(feedback.split())
-    return any(
-        pattern.search(normalized_feedback) is not None
-        for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS
-    )
+    for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS:
+        if pattern.search(normalized_feedback) is not None:
+            return pattern
+    return None
 
 
 def validate_commit_requirements(
@@ -316,11 +321,13 @@ async def validate_leaf_task_with_llm(
     )
 
     validation_status = result.status
-    if result.status == "valid" and feedback_admits_required_validation_failure(result.feedback):
+    matched_failure_pattern = matched_required_validation_failure_pattern(result.feedback)
+    if result.status == "valid" and matched_failure_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned 'valid' but feedback "
-            "admits failure. Feedback: %s",
+            "admits failure. Pattern: %s. Feedback: %s",
             resolved_id,
+            matched_failure_pattern.pattern,
             result.feedback,
         )
         validation_status = "invalid"

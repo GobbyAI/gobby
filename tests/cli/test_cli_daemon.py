@@ -176,6 +176,33 @@ class TestDaemonHealthWait:
         assert mock_sleep.call_count == 3
 
 
+class TestStartupProgressPolling:
+    """Tests for daemon startup progress polling."""
+
+    @pytest.mark.parametrize(
+        "side_effect",
+        [
+            httpx.DecodingError("invalid json"),
+            httpx.ProtocolError("bad protocol"),
+            httpx.TooManyRedirects("redirect loop"),
+            httpx.RequestError("request failed"),
+            RuntimeError("unexpected"),
+        ],
+    )
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_non_retryable_startup_progress_errors_return_false(
+        self,
+        mock_httpx_get: MagicMock,
+        side_effect: Exception,
+    ) -> None:
+        """Non-retryable startup progress failures are reported without escaping."""
+        from gobby.cli.daemon import _poll_startup_progress
+
+        mock_httpx_get.side_effect = side_effect
+
+        assert _poll_startup_progress(60887, max_wait=5.0) is False
+
+
 class TestStartCommand:
     """Tests for the 'start' command."""
 

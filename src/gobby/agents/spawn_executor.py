@@ -682,7 +682,6 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
     )
-    pre_approve_directory("codex", request.cwd)
 
     gobby_session_id = spawn_context.session_id
 
@@ -712,6 +711,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("codex", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(

@@ -12,14 +12,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_daemon_client():
+def mock_daemon_client() -> MagicMock:
     client = MagicMock(spec=DaemonClient)
     client.check_health.return_value = (True, None)
     return client
 
 
 @pytest.fixture
-def cli_runner(mock_daemon_client):
+def cli_runner(mock_daemon_client: MagicMock) -> CliRunner:
     runner = CliRunner()
     # Patch get_daemon_client to return our mock
     # passing obj to invoke is handled by the runner, but we need to ensure get_daemon_client uses it or is patched
@@ -27,7 +27,7 @@ def cli_runner(mock_daemon_client):
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     return MagicMock(spec=DaemonConfig, daemon_port=60887)
 
 

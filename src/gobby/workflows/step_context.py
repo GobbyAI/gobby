@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
 import pydantic
@@ -11,6 +12,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.state_manager import WorkflowInstanceManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,19 @@ def _get_active_step_workflow_context(
 
         try:
             definition = WorkflowDefinition(**json.loads(row.definition_json))
-        except (json.JSONDecodeError, TypeError, pydantic.ValidationError):
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Skipping malformed step workflow definition %s: invalid JSON: %s",
+                instance.workflow_name,
+                exc,
+            )
+            continue
+        except (TypeError, pydantic.ValidationError) as exc:
+            logger.warning(
+                "Skipping malformed step workflow definition %s: validation failed: %s",
+                instance.workflow_name,
+                exc,
+            )
             continue
 
         step = definition.get_step(instance.current_step)

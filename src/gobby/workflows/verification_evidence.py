@@ -7,6 +7,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
 MAX_VERIFICATION_EVIDENCE_ITEMS = 50
 VERIFICATION_EVIDENCE_VARIABLE = "verification_evidence"
 VERIFICATION_EVIDENCE_RECORDED_VARIABLE = "verification_evidence_recorded"
@@ -20,6 +22,34 @@ _EVIDENCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_:-]{1,63}$")
 logger = logging.getLogger(__name__)
 
 
+class VerificationEvidence(BaseModel):
+    """Typed verification evidence item stored in session variables."""
+
+    model_config = ConfigDict(extra="allow")
+
+    evidence_type: str = Field(strict=True)
+    success: bool = Field(strict=True)
+    timestamp: str | None = Field(default=None, strict=True)
+    command: str | None = Field(default=None, strict=True)
+    summary: str | None = Field(default=None, strict=True)
+
+    @field_validator("evidence_type")
+    @classmethod
+    def _validate_evidence_type(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("requires a non-empty evidence_type")
+        value = value.strip()
+        if not _EVIDENCE_TYPE_RE.fullmatch(value):
+            raise ValueError("evidence_type must be snake-case text")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_command_or_summary(self) -> VerificationEvidence:
+        if not self.command and not self.summary:
+            raise ValueError("requires command or summary")
+        return self
+
+
 def append_verification_evidence(
     existing: list[Any] | None,
     evidence: dict[str, Any],
@@ -27,8 +57,7 @@ def append_verification_evidence(
     session_id: str | None = None,
 ) -> list[Any]:
     """Append one evidence item, retaining only the newest entries."""
-    if error := validate_verification_evidence(evidence):
-        raise ValueError(error)
+    validated = _validate_verification_evidence_model(evidence)
     if isinstance(existing, list):
         items = existing
     elif existing is None:
@@ -39,32 +68,50 @@ def append_verification_evidence(
             extra={"stored_type": type(existing).__name__, "session_id": session_id},
         )
         items = []
-    return [*items, evidence][-MAX_VERIFICATION_EVIDENCE_ITEMS:]
+    return [*items, validated.model_dump(mode="json", exclude_none=True)][
+        -MAX_VERIFICATION_EVIDENCE_ITEMS:
+    ]
 
 
 def validate_verification_evidence(evidence: Mapping[str, Any]) -> str | None:
     """Return a validation error for malformed verification evidence, if any."""
-    evidence_type = evidence.get("evidence_type")
-    if not isinstance(evidence_type, str) or not evidence_type.strip():
-        return "verification evidence requires a non-empty evidence_type"
-    if not _EVIDENCE_TYPE_RE.fullmatch(evidence_type.strip()):
-        return "verification evidence evidence_type must be snake-case text"
-
-    success = evidence.get("success")
-    if not isinstance(success, bool):
-        return "verification evidence requires a boolean success field"
-
-    timestamp = evidence.get("timestamp")
-    if timestamp is not None and not isinstance(timestamp, str):
-        return "verification evidence timestamp must be a string when provided"
-
-    command = evidence.get("command")
-    summary = evidence.get("summary")
-    if command is not None and not isinstance(command, str):
-        return "verification evidence command must be a string when provided"
-    if summary is not None and not isinstance(summary, str):
-        return "verification evidence summary must be a string when provided"
-    if not command and not summary:
-        return "verification evidence requires command or summary"
+    try:
+        _validate_verification_evidence_model(evidence)
+    except ValueError as exc:
+        return str(exc)
 
     return None
+
+
+def _validate_verification_evidence_model(
+    evidence: Mapping[str, Any],
+) -> VerificationEvidence:
+    try:
+        return VerificationEvidence.model_validate(dict(evidence))
+    except ValidationError as exc:
+        for error in exc.errors():
+            loc = error.get("loc", ())
+            if loc == ("evidence_type",):
+                message = str(error.get("msg", ""))
+                if "snake-case text" in message:
+                    raise ValueError(
+                        "verification evidence evidence_type must be snake-case text"
+                    ) from exc
+                raise ValueError(
+                    "verification evidence requires a non-empty evidence_type"
+                ) from exc
+            if loc == ("success",):
+                raise ValueError("verification evidence requires a boolean success field") from exc
+            if loc == ("timestamp",):
+                raise ValueError(
+                    "verification evidence timestamp must be a string when provided"
+                ) from exc
+            if loc == ("command",):
+                raise ValueError(
+                    "verification evidence command must be a string when provided"
+                ) from exc
+            if loc == ("summary",):
+                raise ValueError(
+                    "verification evidence summary must be a string when provided"
+                ) from exc
+        raise ValueError("verification evidence requires command or summary") from exc

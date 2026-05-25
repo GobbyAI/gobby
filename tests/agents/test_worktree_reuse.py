@@ -13,8 +13,6 @@ from gobby.agents.worktree_reuse import (
 )
 from gobby.worktrees.git import WorktreeGitManager
 
-pytestmark = pytest.mark.unit
-
 
 class FakeGitManager:
     def __init__(self, responses: list[subprocess.CompletedProcess[str]]) -> None:
@@ -54,6 +52,7 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -80,6 +79,7 @@ async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_sync_reused_worktree_rejects_dirty_worktree(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -101,6 +101,7 @@ async def test_sync_reused_worktree_rejects_dirty_worktree(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     tmp_path: Path,
 ) -> None:
@@ -151,6 +152,7 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_sync_reused_worktree_rejects_non_generated_project_metadata(
     tmp_path: Path,
 ) -> None:
@@ -182,6 +184,7 @@ async def test_sync_reused_worktree_rejects_non_generated_project_metadata(
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_sync_reused_worktree_aborts_failed_rebase(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()

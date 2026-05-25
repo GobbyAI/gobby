@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import time
+import weakref
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -77,7 +78,9 @@ class WakeDispatcher:
         self._web_chat_session_registry = web_chat_session_registry
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
-        self._live_wake_locks: dict[str, asyncio.Lock] = {}
+        self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     def set_web_chat_session_registry(
         self,
@@ -116,7 +119,10 @@ class WakeDispatcher:
         session: Any | None = None,
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
-        lock = self._live_wake_locks.setdefault(session_id, asyncio.Lock())
+        lock = self._live_wake_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._live_wake_locks[session_id] = lock
         async with lock:
             return await self._dispatch_live_wake_unlocked(session_id, session=session)
 

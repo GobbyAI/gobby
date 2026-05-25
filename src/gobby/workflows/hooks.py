@@ -530,12 +530,19 @@ class WorkflowHookHandler:
                             logger.warning(
                                 "Failed to load session variables on STOP - "
                                 f"blocking for safety: {e}",
+                                exc_info=True,
                             )
                             return HookResponse(
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
-                        logger.debug(f"Could not load session variables for rules: {e}")
+                        logger.debug(
+                            "Could not load session variables for rules session=%s event=%s: %s",
+                            session_id,
+                            event.event_type,
+                            e,
+                            exc_info=True,
+                        )
 
                 # Inject active step details so stop gates can give actionable
                 # lifecycle instructions.
@@ -559,7 +566,14 @@ class WorkflowHookHandler:
                             variables["current_step_status_message"] = ""
                             variables["current_step_description"] = ""
                     except Exception as e:
-                        logger.debug(f"Could not inject current_step from workflow instance: {e}")
+                        logger.warning(
+                            "Could not inject current_step from workflow instance "
+                            "session=%s event=%s: %s",
+                            session_id,
+                            event.event_type,
+                            e,
+                            exc_info=True,
+                        )
 
                 # Lazy-init variable presets for sessions that started before gobby init.
                 # Mirrors the baseline_dirty_files pattern below — one-time DB hit per session.
@@ -580,14 +594,25 @@ class WorkflowHookHandler:
                                 key = var_body.get("variable", var_row.name)
                                 if key not in variables:
                                     defaults[key] = var_body.get("value")
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    "Skipping malformed variable definition %s: %s",
+                                    getattr(var_row, "name", "<unknown>"),
+                                    e,
+                                    exc_info=True,
+                                )
                         defaults["_variable_defaults_loaded"] = True
                         variables.update(defaults)
                         if self._session_var_manager and session_id:
                             self._session_var_manager.merge_variables(session_id, defaults)
                     except Exception as e:
-                        logger.debug(f"Could not lazy-load variable defaults: {e}")
+                        logger.warning(
+                            "Could not lazy-load variable defaults session=%s project=%s: %s",
+                            session_id,
+                            event.project_id,
+                            e,
+                            exc_info=True,
+                        )
 
                 from gobby.workflows.git_utils import get_dirty_files_categorized
                 from gobby.workflows.safe_evaluator import LazyBool

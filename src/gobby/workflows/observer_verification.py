@@ -61,9 +61,8 @@ def detect_verification_evidence(
     if success:
         variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = True
         logger.info(
-            "Session %s: verification_evidence_recorded=true (via %s)",
+            "Session %s: verification_evidence_recorded=true via validation command",
             session_id,
-            command,
         )
         return
 

@@ -126,7 +126,8 @@ def _new_db(module, pool: _Pool):
     return db
 
 
-def test_postgres_pool_opens_lazily(monkeypatch) -> None:
+def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PostgresHubDatabase construction must not open a socket until open()."""
     module = _postgres_module()
     calls: dict[str, object] = {}
 

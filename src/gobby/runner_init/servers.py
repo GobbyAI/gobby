@@ -7,7 +7,6 @@ import weakref
 from typing import TYPE_CHECKING
 
 from gobby.app_context import ServiceContainer, set_app_context
-from gobby.config.local_cli_token import ensure_local_cli_token
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
-    ensure_local_cli_token()
     web_chat_session_registry = WebChatSessionRegistry()
     runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None

@@ -5,8 +5,8 @@ and integration with worktrees for agent spawning.
 """
 
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -32,7 +32,8 @@ from gobby.agents.spawn import (
 from gobby.agents.spawners.base import SpawnResult
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.integration
@@ -45,7 +46,7 @@ def temp_db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def project(temp_db: Any, tmp_path: Any) -> Any:
+def project(temp_db: HubDatabase, tmp_path: Path) -> Project:
     """Create a test project."""
     project_manager = LocalProjectManager(temp_db)
     repo_path = tmp_path / "test-repo"
@@ -57,19 +58,19 @@ def project(temp_db: Any, tmp_path: Any) -> Any:
 
 
 @pytest.fixture
-def session_storage(temp_db: Any) -> Any:
+def session_storage(temp_db: HubDatabase) -> SessionManager:
     """Create a session storage."""
     return SessionManager(temp_db)
 
 
 @pytest.fixture
-def child_session_manager(session_storage: Any) -> Any:
+def child_session_manager(session_storage: SessionManager) -> ChildSessionManager:
     """Create a child session manager."""
     return ChildSessionManager(session_storage=session_storage, max_agent_depth=3)
 
 
 @pytest.fixture
-def parent_session(session_storage: Any, project: Any) -> Any:
+def parent_session(session_storage: SessionManager, project: Project) -> Session:
     """Create a parent session for testing."""
     return session_storage.register(
         machine_id="test-machine",
@@ -81,7 +82,7 @@ def parent_session(session_storage: Any, project: Any) -> Any:
 
 
 @pytest.fixture
-def worktree_dir() -> Any:
+def worktree_dir() -> Iterator[Path]:
     """Create a temporary directory simulating a worktree."""
     with tempfile.TemporaryDirectory() as tmpdir:
         worktree_path = Path(tmpdir) / "worktree-feature-x"
@@ -194,7 +195,10 @@ class TestPrepareTerminalSpawn:
     """Tests for prepare_terminal_spawn function."""
 
     def test_creates_child_session(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that prepare_terminal_spawn creates a child session."""
         result = prepare_terminal_spawn(
@@ -212,7 +216,10 @@ class TestPrepareTerminalSpawn:
         assert result.project_id == project.id
 
     def test_sets_agent_depth(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that agent depth is correctly set."""
         result = prepare_terminal_spawn(
@@ -228,7 +235,10 @@ class TestPrepareTerminalSpawn:
         assert result.env_vars[GOBBY_AGENT_DEPTH] == "1"
 
     def test_with_workflow_name(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test with workflow name."""
         result = prepare_terminal_spawn(
@@ -244,7 +254,10 @@ class TestPrepareTerminalSpawn:
         assert result.env_vars[GOBBY_WORKFLOW_NAME] == "plan-execute"
 
     def test_short_prompt_uses_env_var(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that short prompts are passed via environment variable."""
         short_prompt = "Implement a simple feature"
@@ -262,7 +275,10 @@ class TestPrepareTerminalSpawn:
         assert GOBBY_PROMPT_FILE not in result.env_vars
 
     def test_long_prompt_uses_file(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that long prompts are written to a file."""
         long_prompt = "x" * (MAX_ENV_PROMPT_LENGTH + 100)
@@ -285,7 +301,10 @@ class TestPrepareTerminalSpawn:
         assert prompt_file.read_text() == long_prompt
 
     def test_max_agent_depth_passed(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that max_agent_depth is correctly passed."""
         result = prepare_terminal_spawn(
@@ -300,7 +319,10 @@ class TestPrepareTerminalSpawn:
         assert result.env_vars[GOBBY_MAX_AGENT_DEPTH] == "5"
 
     def test_env_vars_contains_all_required(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that env_vars contains all required variables."""
         result = prepare_terminal_spawn(
@@ -353,7 +375,11 @@ class TestWorktreeIntegration:
     """Tests for terminal mode integration with worktrees."""
 
     def test_prepare_spawn_with_worktree_path(
-        self, child_session_manager: Any, parent_session: Any, project: Any, worktree_dir: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
+        worktree_dir: Path,
     ) -> None:
         """Test preparing spawn with a worktree as working directory."""
         result = prepare_terminal_spawn(
@@ -369,7 +395,10 @@ class TestWorktreeIntegration:
         # The session would track the git branch for the worktree
 
     def test_env_vars_for_worktree_agent(
-        self, child_session_manager: Any, parent_session: Any, project: Any
+        self,
+        child_session_manager: ChildSessionManager,
+        parent_session: Session,
+        project: Project,
     ) -> None:
         """Test that environment variables are correctly set for worktree agents."""
         result = prepare_terminal_spawn(

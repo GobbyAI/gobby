@@ -16,7 +16,6 @@ from gobby.servers.routes.configuration import create_configuration_router
 from gobby.servers.routes.cron import create_cron_router
 from gobby.servers.routes.files import create_files_router
 from gobby.servers.routes.github_triage import create_github_triage_router
-from gobby.servers.routes.local_runtime import create_local_runtime_router
 from gobby.servers.routes.mcp import (
     create_hooks_router,
     create_mcp_router,
@@ -51,7 +50,6 @@ __all__ = [
     "create_cron_router",
     "create_files_router",
     "create_github_triage_router",
-    "create_local_runtime_router",
     "create_hooks_router",
     "create_mcp_router",
     "create_memory_router",

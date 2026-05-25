@@ -48,6 +48,16 @@ Plan Mode triage is read-only: ingest supplied findings and
 to implementation. If native Plan Mode blocks task creation, create or claim the
 `gobby-tasks` task immediately after plan approval and before the first edit.
 
+The Plan Mode output MUST include a finding-by-finding table. Each supplied
+finding gets its own row with:
+
+- Decision: `fix` or `no-fix`.
+- Checked file, symbol, or behavior.
+- Reason for the decision.
+
+No finding may be grouped away, summarized into another row, or silently
+omitted from the final plan.
+
 ## Contract
 
 CodeRabbit findings are leads, not patches. Verify each item against current code

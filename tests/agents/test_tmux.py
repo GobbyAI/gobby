@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Generator
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -157,7 +157,7 @@ class TestTmuxTextInjection:
             enter_delay_seconds=0,
         )
 
-        assert len(commands) == 3
+        assert len(commands) == 4
         buffer_name = commands[0][7]
         assert commands[0][:5] == tmux_cmd
         assert commands[0][5:] == ["set-buffer", "-b", buffer_name, "--", "-X message"]
@@ -170,8 +170,40 @@ class TestTmuxTextInjection:
             "-t",
             "%12",
         ]
-        assert commands[2] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
+        assert commands[2] == [*tmux_cmd, "delete-buffer", "-b", buffer_name]
+        assert commands[3] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
         assert not any("send-keys" in command and "-l" in command for command in commands)
+
+    @pytest.mark.asyncio
+    async def test_paste_failure_still_deletes_tmux_buffer(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 1 if "paste-buffer" in args else 0
+            proc.communicate = AsyncMock(return_value=(b"", b"can't find pane: %12"))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        with pytest.raises(TmuxTargetUnavailableError):
+            await send_literal_text_to_tmux_target(
+                "%12",
+                "hello",
+                enter_delay_seconds=0,
+            )
+
+        buffer_name = commands[0][3]
+        assert commands[1][:4] == ["tmux", "paste-buffer", "-d", "-b"]
+        assert commands[1][4] == buffer_name
+        assert commands[2] == ["tmux", "delete-buffer", "-b", buffer_name]
 
     @pytest.mark.asyncio
     async def test_timeout_is_expected_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -578,7 +610,7 @@ class TestSingletons:
     """Tests for module-level singleton getters."""
 
     @pytest.fixture(autouse=True)
-    def reset_singletons(self) -> Generator[None, None, None]:  # noqa: UP043
+    def reset_singletons(self) -> Iterator[None]:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 

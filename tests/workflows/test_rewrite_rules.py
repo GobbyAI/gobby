@@ -513,6 +513,7 @@ class TestCompressBashOutputBundledRule:
 
     @pytest.mark.asyncio
     async def test_claude_still_rewrites_bash_through_gsqz(self, db: HubDatabase) -> None:
+        """Claude Bash commands still get compressed by the bundled rule."""
         _sync_bundled_rules(db)
 
         event = _make_event(
@@ -529,6 +530,7 @@ class TestCompressBashOutputBundledRule:
 
     @pytest.mark.asyncio
     async def test_gcode_command_stays_unwrapped(self, db: HubDatabase) -> None:
+        """gcode commands stay directly inspectable instead of being wrapped."""
         _sync_bundled_rules(db)
 
         event = _make_event(

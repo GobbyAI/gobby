@@ -134,7 +134,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     sample_project: dict,
     agent_run_manager: LocalAgentRunManager,
 ) -> None:
-    """Step-context lookup errors fall back to the generic reprompt and log exc_info."""
+    """Unexpected step-context lookup errors fall back and log exception context."""
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
         agent_run_manager=agent_run_manager,
@@ -168,12 +168,15 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
             "gobby.agents.idle_check_handler.get_active_step_workflow_context",
             side_effect=RuntimeError("context lookup failed"),
         ),
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+        patch("gobby.agents.idle_check_handler.logger.exception") as mock_exception,
     ):
         message = await monitor._idle_check_handler._idle_reprompt_message(run)
 
     assert message == IdleDetector.REPROMPT_MESSAGE
-    assert any(call.kwargs.get("exc_info") is True for call in mock_warning.call_args_list)
+    mock_exception.assert_called_once()
+    assert (
+        "Unexpected error loading active step workflow context" in mock_exception.call_args.args[0]
+    )
 
 
 @pytest.mark.asyncio

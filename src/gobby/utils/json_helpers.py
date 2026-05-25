@@ -16,6 +16,8 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+type JSONValue = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
+
 
 def extract_json_from_text(text: str | None) -> str | None:
     """
@@ -120,12 +122,12 @@ def extract_json_object(text: str | None) -> dict[str, Any] | None:
 
 def json_equal(left: Any, right: Any) -> bool:
     """Compare JSON payloads semantically across strings and decoded values."""
-    left_value: object = _decode_json_if_text(left)
-    right_value: object = _decode_json_if_text(right)
+    left_value = _decode_json_if_text(left)
+    right_value = _decode_json_if_text(right)
     return left_value == right_value
 
 
-def _decode_json_if_text(value: Any) -> object:
+def _decode_json_if_text(value: JSONValue) -> JSONValue:
     if not isinstance(value, str):
         return value
     try:

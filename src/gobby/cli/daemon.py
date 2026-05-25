@@ -248,13 +248,13 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
             json.JSONDecodeError,
         ) as e:
             logger.error("Non-retryable startup progress polling error: %s", e, exc_info=True)
-            raise
+            return False
         except httpx.RequestError as e:
             logger.error("Non-retryable startup progress request error: %s", e, exc_info=True)
-            raise
+            return False
         except Exception as e:
             logger.error("Unexpected startup progress polling error: %s", e, exc_info=True)
-            raise
+            return False
         time.sleep(0.5)
     return False
 

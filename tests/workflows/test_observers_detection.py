@@ -1067,6 +1067,13 @@ class TestDetectBashCommit:
 
         assert variables["task_has_commits"] is True
 
+    def test_git_commit_detached_head_output(self, variables) -> None:
+        event = _make_bash_event("[detached HEAD 9a3b2c1e] Fix bug\n 1 file changed")
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
     def test_skips_when_already_set(self, variables) -> None:
         variables["task_has_commits"] = True
         event = _make_bash_event("[main def5678] Another\n 1 file changed")
@@ -1261,6 +1268,20 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
         assert variables["verification_evidence"][-1]["success"] is True
 
+    def test_successful_validation_log_omits_raw_command(
+        self,
+        variables,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        command = "uv run pytest tests/workflows/test_hooks.py -v"
+        event = _make_bash_event("passed", command=command, cwd="/repo")
+
+        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+            detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert command not in caplog.text
+        assert "verification_evidence_recorded=true via validation command" in caplog.text
+
     def test_validation_evidence_keeps_latest_50_items(self, variables) -> None:
         variables["verification_evidence"] = [
             {"command": f"uv run pytest old_{index}.py", "success": True} for index in range(55)
@@ -1408,6 +1429,12 @@ class TestIsGitCommitCommand:
 
     def test_chained_commands(self) -> None:
         assert _is_git_commit_command("git add . && git commit -m 'msg'") is True
+
+    def test_global_option_before_commit(self) -> None:
+        assert _is_git_commit_command("git -C /repo commit -m 'msg'") is True
+
+    def test_git_binary_path_before_commit(self) -> None:
+        assert _is_git_commit_command("/usr/bin/git -c user.name=Gobby commit -m 'msg'") is True
 
     def test_not_commit(self) -> None:
         assert _is_git_commit_command("git status") is False

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
+import weakref
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
@@ -400,6 +402,25 @@ class TestWakeDispatch:
         assert result["error_code"] == "session_expired"
 
     @pytest.mark.asyncio
+    async def test_transient_live_wake_failure_does_not_retain_lock(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Live wake locks for one-off missing sessions are not retained forever."""
+        session_manager.get.return_value = None
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+
+        result = await dispatcher.dispatch_live_wake("missing-session")
+        gc.collect()
+
+        assert result["error_code"] == "session_not_found"
+        assert "missing-session" not in dispatcher._live_wake_locks
+
+    @pytest.mark.asyncio
     async def test_interactive_session_without_tmux_pane_reports_no_tmux_pane(
         self,
         session_manager: MagicMock,
@@ -669,16 +690,16 @@ class TestWakeDispatch:
         )
         locked = asyncio.Lock()
         await locked.acquire()
+        stale_lock = asyncio.Lock()
+        fresh_lock = asyncio.Lock()
         dispatcher._last_live_wake = {
             "stale": (1, 900.0),
             "locked": (1, 900.0),
             "fresh": (1, 990.0),
         }
-        dispatcher._live_wake_locks = {
-            "stale": asyncio.Lock(),
-            "locked": locked,
-            "fresh": asyncio.Lock(),
-        }
+        dispatcher._live_wake_locks = weakref.WeakValueDictionary(
+            {"stale": stale_lock, "locked": locked, "fresh": fresh_lock}
+        )
         monkeypatch.setattr("gobby.events.wake.time.monotonic", lambda: 1000.0)
 
         try:

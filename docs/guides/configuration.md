@@ -60,17 +60,15 @@ ui_port: 60889
 falkordb_password: "gobbyfalkor"
 ```
 
-`database_url` is retained only for legacy compatibility and operator-managed
-artifacts outside the current runtime. PostgreSQL is the only runtime hub.
-Startup fails when the PostgreSQL DSN is missing instead of falling
-back to PostgreSQL, so do not use `database_url` or `gobby postgres uninstall` as
-a runtime recovery path.
+`database_url` is the required PostgreSQL DSN for the runtime hub. PostgreSQL is
+the only runtime hub. Startup fails when the PostgreSQL DSN is missing, so do not
+remove `database_url` or use `gobby postgres uninstall` as a runtime recovery
+path.
 
 Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
 `bootstrap.yaml` is written with mode `0600`; keep that permission so the DSN
-stays owner-readable only. Gobby may generate isolated helper bootstraps with
-`daemon:gobby:postgres_database_url`; that ref is broker-only and is resolved by
-the local daemon.
+stays owner-readable only. Gobby-generated helper bootstraps also use
+`database_url`; `database_url_ref` values are no longer supported.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
