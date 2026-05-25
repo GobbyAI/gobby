@@ -416,9 +416,7 @@ class TestSyncBundledAgents:
         assert len(result["errors"]) == 1
 
     @pytest.mark.unit
-    def test_sync_ignores_deprecated_directory(
-        self, tmp_path: Path, temp_db: HubDatabase
-    ) -> None:
+    def test_sync_ignores_deprecated_directory(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Deprecated bundled agents are archival and not active install inputs."""
         db = temp_db
 
@@ -546,3 +544,24 @@ class TestSyncBundledAgents:
         assert "conductor" not in names
         assert "developer" not in names
         assert "pipeline-worker" not in names
+
+
+@pytest.mark.unit
+def test_memory_recall_helper_synced(temp_db: HubDatabase) -> None:
+    """The bundled memory recall helper syncs into workflow_definitions."""
+    result = sync_bundled_agents(temp_db)
+
+    assert result["success"] is True
+    assert result["errors"] == []
+
+    row = LocalWorkflowDefinitionManager(temp_db).get_by_name("memory-recall-helper")
+    assert row is not None
+    assert row.workflow_type == "agent"
+    assert row.enabled is True
+
+    body = AgentDefinitionBody.model_validate_json(row.definition_json)
+    assert body.model == "claude-haiku-4-5"
+    assert body.max_turns == 3
+    assert body.timeout == 60
+    assert "mcp__gobby__set_variable" in body.blocked_tools
+    assert body.blocked_mcp_tools == []
