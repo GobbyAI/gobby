@@ -9,6 +9,7 @@ from gobby.utils.json_helpers import (
     decode_llm_response,
     extract_json_from_text,
     extract_json_object,
+    json_equal,
 )
 
 pytestmark = pytest.mark.unit
@@ -119,6 +120,25 @@ class TestExtractJsonObject:
         """Test that text without JSON returns None."""
         result = extract_json_object("Just text")
         assert result is None
+
+
+class TestJsonEqual:
+    """Tests for json_equal()."""
+
+    def test_compares_json_strings_semantically(self) -> None:
+        """Test equivalent JSON strings compare equal regardless of key order."""
+        left = '{"status": "ok", "count": 2}'
+        right = '{"count": 2, "status": "ok"}'
+        assert json_equal(left, right)
+
+    def test_detects_json_string_mismatch(self) -> None:
+        """Test different decoded JSON payloads compare unequal."""
+        assert not json_equal('{"status": "ok"}', '{"status": "failed"}')
+
+    def test_compares_plain_non_json_strings(self) -> None:
+        """Test non-JSON strings fall back to normal equality."""
+        assert json_equal("same", "same")
+        assert not json_equal("same", "different")
 
 
 class TaskStatus(str, Enum):
