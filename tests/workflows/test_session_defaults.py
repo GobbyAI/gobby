@@ -193,7 +193,7 @@ variables:
         assert result["orphaned"] == 1
 
     def test_all_expected_variables_synced(self, db) -> None:
-        """All 15 expected session-default variables should be synced.
+        """Expected session-default variables should be synced.
 
         Note: task_ref was removed — claimed_tasks map handles this now.
         """
@@ -210,7 +210,6 @@ variables:
             "task_claimed",
             "require_task_before_edit",
             "require_commit_before_status",
-            "errors_resolved",
             "verification_evidence_recorded",
             "verification_evidence",
             "enforce_tool_schema_check",

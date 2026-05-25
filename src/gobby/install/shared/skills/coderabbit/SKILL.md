@@ -19,7 +19,7 @@ metadata:
 Use this skill for `$gobby coderabbit [findings]`, pasted CodeRabbit comments,
 and files matching `./reports/coderabbit-*.md`.
 
-REQUIRED SKILL: verification-before-completion.
+REQUIRED SKILL: task-transitions.
 
 ## Plan Mode Gate
 

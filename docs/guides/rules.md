@@ -107,7 +107,7 @@ tool-policy helpers such as `is_discovery_tool`, `is_operator_tool`, and
 Use defensive variable access in block rules:
 
 ```yaml
-when: "variables.get('task_claimed', False) and not variables.get('errors_resolved')"
+when: "variables.get('task_claimed', False) and not variables.get('plan_mode')"
 ```
 
 If a condition raises, block effects fail closed and fire. Other effect types

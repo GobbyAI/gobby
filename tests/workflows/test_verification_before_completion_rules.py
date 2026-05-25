@@ -1,4 +1,4 @@
-"""Tests for verification-before-completion lifecycle rule wiring."""
+"""Tests for completion-readiness lifecycle rule wiring."""
 
 from __future__ import annotations
 
@@ -8,10 +8,8 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -38,68 +36,27 @@ def _sync_bundled(db: HubDatabase) -> None:
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 
-def _rule(manager: LocalWorkflowDefinitionManager, name: str) -> RuleDefinitionBody:
-    row = manager.get_by_name(name)
-    assert row is not None
-    return RuleDefinitionBody.model_validate_json(row.definition_json)
-
-
-def test_schema_lookup_rule_mentions_lifecycle_completion_tools(
-    db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
-) -> None:
-    _sync_bundled(db)
-
-    body = _rule(manager, "require-verification-before-completion-on-schema")
-
-    assert body.event.value == "before_tool"
-    assert body.effects[0].type == "block"
-    assert body.effects[0].reason == skill_fetch_directive("verification-before-completion")
-    assert "not skill_loaded('verification-before-completion')" in (body.when or "")
-    when = body.when or ""
-    for tool_name in (
-        "close_task",
-        "submit_for_review",
-        "approve_review",
-        "record_pr_opened",
-        "open_delivery_pr",
-        "record_pr_verdict",
-        "record_merge_result",
-        "close_linked_github_issue",
-        "merge_apply",
-    ):
-        assert tool_name in when
-
-
-def test_lifecycle_call_rule_requires_verification_skill(
-    db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
-) -> None:
-    _sync_bundled(db)
-
-    body = _rule(manager, "require-verification-before-completion-on-lifecycle-call")
-    block_effects = [effect for effect in body.effects if effect.type == "block"]
-
-    assert body.event.value == "before_tool"
-    assert "not skill_loaded('verification-before-completion')" in (body.when or "")
-    assert len(block_effects) == 1
-    assert block_effects[0].reason == skill_fetch_directive("verification-before-completion")
-
-
-def _close_task_event() -> HookEvent:
+def _lifecycle_event(server: str = "gobby-tasks", tool: str = "close_task") -> HookEvent:
+    arguments = {
+        "task_id": "#42",
+        "commit_sha": "abc1234",
+        "changes_summary": "done",
+    }
+    if server == "gobby-tasks-ops":
+        arguments["stage_name"] = "development"
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
-            "tool_name": "mcp__gobby-tasks__close_task",
-            "mcp_server": "gobby-tasks",
-            "mcp_tool": "close_task",
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": server,
+            "mcp_tool": tool,
             "tool_input": {
-                "task_id": "#42",
-                "commit_sha": "abc1234",
-                "changes_summary": "done",
+                "server_name": server,
+                "tool_name": tool,
+                "arguments": arguments,
             },
         },
     )
@@ -120,11 +77,18 @@ def _set_variable_event(name: str) -> HookEvent:
 
 def _ready_variables(**overrides: object) -> dict[str, object]:
     variables: dict[str, object] = {
-        "loaded_skills": ["task-transitions", "verification-before-completion"],
+        "loaded_skills": ["task-transitions"],
         "session_edited_files": ["src/gobby/workflows/observers.py"],
         "task_has_commits": True,
-        "errors_resolved": True,
         "memory_review_completed": True,
+        "is_spawned_agent": True,
+        "verification_evidence": [
+            {
+                "evidence_type": "validation_command",
+                "command": "uv run pytest tests/workflows/test_hooks.py -v",
+                "success": True,
+            }
+        ],
         "verification_evidence_recorded": True,
     }
     variables.update(overrides)
@@ -132,17 +96,25 @@ def _ready_variables(**overrides: object) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_completion_readiness_blocks_without_recorded_evidence(
+@pytest.mark.parametrize(
+    ("server", "tool"),
+    [
+        ("gobby-tasks", "close_task"),
+        ("gobby-tasks-ops", "submit_for_review"),
+    ],
+)
+async def test_completion_readiness_blocks_without_evidence(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    server: str,
+    tool: str,
 ) -> None:
     """Lifecycle success tools are blocked until fresh verification evidence exists."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
-        _close_task_event(),
+        _lifecycle_event(server, tool),
         session_id="sid",
-        variables=_ready_variables(verification_evidence_recorded=False),
+        variables=_ready_variables(verification_evidence=[], verification_evidence_recorded=False),
     )
 
     assert response.decision == "block"
@@ -150,15 +122,14 @@ async def test_completion_readiness_blocks_without_recorded_evidence(
 
 
 @pytest.mark.asyncio
-async def test_completion_readiness_allows_with_all_sibling_gates(
+async def test_completion_readiness_allows_successful_validation_evidence(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
 ) -> None:
-    """Completion readiness allows close_task when every sibling gate is satisfied."""
+    """A successful validation command satisfies completion readiness."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
-        _close_task_event(),
+        _lifecycle_event(),
         session_id="sid",
         variables=_ready_variables(),
     )
@@ -167,9 +138,117 @@ async def test_completion_readiness_allows_with_all_sibling_gates(
 
 
 @pytest.mark.asyncio
+async def test_completion_readiness_blocks_failed_validation_evidence(
+    db: HubDatabase,
+) -> None:
+    """The latest failed validation command blocks lifecycle success."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id="sid",
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest tests/workflows/test_hooks.py -v",
+                    "success": False,
+                }
+            ],
+            verification_evidence_recorded=False,
+        ),
+    )
+
+    assert response.decision == "block"
+    assert "require-completion-readiness-evidence" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_later_successful_validation_clears_failed_validation_block(
+    db: HubDatabase,
+) -> None:
+    """A later validation-command success resolves an earlier validation failure."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id="sid",
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest old.py",
+                    "success": False,
+                },
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest new.py",
+                    "success": True,
+                },
+            ],
+        ),
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_manual_evidence_satisfies_readiness_without_failed_validation(
+    db: HubDatabase,
+) -> None:
+    """Manual evidence is sufficient when no failed validation command is pending."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id="sid",
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "manual_diff_review",
+                    "summary": "Reviewed diff",
+                    "success": True,
+                }
+            ],
+        ),
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_manual_evidence_cannot_clear_failed_validation(
+    db: HubDatabase,
+) -> None:
+    """Manual evidence does not resolve a failed validation command."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id="sid",
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest old.py",
+                    "success": False,
+                },
+                {
+                    "evidence_type": "manual_diff_review",
+                    "summary": "Reviewed diff",
+                    "success": True,
+                },
+            ],
+        ),
+    )
+
+    assert response.decision == "block"
+    assert "require-completion-readiness-evidence" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_protected_evidence_variables_cannot_be_set_directly(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
 ) -> None:
     """Agents must record evidence through approved observers or MCP tools."""
     _sync_bundled(db)

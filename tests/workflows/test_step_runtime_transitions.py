@@ -324,7 +324,7 @@ async def test_non_reserved_set_variable_remains_allowed(db: HubDatabase) -> Non
     variables: dict[str, Any] = {}
 
     response = await engine.evaluate(
-        _before_set_variable("errors_resolved", True),
+        _before_set_variable("lint_passed", True),
         session_id="test-session",
         variables=variables,
     )
@@ -344,7 +344,7 @@ async def test_missing_session_scoped_transition_variable_waits_without_error(
     caplog.set_level(logging.ERROR, logger="gobby.workflows.engine.templating")
 
     response = await engine.evaluate(
-        _before_set_variable("errors_resolved", True),
+        _before_set_variable("lint_passed", True),
         session_id="test-session",
         variables=variables,
     )

@@ -43,7 +43,6 @@ def test_doc_reviewer_loads_required_skills() -> None:
         "code-index",
         "tech-writer",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     for skill_name in agent["step_variables"]["required_skills"]:

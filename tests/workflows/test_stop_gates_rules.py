@@ -2,18 +2,17 @@
 
 Tier 1 behaviors (hardcoded in RuleEngine.evaluate):
 - stop_attempts auto-increment on STOP
-- BEFORE_AGENT full reset (tool_block_pending, errors_resolved, stop_attempts, etc.)
+- BEFORE_AGENT full reset (tool_block_pending, stop_attempts, etc.)
 - tool_block_pending stop gate, force_allow_stop bypass, consecutive tool block counter
 
 Tier 2 rules (YAML templates — configurable):
-- require-error-triage-before-status (task-enforcement), require-task-close
+- require-task-close
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -161,47 +160,6 @@ class TestStopAttemptsPlumbing:
 
         assert response.decision == "block"
         assert variables.get("stop_attempts") == 2
-
-
-class TestRequireErrorTriage:
-    """Verify require-error-triage-before-status blocks status transitions until triage confirmed."""
-
-    def test_blocks_on_before_tool(self, db, manager) -> None:
-        """Should have a block effect on before_tool event."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        effect_types = {e.type for e in body.resolved_effects}
-        assert "block" in effect_types
-
-    def test_blocks_all_status_transitions(self, db, manager) -> None:
-        """Should block close_task and all review lifecycle transitions."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        mcp_tools = body.effects[0].mcp_tools
-        assert "gobby-tasks:close_task" in mcp_tools
-        assert "gobby-tasks:de_escalate_task" in mcp_tools
-        assert "gobby-tasks-ops:submit_for_review" in mcp_tools
-        assert "gobby-tasks-ops:approve_review" in mcp_tools
-        assert "gobby-tasks-ops:reject_review" in mcp_tools
-
-    def test_when_checks_triage_flag(self, db, manager) -> None:
-        """Should check errors_resolved."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "errors_resolved" in body.when
-        assert "session_edited_files" in body.when
 
 
 class TestRequireTaskClose:
@@ -384,51 +342,11 @@ class TestRequireStepCompletion:
         assert 'submit_for_review(stage_name="planning")' in (response.reason or "")
 
 
-class TestCompactPreservesTriagedState:
-    """Regression: compact must NOT reset errors_resolved.
-
-    Bug scenario: agent sets errors_resolved=true during session,
-    then /compact fires SessionStart → _activate_default_agent re-applies
-    defaults → overwrites triaged back to false → require-error-triage fires
-    spuriously on next stop.
-    """
-
-    def test_compact_preserves_triaged_state(self, db, manager) -> None:
-        """After triaging errors, compact should NOT cause require-error-triage to fire."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        # State AFTER agent has triaged errors and committed
-        variables: dict[str, object] = {
-            "errors_resolved": True,  # Set by agent
-            "stop_attempts": 1,
-        }
-
-        # The fix ensures _activate_default_agent does NOT overwrite these.
-        # Verify: with preserved variables, the rule condition should NOT match.
-        # Build event context that would normally trigger the rule (close_task with commit)
-        mock_event = MagicMock()
-        mock_event.data = {
-            "mcp_tool": "close_task",
-            "tool_input": {"arguments": {"commit_sha": "abc123"}},
-        }
-        evaluator = SafeExpressionEvaluator(
-            context={"variables": variables, "event": mock_event},
-            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
-        )
-        assert not evaluator.evaluate(body.when), (
-            "require-error-triage-before-status should NOT fire when errors_resolved=true"
-        )
-
-
 class TestBeforeAgentResetsPlumbing:
     """Test hardcoded BEFORE_AGENT resets in RuleEngine.
 
     The semantic turn_start boundary clears per-turn stop-cycle state: tool_block_pending,
     stop_attempts, consecutive_tool_blocks, _last_blocked_tool.
-    It does NOT reset errors_resolved (session-scoped).
     """
 
     @pytest.mark.asyncio
@@ -443,23 +361,11 @@ class TestBeforeAgentResetsPlumbing:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_preserves_errors_resolved(self, db) -> None:
-        """The semantic turn_start boundary should NOT reset errors_resolved."""
-        engine = RuleEngine(db)
-        variables: dict[str, object] = {"errors_resolved": True}
-
-        event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
-
-        assert variables.get("errors_resolved") is True
-
-    @pytest.mark.asyncio
     async def test_full_reset_on_new_turn(self, db) -> None:
         """The semantic turn_start boundary should reset stop-cycle variables."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "tool_block_pending": True,
-            "errors_resolved": True,
             "stop_attempts": 5,
             "consecutive_tool_blocks": 2,
             "_last_blocked_tool": "Edit",
@@ -469,7 +375,6 @@ class TestBeforeAgentResetsPlumbing:
         await engine.evaluate(event, "sess-1", variables)
 
         assert variables["tool_block_pending"] is False
-        assert variables["errors_resolved"] is True
         assert variables["stop_attempts"] == 0
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""

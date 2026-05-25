@@ -1278,10 +1278,9 @@ class TestDetectVerificationEvidence:
         assert evidence[0]["command"] == "uv run pytest old_6.py"
         assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
 
-    def test_failed_validation_clears_readiness_and_errors_resolved(self, variables) -> None:
+    def test_failed_validation_clears_recorded_readiness(self, variables) -> None:
         variables["verification_evidence_recorded"] = True
         variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
-        variables["errors_resolved"] = True
         event = _make_bash_event(
             "failed",
             command="uv run pytest tests/workflows/test_hooks.py -v",
@@ -1291,7 +1290,6 @@ class TestDetectVerificationEvidence:
         detect_verification_evidence(event, variables, SESSION_ID)
 
         assert variables["verification_evidence_recorded"] is False
-        assert variables["errors_resolved"] is False
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
 

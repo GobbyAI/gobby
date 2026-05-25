@@ -22,7 +22,7 @@ instructions: |
      CLAIM. If the active workflow step is already past CLAIM, do not call
      claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-     skills: code-index, task-transitions, verification-before-completion.
+     skills: code-index and task-transitions.
   3. REVIEW: Perform ordered leaf review:
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
@@ -101,7 +101,6 @@ step_variables:
   required_skills:
     - code-index
     - task-transitions
-    - verification-before-completion
   required_skills_loaded: false
   review_approved: false
   review_complete: false
@@ -139,7 +138,6 @@ steps:
       Call these exact tools before reviewing:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="task-transitions") on gobby-skills
-      3. get_skill(name="verification-before-completion") on gobby-skills
       Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->

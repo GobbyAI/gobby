@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    completion_evidence_ready,
     is_gobby_build_command,
     is_task_complete,
     task_needs_human_review,
@@ -67,6 +68,104 @@ class TestIsGobbyBuildCommand:
     )
     def test_skips_non_build_invocations(self, command: object) -> None:
         assert is_gobby_build_command(command) is False
+
+
+class TestCompletionEvidenceReady:
+    def test_false_without_evidence(self) -> None:
+        assert completion_evidence_ready({}) is False
+
+    def test_successful_validation_evidence_is_ready(self) -> None:
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest tests/workflows/test_hooks.py -v",
+                            "success": True,
+                        }
+                    ]
+                }
+            )
+            is True
+        )
+
+    def test_failed_validation_blocks_until_later_validation_success(self) -> None:
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest old.py",
+                            "success": True,
+                        },
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest failing.py",
+                            "success": False,
+                        },
+                    ]
+                }
+            )
+            is False
+        )
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest failing.py",
+                            "success": False,
+                        },
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest fixed.py",
+                            "success": True,
+                        },
+                    ]
+                }
+            )
+            is True
+        )
+
+    def test_manual_evidence_cannot_clear_failed_validation(self) -> None:
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest failing.py",
+                            "success": False,
+                        },
+                        {
+                            "evidence_type": "manual_diff_review",
+                            "summary": "Reviewed diff",
+                            "success": True,
+                        },
+                    ]
+                }
+            )
+            is False
+        )
+
+    def test_manual_evidence_satisfies_without_failed_validation(self) -> None:
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "manual_diff_review",
+                            "summary": "Reviewed diff",
+                            "success": True,
+                        }
+                    ]
+                }
+            )
+            is True
+        )
 
 
 class TestNormalizeTaskId:

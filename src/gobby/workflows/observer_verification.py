@@ -14,7 +14,6 @@ from gobby.workflows.observer_utils import (
     _shell_tool_succeeded,
 )
 from gobby.workflows.verification_evidence import (
-    ERRORS_RESOLVED_VARIABLE,
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
     VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
     VERIFICATION_EVIDENCE_VARIABLE,
@@ -69,7 +68,6 @@ def detect_verification_evidence(
         return
 
     variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = False
-    variables[ERRORS_RESOLVED_VARIABLE] = False
     logger.info(
         "Session %s: verification readiness cleared after failed validation command",
         session_id,

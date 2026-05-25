@@ -1,6 +1,6 @@
 ---
 name: task-transitions
-description: "Pre-transition checklist for closing or reviewing tasks. Covers commit, lint/test, error triage, and memory gates."
+description: "Pre-transition checklist for closing or reviewing tasks. Covers fresh verification evidence, commits, and memory gates."
 category: core
 metadata:
   gobby:
@@ -19,19 +19,66 @@ Before closing or changing task status, complete ALL gates below. They fire in o
 
 | # | Gate | Variable | Skipped by |
 |---|------|----------|------------|
-| 1 | Clean working tree | — | Non-work closes |
-| 2 | Commit SHA passed to close_task | — | Non-work closes |
-| 3 | Lint + tests pass, all issues fixed | `errors_resolved` | — |
+| 1 | Fresh verification evidence ready | `verification_evidence` | — |
+| 2 | Clean working tree | — | Non-work closes |
+| 3 | Commit SHA passed to close_task | — | Non-work closes |
 | 4 | Memory review completed | `memory_review_completed` | — |
-| 5 | Fresh verification evidence recorded | `verification_evidence_recorded` | — |
 
-**Non-work close reasons** (skip gates 1-2): `duplicate`, `already_implemented`, `wont_fix`, `obsolete`, `out_of_repo`
+**Non-work close reasons** (skip commit gates 2-3): `duplicate`, `already_implemented`, `wont_fix`, `obsolete`, `out_of_repo`
 
-Gates 3-5 always apply, even for non-work closes.
+Fresh evidence and memory review still apply for non-work closes.
 
 ---
 
-## Gate 1: Clean Working Tree
+## Gate 1: Fresh Verification Evidence
+
+Run verification after the final file edit. Later file edits clear readiness
+evidence. Git commits preserve evidence, so the normal sequence is:
+
+1. Finish editing files.
+2. Run focused validation.
+3. Commit.
+4. Review memory.
+5. Close or submit for review.
+
+Run the verification commands defined in `.gobby/project.json` on the files you
+touched. The `verification` key contains named commands — run the ones relevant
+to your changes:
+
+```bash
+# Read the project's verification config
+cat .gobby/project.json | jq '.verification'
+
+# Run relevant checks (examples — use the actual commands from project.json)
+# verification.lint → linting
+# verification.format → format checking
+# verification.type_check → type checking
+# verification.unit_tests → tests (scope to relevant files, not the full suite)
+# verification.custom.* → project-specific checks (frontend, etc.)
+```
+
+Scope test runs to relevant files — do NOT run the full test suite unless
+explicitly asked.
+
+Successful validation commands such as `uv run pytest ...`,
+`uv run ruff check ...`, `uv run mypy ...`, and `npm test` are recorded
+automatically as `validation_command` evidence. A failed validation command
+blocks readiness until a later validation command succeeds. Manual evidence can
+satisfy readiness when no failed validation command is pending, but it cannot
+clear a failed validation command.
+
+For manual review, PR state, or another non-command artifact, record evidence
+explicitly:
+
+```python
+call_tool("gobby-sessions", "record_verification_evidence", {
+    "summary": "Read the diff and verified the touched lifecycle gates match the task",
+    "evidence_type": "manual_diff_review",
+    "supports": "completion readiness for #N"
+}, session_id="#2333")
+```
+
+## Gate 2: Clean Working Tree
 
 All changes must be committed before status transitions.
 
@@ -44,7 +91,7 @@ Prefer staging specific files over `git add -A`. Include the task reference in t
 commit message. `project_name` is a placeholder for the real project name, never
 a literal prefix. In this repo, use `[gobby-#N] type: description`.
 
-## Gate 2: Close with Commit SHA
+## Gate 3: Close with Commit SHA
 
 Pass `commit_sha` to `close_task` — this links the commit and closes in one call:
 
@@ -60,36 +107,6 @@ call_tool("gobby-tasks", "close_task", {
 
 Do NOT call `link_commit` separately — `close_task` handles linking internally when you pass `commit_sha`. The `link_commit` tool exists only for associating commits to tasks still in progress (multi-commit work).
 
-## Gate 3: Errors, Warnings, and Failures Resolved
-
-Run the verification commands defined in `.gobby/project.json` on the files you touched. The `verification` key contains named commands — run the ones relevant to your changes:
-
-```bash
-# Read the project's verification config
-cat .gobby/project.json | jq '.verification'
-
-# Run relevant checks (examples — use the actual commands from project.json)
-# verification.lint → linting
-# verification.format → format checking
-# verification.type_check → type checking
-# verification.unit_tests → tests (scope to relevant files, not the full suite)
-# verification.custom.* → project-specific checks (frontend, etc.)
-```
-
-Scope test runs to relevant files — do NOT run the full test suite unless explicitly asked.
-
-Fix ALL errors, warnings, and failures — including pre-existing ones.
-
-**Do NOT be lazy and simply file a task without first thoroughly investigating the issue.** If you can complete the fix this session without compaction, you must do it. The only exception is something that genuinely requires multi-session architectural changes across many files.
-
-Once resolved:
-
-`set_variable` and `get_variable` are top-level MCP tools — call them directly, not through `call_tool`:
-
-```python
-set_variable(name="errors_resolved", value=true, session_id="#2333")
-```
-
 ## Gate 4: Memory Review
 
 Review your session for memories worth preserving:
@@ -104,38 +121,17 @@ set_variable(name="memory_review_completed", value=true, session_id="#2333")
 
 Do NOT create memories for bugs or errors — create tasks instead.
 
-## Gate 5: Completion Readiness Evidence
-
-Loading `verification-before-completion` is guidance only. It does not clear
-this gate.
-
-Successful validation commands such as `uv run pytest ...`, `uv run ruff check ...`,
-`uv run mypy ...`, and `npm test` are recorded automatically. If the evidence is
-manual review, PR state, or another non-command artifact, record it explicitly:
-
-```python
-call_tool("gobby-sessions", "record_verification_evidence", {
-    "summary": "Read the diff and verified the touched lifecycle gates match the task",
-    "evidence_type": "manual_diff_review",
-    "supports": "completion readiness for #N"
-}, session_id="#2333")
-```
-
-Editing files after evidence is recorded clears this gate. Failed validation
-commands also clear it and reset `errors_resolved`.
-
 ---
 
 ## Complete Close Sequence (interactive sessions)
 
 ```
-1. git add + git commit (with [<project_name>-#<task_number>] in the message, e.g. [gobby-#N])
-2. Run verification commands from .gobby/project.json on touched files → fix everything
-3. set_variable(errors_resolved=true)
+1. Run verification commands from .gobby/project.json after the final file edit
+2. Fix every error, warning, and failure you encounter
+3. git add + git commit (with [<project_name>-#<task_number>] in the message, e.g. [gobby-#N])
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
-6. Ensure verification evidence is recorded automatically or via record_verification_evidence
-7. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
+6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
 ```
 
 ## Review Flow (autonomous/pipeline agents)
@@ -207,7 +203,7 @@ call_tool("gobby-tasks", "close_task", {
 }, session_id="#2333")
 ```
 
-Gates 3-4 still apply. `changes_summary` is still required — explain why no changes were needed.
+Fresh evidence and memory review still apply. `changes_summary` is still required — explain why no changes were needed.
 
 ## Common Mistakes
 
@@ -216,8 +212,8 @@ Gates 3-4 still apply. `changes_summary` is still required — explain why no ch
 | Close without `commit_sha` | Gate 2 blocks — no commit to validate | Commit first, pass `commit_sha` to `close_task` |
 | Separate `link_commit` then `close_task` | Unnecessary extra call | Pass `commit_sha` directly to `close_task` |
 | `git add -A` | May stage secrets or binaries | Stage specific files |
-| File task instead of fixing error | Gate 3 blocks — `errors_resolved` not set | Investigate and fix first |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |
-| Load verification skill but record no evidence | Gate 5 blocks — `verification_evidence_recorded` not set | Run validation or record non-command evidence |
+| Record evidence before final edits | Gate 1 blocks after later file edits clear evidence | Run validation after the final edit |
+| Run validation that fails, then record manual evidence | Gate 1 blocks because failed validation is unresolved | Run a later successful validation command |
 | Omit `changes_summary` | close_task rejects — required for leaf tasks | Describe what changed and why |
 | Use review tools in interactive session | Blocked by rule | Use `close_task` — user is the reviewer |

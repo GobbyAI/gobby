@@ -100,7 +100,6 @@ def test_loads_required_skills_before_review() -> None:
         "holistic-review",
         "tech-writer",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     for skill_name in agent["step_variables"]["required_skills"]:

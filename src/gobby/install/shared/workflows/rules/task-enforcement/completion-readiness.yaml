@@ -2,13 +2,13 @@ tags: [task-enforcement, enforcement, lifecycle, completion-readiness, gobby, de
 
 rules:
   require-completion-readiness-evidence:
-    description: "Gate lifecycle success transitions until verification evidence is recorded"
+    description: "Gate lifecycle success transitions until fresh verification evidence is ready"
     event: before_tool
     enabled: true
     priority: 50
     when: >
       not variables.get('plan_mode')
-      and not variables.get('verification_evidence_recorded')
+      and not completion_evidence_ready(variables)
       and (variables.get('session_edited_files', []) or variables.get('task_has_commits'))
     effects:
       - type: block
@@ -24,10 +24,12 @@ rules:
           - "gobby-tasks-ops:close_linked_github_issue"
           - "gobby-merge:merge_apply"
         reason: |
-          Completion readiness requires fresh recorded verification evidence.
+          Completion readiness requires fresh successful verification evidence.
 
           Run a validation command such as pytest, ruff check, mypy, or npm test.
           Successful validation commands are recorded automatically.
+          A failed validation command blocks readiness until a later validation
+          command succeeds.
 
           For non-command evidence, call:
           record_verification_evidence(summary="...", evidence_type="...", supports="...")

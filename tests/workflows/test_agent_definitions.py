@@ -132,7 +132,6 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
         "holistic-review",
         "tech-writer",
         "task-transitions",
-        "verification-before-completion",
     }.issubset(set(agent["step_variables"]["required_skills"]))
     for skill_name in agent["step_variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
@@ -221,14 +220,12 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert agent["step_variables"]["required_skills"] == [
         "development-discipline",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
     for skill_name in agent["step_variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
     assert "development-discipline" in agent["instructions"]
     assert "task-transitions" in agent["instructions"]
-    assert "verification-before-completion" in agent["instructions"]
     assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
@@ -324,7 +321,7 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
     assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"tech-writer", "task-transitions", "verification-before-completion"}.issubset(
+    assert {"tech-writer", "task-transitions"}.issubset(
         set(agent["step_variables"]["required_skills"])
     )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]

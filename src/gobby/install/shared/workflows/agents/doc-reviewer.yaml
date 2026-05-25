@@ -20,7 +20,7 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details.
      If the active workflow step is already past CLAIM, do not call claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact docs review
-     skills: code-index, tech-writer, task-transitions, verification-before-completion.
+     skills: code-index, tech-writer, and task-transitions.
   3. REVIEW: Perform ordered documentation review:
      a. docs_spec_compliance: compare task description, validation criteria,
         required docs files, audience, scope, and diff. Reject immediately on
@@ -83,7 +83,6 @@ step_variables:
     - code-index
     - tech-writer
     - task-transitions
-    - verification-before-completion
   required_skills_loaded: false
   review_approved: false
   review_complete: false
@@ -122,7 +121,6 @@ steps:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="tech-writer") on gobby-skills
       3. get_skill(name="task-transitions") on gobby-skills
-      4. get_skill(name="verification-before-completion") on gobby-skills
       Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->

@@ -50,8 +50,6 @@ TASK_ENFORCEMENT_RULES = {
     "block-reopen-task",
     "require-task-creation-skill-on-schema",
     "require-task-transitions-skill-on-lifecycle",
-    "require-verification-before-completion-on-lifecycle-call",
-    "require-verification-before-completion-on-schema",
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
@@ -69,8 +67,6 @@ TASK_ENFORCEMENT_RULES = {
 REPLACED_TASK_SKILL_RULES = {
     "inject-task-creation-on-schema",
     "inject-transition-skill",
-    "inject-verification-before-completion-on-lifecycle-call",
-    "inject-verification-before-completion-on-schema",
 }
 
 
@@ -648,7 +644,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -667,7 +663,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -686,7 +682,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }

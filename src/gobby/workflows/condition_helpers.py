@@ -9,11 +9,15 @@ so they can be called from rule ``when`` conditions, e.g.:
 import logging
 import re
 import shlex
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
 from gobby.tasks.state_semantics import projected_task_state
+from gobby.workflows.verification_evidence import (
+    VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
+    VERIFICATION_EVIDENCE_VARIABLE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +170,40 @@ def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
     if executable in {"python", "python3"} or executable.startswith("python3."):
         return len(tokens) > 3 and tokens[1] == "-m" and tokens[2] == "gobby" and tokens[3] == "build"
     return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
+
+
+def completion_evidence_ready(variables: Mapping[str, Any] | None) -> bool:
+    """Return whether current session evidence is sufficient for completion."""
+    if not isinstance(variables, Mapping):
+        return False
+
+    evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
+    if not isinstance(evidence_items, list):
+        return False
+
+    successful_evidence_seen = False
+    failed_validation_unresolved = False
+
+    for item in evidence_items:
+        if not isinstance(item, Mapping):
+            continue
+        evidence_type = item.get("evidence_type")
+        if not isinstance(evidence_type, str):
+            continue
+
+        success = item.get("success")
+        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
+            if success is True:
+                successful_evidence_seen = True
+                failed_validation_unresolved = False
+            elif success is False:
+                failed_validation_unresolved = True
+            continue
+
+        if success is True:
+            successful_evidence_seen = True
+
+    return successful_evidence_seen and not failed_validation_unresolved
 
 
 def _strip_env_assignments(tokens: list[str]) -> list[str]:

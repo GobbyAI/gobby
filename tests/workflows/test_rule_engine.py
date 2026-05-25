@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -296,19 +297,19 @@ class TestSetVariableEffect:
                 effects=[
                     RuleEffect(
                         type="set_variable",
-                        variable="error_triage_blocks",
-                        value="{{ variables.get('error_triage_blocks', 0) + 1 }}",
+                        variable="template_counter",
+                        value="{{ variables.get('template_counter', 0) + 1 }}",
                     )
                 ],
             ),
         )
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"error_triage_blocks": 2}
+        variables: dict[str, Any] = {"template_counter": 2}
         event = _make_event(HookEventType.STOP)
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables["error_triage_blocks"] == 3
+        assert variables["template_counter"] == 3
 
 
 class TestInjectContextEffect:
@@ -491,7 +492,7 @@ class TestSessionOverrides:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_id, "block-rule", 0),
+            (str(uuid.uuid4()), session_id, "block-rule", False),
         )
 
         event = _make_event(HookEventType.BEFORE_TOOL)
@@ -517,7 +518,7 @@ class TestSessionOverrides:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), "session-a", "block-rule", 0),
+            (str(uuid.uuid4()), "session-a", "block-rule", False),
         )
 
         event = _make_event(HookEventType.BEFORE_TOOL)
@@ -2681,10 +2682,10 @@ class TestLiveActiveRuleSelection:
     async def test_active_rule_names_remain_fallback_when_agent_json_is_invalid(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Fall back to stored active rule names when the live agent JSON is invalid."""
+        """Fall back to stored active rule names when the live agent definition is invalid."""
         manager.create(
             name="default",
-            definition_json="{",
+            definition_json=json.dumps({"name": "default", "surfaces": ["invalid"]}),
             workflow_type="agent",
             source="custom",
         )

@@ -106,18 +106,15 @@ def test_loads_required_skills_before_review() -> None:
     assert agent["step_variables"]["required_skills"] == [
         "code-index",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert claim_step["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     assert "code-index" in load_step["status_message"]
     assert "task-transitions" in load_step["status_message"]
-    assert "verification-before-completion" in load_step["status_message"]
     assert "tech-writer" not in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]
     assert 'get_skill(name="code-index")' in load_step["status_message"]
     assert 'get_skill(name="task-transitions")' in load_step["status_message"]
-    assert 'get_skill(name="verification-before-completion")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "review",

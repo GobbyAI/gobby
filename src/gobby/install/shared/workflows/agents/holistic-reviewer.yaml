@@ -27,12 +27,10 @@ instructions: |
 
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the `code-index`,
-  `holistic-review`, `tech-writer`, `task-transitions`, and
-  `verification-before-completion` skills. Call get_skill(name="code-index"),
-  get_skill(name="holistic-review"), get_skill(name="tech-writer"),
-  get_skill(name="task-transitions"), and
-  get_skill(name="verification-before-completion") on gobby-skills, then
-  continue.
+  `holistic-review`, `tech-writer`, and `task-transitions` skills. Call
+  get_skill(name="code-index"), get_skill(name="holistic-review"),
+  get_skill(name="tech-writer"), and get_skill(name="task-transitions") on
+  gobby-skills, then continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
   `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections when present, or through child
@@ -41,8 +39,8 @@ instructions: |
 
   WORKFLOW:
   - Claim the assigned epic and read it.
-  - Load code-index, holistic-review, tech-writer, task-transitions, and
-    verification-before-completion skills before reviewing.
+  - Load code-index, holistic-review, tech-writer, and task-transitions skills
+    before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
   - Read the plan artifact when present. If no plan artifact exists for a
@@ -93,7 +91,6 @@ step_variables:
     - holistic-review
     - tech-writer
     - task-transitions
-    - verification-before-completion
   required_skills_loaded: false
   review_complete: false
 
@@ -130,7 +127,6 @@ steps:
       2. get_skill(name="holistic-review") on gobby-skills
       3. get_skill(name="tech-writer") on gobby-skills
       4. get_skill(name="task-transitions") on gobby-skills
-      5. get_skill(name="verification-before-completion") on gobby-skills
       Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->

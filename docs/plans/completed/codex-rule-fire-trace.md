@@ -186,9 +186,9 @@ File is written successfully.
 |---|---|
 | `compress-bash-output` | **REWRITES** through gsqz |
 
-### `set_variable(name="errors_resolved", value=true, session_id="...")`
+### Successful validation evidence
 
-Clears the error-triage gate for Phase 8.
+Validation commands record completion-readiness evidence for Phase 8.
 
 ---
 
@@ -238,7 +238,7 @@ Clears the memory-review gate.
 | `require-schema-before-call` | **PASSES** | `close_task` is unlocked |
 | `require-clean-tree-before-status` | **PASSES** | Working tree is clean (committed in Phase 7) |
 | `require-commit-before-status` | **PASSES** | `task_has_commits=true` (set by commit detector) |
-| `require-error-triage-before-status` | **PASSES** | `errors_resolved=true` (set in Phase 6) |
+| `require-completion-readiness-evidence` | **PASSES** | Successful verification evidence exists from Phase 6 |
 | `require-memory-review-before-status` | **PASSES** | `memory_review_completed=true` (set above) |
 | `strip-skip-validation-with-commit` | Only fires if `skip_validation` was passed -- strips it since commits exist |
 
@@ -246,7 +246,7 @@ If any gate **BLOCKS**, the agent gets a specific error telling it what to do. C
 
 - Forgot to commit -> `require-clean-tree-before-status` blocks
 - Committed but SHA not detected -> `require-commit-before-status` blocks
-- Didn't run lint/tests -> `require-error-triage-before-status` blocks
+- Didn't run lint/tests -> `require-completion-readiness-evidence` blocks
 - Didn't review memories -> `require-memory-review-before-status` blocks
 
 ---
@@ -297,7 +297,7 @@ If `require-task-close` **BLOCKS** (task still claimed), and the agent tries `As
 | `task_has_commits` | Commit detector observer | `require-commit-before-status`, `strip-skip-validation-with-commit` |
 | `code_index_loaded` | `block-and-teach-code-index` | `block-and-teach-code-index` |
 | `context7_loaded` | `block-and-teach-context7` | `block-and-teach-context7` |
-| `errors_resolved` | Manual `set_variable` | `require-error-triage-before-status` |
+| `verification_evidence` | Validation observer or `record_verification_evidence` | `require-completion-readiness-evidence` |
 | `memory_review_completed` | Manual `set_variable` | `require-memory-review-before-status` |
 | `unlocked_tools` | `track-schema-lookup` | `require-schema-before-call` |
 | `listed_servers` | `track-listed-servers` | `require-server-listed-for-schema` |
