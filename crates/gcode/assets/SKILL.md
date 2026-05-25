@@ -14,11 +14,11 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 ## Search
 
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
-- `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
+- `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
 - `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. All search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. All search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
 
 ## Retrieval
 

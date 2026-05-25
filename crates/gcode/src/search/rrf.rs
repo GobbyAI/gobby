@@ -38,12 +38,17 @@ pub fn merge(sources: Vec<(&str, Vec<String>)>) -> Vec<MergedResult> {
         .into_iter()
         .map(|(id, source_ranks)| {
             let score: f64 = source_ranks.values().map(|&rank| rrf_score(rank)).sum();
-            let source_names: Vec<String> = source_ranks.into_keys().collect();
+            let mut source_names: Vec<String> = source_ranks.into_keys().collect();
+            source_names.sort();
             (id, score, source_names)
         })
         .collect();
 
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     results
 }
 
@@ -86,6 +91,21 @@ mod tests {
         assert_eq!(a_result.2.len(), 2);
         // "a" should be ranked first
         assert_eq!(results[0].0, "a");
+    }
+
+    #[test]
+    fn test_merge_sorts_sources_deterministically() {
+        let results = merge(vec![
+            ("semantic", vec!["b".into(), "a".into()]),
+            ("fts", vec!["b".into()]),
+        ]);
+
+        assert_eq!(results[0].0, "b");
+        assert_eq!(
+            results[0].2,
+            vec!["fts".to_string(), "semantic".to_string()]
+        );
+        assert_eq!(results[1].0, "a");
     }
 
     #[test]

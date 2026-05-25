@@ -113,6 +113,9 @@ enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
+        /// Include FalkorDB graph neighbors in the exact-first ranking [requires Gobby]
+        #[arg(long)]
+        with_graph: bool,
     },
     /// pg_search BM25 search on symbol metadata (names, signatures, docstrings)
     SearchText {
@@ -294,6 +297,7 @@ fn main() -> anyhow::Result<()> {
                     language: language.as_deref(),
                     paths: &paths,
                     format: cli.format,
+                    with_graph: true,
                 },
             )
         }
@@ -304,6 +308,7 @@ fn main() -> anyhow::Result<()> {
             offset,
             kind,
             language,
+            with_graph,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search_symbol(
@@ -316,6 +321,7 @@ fn main() -> anyhow::Result<()> {
                     language: language.as_deref(),
                     paths: &paths,
                     format: cli.format,
+                    with_graph,
                 },
             )
         }
@@ -538,6 +544,7 @@ mod tests {
                 offset,
                 kind,
                 language,
+                with_graph,
             } => {
                 assert_eq!(query, "outline");
                 assert_eq!(paths, vec!["crates/gcode/src"]);
@@ -545,7 +552,19 @@ mod tests {
                 assert_eq!(offset, 0);
                 assert_eq!(kind.as_deref(), Some("function"));
                 assert_eq!(language.as_deref(), Some("rust"));
+                assert!(!with_graph);
             }
+            _ => panic!("expected search-symbol command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_symbol_with_graph() {
+        let cli = Cli::try_parse_from(["gcode", "search-symbol", "outline", "--with-graph"])
+            .expect("search-symbol --with-graph parses");
+
+        match cli.command {
+            Command::SearchSymbol { with_graph, .. } => assert!(with_graph),
             _ => panic!("expected search-symbol command"),
         }
     }

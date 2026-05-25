@@ -1277,13 +1277,15 @@ fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut Extr
         return;
     };
 
-    let module = rest
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .split('.')
-        .next()
-        .unwrap_or_default();
+    let mut tokens = rest.split_whitespace();
+    let mut module_token = tokens.next().unwrap_or_default();
+    if matches!(
+        module_token,
+        "class" | "struct" | "enum" | "protocol" | "func" | "typealias" | "var" | "let"
+    ) {
+        module_token = tokens.next().unwrap_or_default();
+    }
+    let module = module_token.split('.').next().unwrap_or_default();
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
         module_name: rest.to_string(),

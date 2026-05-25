@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] — gcode
+
+### Added
+
+#### gcode
+
+- **Graph-aware symbol lookup** — `gcode search-symbol --with-graph` keeps
+  exact-first ranking and adds FalkorDB graph neighbors when graph config is
+  available.
+
+### Changed
+
+#### gcode
+
+- **Search scoring metadata** — hybrid JSON output now uses `score` for the
+  final displayed rank score, exposes raw RRF as `rrf_score`, and sorts
+  `sources` deterministically.
+
+- **Path-filter fallback visibility** — path globs that cannot be pushed into
+  SQL now log a warning and surface a user-facing hint while still enforcing
+  exact glob semantics through post-filtering.
+
+### Fixed
+
+#### gcode
+
+- **External call extraction** — scoped Swift imports like
+  `import struct Foundation.Date` bind the module root correctly; parameter and
+  local variable shadowing prevents false external call targets; Dart textual
+  call extraction now tracks raw and triple-quoted multiline strings; C/C++
+  macro detection accepts both `#define` and `# define`.
+
+- **clangd cleanup errors** — C/C++ semantic resolution now returns the original
+  resolution error first and only closes open clangd files after successful
+  resolution.
+
+## [0.1.2] — gloc
+
+### Changed
+
+#### gloc
+
+- **MSRV metadata** — raised the crate `rust-version` to 1.88 to match the
+  workspace policy.
+
 ## [0.8.5] — gcode
 
 ### Changed

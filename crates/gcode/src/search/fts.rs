@@ -116,21 +116,29 @@ fn path_like_prefixes(paths: &[String]) -> Option<Vec<String>> {
     Some(prefixes)
 }
 
+pub fn path_filter_falls_back(paths: &[String]) -> bool {
+    !paths.is_empty() && path_like_prefixes(paths).is_none()
+}
+
 fn push_path_filter(
     conditions: &mut Vec<String>,
     params: &mut Vec<PgParam>,
     alias: &str,
     paths: &[String],
-) {
+) -> bool {
     let Some(prefixes) = path_like_prefixes(paths) else {
-        log::debug!(
-            "omitting SQL path filter for alias `{alias}` because path filters {:?} cannot be converted to LIKE prefixes; relying on post-query glob matching",
-            paths
-        );
-        return;
+        for path in paths
+            .iter()
+            .filter(|path| glob_to_like_prefix(path).is_none())
+        {
+            log::warn!(
+                "omitting SQL path filter for alias `{alias}` because path filter `{path}` cannot be converted to a LIKE prefix; relying on post-query glob matching",
+            );
+        }
+        return true;
     };
     if prefixes.is_empty() {
-        return;
+        return false;
     }
 
     let predicates = prefixes
@@ -141,6 +149,7 @@ fn push_path_filter(
         })
         .collect::<Vec<_>>();
     conditions.push(format!("({})", predicates.join(" OR ")));
+    false
 }
 
 fn push_symbol_filters(
@@ -936,6 +945,8 @@ mod tests {
 
         let mixed = vec!["src/**".to_string(), "*.rs".to_string()];
         assert!(path_like_prefixes(&mixed).is_none());
+        assert!(path_filter_falls_back(&mixed));
+        assert!(!path_filter_falls_back(&paths));
     }
 
     #[test]

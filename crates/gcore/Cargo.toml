@@ -2,7 +2,7 @@
 name = "gobby-core"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
 description = "Shared primitives for Gobby CLI tools — project root resolution, bootstrap config, daemon URL helpers"
 license = "Apache-2.0"

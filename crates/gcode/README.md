@@ -55,7 +55,7 @@ codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / 
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
 2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → Reciprocal Rank Fusion
+3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → exact-tiered RRF results with raw `rrf_score` metadata
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -121,6 +121,7 @@ gcode search "query" --kind function      # Filter by symbol kind
 gcode search "query" --language rust      # Filter by source language
 gcode search "query" src/**/*.rs          # Filter by path or glob
 gcode search-symbol "outline"             # Exact-first symbol/command lookup
+gcode search-symbol "outline" --with-graph # Exact-first lookup plus graph neighbors
 gcode search-symbol "outline" --kind function --language rust
 gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures

@@ -48,12 +48,6 @@ jobs:
       - name: Run tests
         run: cargo test -p gobby-code
 
-      - name: Clippy without default features
-        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
-
-      - name: Run tests
-        run: cargo test -p gobby-code
-
       - name: Run tests without default features
         run: cargo test -p gobby-code --no-default-features
 

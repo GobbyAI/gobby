@@ -110,6 +110,7 @@ impl Symbol {
             line_start: self.line_start,
             line_end: self.line_end,
             score: 0.0,
+            rrf_score: None,
             summary: self.summary.clone(),
             signature: self.signature.clone(),
             sources: None,
@@ -262,6 +263,8 @@ pub struct SearchResult {
     pub line_start: usize,
     pub line_end: usize,
     pub score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rrf_score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

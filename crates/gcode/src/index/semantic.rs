@@ -163,7 +163,8 @@ fn logical_source_lines(text: &str) -> Vec<String> {
 }
 
 fn macro_definition_name(line: &str) -> Option<&str> {
-    let rest = line.trim_start().strip_prefix("#define")?;
+    let rest = line.trim_start().strip_prefix('#')?.trim_start();
+    let rest = rest.strip_prefix("define")?;
     if !rest.chars().next().is_some_and(char::is_whitespace) {
         return None;
     }
@@ -511,11 +512,9 @@ impl SemanticCallResolver for ClangdResolver {
                 &locations,
             ))
         })();
-        if let Err(close_err) = self.close_open_files() {
-            result?;
-            return Err(close_err).context("close clangd open files");
-        }
-        result
+        let resolved = result?;
+        self.close_open_files().context("close clangd open files")?;
+        Ok(resolved)
     }
 }
 
@@ -752,10 +751,15 @@ mod tests {
             b"#define \\\ntrace(value) \\\nlog(value)\nvoid run() { trace(1); }",
             "trace"
         ));
+        assert!(source_defines_macro(
+            b"# define spaced(value) log(value)\nvoid run() { spaced(1); }",
+            "spaced"
+        ));
         assert!(!source_defines_macro(
             b"#define trace_wrapper(value) trace(value)",
             "trace"
         ));
+        assert!(!source_defines_macro(b"# defined trace(value)", "trace"));
     }
 
     #[test]
