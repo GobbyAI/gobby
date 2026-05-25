@@ -190,7 +190,7 @@ class PostgresHubDatabase:
     def __init__(self, dsn: str) -> None:
         self._pool = ConnectionPool(
             conninfo=dsn,
-            open=True,
+            open=False,
             min_size=int(os.getenv("PGPOOL_MIN", "2")),
             max_size=int(os.getenv("PGPOOL_MAX", "10")),
             timeout=int(os.getenv("PGCONNECT_TIMEOUT", "5")),
@@ -200,6 +200,28 @@ class PostgresHubDatabase:
             },
         )
         self._state = threading.local()
+        self._open_lock = threading.Lock()
+        self._pool_opened = False
+
+    def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
+        """Open the lazy connection pool before first use."""
+        open_pool = getattr(self._pool, "open", None)
+        if not callable(open_pool):
+            return
+
+        lock = getattr(self, "_open_lock", None)
+        if lock is None:
+            self._open_lock = threading.Lock()
+            lock = self._open_lock
+
+        with lock:
+            if getattr(self, "_pool_opened", False):
+                return
+            open_timeout = timeout
+            if open_timeout is None:
+                open_timeout = float(os.getenv("PGPOOL_OPEN_TIMEOUT", "30"))
+            open_pool(wait=wait, timeout=open_timeout)
+            self._pool_opened = True
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
@@ -228,6 +250,7 @@ class PostgresHubDatabase:
         is_immediate: bool,
         initial_lock: LockTarget | None = None,
     ) -> Iterator[Transaction]:
+        self.open()
         start_len = _lock_stack_len(self._state)
         try:
             if initial_lock is not None:
@@ -308,10 +331,12 @@ class PostgresHubDatabase:
         runner.apply_pending()
 
     def _postgres_baseline_already_applied(self) -> bool:
+        self.open()
         with self._pool.connection() as conn:
             return _classify_baseline_state(conn) == "already_baselined"
 
     def _apply_postgres_baseline(self) -> None:
+        self.open()
         with self._pool.connection() as fast_conn:
             if _classify_baseline_state(fast_conn) == "already_baselined":
                 return
@@ -344,6 +369,7 @@ class PostgresHubDatabase:
 
     def close(self) -> None:
         self._pool.close()
+        self._pool_opened = False
 
 
 class _PostgresTransaction:

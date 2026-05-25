@@ -118,6 +118,22 @@ def extract_json_object(text: str | None) -> dict[str, Any] | None:
         return None
 
 
+def json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON payloads semantically across strings and decoded values."""
+    left_value: object = _decode_json_if_text(left)
+    right_value: object = _decode_json_if_text(right)
+    return left_value == right_value
+
+
+def _decode_json_if_text(value: Any) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
 def decode_llm_response[T](
     text: str | None,
     response_type: type[T],

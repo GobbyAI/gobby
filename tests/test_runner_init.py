@@ -23,7 +23,7 @@ def _set_config_value(db: Any, key: str, value: Any, *, is_secret: bool = False)
         INSERT INTO config_store (key, value, source, is_secret, updated_at)
         VALUES (?, ?, 'test', ?, CURRENT_TIMESTAMP)
         """,
-        (key, json.dumps(value), int(is_secret)),
+        (key, json.dumps(value), is_secret),
     )
 
 
@@ -200,6 +200,44 @@ class TestInitHubDatabase:
         assert result is db
         postgres_database.assert_called_once_with("postgresql://gobby:secret@localhost:60891/gobby")
         db.apply_migrations.assert_called_once_with()
+
+    def test_postgres_startup_retries_transient_connection_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PostgreSQL startup retries transient pool/connection failures."""
+        import psycopg
+
+        from gobby.runner_init import helpers
+
+        sleeps: list[float] = []
+
+        class FakePostgresDatabase:
+            calls = 0
+
+            def __init__(self, _dsn: str) -> None:
+                pass
+
+            def apply_migrations(self) -> None:
+                self.calls += 1
+                if self.calls < 3:
+                    raise psycopg.OperationalError("database is starting")
+
+        monkeypatch.setattr(
+            "gobby.storage.hub.postgres.PostgresHubDatabase",
+            FakePostgresDatabase,
+        )
+        monkeypatch.setattr(helpers.time, "sleep", sleeps.append)
+        config = SimpleNamespace(
+            hub_backend="postgres",
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        )
+
+        result = helpers.init_hub_database(config)
+
+        assert isinstance(result, FakePostgresDatabase)
+        assert result.calls == 3
+        assert sleeps == [0.25, 0.5]
 
     def test_postgres_backend_requires_database_url(self) -> None:
         """PostgreSQL backend requires a configured database_url."""

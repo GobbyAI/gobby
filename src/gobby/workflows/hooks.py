@@ -548,13 +548,16 @@ class WorkflowHookHandler:
                         )
                         if step_context is not None:
                             variables["current_step"] = step_context.current_step
-                            variables.setdefault("_step_workflow_name", step_context.workflow_name)
-                            if step_context.status_message:
-                                variables["current_step_status_message"] = (
-                                    step_context.status_message
-                                )
-                            if step_context.description:
-                                variables["current_step_description"] = step_context.description
+                            variables["_step_workflow_name"] = step_context.workflow_name
+                            variables["current_step_status_message"] = (
+                                step_context.status_message or ""
+                            )
+                            variables["current_step_description"] = step_context.description or ""
+                        else:
+                            variables["current_step"] = ""
+                            variables["_step_workflow_name"] = ""
+                            variables["current_step_status_message"] = ""
+                            variables["current_step_description"] = ""
                     except Exception as e:
                         logger.debug(f"Could not inject current_step from workflow instance: {e}")
 

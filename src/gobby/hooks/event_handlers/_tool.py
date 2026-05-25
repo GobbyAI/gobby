@@ -278,6 +278,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 return
 
             from gobby.workflows.state_manager import SessionVariableManager
+            from gobby.workflows.verification_evidence import (
+                VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+                VERIFICATION_EVIDENCE_RESET_UPDATES,
+            )
 
             db = getattr(self._session_manager, "db", None)
             if db:
@@ -286,11 +290,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     session_id,
                     "session_edited_files",
                     [rel_path],
-                    condition_name="verification_evidence_recorded",
-                    updates={
-                        "verification_evidence_recorded": False,
-                        "verification_evidence": [],
-                    },
+                    condition_name=VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+                    updates=VERIFICATION_EVIDENCE_RESET_UPDATES,
                 )
         except Exception as e:
             logger.debug(f"Failed to track session edited file: {e}")

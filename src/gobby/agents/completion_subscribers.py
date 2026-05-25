@@ -68,18 +68,7 @@ def subscribe_agent_completion(
     """Register in-memory and durable subscribers for an agent completion event."""
     subscribers = completion_subscriber_lineage(subscriber_session_id, session_manager)
     if completion_registry is not None:
-        try:
-            completion_registry.register(run_id, subscribers=subscribers)
-        except Exception as e:
-            # completion_registry.register(run_id, subscribers) is best-effort wake wiring.
-            logger.warning(
-                "Failed to register completion event for run %s with subscribers %s: %s",
-                run_id,
-                subscribers,
-                e,
-                exc_info=True,
-            )
-            return subscribers
+        completion_registry.register(run_id, subscribers=subscribers)
 
     if db is not None:
         try:
@@ -90,7 +79,7 @@ def subscribe_agent_completion(
             try:
                 manager = LocalPipelineExecutionManager(db=db, project_id="")
                 manager.add_completion_subscribers(run_id, subscribers)
-            except (ValueError, psycopg.Error):
+            except (ValueError, sqlite3.DatabaseError, psycopg.Error):
                 logger.debug(
                     "Failed to persist completion subscribers for run %s",
                     run_id,

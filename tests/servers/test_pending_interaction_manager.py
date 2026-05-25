@@ -189,7 +189,6 @@ class TestCleanup:
         assert result == {"decision": "deny", "reason": "daemon_shutdown"}
         assert len(manager._waiters) == 0
         assert len(manager._timeouts) == 0
-        assert len(manager._results) == 0
 
     @pytest.mark.asyncio
     async def test_cleanup_clears_state(self, manager: PendingInteractionManager) -> None:
@@ -197,7 +196,6 @@ class TestCleanup:
         await manager.cleanup()
         assert len(manager._waiters) == 0
         assert len(manager._timeouts) == 0
-        assert len(manager._results) == 0
 
     @pytest.mark.asyncio
     async def test_cleanup_wakes_waiter_with_shutdown_denial(
@@ -213,7 +211,6 @@ class TestCleanup:
         assert result == {"decision": "deny", "reason": "daemon_shutdown"}
         assert len(manager._waiters) == 0
         assert len(manager._timeouts) == 0
-        assert len(manager._results) == 0
 
 
 class TestExpireAllPending:

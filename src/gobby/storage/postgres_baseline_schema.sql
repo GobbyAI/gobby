@@ -465,6 +465,9 @@ CREATE INDEX idx_build_runs_project_started
 CREATE INDEX idx_build_runs_root_started
     ON build_runs(root_task_id, started_at DESC);
 
+CREATE INDEX idx_build_runs_project_root_started
+    ON build_runs(project_id, root_task_id, started_at DESC);
+
 CREATE INDEX idx_build_runs_input_started
     ON build_runs(project_id, input_ref, started_at DESC);
 

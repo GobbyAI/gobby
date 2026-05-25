@@ -250,16 +250,20 @@ def _has_summary_refresh_source(session: Any) -> bool:
 def _compact_handoff_refresh_timeout_seconds() -> float:
     try:
         from gobby.config.app import load_config
+    except ImportError as exc:
+        logger.debug("Using default compact handoff refresh timeout: %s", exc)
+        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
 
-        config = load_config()
-        compact_handoff = getattr(config, "compact_handoff", None)
-        value = getattr(
-            compact_handoff,
-            "refresh_timeout_seconds",
-            _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
-        )
+    config = load_config()
+    compact_handoff = getattr(config, "compact_handoff", None)
+    value = getattr(
+        compact_handoff,
+        "refresh_timeout_seconds",
+        _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
+    )
+    try:
         return float(value)
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
         logger.debug("Using default compact handoff refresh timeout: %s", exc)
         return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
 

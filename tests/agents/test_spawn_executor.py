@@ -408,12 +408,14 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
         )
 
+        call_order: list[str] = []
+        spawn_context = MagicMock(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123def456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
         mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123def456",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
-            )
+            side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context
         )
 
         mock_spawner = MagicMock()
@@ -435,12 +437,14 @@ class TestExecuteSpawn:
             ),
             patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
+            mock_preapprove.side_effect = lambda *_args, **_kwargs: call_order.append("preapprove")
             result = await execute_spawn(request)
 
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
             mock_preapprove.assert_called_once_with("codex", "/path")
             mock_prepare.assert_called_once()
+            assert call_order == ["prepare", "preapprove"]
             call_kwargs = mock_prepare.call_args.kwargs
             assert call_kwargs["source"] == "codex"
             assert call_kwargs["agent_run_id"] == "run-abc123def456"

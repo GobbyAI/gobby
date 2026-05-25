@@ -825,6 +825,54 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
     assert subscribers == [coordinator.id]
 
 
+def test_spawn_action_skips_cross_project_build_coordinator_completion(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    other_project = LocalProjectManager(temp_db).create(name="other-project")
+    session_manager = SessionManager(temp_db)
+    coordinator = session_manager.register(
+        external_id="coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=other_project.id,
+        title="Coordinator",
+    )
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+    completion_registry = MagicMock()
+    services = SimpleNamespace(
+        session_manager=session_manager,
+        completion_registry=completion_registry,
+    )
+
+    _subscribe_build_coordinator_completion(
+        db=temp_db,
+        project_id=sample_project["id"],
+        task_id=task.id,
+        run_id="run-cross-project",
+        services=services,
+    )
+
+    completion_registry.register.assert_not_called()
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-cross-project"
+    )
+    assert subscribers == []
+
+
 async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

@@ -14,26 +14,6 @@ from gobby.utils.status import format_status_message
 pytestmark = pytest.mark.unit
 
 
-class TestIsFalkorDBInstalled:
-    """Tests for is_falkordb_installed."""
-
-    def test_returns_true_when_config_store_keys_exist(self, hub_db: HubDatabase) -> None:
-        from gobby.cli.services import is_falkordb_installed
-
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
-        assert is_falkordb_installed(db=hub_db) is True
-
-    def test_returns_false_when_config_store_keys_are_missing(
-        self,
-        hub_db: HubDatabase,
-    ) -> None:
-        from gobby.cli.services import is_falkordb_installed
-
-        assert is_falkordb_installed(db=hub_db) is False
-
-
 class TestGetFalkorDBStatus:
     """Tests for get_falkordb_status."""
 

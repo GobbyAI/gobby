@@ -126,6 +126,32 @@ def _new_db(module, pool: _Pool):
     return db
 
 
+def test_postgres_pool_opens_lazily(monkeypatch) -> None:
+    module = _postgres_module()
+    calls: dict[str, object] = {}
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            calls["constructor_open"] = kwargs["open"]
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            calls["opened"] = (wait, timeout)
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    assert calls["constructor_open"] is False
+    assert "opened" not in calls
+
+    db.open(timeout=1.5)
+    db.open(timeout=9.0)
+
+    assert calls["opened"] == (True, 1.5)
+
+
 def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypatch) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")

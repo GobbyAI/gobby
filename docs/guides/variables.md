@@ -184,7 +184,11 @@ not only by declarative rules:
 | `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
 | `session_edited_files` | Updated by tool observers as the session edits files |
 
-`errors_resolved` is not auto-reset by the rule engine.
+`errors_resolved` is reset by verification observers after failed validation commands.
+Fresh successful validation commands set `verification_evidence_recorded` and append
+`validation_command` evidence to `verification_evidence`; manual evidence should use
+`gobby-sessions:record_verification_evidence` with a snake-case `evidence_type` such as
+`manual_diff_review`.
 
 ---
 

@@ -17,6 +17,7 @@ from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.utils.json_helpers import json_equal
 from gobby.workflows.definitions import AgentDefinitionBody
 
 __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
@@ -62,16 +63,7 @@ def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
 
 def _definition_json_equal(existing_json: Any, desired_json: str) -> bool:
     """Compare definition JSON semantically across text and Postgres JSONB formats."""
-    try:
-        existing_payload = (
-            json.loads(existing_json) if isinstance(existing_json, str) else existing_json
-        )
-        desired_payload: object = json.loads(desired_json)
-        existing_payload_obj: object = existing_payload
-        return existing_payload_obj == desired_payload
-    except (TypeError, json.JSONDecodeError):
-        existing_json_obj: object = existing_json
-        return existing_json_obj == desired_json
+    return json_equal(existing_json, desired_json)
 
 
 def _build_agent_update_fields(

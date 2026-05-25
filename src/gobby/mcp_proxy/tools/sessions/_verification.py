@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.verification_evidence import append_verification_evidence
+from gobby.workflows.verification_evidence import (
+    VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+    VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+    VERIFICATION_EVIDENCE_VARIABLE,
+    append_verification_evidence,
+    validate_verification_evidence,
+)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -52,7 +58,10 @@ def register_verification_tools(
             )
             return {"success": False, "error": "Session manager and database are required"}
 
-        if not summary.strip() or not evidence_type.strip() or not supports.strip():
+        summary = summary.strip()
+        evidence_type = evidence_type.strip()
+        supports = supports.strip()
+        if not summary or not evidence_type or not supports:
             return {
                 "success": False,
                 "error": "summary, evidence_type, and supports must be non-empty",
@@ -87,10 +96,12 @@ def register_verification_tools(
             "tool_name": "record_verification_evidence",
             "success": True,
         }
+        if error := validate_verification_evidence(evidence):
+            return {"success": False, "error": error}
 
         manager = SessionVariableManager(db)
         variables = manager.get_variables(resolved_session_id)
-        existing = variables.get("verification_evidence", [])
+        existing = variables.get(VERIFICATION_EVIDENCE_VARIABLE, [])
         evidence_items = append_verification_evidence(
             existing,
             evidence,
@@ -99,8 +110,8 @@ def register_verification_tools(
         manager.merge_variables(
             resolved_session_id,
             {
-                "verification_evidence": evidence_items,
-                "verification_evidence_recorded": True,
+                VERIFICATION_EVIDENCE_VARIABLE: evidence_items,
+                VERIFICATION_EVIDENCE_RECORDED_VARIABLE: True,
             },
         )
         logger.info(
@@ -119,3 +130,9 @@ def register_verification_tools(
             "evidence": evidence,
             "evidence_count": len(evidence_items),
         }
+
+
+__all__ = [
+    "VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW",
+    "register_verification_tools",
+]

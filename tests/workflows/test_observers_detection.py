@@ -424,7 +424,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
         assert variables.get("task_claimed") is True
 
-    def test_unresolved_close_refs_emit_thresholded_info(
+    def test_unresolved_close_refs_emit_thresholded_debug(
         self,
         variables,
         make_after_tool_event,
@@ -442,13 +442,18 @@ class TestDetectTaskClaimCloseTaskBehavior:
             tool_output={"success": True, "result": {}},
         )
 
-        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
             for _ in range(10):
                 detect_task_claim(event, variables, SESSION_ID)
 
         assert "Unresolved close_task refs reached 10" in caplog.text
-        assert "latest_ref='#404'" in caplog.text
-        assert f"session={SESSION_ID}" in caplog.text
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Unresolved close_task refs reached 10"
+        )
+        assert record.latest_ref == "#404"
+        assert record.session_id == SESSION_ID
 
 
 # =============================================================================
@@ -1252,6 +1257,7 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence_recorded"] is True
         assert variables["verification_evidence"][-1]["command"] == command
         assert variables["verification_evidence"][-1]["cwd"] == "/repo"
+        assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
         assert variables["verification_evidence"][-1]["success"] is True
 
@@ -1286,6 +1292,7 @@ class TestDetectVerificationEvidence:
 
         assert variables["verification_evidence_recorded"] is False
         assert variables["errors_resolved"] is False
+        assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
 
     def test_non_validation_command_is_ignored(self, variables) -> None:

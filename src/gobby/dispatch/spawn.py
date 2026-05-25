@@ -238,13 +238,52 @@ def _subscribe_build_coordinator_completion(
     coordinator_session_id = run.summary.get("coordinator_session_id")
     if not isinstance(coordinator_session_id, str) or not coordinator_session_id:
         return
+    session_manager = getattr(services, "session_manager", None)
+    if not _coordinator_session_matches_project(
+        session_manager,
+        coordinator_session_id,
+        project_id,
+    ):
+        return
     subscribe_agent_completion(
         completion_registry=getattr(services, "completion_registry", None),
         run_id=run_id,
         subscriber_session_id=coordinator_session_id,
-        session_manager=getattr(services, "session_manager", None),
+        session_manager=session_manager,
         db=db,
     )
+
+
+def _coordinator_session_matches_project(
+    session_manager: SessionManager | None,
+    coordinator_session_id: str,
+    project_id: str,
+) -> bool:
+    """Return whether a coordinator session exists and belongs to the build project."""
+    if session_manager is None:
+        logger.debug(
+            "Skipping build coordinator completion subscription; no session_manager",
+            extra={"coordinator_session_id": coordinator_session_id, "project_id": project_id},
+        )
+        return False
+    session = session_manager.get(coordinator_session_id)
+    if session is None:
+        logger.debug(
+            "Skipping build coordinator completion subscription; coordinator session missing",
+            extra={"coordinator_session_id": coordinator_session_id, "project_id": project_id},
+        )
+        return False
+    if getattr(session, "project_id", None) != project_id:
+        logger.warning(
+            "Skipping build coordinator completion subscription for cross-project session",
+            extra={
+                "coordinator_session_id": coordinator_session_id,
+                "coordinator_project_id": getattr(session, "project_id", None),
+                "project_id": project_id,
+            },
+        )
+        return False
+    return True
 
 
 def _prepare_spawn_artifacts(

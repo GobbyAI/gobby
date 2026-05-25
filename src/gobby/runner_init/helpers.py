@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Literal, Protocol
+
+import psycopg
+from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
@@ -12,6 +16,8 @@ from gobby.config.bootstrap import (
 )
 
 logger = logging.getLogger(__name__)
+
+_POSTGRES_STARTUP_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
 
 
 class DatabasePathConfig(Protocol):
@@ -92,6 +98,24 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
     postgres_db = PostgresHubDatabase(database_url)
-    postgres_db.apply_migrations()
+    _apply_postgres_migrations_with_startup_retry(postgres_db)
     logger.info("Database: PostgreSQL hub")
     return postgres_db
+
+
+def _apply_postgres_migrations_with_startup_retry(postgres_db: Any) -> None:
+    """Apply startup migrations, retrying transient PostgreSQL connection failures."""
+    for attempt, delay in enumerate((*_POSTGRES_STARTUP_RETRY_DELAYS, None), start=1):
+        try:
+            postgres_db.apply_migrations()
+            return
+        except (psycopg.OperationalError, PoolTimeout) as exc:
+            if delay is None:
+                raise
+            logger.warning(
+                "PostgreSQL hub unavailable during startup (attempt %s); retrying in %.2fs: %s",
+                attempt,
+                delay,
+                exc,
+            )
+            time.sleep(delay)

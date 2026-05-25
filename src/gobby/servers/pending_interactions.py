@@ -64,7 +64,6 @@ class PendingInteractionManager:
         self._db = db
         self._run_db = run_db
         self._waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._results: dict[str, dict[str, Any]] = {}
         self._timeouts: dict[str, asyncio.Task[None]] = {}
 
     async def _run_database(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -163,7 +162,6 @@ class PendingInteractionManager:
             return await future
         finally:
             self._waiters.pop(interaction_id, None)
-            self._results.pop(interaction_id, None)
 
     async def resolve(
         self,
@@ -222,7 +220,6 @@ class PendingInteractionManager:
 
     def _wake_waiter(self, interaction_id: str, result: dict[str, Any]) -> None:
         """Resolve an in-memory waiter with a durable result."""
-        self._results[interaction_id] = result
         future = self._waiters.get(interaction_id)
         if future and not future.done():
             future.set_result(result)
@@ -295,7 +292,6 @@ class PendingInteractionManager:
             await asyncio.gather(*self._timeouts.values(), return_exceptions=True)
         self._timeouts.clear()
         self._waiters.clear()
-        self._results.clear()
 
     async def supersede(self, session_id: str, kind: str) -> None:
         """Expire any existing pending interaction of same (session_id, kind)."""
@@ -315,7 +311,6 @@ class PendingInteractionManager:
         for interaction_id in list(self._waiters):
             self._wake_waiter(interaction_id, {"decision": "timeout"})
         self._waiters.clear()
-        self._results.clear()
         for task in self._timeouts.values():
             task.cancel()
         if self._timeouts:
