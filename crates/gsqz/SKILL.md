@@ -3,7 +3,7 @@ name: gsqz
 description: >
   Output compressor for LLM token optimization. Wraps shell commands and compresses
   verbose output by 70-95% using pattern-matched pipelines. Use when running tests,
-  builds, git operations, linting, or any command that produces more output than an
+  builds, linting, or any command that produces more output than an
   LLM needs. Triggers on: compress output, reduce tokens, verbose output, test output,
   build output, token savings, save context, shrink output.
 ---
@@ -18,7 +18,6 @@ Prefix any command with `gsqz --`:
 
 ```bash
 gsqz -- cargo test
-gsqz -- git status
 gsqz -- npm run lint
 ```
 
@@ -30,7 +29,6 @@ gsqz auto-detects the command and applies the right compression:
 
 | Category | Commands |
 |---|---|
-| Git | status, diff, log, push/pull/fetch/clone, add/commit/stash |
 | Tests | pytest, cargo test, npm test, vitest, jest, mocha, go test |
 | Linters | ruff, mypy, pylint, eslint, tsc, biome, golangci-lint, staticcheck |
 | Build | cargo build, go build, next build, webpack, make |
@@ -39,6 +37,8 @@ gsqz auto-detects the command and applies the right compression:
 | Container | docker ps/images/logs, kubectl logs |
 | GitHub | gh pr/issue list/view |
 | Fallback | Any unmatched command: keeps first 20 + last 20 lines |
+
+Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are built-in exclusions. gsqz surfaces them raw.
 
 ## When NOT to Use
 

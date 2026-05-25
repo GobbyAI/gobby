@@ -27,6 +27,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<()> 
                 &ctx.project_id,
                 true,
                 ctx.quiet,
+                false,
             )?;
         }
         FreshnessScope::Files(paths) => {
@@ -35,7 +36,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<()> 
                 .map(|path| normalize_file_path(&ctx.project_root, path))
                 .collect();
             if !files.is_empty() {
-                indexer::index_files(&mut conn, &ctx.project_root, &ctx.project_id, &files)?;
+                indexer::index_files(&mut conn, &ctx.project_root, &ctx.project_id, &files, false)?;
             }
         }
     }
@@ -54,8 +55,7 @@ pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<()> {
             &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
             &[&id, &ctx.project_id],
         )?
-        .as_ref()
-        .and_then(|row| Symbol::from_row(row).ok());
+        .and_then(|row| Symbol::from_row(&row).ok());
     drop(conn);
 
     let Some(sym) = sym else {

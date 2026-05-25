@@ -59,6 +59,9 @@ enum Command {
         /// Force full reindex (skip incremental hash check)
         #[arg(long)]
         full: bool,
+        /// Fail C/C++ indexing when clangd or compile_commands.json semantics are unavailable
+        #[arg(long)]
+        require_cpp_semantics: bool,
     },
     /// Show project index status
     Status,
@@ -78,6 +81,9 @@ enum Command {
     /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
     Search {
         query: String,
+        /// Optional file paths or globs to filter results
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
         #[arg(long, default_value = "10")]
         limit: usize,
         /// Skip first N results (for pagination)
@@ -89,13 +95,13 @@ enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
-        #[arg(long)]
-        path: Option<String>,
     },
     /// Exact-first symbol/name search with deterministic ranking
     SearchSymbol {
         query: String,
+        /// Optional file paths or globs to filter results
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
         #[arg(long, default_value = "10")]
         limit: usize,
         /// Skip first N results (for pagination)
@@ -107,13 +113,16 @@ enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        /// Include FalkorDB graph neighbors in the exact-first ranking [requires Gobby]
         #[arg(long)]
-        path: Option<String>,
+        with_graph: bool,
     },
     /// pg_search BM25 search on symbol metadata (names, signatures, docstrings)
     SearchText {
         query: String,
+        /// Optional file paths or globs to filter results
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
         #[arg(long, default_value = "10")]
         limit: usize,
         /// Skip first N results (for pagination)
@@ -122,13 +131,13 @@ enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
-        #[arg(long)]
-        path: Option<String>,
     },
     /// pg_search BM25 search on file content chunks
     SearchContent {
         query: String,
+        /// Optional file paths or globs to filter results
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
         #[arg(long, default_value = "10")]
         limit: usize,
         /// Skip first N results (for pagination)
@@ -137,9 +146,6 @@ enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
-        #[arg(long)]
-        path: Option<String>,
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
@@ -254,7 +260,12 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
-        Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
+        Command::Index {
+            path,
+            files,
+            full,
+            require_cpp_semantics,
+        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, cli.format)
@@ -269,11 +280,11 @@ fn main() -> anyhow::Result<()> {
 
         Command::Search {
             query,
+            paths,
             limit,
             offset,
             kind,
             language,
-            path,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search(
@@ -284,18 +295,20 @@ fn main() -> anyhow::Result<()> {
                     offset,
                     kind: kind.as_deref(),
                     language: language.as_deref(),
-                    path: path.as_deref(),
+                    paths: &paths,
                     format: cli.format,
+                    with_graph: true,
                 },
             )
         }
         Command::SearchSymbol {
             query,
+            paths,
             limit,
             offset,
             kind,
             language,
-            path,
+            with_graph,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search_symbol(
@@ -306,17 +319,18 @@ fn main() -> anyhow::Result<()> {
                     offset,
                     kind: kind.as_deref(),
                     language: language.as_deref(),
-                    path: path.as_deref(),
+                    paths: &paths,
                     format: cli.format,
+                    with_graph,
                 },
             )
         }
         Command::SearchText {
             query,
+            paths,
             limit,
             offset,
             language,
-            path,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search_text(
@@ -325,16 +339,16 @@ fn main() -> anyhow::Result<()> {
                 limit,
                 offset,
                 language.as_deref(),
-                path.as_deref(),
+                &paths,
                 cli.format,
             )
         }
         Command::SearchContent {
             query,
+            paths,
             limit,
             offset,
             language,
-            path,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search_content(
@@ -343,7 +357,7 @@ fn main() -> anyhow::Result<()> {
                 limit,
                 offset,
                 language.as_deref(),
-                path.as_deref(),
+                &paths,
                 cli.format,
             )
         }
@@ -435,6 +449,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_index_require_cpp_semantics() {
+        let cli = Cli::try_parse_from(["gcode", "index", "--require-cpp-semantics"])
+            .expect("index parses");
+
+        match cli.command {
+            Command::Index {
+                require_cpp_semantics,
+                ..
+            } => assert!(require_cpp_semantics),
+            _ => panic!("expected index command"),
+        }
+    }
+
+    #[test]
     fn test_parse_callers_remains_top_level() {
         let cli = Cli::try_parse_from(["gcode", "callers", "handleAuth"]).expect("callers parses");
 
@@ -500,31 +528,43 @@ mod tests {
             "gcode",
             "search-symbol",
             "outline",
+            "crates/gcode/src",
             "--kind",
             "function",
             "--language",
             "rust",
-            "--path",
-            "src/**/*.rs",
         ])
         .expect("search-symbol parses");
 
         match cli.command {
             Command::SearchSymbol {
                 query,
+                paths,
                 limit,
                 offset,
                 kind,
                 language,
-                path,
+                with_graph,
             } => {
                 assert_eq!(query, "outline");
+                assert_eq!(paths, vec!["crates/gcode/src"]);
                 assert_eq!(limit, 10);
                 assert_eq!(offset, 0);
                 assert_eq!(kind.as_deref(), Some("function"));
                 assert_eq!(language.as_deref(), Some("rust"));
-                assert_eq!(path.as_deref(), Some("src/**/*.rs"));
+                assert!(!with_graph);
             }
+            _ => panic!("expected search-symbol command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_symbol_with_graph() {
+        let cli = Cli::try_parse_from(["gcode", "search-symbol", "outline", "--with-graph"])
+            .expect("search-symbol --with-graph parses");
+
+        match cli.command {
+            Command::SearchSymbol { with_graph, .. } => assert!(with_graph),
             _ => panic!("expected search-symbol command"),
         }
     }
@@ -539,6 +579,117 @@ mod tests {
                 assert_eq!(language.as_deref(), Some("rust"));
             }
             _ => panic!("expected search command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_positional_paths() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search",
+            "outline",
+            "src/gobby",
+            "tests",
+            "--limit",
+            "20",
+        ])
+        .expect("search parses");
+
+        match cli.command {
+            Command::Search { paths, limit, .. } => {
+                assert_eq!(paths, vec!["src/gobby", "tests"]);
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected search command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_text_positional_path_after_option() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search-text",
+            "outline",
+            "--limit",
+            "5",
+            "src/gobby",
+        ])
+        .expect("search-text parses");
+
+        match cli.command {
+            Command::SearchText { paths, limit, .. } => {
+                assert_eq!(paths, vec!["src/gobby"]);
+                assert_eq!(limit, 5);
+            }
+            _ => panic!("expected search-text command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_content_positional_paths_and_format() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search-content",
+            "QUERY",
+            "src/gobby",
+            "tests",
+            "--limit",
+            "20",
+            "--format",
+            "text",
+        ])
+        .expect("search-content parses");
+
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::SearchContent { paths, limit, .. } => {
+                assert_eq!(paths, vec!["src/gobby", "tests"]);
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected search-content command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_content_positional_path_after_option() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search-content",
+            "QUERY",
+            "--limit",
+            "5",
+            "src/gobby",
+        ])
+        .expect("search-content parses");
+
+        match cli.command {
+            Command::SearchContent { paths, limit, .. } => {
+                assert_eq!(paths, vec!["src/gobby"]);
+                assert_eq!(limit, 5);
+            }
+            _ => panic!("expected search-content command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_path_flag_rejected() {
+        for command in ["search", "search-symbol", "search-text", "search-content"] {
+            let err = match Cli::try_parse_from([
+                "gcode",
+                command,
+                "QUERY",
+                "--path",
+                "crates/gcode/src",
+            ]) {
+                Ok(_) => panic!("--path should be rejected for {command}"),
+                Err(err) => err,
+            };
+
+            assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+            assert!(
+                err.to_string().contains("--path"),
+                "unexpected error for {command}: {err}"
+            );
         }
     }
 

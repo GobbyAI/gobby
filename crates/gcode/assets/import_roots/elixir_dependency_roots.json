@@ -1,0 +1,18 @@
+{
+  "jason": ["Jason"],
+  "httpoison": ["HTTPoison"],
+  "tesla": ["Tesla"],
+  "req": ["Req"],
+  "finch": ["Finch"],
+  "mint": ["Mint"],
+  "ecto": ["Ecto"],
+  "phoenix": ["Phoenix"],
+  "plug": ["Plug"],
+  "oban": ["Oban"],
+  "broadway": ["Broadway"],
+  "nimble_options": ["NimbleOptions"],
+  "nimble_parsec": ["NimbleParsec"],
+  "telemetry": ["Telemetry"],
+  "benchee": ["Benchee"],
+  "ex_doc": ["ExDoc"]
+}

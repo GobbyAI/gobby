@@ -1,8 +1,8 @@
 [package]
 name = "gobby-squeeze"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
 description = "YAML-configurable output compressor for LLM token optimization"
 license = "Apache-2.0"

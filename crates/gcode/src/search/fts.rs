@@ -23,8 +23,10 @@ pub struct ResolvedGraphSymbol {
 struct SymbolFilters<'a> {
     kind: Option<&'a str>,
     language: Option<&'a str>,
-    path: Option<&'a str>,
+    paths: &'a [String],
 }
+
+pub const FILTERED_FETCH_CAP: usize = 10_000;
 
 fn push_param<T>(params: &mut Vec<PgParam>, value: T) -> String
 where
@@ -66,6 +68,90 @@ fn glob_to_like_prefix(pattern: &str) -> Option<String> {
     }
 }
 
+fn has_glob_meta(path: &str) -> bool {
+    path.chars().any(|c| matches!(c, '*' | '?' | '['))
+}
+
+pub fn expand_paths(paths: &[String]) -> Vec<String> {
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let trimmed = path.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let patterns = if has_glob_meta(trimmed) {
+            vec![trimmed.to_string()]
+        } else {
+            vec![trimmed.to_string(), format!("{trimmed}/**")]
+        };
+        for pattern in patterns {
+            if seen.insert(pattern.clone()) {
+                expanded.push(pattern);
+            }
+        }
+    }
+    expanded
+}
+
+pub fn compile_patterns(paths: &[String]) -> anyhow::Result<Vec<glob::Pattern>> {
+    paths
+        .iter()
+        .map(|path| {
+            glob::Pattern::new(path).map_err(|e| anyhow::anyhow!("invalid path glob `{path}`: {e}"))
+        })
+        .collect()
+}
+
+fn path_like_prefixes(paths: &[String]) -> Option<Vec<String>> {
+    if paths.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut prefixes = Vec::with_capacity(paths.len());
+    for path in paths {
+        prefixes.push(glob_to_like_prefix(path)?);
+    }
+    Some(prefixes)
+}
+
+pub fn path_filter_falls_back(paths: &[String]) -> bool {
+    !paths.is_empty() && path_like_prefixes(paths).is_none()
+}
+
+fn push_path_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    alias: &str,
+    paths: &[String],
+) -> bool {
+    let Some(prefixes) = path_like_prefixes(paths) else {
+        for path in paths
+            .iter()
+            .filter(|path| glob_to_like_prefix(path).is_none())
+        {
+            log::warn!(
+                "omitting SQL path filter for alias `{alias}` because path filter `{path}` cannot be converted to a LIKE prefix; relying on post-query glob matching",
+            );
+        }
+        return true;
+    };
+    if prefixes.is_empty() {
+        return false;
+    }
+
+    let predicates = prefixes
+        .into_iter()
+        .map(|prefix| {
+            let placeholder = push_param(params, prefix);
+            format!("{alias}.file_path LIKE {placeholder} ESCAPE '\\'")
+        })
+        .collect::<Vec<_>>();
+    conditions.push(format!("({})", predicates.join(" OR ")));
+    false
+}
+
 fn push_symbol_filters(
     conditions: &mut Vec<String>,
     params: &mut Vec<PgParam>,
@@ -80,10 +166,7 @@ fn push_symbol_filters(
         let placeholder = push_param(params, language.to_string());
         conditions.push(format!("{alias}.language = {placeholder}"));
     }
-    if let Some(like) = filters.path.and_then(glob_to_like_prefix) {
-        let placeholder = push_param(params, like);
-        conditions.push(format!("{alias}.file_path LIKE {placeholder} ESCAPE '\\'"));
-    }
+    push_path_filter(conditions, params, alias, filters.paths);
 }
 
 fn append_unique_symbols(
@@ -160,7 +243,7 @@ pub fn search_symbols_fts(
     project_id: &str,
     kind: Option<&str>,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<Symbol> {
     let bm25_query = sanitize_pg_search_query(query);
@@ -181,7 +264,7 @@ pub fn search_symbols_fts(
     let filters = SymbolFilters {
         kind,
         language,
-        path,
+        paths,
     };
     query_symbols_by_conditions(
         conn,
@@ -200,7 +283,7 @@ pub fn search_symbols_by_name(
     project_id: &str,
     kind: Option<&str>,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<Symbol> {
     if query.trim().is_empty() || limit == 0 {
@@ -225,7 +308,7 @@ pub fn search_symbols_by_name(
         SymbolFilters {
             kind,
             language,
-            path,
+            paths,
         },
         limit,
         "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
@@ -238,7 +321,7 @@ pub fn search_symbols_exact_first(
     project_id: &str,
     kind: Option<&str>,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<Symbol> {
     if query.trim().is_empty() || limit == 0 {
@@ -250,7 +333,7 @@ pub fn search_symbols_exact_first(
     let filters = SymbolFilters {
         kind,
         language,
-        path,
+        paths,
     };
 
     let mut params = Vec::new();
@@ -318,13 +401,13 @@ pub fn search_symbols_exact_first(
         return results;
     }
 
-    let contains = search_symbols_by_name(conn, query, project_id, kind, language, path, limit);
+    let contains = search_symbols_by_name(conn, query, project_id, kind, language, paths, limit);
     append_unique_symbols(&mut results, &mut seen, contains, limit);
     if results.len() >= limit {
         return results;
     }
 
-    let fts = search_symbols_fts(conn, query, project_id, kind, language, path, limit);
+    let fts = search_symbols_fts(conn, query, project_id, kind, language, paths, limit);
     append_unique_symbols(&mut results, &mut seen, fts, limit);
 
     results
@@ -416,13 +499,13 @@ pub fn resolve_graph_symbol(
         return (resolved, suggestions);
     }
 
-    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, None, 6);
+    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, &[], 6);
     let (resolved, suggestions) = resolve_from_candidates(like_matches);
     if resolved.is_some() || !suggestions.is_empty() {
         return (resolved, suggestions);
     }
 
-    let fts_results = search_symbols_fts(conn, input, project_id, None, None, None, 6);
+    let fts_results = search_symbols_fts(conn, input, project_id, None, None, &[], 6);
     resolve_from_candidates(fts_results)
 }
 
@@ -432,15 +515,17 @@ pub fn count_text(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
 ) -> usize {
     if query.trim().is_empty() {
         return 0;
     }
 
     let bm25_query = sanitize_pg_search_query(query);
+    // Intentional fallback: when BM25 sanitization empties the query, use
+    // count_symbols_by_name_like, which may count LIKE matches BM25 filtered out.
     if bm25_query.is_empty() {
-        return count_symbols_by_name_like(conn, query, project_id, language, path);
+        return count_symbols_by_name_like(conn, query, project_id, language, paths);
     }
 
     let mut params = Vec::new();
@@ -460,7 +545,7 @@ pub fn count_text(
         SymbolFilters {
             kind: None,
             language,
-            path,
+            paths,
         },
     );
     let refs = param_refs(&params);
@@ -481,7 +566,7 @@ pub fn count_text(
         return count as usize;
     }
 
-    count_symbols_by_name_like(conn, query, project_id, language, path)
+    count_symbols_by_name_like(conn, query, project_id, language, paths)
 }
 
 fn count_symbols_by_name_like(
@@ -489,7 +574,7 @@ fn count_symbols_by_name_like(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
 ) -> usize {
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
@@ -510,7 +595,7 @@ fn count_symbols_by_name_like(
         SymbolFilters {
             kind: None,
             language,
-            path,
+            paths,
         },
     );
     let refs = param_refs(&params);
@@ -534,7 +619,7 @@ pub fn count_content(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
 ) -> usize {
     if query.trim().is_empty() {
         return 0;
@@ -542,7 +627,7 @@ pub fn count_content(
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
-        return count_content_like(conn, query, project_id, language, path);
+        return count_content_like(conn, query, project_id, language, paths);
     }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -555,10 +640,7 @@ pub fn count_content(
         let placeholder = push_param(&mut params, lang.to_string());
         conditions.push(format!("c.language = {placeholder}"));
     }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        let placeholder = push_param(&mut params, like);
-        conditions.push(format!("c.file_path LIKE {placeholder} ESCAPE '\\'"));
-    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
     let refs = param_refs(&params);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
@@ -577,7 +659,7 @@ pub fn count_content(
         return count as usize;
     }
 
-    count_content_like(conn, query, project_id, language, path)
+    count_content_like(conn, query, project_id, language, paths)
 }
 
 fn count_content_like(
@@ -585,7 +667,7 @@ fn count_content_like(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
 ) -> usize {
     let escaped_query = escape_like(query);
     let like_query = format!("%{escaped_query}%");
@@ -600,10 +682,7 @@ fn count_content_like(
         let placeholder = push_param(&mut params, lang.to_string());
         conditions.push(format!("c.language = {placeholder}"));
     }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        let placeholder = push_param(&mut params, like);
-        conditions.push(format!("c.file_path LIKE {placeholder} ESCAPE '\\'"));
-    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
     let refs = param_refs(&params);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
@@ -625,12 +704,12 @@ pub fn search_text(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<SearchResult> {
-    let mut results = search_symbols_fts(conn, query, project_id, None, language, path, limit);
+    let mut results = search_symbols_fts(conn, query, project_id, None, language, paths, limit);
     if results.is_empty() {
-        results = search_symbols_by_name(conn, query, project_id, None, language, path, limit);
+        results = search_symbols_by_name(conn, query, project_id, None, language, paths, limit);
     }
     results.into_iter().map(|s| s.to_brief()).collect()
 }
@@ -641,7 +720,7 @@ pub fn search_content(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<ContentSearchHit> {
     if query.trim().is_empty() || limit == 0 {
@@ -650,7 +729,7 @@ pub fn search_content(
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
-        return search_content_like(conn, query, project_id, language, path, limit);
+        return search_content_like(conn, query, project_id, language, paths, limit);
     }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -663,10 +742,7 @@ pub fn search_content(
         let placeholder = push_param(&mut params, lang.to_string());
         conditions.push(format!("c.language = {placeholder}"));
     }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        let placeholder = push_param(&mut params, like);
-        conditions.push(format!("c.file_path LIKE {placeholder} ESCAPE '\\'"));
-    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
     let limit_placeholder = push_param(&mut params, limit as i64);
     let refs = param_refs(&params);
     let sql = format!(
@@ -707,7 +783,7 @@ pub fn search_content(
         return hits;
     }
 
-    search_content_like(conn, query, project_id, language, path, limit)
+    search_content_like(conn, query, project_id, language, paths, limit)
 }
 
 fn search_content_like(
@@ -715,7 +791,7 @@ fn search_content_like(
     query: &str,
     project_id: &str,
     language: Option<&str>,
-    path: Option<&str>,
+    paths: &[String],
     limit: usize,
 ) -> Vec<ContentSearchHit> {
     let escaped_query = escape_like(query);
@@ -731,10 +807,7 @@ fn search_content_like(
         let placeholder = push_param(&mut params, lang.to_string());
         conditions.push(format!("c.language = {placeholder}"));
     }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        let placeholder = push_param(&mut params, like);
-        conditions.push(format!("c.file_path LIKE {placeholder} ESCAPE '\\'"));
-    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
     let limit_placeholder = push_param(&mut params, limit as i64);
     let refs = param_refs(&params);
     let sql = format!(
@@ -772,25 +845,41 @@ fn search_content_like(
 }
 
 fn make_snippet(content: &str, query: &str) -> String {
-    let lowered = content.to_lowercase();
     let tokens: Vec<String> = query
         .split_whitespace()
         .map(str::to_lowercase)
         .filter(|token| !token.is_empty())
         .collect();
+    let (lower_content, lower_byte_to_original_char) = lowercase_with_original_char_map(content);
     let mut match_at = None;
     for token in tokens {
-        if let Some(index) = lowered.find(&token) {
-            match_at = Some(index);
+        if let Some(byte_index) = lower_content.find(&token) {
+            match_at = lower_byte_to_original_char
+                .get(byte_index)
+                .copied()
+                .or(Some(0));
             break;
         }
     }
-    let start = match_at.unwrap_or(0).saturating_sub(60);
-    let end = (match_at.unwrap_or(0) + 120).min(content.len());
-    content
-        .get(start..end)
-        .unwrap_or_else(|| content.get(..content.len().min(120)).unwrap_or(""))
-        .to_string()
+    let match_at = match_at.unwrap_or(0);
+    let start = match_at.saturating_sub(60);
+    let end = (match_at + 120).min(content.chars().count());
+    content.chars().skip(start).take(end - start).collect()
+}
+
+fn lowercase_with_original_char_map(content: &str) -> (String, Vec<usize>) {
+    let mut lower = String::with_capacity(content.len());
+    let mut lower_byte_to_original_char = Vec::with_capacity(content.len());
+    for (original_char_index, ch) in content.chars().enumerate() {
+        for lower_ch in ch.to_lowercase() {
+            let mut buf = [0; 4];
+            let encoded = lower_ch.encode_utf8(&mut buf);
+            lower_byte_to_original_char
+                .extend(std::iter::repeat_n(original_char_index, encoded.len()));
+            lower.push(lower_ch);
+        }
+    }
+    (lower, lower_byte_to_original_char)
 }
 
 #[cfg(test)]
@@ -819,11 +908,68 @@ mod tests {
     }
 
     #[test]
+    fn expand_paths_trims_skips_empty_and_expands_bare_paths() {
+        let paths = vec![
+            " src/gobby ".to_string(),
+            "".to_string(),
+            "crates/**/*.rs".to_string(),
+            "src/gobby/".to_string(),
+        ];
+
+        assert_eq!(
+            expand_paths(&paths),
+            vec!["src/gobby", "src/gobby/**", "crates/**/*.rs"]
+        );
+    }
+
+    #[test]
+    fn compile_patterns_reports_invalid_glob() {
+        let err = compile_patterns(&["src/[".to_string()])
+            .expect_err("invalid glob should fail")
+            .to_string();
+
+        assert!(err.contains("invalid path glob `src/[`"));
+    }
+
+    #[test]
+    fn path_like_prefixes_escape_and_require_all_patterns() {
+        let paths = vec![
+            "src/foo_bar".to_string(),
+            "src/foo_bar/**".to_string(),
+            "src/100%/**".to_string(),
+        ];
+        assert_eq!(
+            path_like_prefixes(&paths).expect("prefixes"),
+            vec!["src/foo\\_bar%", "src/foo\\_bar/%", "src/100\\%/%"]
+        );
+
+        let mixed = vec!["src/**".to_string(), "*.rs".to_string()];
+        assert!(path_like_prefixes(&mixed).is_none());
+        assert!(path_filter_falls_back(&mixed));
+        assert!(!path_filter_falls_back(&paths));
+    }
+
+    #[test]
     fn snippet_centers_first_matching_token() {
         let content = "before ".repeat(20) + "target call here";
         let snippet = make_snippet(&content, "target");
 
         assert!(snippet.contains("target call here"));
         assert!(snippet.len() <= 180);
+    }
+
+    #[test]
+    fn snippet_handles_unicode_before_match() {
+        let content = "é".repeat(80) + " target call here";
+        let snippet = make_snippet(&content, "target");
+
+        assert!(snippet.contains("target call here"));
+        assert!(snippet.chars().count() <= 180);
+
+        let content = "\u{0130}".repeat(80) + " target call here";
+        let snippet = make_snippet(&content, "target");
+
+        assert!(snippet.contains("target call here"));
+        assert!(snippet.chars().count() <= 180);
     }
 }

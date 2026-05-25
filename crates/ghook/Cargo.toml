@@ -2,7 +2,7 @@
 name = "gobby-hooks"
 version = "0.4.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
 description = "Sandbox-tolerant hook dispatcher for Gobby — enqueue-first, Rust port of the Python hook_dispatcher. Ships the `ghook` binary."
 license = "Apache-2.0"

@@ -35,6 +35,23 @@ fn decrypt_fernet(key: &str, token: &str) -> anyhow::Result<String> {
     String::from_utf8(plaintext).context("decrypted secret is not valid UTF-8")
 }
 
+fn resolve_env_pattern(value: &str) -> anyhow::Result<Option<String>> {
+    if !(value.starts_with("${") && value.ends_with('}')) {
+        return Ok(None);
+    }
+
+    let var_name = &value[2..value.len() - 1];
+    if let Some((var, default)) = var_name.split_once(":-") {
+        return Ok(Some(
+            std::env::var(var).unwrap_or_else(|_| default.to_string()),
+        ));
+    }
+
+    std::env::var(var_name)
+        .map(Some)
+        .with_context(|| format!("environment variable {var_name} not set"))
+}
+
 /// Resolve a secret by name from the secrets table in the PostgreSQL hub.
 ///
 /// Secret names are normalized to lowercase (matching Python SecretStore._normalize_name).
@@ -87,14 +104,8 @@ pub fn resolve_config_value(value: &str, conn: &mut Client) -> anyhow::Result<St
         return resolve_secret(conn, name);
     }
 
-    // ${VAR} or ${VAR:-default} pattern
-    if value.starts_with("${") && value.ends_with('}') {
-        let var_name = &value[2..value.len() - 1];
-        if let Some((var, default)) = var_name.split_once(":-") {
-            return Ok(std::env::var(var).unwrap_or_else(|_| default.to_string()));
-        }
-        return std::env::var(var_name)
-            .with_context(|| format!("environment variable {var_name} not set"));
+    if let Some(resolved) = resolve_env_pattern(value)? {
+        return Ok(resolved);
     }
 
     Ok(value.to_string())
@@ -108,13 +119,8 @@ fn resolve_config_value_without_secrets(value: &str) -> anyhow::Result<String> {
     if !value.contains("${") {
         return Ok(value.to_string());
     }
-    if value.starts_with("${") && value.ends_with('}') {
-        let var_name = &value[2..value.len() - 1];
-        if let Some((var, default)) = var_name.split_once(":-") {
-            return Ok(std::env::var(var).unwrap_or_else(|_| default.to_string()));
-        }
-        return std::env::var(var_name)
-            .with_context(|| format!("environment variable {var_name} not set"));
+    if let Some(resolved) = resolve_env_pattern(value)? {
+        return Ok(resolved);
     }
     Ok(value.to_string())
 }

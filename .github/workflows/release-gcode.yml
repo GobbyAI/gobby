@@ -20,11 +20,36 @@ jobs:
         with:
           components: clippy
 
+      - name: Verify tag matches Cargo.toml version
+        # Guards against tag/crate/release drift: installers resolve a version
+        # from crates.io and then look for a matching gcode-v{version} GitHub
+        # asset, so the tag, crate version, and release name must align.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#gcode-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'gcode-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-code | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/gcode/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/gcode/Cargo.toml version '$cargo_version'."
+
       - name: Clippy
         run: cargo clippy -p gobby-code -- -D warnings
 
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
+
       - name: Run tests
         run: cargo test -p gobby-code
+
+      - name: Run tests without default features
+        run: cargo test -p gobby-code --no-default-features
 
   build:
     needs: test

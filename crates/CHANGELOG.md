@@ -9,7 +9,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes.
+## [0.8.6] — gcode
+
+### Added
+
+#### gcode
+
+- **Graph-aware symbol lookup** — `gcode search-symbol --with-graph` keeps
+  exact-first ranking and adds FalkorDB graph neighbors when graph config is
+  available.
+
+### Changed
+
+#### gcode
+
+- **Search scoring metadata** — hybrid JSON output now uses `score` for the
+  final displayed rank score, exposes raw RRF as `rrf_score`, and sorts
+  `sources` deterministically.
+
+- **Path-filter fallback visibility** — path globs that cannot be pushed into
+  SQL now log a warning and surface a user-facing hint while still enforcing
+  exact glob semantics through post-filtering.
+
+### Fixed
+
+#### gcode
+
+- **External call extraction** — scoped Swift imports like
+  `import struct Foundation.Date` bind the module root correctly; parameter and
+  local variable shadowing prevents false external call targets; Dart textual
+  call extraction now tracks raw and triple-quoted multiline strings; C/C++
+  macro detection accepts both `#define` and `# define`.
+
+- **clangd cleanup errors** — C/C++ semantic resolution now returns the original
+  resolution error first and only closes open clangd files after successful
+  resolution.
+
+## [0.1.2] — gloc
+
+### Changed
+
+#### gloc
+
+- **MSRV metadata** — raised the crate `rust-version` to 1.88 to match the
+  workspace policy.
+
+## [0.8.5] — gcode
+
+### Changed
+
+#### gcode
+
+- **Positional search paths** — `gcode search`, `gcode search-symbol`,
+  `gcode search-text`, and `gcode search-content` now accept one or more
+  positional path filters after the query. Bare paths match exact files and
+  descendants; glob paths stay verbatim; multiple paths use OR semantics.
+
+- **Broker-first PostgreSQL DSN resolution** — `gcode` now asks the local
+  daemon broker for the PostgreSQL hub DSN before consulting any daemonless
+  fallback. If the broker is unavailable, explicit fallback sources resolve in
+  this order: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
+  `~/.gobby/gcode.yaml` `database_url`, then bootstrap inline `database_url`.
+
+- **Bootstrap `database_url_ref` rejected** — `~/.gobby/bootstrap.yaml`
+  `database_url_ref` values are no longer accepted by `gcode`. Daemonless
+  setups must provide an inline `database_url` or one of the explicit fallback
+  sources above; broker-managed secrets stay behind the daemon broker.
+
+### Fixed
+
+#### gcode
+
+- **Directory path indexing root** — `gcode index <path>` now indexes from the
+  resolved project root when `<path>` is inside the current project, keeping
+  relative file paths stable instead of treating the passed directory as a new
+  root.
+
+### Removed
+
+#### gcode
+
+- **`--path` search filters** — breaking CLI cleanup: `gcode search`,
+  `gcode search-symbol`, `gcode search-text`, and `gcode search-content` no
+  longer accept `--path <glob>`. Pass paths and globs positionally after the
+  query instead.
 
 
 ## [0.8.4] — gcode
@@ -166,6 +249,17 @@ No unreleased changes.
 - **Drop phantom ACP session registrations** — `ghook` now short-circuits when `GOBBY_HOOKS_DISABLED=1` is set in the process environment, returning `{}` with exit 0 before any side effect (no enqueue, no POST, no terminal-context capture). Daemon-spawned `gemini --acp` / `qwen --acp` subprocesses inherit the host CLI's SessionStart hook; this env flag lets the daemon mark them so they don't register phantom sessions.
 - **`gobby_acp_child` in terminal_context** — `terminal_context.capture()` now includes `gobby_acp_child` (read from `GOBBY_ACP_CHILD`). The daemon's SESSION_START handler uses it as a second line of defense to recognize and drop registrations from ACP subprocesses even if the env short-circuit didn't fire.
 - **Surface nested `permissionDecisionReason` in block messages** — `extract_reason` now also checks `hookSpecificOutput.permissionDecisionReason` (and `.reason` inside that object) after the top-level fallback keys. Modern Claude Code PreToolUse deny responses carry the reason inside `hookSpecificOutput`; `is_blocked` already recognized the nested shape, but `extract_reason` didn't — so denies surfaced as the bare "Blocked by hook" fallback instead of the daemon's actual message.
+
+## [0.4.3] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Built-in exclusion passthrough** — Gobby-owned CLIs (`gobby`,
+  `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are now excluded
+  from squeezing. Their output is surfaced raw and skips compression headers
+  and daemon savings reports.
 
 ## [0.4.2] — gsqz
 

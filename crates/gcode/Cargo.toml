@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.8.4"
+version = "0.8.6"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -27,6 +27,7 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+toml = "1"
 
 # Database
 postgres = "0.19"
@@ -38,23 +39,23 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "blo
 base64 = "0.22"
 
 # Tree-sitter (core + language grammars)
-tree-sitter = "0.24"
+tree-sitter = "0.25"
 # Tier 1: Primary languages
-tree-sitter-python = "0.23"
-tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
-tree-sitter-go = "0.23"
-tree-sitter-rust = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-rust = "0.24.2"
 tree-sitter-java = "0.23"
-tree-sitter-c = "0.23"
+tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
-tree-sitter-c-sharp = "0.23"
+tree-sitter-c-sharp = "0.23.5"
 tree-sitter-ruby = "0.23"
-tree-sitter-php = "0.23"
+tree-sitter-php = "0.24"
 tree-sitter-swift = "0.7"
-tree-sitter-kotlin = "0.3"
+tree-sitter-kotlin-ng = "1.1"
 # Tier 2: Additional languages
-tree-sitter-dart = "0.1"
+tree-sitter-dart = "0.2"
 tree-sitter-elixir = "0.3"
 # Tier 3: Data formats
 tree-sitter-json = "0.23"
@@ -66,11 +67,13 @@ streaming-iterator = "0.1"
 
 # Utilities
 glob = "0.3"
+shlex = "1"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v5"] }
 ignore = "0.4"
 dirs = "6"
 anyhow = "1"
+log = "0.4"
 ureq = { version = "2", features = ["json"] }
 
 # Secret resolution (Fernet decryption of gobby secrets)

@@ -8,12 +8,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+use anyhow::Context;
 use postgres::{Client, GenericClient};
 
 use crate::index::chunker;
 use crate::index::hasher;
 use crate::index::languages;
 use crate::index::parser;
+use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::walker;
 use crate::models::{IndexResult, IndexedFile, IndexedProject};
 use crate::progress::ProgressBar;
@@ -45,6 +47,7 @@ pub fn index_directory(
     project_id: &str,
     incremental: bool,
     quiet: bool,
+    require_cpp_semantics: bool,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -59,6 +62,8 @@ pub fn index_directory(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
+    let mut semantic_resolver =
+        create_semantic_resolver_if_needed(root_path, &candidates, require_cpp_semantics)?;
 
     // Build current hash map for incremental detection and orphan cleanup.
     let current_hashes = current_file_hashes(root_path, &candidates, &content_only);
@@ -100,7 +105,8 @@ pub fn index_directory(
             root_path,
             &excludes,
             &import_context,
-        ) {
+            semantic_resolver.as_deref_mut(),
+        )? {
             Some(count) => {
                 result.files_indexed += 1;
                 result.symbols_found += count;
@@ -121,7 +127,7 @@ pub fn index_directory(
             result.files_skipped += 1;
             continue;
         }
-        if index_content_only(conn, path, project_id, root_path) {
+        if index_content_only(conn, path, project_id, root_path, &excludes)? {
             result.files_indexed += 1;
         } else {
             result.files_skipped += 1;
@@ -150,6 +156,7 @@ pub fn index_files(
     root_path: &Path,
     project_id: &str,
     file_paths: &[String],
+    require_cpp_semantics: bool,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -164,6 +171,8 @@ pub fn index_files(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
+    let mut routed_files = Vec::new();
+    let mut ast_files = Vec::new();
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -178,16 +187,49 @@ pub fn index_files(
             continue;
         }
 
-        if let Some(count) = index_file(
-            conn,
-            &abs,
-            project_id,
-            root_path,
-            &excludes,
-            &import_context,
-        ) {
-            result.files_indexed += 1;
-            result.symbols_found += count;
+        match explicit_file_route(root_path, &abs, &excludes) {
+            ExplicitFileRoute::Ast => {
+                ast_files.push(abs.clone());
+                routed_files.push((abs, ExplicitFileRoute::Ast));
+            }
+            ExplicitFileRoute::ContentOnly => {
+                routed_files.push((abs, ExplicitFileRoute::ContentOnly));
+            }
+            ExplicitFileRoute::Skip => {
+                result.files_skipped += 1;
+            }
+        }
+    }
+
+    let mut semantic_resolver =
+        create_semantic_resolver_if_needed(root_path, &ast_files, require_cpp_semantics)?;
+
+    for (abs, route) in routed_files {
+        match route {
+            ExplicitFileRoute::Ast => {
+                if let Some(count) = index_file(
+                    conn,
+                    &abs,
+                    project_id,
+                    root_path,
+                    &excludes,
+                    &import_context,
+                    semantic_resolver.as_deref_mut(),
+                )? {
+                    result.files_indexed += 1;
+                    result.symbols_found += count;
+                } else {
+                    result.files_skipped += 1;
+                }
+            }
+            ExplicitFileRoute::ContentOnly => {
+                if index_content_only(conn, &abs, project_id, root_path, &excludes)? {
+                    result.files_indexed += 1;
+                } else {
+                    result.files_skipped += 1;
+                }
+            }
+            _ => unreachable!("skip routes are filtered before indexing"),
         }
     }
 
@@ -210,24 +252,34 @@ fn index_file(
     root_path: &Path,
     exclude_patterns: &[String],
     import_context: &parser::ImportResolutionContext,
-) -> Option<usize> {
-    let rel = relative_path(file_path, root_path).ok()?;
+    semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Option<usize>> {
+    let rel = match relative_path(file_path, root_path) {
+        Ok(rel) => rel,
+        Err(_) => return Ok(None),
+    };
 
-    let parse_result = parser::parse_file(
+    let Some(parse_result) = parser::parse_file_with_semantic(
         file_path,
         project_id,
         root_path,
         exclude_patterns,
         import_context,
-    )?;
+        semantic_resolver,
+    )?
+    else {
+        return Ok(None);
+    };
 
     let count = parse_result.symbols.len();
 
     // PostgreSQL hub writes (transactional).
-    let mut tx = conn.transaction().ok()?;
+    let mut tx = conn
+        .transaction()
+        .context("start indexed file transaction")?;
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
-    upsert_symbols(&mut tx, &parse_result.symbols);
+    upsert_symbols(&mut tx, &parse_result.symbols)?;
 
     let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
     let h = hasher::file_content_hash(file_path).unwrap_or_default();
@@ -256,40 +308,75 @@ fn index_file(
         upsert_content_chunks(&mut tx, &chunks);
     }
 
-    tx.commit().ok()?;
+    tx.commit().context("commit indexed file transaction")?;
 
-    Some(count)
+    Ok(Some(count))
+}
+
+fn create_semantic_resolver_if_needed(
+    root_path: &Path,
+    candidates: &[std::path::PathBuf],
+    require_cpp_semantics: bool,
+) -> anyhow::Result<Option<Box<dyn SemanticCallResolver>>> {
+    let has_cpp_candidate = candidates.iter().any(|path| {
+        matches!(
+            languages::detect_language(&path.to_string_lossy()),
+            Some("c" | "cpp")
+        )
+    });
+    if !has_cpp_candidate {
+        return Ok(None);
+    }
+    semantic::create_cpp_semantic_resolver(root_path, require_cpp_semantics)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplicitFileRoute {
+    Ast,
+    ContentOnly,
+    Skip,
+}
+
+fn explicit_file_route(
+    root_path: &Path,
+    path: &Path,
+    exclude_patterns: &[String],
+) -> ExplicitFileRoute {
+    match walker::classify_file(root_path, path, exclude_patterns) {
+        Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
+        Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
+        None => ExplicitFileRoute::Skip,
+    }
 }
 
 /// Index content-only file (no AST, just chunks).
-fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_path: &Path) -> bool {
+fn index_content_only(
+    conn: &mut Client,
+    path: &Path,
+    project_id: &str,
+    root_path: &Path,
+    exclude_patterns: &[String],
+) -> anyhow::Result<bool> {
+    if !walker::is_content_indexable(root_path, path, exclude_patterns) {
+        return Ok(false);
+    }
+
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
-        Err(_) => return false,
-    };
-
-    let meta = match path.metadata() {
-        Ok(m) if m.len() > 0 && m.len() <= 10 * 1024 * 1024 => m,
-        _ => return false,
+        Err(_) => return Ok(false),
     };
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
 
-    // Skip binary
-    if source[..source.len().min(8192)].contains(&0) {
-        return false;
-    }
-
-    let lang = path.extension().map(|e| e.to_string_lossy().to_string());
+    let lang = walker::content_language(path);
     let content_hash = hasher::file_content_hash(path).unwrap_or_default();
 
-    let mut tx = match conn.transaction() {
-        Ok(tx) => tx,
-        Err(_) => return false,
-    };
+    let mut tx = conn
+        .transaction()
+        .context("start content-only file transaction")?;
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
     upsert_file(
@@ -298,20 +385,22 @@ fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_pat
             id: IndexedFile::make_id(project_id, &rel),
             project_id: project_id.to_string(),
             file_path: rel.clone(),
-            language: lang.clone().unwrap_or_else(|| "unknown".to_string()),
+            language: lang.clone(),
             content_hash,
             symbol_count: 0,
-            byte_size: meta.len() as usize,
+            byte_size: source.len(),
             indexed_at: epoch_secs_str(),
         },
     );
 
-    let chunks = chunker::chunk_file_content(&source, &rel, project_id, lang.as_deref());
+    let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(&lang));
     if !chunks.is_empty() {
         upsert_content_chunks(&mut tx, &chunks);
     }
 
-    tx.commit().is_ok()
+    tx.commit()
+        .context("commit content-only file transaction")?;
+    Ok(true)
 }
 
 /// Invalidate all index data for a project.
@@ -385,9 +474,12 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
 
 // ── PostgreSQL helpers ─────────────────────────────────────────────────
 
-fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[crate::models::Symbol]) {
+fn upsert_symbols(
+    conn: &mut impl GenericClient,
+    symbols: &[crate::models::Symbol],
+) -> anyhow::Result<()> {
     for sym in symbols {
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO code_symbols (
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
@@ -423,8 +515,9 @@ fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[crate::models::Symbo
                 &sym.content_hash,
                 &sym.summary,
             ],
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) {
@@ -703,7 +796,17 @@ fn epoch_secs_str() -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::models::{CallRelation, CallTargetKind};
+    use std::path::Path;
+
+    fn write_file(root: &Path, rel: &str, contents: &[u8]) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent");
+        }
+        std::fs::write(path, contents).expect("write file");
+    }
 
     #[test]
     fn call_relation_contract_uses_empty_optional_storage_values() {
@@ -728,5 +831,44 @@ mod tests {
         assert_eq!(unresolved.callee_symbol_id.as_deref().unwrap_or(""), "");
         assert_eq!(resolved.callee_target_kind, CallTargetKind::Symbol);
         assert_eq!(unresolved.callee_target_kind, CallTargetKind::Unresolved);
+    }
+
+    #[test]
+    fn explicit_file_route_sends_unsupported_text_to_content_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, "src/lib.rs", b"fn main() {}\n");
+        write_file(root, "notes.txt", b"plain notes\n");
+        write_file(root, "Dockerfile", b"FROM rust:latest\n");
+        write_file(root, "api_key.txt", b"secret-ish\n");
+        write_file(root, "target/generated.txt", b"generated\n");
+        write_file(root, "image.bin", b"PNG\0binary");
+
+        let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+
+        assert_eq!(
+            explicit_file_route(root, &root.join("src/lib.rs"), &excludes),
+            ExplicitFileRoute::Ast
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("notes.txt"), &excludes),
+            ExplicitFileRoute::ContentOnly
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("Dockerfile"), &excludes),
+            ExplicitFileRoute::ContentOnly
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("api_key.txt"), &excludes),
+            ExplicitFileRoute::Skip
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("target/generated.txt"), &excludes),
+            ExplicitFileRoute::Skip
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("image.bin"), &excludes),
+            ExplicitFileRoute::Skip
+        );
     }
 }

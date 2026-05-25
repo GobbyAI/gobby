@@ -15,60 +15,6 @@ settings:
   on_empty: 'No output after compression.'
 
 pipelines:
-  # === Git ===
-  git-status:
-    match: '\bgit\s+status\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^\s*$'
-            - '^On branch '
-            - '^Your branch is '
-            - '^  \(use "git '
-            - '^Changes not staged'
-            - '^Changes to be committed'
-            - '^Untracked files:'
-            - '^no changes added'
-      - group_lines:
-          mode: git_status
-
-  git-diff:
-    match: '\bgit\s+diff\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^index [0-9a-f]'
-      - group_lines:
-          mode: git_diff
-
-  git-log:
-    match: '\bgit\s+log\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^Merge:'
-            - '^\s*$'
-
-  git-transfer:
-    match: '\bgit\s+(?:push|pull|fetch|clone)\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^remote: Counting'
-            - '^remote: Compressing'
-            - '^remote: Total'
-            - '^Receiving objects:'
-            - '^Resolving deltas:'
-            - '^Unpacking objects:'
-            - '^remote: Enumerating'
-
-  git-mutation:
-    match: '\bgit\s+(?:add|commit|stash|tag|branch)\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^\s*$'
-
   # === Test runners ===
   pytest:
     match: '\b(?:pytest|py\.test)\b'
@@ -274,4 +220,6 @@ fallback:
         head: 20
         tail: 20
 
+# These are additive. Gobby-owned CLIs and git are always excluded in code:
+# gobby, gobby-cli, gcode, ghook, gloc, gsqz, git.
 excluded_commands: []

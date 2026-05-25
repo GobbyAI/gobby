@@ -7,6 +7,7 @@ pub fn run(
     path: Option<String>,
     files: Option<Vec<String>>,
     full: bool,
+    require_cpp_semantics: bool,
 ) -> anyhow::Result<()> {
     // Resolve root, project_id, and DB connection — re-resolve if path
     // belongs to a different project than the CWD-derived context.
@@ -36,7 +37,7 @@ pub fn run(
                 (target_root, identity.project_id, conn)
             } else {
                 let conn = db::connect_readwrite(&ctx.database_url)?;
-                (target, ctx.project_id.clone(), conn)
+                (target_root, ctx.project_id.clone(), conn)
             }
         }
         None => {
@@ -46,7 +47,13 @@ pub fn run(
     };
 
     if let Some(file_list) = files {
-        let result = indexer::index_files(&mut conn, &root, &project_id, &file_list)?;
+        let result = indexer::index_files(
+            &mut conn,
+            &root,
+            &project_id,
+            &file_list,
+            require_cpp_semantics,
+        )?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files, {} symbols in {}ms",
@@ -54,7 +61,14 @@ pub fn run(
             );
         }
     } else {
-        let result = indexer::index_directory(&mut conn, &root, &project_id, !full, ctx.quiet)?;
+        let result = indexer::index_directory(
+            &mut conn,
+            &root,
+            &project_id,
+            !full,
+            ctx.quiet,
+            require_cpp_semantics,
+        )?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files ({} skipped), {} symbols in {}ms",

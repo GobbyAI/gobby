@@ -25,7 +25,11 @@ AI coding agents read entire files to find a single function. A 2000-line module
 
 ## The Fix
 
-gcode indexes your codebase using tree-sitter AST parsing and gives agents (and humans) precise, token-efficient access to symbols, search results, and dependency graphs.
+gcode indexes your codebase using tree-sitter AST parsing plus safe repo text
+chunking, where content chunks stay within file boundaries and skip binary,
+large, and excluded files, then gives agents (and humans) precise,
+token-efficient access to symbols, docs, configs, content chunks, and dependency
+graphs.
 
 ```
 $ gcode search "handleAuth"
@@ -39,20 +43,19 @@ One search call instead of reading 50 files. 90%+ token savings.
 
 ## How It Works
 
-```
-codebase → tree-sitter AST → PostgreSQL hub → search / retrieve / navigate
-                │                   │
-     ┌──────────┼──────────┐        │
-     │          │          │        │
-  symbols    chunks     files    ┌──┴──┐
-  (BM25)    (BM25)   (hashes)   │     │
-                              FalkorDB Qdrant
-                             (calls) (vectors)
+```text
+codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / retrieve / navigate
+                │                              │
+     ┌──────────┼──────────┐                   │
+     │          │          │                 ┌──┴──┐
+  symbols    chunks     files               │     │
+  (BM25)    (BM25)   (hashes)             FalkorDB Qdrant
+                                          (calls) (vectors)
 ```
 
-1. **Index** — Walk files, parse ASTs with tree-sitter, extract symbols and content chunks
+1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
 2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → Reciprocal Rank Fusion
+3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → exact-tiered RRF results with raw `rrf_score` metadata
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -95,16 +98,12 @@ projects read FalkorDB settings from `databases.falkordb.*`; daemon-independent
 setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
 `GOBBY_FALKORDB_PASSWORD`.
 
-Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode reads
-`~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the
-hub DSN from `database_url_ref` or `database_url`. For
-`database_url_ref: keyring:gobby:postgres_database_url`, gcode asks the local
-Gobby daemon broker for the DSN and fails clearly when the daemon is unavailable.
-gcode never reads the native OS keyring directly. The DSN is not written to a
-plaintext runtime file. For explicit daemonless setups, use inline
-`database_url`.
-If macOS keeps asking for Keychain authorization, check `which -a gcode`; stale
-binaries from before `0.8.4` can still read Keychain directly.
+Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
+asks the local daemon broker for the hub DSN first. If the daemon is
+unavailable, it falls back to explicit fallback sources:
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`
+`database_url`, then bootstrap `database_url`. Bootstrap fallback requires
+`hub_backend: postgres`; bootstrap `database_url_ref` is rejected.
 
 ### With Gobby
 
@@ -120,11 +119,15 @@ gcode init
 gcode search "query"                      # Hybrid: BM25 + semantic + graph boost
 gcode search "query" --kind function      # Filter by symbol kind
 gcode search "query" --language rust      # Filter by source language
-gcode search "query" --path "src/**/*.rs" # Filter by file path glob
+gcode search "query" src/**/*.rs          # Filter by path or glob
 gcode search-symbol "outline"             # Exact-first symbol/command lookup
+gcode search-symbol "outline" --with-graph # Exact-first lookup plus graph neighbors
 gcode search-symbol "outline" --kind function --language rust
+gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
-gcode search-content "query"              # BM25 on file content, comments, config, CSS
+gcode search-text "query" crates/gcode/src
+gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
+gcode search-content "query" docs/**/*.md crates/gcode/src
 
 # Symbol retrieval
 gcode outline src/auth.ts                 # Hierarchical symbol tree
@@ -186,7 +189,7 @@ source of truth for code-index rows.
 
 ### With Gobby
 
-```
+```text
 codebase → tree-sitter → PostgreSQL hub + pg_search BM25
                           FalkorDB              → call graphs, blast radius, imports
                           Qdrant + embeddings   → semantic vector search
@@ -200,9 +203,10 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 
 **Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
-**PostgreSQL DSNs stay out of plaintext files.** Isolated gcode runtimes keep
-`database_url_ref: daemon:gobby:postgres_database_url`; gcode resolves it
-through the daemon broker only.
+**PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
+ask the daemon broker first. Operators who need daemonless access can opt into
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`, or inline
+bootstrap `database_url`. Bootstrap `database_url_ref` is rejected.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 
@@ -239,13 +243,24 @@ current resolved project.
 
 ## Language Support
 
-gcode parses ASTs using tree-sitter with support for 18 languages:
+gcode parses ASTs using tree-sitter with support for 18 languages. Files that
+pass the same safety checks but do not match a tree-sitter language are indexed
+as content-only text for `search-content`.
 
 | Tier | Languages |
 |------|-----------|
 | **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin |
 | **Tier 2** | Dart, Elixir |
-| **Tier 3** | JSON, YAML, Markdown (content indexing only) |
+| **Tier 3** | JSON, YAML, Markdown (structural symbols + content chunks) |
+
+Content-only indexing covers repo text files such as source comments, skill
+files, docs/Markdown, configs, scripts, CSS, SQL, `Dockerfile`/`Makefile`, and
+other extensionless text files. Binary, excluded, empty, and >10MB files are
+skipped. Secret-like skips are filename/path checks from `src/index/security.rs`:
+extensions such as `.env`, `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
+and `.secret`; prefixes such as `credentials`, `.env`, `id_rsa`, `id_ed25519`,
+and `token`; and substrings such as `api_key`, `apikey`, `_secret.`, and
+`_token.`. No content secret scanner or external detector is currently used.
 
 ## Build
 

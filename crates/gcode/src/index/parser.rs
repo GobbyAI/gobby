@@ -11,6 +11,7 @@ use crate::index::hasher::symbol_content_hash;
 use crate::index::import_resolution::{self, ExtractedImports, ImportBindings};
 use crate::index::languages;
 use crate::index::security;
+use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver};
 use crate::models::{CallRelation, ParseResult, Symbol};
 
 pub use crate::index::import_resolution::{
@@ -27,48 +28,61 @@ enum CallSyntaxKind {
     Other,
 }
 
-/// Parse a single file into symbols, imports, and calls.
-/// Returns None if the file should be skipped.
-pub fn parse_file(
+pub(crate) fn parse_file_with_semantic(
     file_path: &Path,
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
     import_context: &ImportResolutionContext,
-) -> Option<ParseResult> {
+    semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Option<ParseResult>> {
     // Security checks
     if !security::validate_path(file_path, root_path) {
-        return None;
+        return Ok(None);
     }
     if !security::is_symlink_safe(file_path, root_path) {
-        return None;
+        return Ok(None);
     }
     if security::should_exclude(file_path, exclude_patterns) {
-        return None;
+        return Ok(None);
     }
     if security::has_secret_extension(file_path) {
-        return None;
+        return Ok(None);
     }
 
-    let meta = file_path.metadata().ok()?;
+    let Ok(meta) = file_path.metadata() else {
+        return Ok(None);
+    };
     if meta.len() == 0 || meta.len() > MAX_FILE_SIZE {
-        return None;
+        return Ok(None);
     }
 
     if security::is_binary(file_path) {
-        return None;
+        return Ok(None);
     }
 
     let file_str = file_path.to_string_lossy();
-    let language = languages::detect_language(&file_str)?;
-    let spec = languages::get_spec(language)?;
-    let ts_lang = languages::get_ts_language(language)?;
+    let Some(language) = languages::detect_language(&file_str) else {
+        return Ok(None);
+    };
+    let Some(spec) = languages::get_spec(language) else {
+        return Ok(None);
+    };
+    let Some(ts_lang) = languages::get_ts_language(language) else {
+        return Ok(None);
+    };
 
-    let source = std::fs::read(file_path).ok()?;
+    let Ok(source) = std::fs::read(file_path) else {
+        return Ok(None);
+    };
 
     let mut parser = Parser::new();
-    parser.set_language(&ts_lang).ok()?;
-    let tree = parser.parse(&source, None)?;
+    if parser.set_language(&ts_lang).is_err() {
+        return Ok(None);
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return Ok(None);
+    };
 
     let rel_path = file_path
         .canonicalize()
@@ -99,18 +113,25 @@ pub fn parse_file(
         &tree,
         &source,
         spec,
-        &ts_lang,
-        &rel_path,
-        &symbols,
-        &extracted_imports.bindings,
-    );
+        CallExtractionContext {
+            language,
+            ts_lang: &ts_lang,
+            rel_path: &rel_path,
+            symbols: &symbols,
+            import_context,
+            import_bindings: &extracted_imports.bindings,
+            file_path,
+            root_path,
+        },
+        semantic_resolver,
+    )?;
 
-    Some(ParseResult {
+    Ok(Some(ParseResult {
         symbols,
         imports: extracted_imports.imports,
         calls,
         source,
-    })
+    }))
 }
 
 fn extract_symbols(
@@ -359,25 +380,43 @@ fn extract_imports(
         }
     }
 
+    import_resolution::seed_import_bindings(language, import_context, &mut extracted.bindings);
     extracted
+}
+
+struct CallExtractionContext<'a> {
+    language: &'a str,
+    ts_lang: &'a tree_sitter::Language,
+    rel_path: &'a str,
+    symbols: &'a [Symbol],
+    import_context: &'a ImportResolutionContext,
+    import_bindings: &'a ImportBindings,
+    file_path: &'a Path,
+    root_path: &'a Path,
 }
 
 fn extract_calls(
     tree: &tree_sitter::Tree,
     source: &[u8],
     spec: &languages::LanguageSpec,
-    ts_lang: &tree_sitter::Language,
-    rel_path: &str,
-    symbols: &[Symbol],
-    import_bindings: &ImportBindings,
-) -> Vec<CallRelation> {
+    ctx: CallExtractionContext<'_>,
+    mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Vec<CallRelation>> {
+    let language = ctx.language;
+    let rel_path = ctx.rel_path;
+    let symbols = ctx.symbols;
+    let import_context = ctx.import_context;
+    let import_bindings = ctx.import_bindings;
+    if language == "dart" {
+        return extract_textual_dart_calls(source, ctx, semantic_resolver);
+    }
     if spec.call_query.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let query = match Query::new(ts_lang, spec.call_query) {
+    let query = match Query::new(ctx.ts_lang, spec.call_query) {
         Ok(q) => q,
-        Err(_) => return Vec::new(),
+        Err(_) => return Ok(Vec::new()),
     };
 
     let mut cursor = QueryCursor::new();
@@ -407,21 +446,77 @@ fn extract_calls(
             None => continue,
         };
 
-        let callee_name =
+        let raw_callee =
             String::from_utf8_lossy(&source[name_n.start_byte()..name_n.end_byte()]).to_string();
+        let (callee_name, qualifier_from_name) = split_qualified_callee(&raw_callee);
+        if should_ignore_call_name(language, &callee_name) {
+            continue;
+        }
 
         let target = call_node.unwrap_or(name_n);
         let caller_symbol = enclosing_symbol(symbols, target.start_byte());
         let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
-        let syntax = call_syntax_kind(name_n, target);
-        let local_target = resolve_same_file_callee(symbols, caller_symbol, &callee_name, syntax);
-        let external_target = import_resolution::resolve_external_callee(
-            import_bindings,
+        // If the captured callee is already qualified, trust that text over a
+        // prefix inferred from the wider call node.
+        let qualifier_path = call_qualifier_path(qualifier_from_name, || {
+            member_qualifier_path(source, target, name_n)
+        });
+        let detected_syntax = call_syntax_kind(name_n, target);
+        let syntax = if detected_syntax == CallSyntaxKind::Bare && qualifier_path.is_some() {
+            CallSyntaxKind::Member
+        } else {
+            detected_syntax
+        };
+        let local_target = resolve_same_file_callee_for_language(
+            language,
             symbols,
+            caller_symbol,
             &callee_name,
-            member_root_alias(source, target, name_n).as_deref(),
-            syntax == CallSyntaxKind::Bare,
+            syntax,
         );
+        let root_alias = qualifier_path
+            .as_deref()
+            .and_then(qualifier_root_alias)
+            .map(ToOwned::to_owned);
+        let external_shadowed = external_call_is_shadowed(
+            source,
+            caller_symbol,
+            target.start_byte(),
+            &callee_name,
+            root_alias.as_deref(),
+            syntax,
+        );
+        let external_target = if external_shadowed {
+            None
+        } else {
+            import_resolution::resolve_external_callee(
+                import_context,
+                import_bindings,
+                symbols,
+                &callee_name,
+                root_alias.as_deref(),
+                qualifier_path.as_deref(),
+                syntax == CallSyntaxKind::Bare,
+            )
+        };
+        let semantic_target =
+            if local_target.is_none() && external_target.is_none() && !external_shadowed {
+                if let Some(resolver) = semantic_resolver.as_deref_mut() {
+                    resolver.resolve(&SemanticCallRequest {
+                        language,
+                        file_path: ctx.file_path,
+                        root_path: ctx.root_path,
+                        source,
+                        callee_name: &callee_name,
+                        line: name_n.start_position().row + 1,
+                        column: utf16_column_at_byte(source, name_n.start_byte()),
+                    })?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
         let mut call = CallRelation::new(
             caller_symbol_id,
@@ -437,12 +532,454 @@ fn extract_calls(
                 call =
                     call.with_external_target(external_target.callee_name, external_target.module);
             }
+            (None, None) => {
+                if let Some(semantic_target) = semantic_target {
+                    call = call.with_external_target(
+                        semantic_target.callee_name,
+                        semantic_target.external_module,
+                    );
+                }
+            }
             _ => {}
         }
         calls.push(call);
     }
 
-    calls
+    Ok(calls)
+}
+
+fn extract_textual_dart_calls(
+    source: &[u8],
+    ctx: CallExtractionContext<'_>,
+    mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Vec<CallRelation>> {
+    let rel_path = ctx.rel_path;
+    let symbols = ctx.symbols;
+    let import_context = ctx.import_context;
+    let import_bindings = ctx.import_bindings;
+    let file_path = ctx.file_path;
+    let root_path = ctx.root_path;
+    let text = String::from_utf8_lossy(source);
+    let mut calls = Vec::new();
+    let mut line_start_byte = 0usize;
+    let mut dart_state = DartScanState::default();
+
+    for (row, line) in text.lines().enumerate() {
+        let terminator_len = line_terminator_len(&text, line_start_byte, line.len());
+        let trimmed = line.trim_start();
+        if dart_state.is_code()
+            && (trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("class ")
+                || trimmed.starts_with("enum ")
+                || trimmed.starts_with("typedef "))
+        {
+            dart_state = dart_state_after_line(line, dart_state);
+            line_start_byte += line.len() + terminator_len;
+            continue;
+        }
+
+        for candidate in textual_call_candidates(line, line_start_byte, &['.']) {
+            let candidate_line_byte = candidate.call_byte.saturating_sub(line_start_byte);
+            if dart_textual_candidate_in_ignored_context(line, candidate_line_byte, dart_state) {
+                continue;
+            }
+            if should_ignore_call_name("dart", &candidate.name) {
+                continue;
+            }
+            let caller_symbol = enclosing_symbol(symbols, candidate.call_byte);
+            let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
+            let syntax = if candidate.qualifier_path.is_some() {
+                CallSyntaxKind::Member
+            } else {
+                CallSyntaxKind::Bare
+            };
+            let local_target = resolve_same_file_callee_for_language(
+                "dart",
+                symbols,
+                caller_symbol,
+                &candidate.name,
+                syntax,
+            );
+            let root_alias = candidate
+                .qualifier_path
+                .as_deref()
+                .and_then(qualifier_root_alias)
+                .map(ToOwned::to_owned);
+            let external_shadowed = external_call_is_shadowed(
+                source,
+                caller_symbol,
+                candidate.call_byte,
+                &candidate.name,
+                root_alias.as_deref(),
+                syntax,
+            );
+            let external_target = if external_shadowed {
+                None
+            } else {
+                import_resolution::resolve_external_callee(
+                    import_context,
+                    import_bindings,
+                    symbols,
+                    &candidate.name,
+                    root_alias.as_deref(),
+                    candidate.qualifier_path.as_deref(),
+                    syntax == CallSyntaxKind::Bare,
+                )
+            };
+            let semantic_target =
+                if local_target.is_none() && external_target.is_none() && !external_shadowed {
+                    if let Some(resolver) = semantic_resolver.as_deref_mut() {
+                        resolver.resolve(&SemanticCallRequest {
+                            language: "dart",
+                            file_path,
+                            root_path,
+                            source,
+                            callee_name: &candidate.name,
+                            line: row + 1,
+                            column: utf16_column_at_byte(source, candidate.call_byte),
+                        })?
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            let mut call = CallRelation::new(
+                caller_symbol_id,
+                candidate.name,
+                rel_path.to_string(),
+                row + 1,
+            );
+            match (local_target, external_target) {
+                (Some(callee_symbol_id), None) => {
+                    call = call.with_symbol_target(callee_symbol_id);
+                }
+                (None, Some(external_target)) => {
+                    call = call
+                        .with_external_target(external_target.callee_name, external_target.module);
+                }
+                (None, None) => {
+                    if let Some(semantic_target) = semantic_target {
+                        call = call.with_external_target(
+                            semantic_target.callee_name,
+                            semantic_target.external_module,
+                        );
+                    }
+                }
+                _ => {}
+            }
+            calls.push(call);
+        }
+
+        dart_state = dart_state_after_line(line, dart_state);
+        line_start_byte += line.len() + terminator_len;
+    }
+
+    Ok(calls)
+}
+
+fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> usize {
+    let terminator_start = line_start_byte + line_len;
+    let Some(rest) = text.as_bytes().get(terminator_start..) else {
+        return 0;
+    };
+    if rest.starts_with(b"\r\n") {
+        2
+    } else if rest.starts_with(b"\n") {
+        1
+    } else {
+        0
+    }
+}
+
+fn utf16_column_at_byte(source: &[u8], byte_offset: usize) -> usize {
+    let byte_offset = byte_offset.min(source.len());
+    let line_start = source[..byte_offset]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    String::from_utf8_lossy(&source[line_start..byte_offset])
+        .encode_utf16()
+        .count()
+}
+
+#[derive(Debug)]
+struct TextualCallCandidate {
+    name: String,
+    qualifier_path: Option<String>,
+    call_byte: usize,
+}
+
+fn textual_call_candidates(
+    line: &str,
+    line_start_byte: usize,
+    separators: &[char],
+) -> Vec<TextualCallCandidate> {
+    let bytes = line.as_bytes();
+    let mut candidates = Vec::new();
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        if bytes[idx] != b'(' {
+            idx += 1;
+            continue;
+        }
+        let mut end = idx;
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let (start, name_end) = if end > 0 && bytes[end - 1] == b'>' {
+            let Some(generic_start) = matching_angle_start(bytes, end - 1) else {
+                idx += 1;
+                continue;
+            };
+            let mut start = generic_start;
+            while start > 0 && is_textual_call_name_byte(bytes[start - 1]) {
+                start -= 1;
+            }
+            (start, generic_start)
+        } else {
+            let mut start = end;
+            while start > 0 && is_textual_call_name_byte(bytes[start - 1]) {
+                start -= 1;
+            }
+            (start, end)
+        };
+        if start == end {
+            idx += 1;
+            continue;
+        }
+
+        let name = &line[start..name_end];
+        if name.is_empty() {
+            idx += 1;
+            continue;
+        }
+        if looks_like_textual_function_declaration(line, start, idx) {
+            idx += 1;
+            continue;
+        }
+        let mut qualifier_path = None;
+        let mut prefix_end = start;
+        while prefix_end > 0 && bytes[prefix_end - 1].is_ascii_whitespace() {
+            prefix_end -= 1;
+        }
+        if prefix_end > 0 && separators.contains(&(bytes[prefix_end - 1] as char)) {
+            let mut qualifier_start = prefix_end - 1;
+            while qualifier_start > 0 {
+                let ch = bytes[qualifier_start - 1] as char;
+                if is_identifier_continue(ch) || separators.contains(&ch) {
+                    qualifier_start -= 1;
+                } else {
+                    break;
+                }
+            }
+            let qualifier = line[qualifier_start..prefix_end - 1].trim();
+            if !qualifier.is_empty() {
+                qualifier_path = Some(qualifier.to_string());
+            }
+        }
+
+        candidates.push(TextualCallCandidate {
+            name: name.to_string(),
+            qualifier_path,
+            call_byte: line_start_byte + start,
+        });
+        idx += 1;
+    }
+
+    candidates
+}
+
+fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for idx in (0..=close_idx).rev() {
+        match bytes[idx] {
+            b'>' => depth += 1,
+            b'<' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DartScanState {
+    in_block_comment: bool,
+    string: Option<DartStringState>,
+}
+
+impl DartScanState {
+    fn is_code(self) -> bool {
+        !self.in_block_comment && self.string.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DartStringState {
+    quote: u8,
+    triple: bool,
+    raw: bool,
+    escaped: bool,
+}
+
+fn dart_textual_candidate_in_ignored_context(
+    line: &str,
+    candidate_byte: usize,
+    state: DartScanState,
+) -> bool {
+    let (state, in_line_comment) = dart_scan_line_until(line, candidate_byte, state);
+    in_line_comment || !state.is_code()
+}
+
+fn dart_state_after_line(line: &str, state: DartScanState) -> DartScanState {
+    dart_scan_line_until(line, line.len(), state).0
+}
+
+fn dart_scan_line_until(
+    line: &str,
+    limit: usize,
+    mut state: DartScanState,
+) -> (DartScanState, bool) {
+    let bytes = line.as_bytes();
+    let limit = limit.min(bytes.len());
+    let mut idx = 0usize;
+
+    while idx < limit {
+        if state.in_block_comment {
+            if bytes[idx..].starts_with(b"*/") {
+                state.in_block_comment = false;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if let Some(mut string) = state.string {
+            if string.triple
+                && bytes[idx..].starts_with(&[string.quote, string.quote, string.quote])
+            {
+                state.string = None;
+                idx += 3;
+                continue;
+            }
+            if !string.triple {
+                if !string.raw && string.escaped {
+                    string.escaped = false;
+                } else if !string.raw && bytes[idx] == b'\\' {
+                    string.escaped = true;
+                } else if bytes[idx] == string.quote {
+                    state.string = None;
+                    idx += 1;
+                    continue;
+                }
+                state.string = Some(string);
+            }
+            idx += 1;
+            continue;
+        }
+
+        if bytes[idx..].starts_with(b"//") {
+            return (state, true);
+        }
+        if bytes[idx..].starts_with(b"/*") {
+            state.in_block_comment = true;
+            idx += 2;
+            continue;
+        }
+        if let Some((string, consumed)) = dart_string_start(bytes, idx) {
+            state.string = Some(string);
+            idx += consumed;
+            continue;
+        }
+        idx += 1;
+    }
+
+    (state, false)
+}
+
+fn dart_string_start(bytes: &[u8], idx: usize) -> Option<(DartStringState, usize)> {
+    let (raw, quote_idx) =
+        if bytes.get(idx) == Some(&b'r') && matches!(bytes.get(idx + 1), Some(b'\'' | b'"')) {
+            (true, idx + 1)
+        } else if matches!(bytes.get(idx), Some(b'\'' | b'"')) {
+            (false, idx)
+        } else {
+            return None;
+        };
+    let quote = bytes[quote_idx];
+    let triple = bytes
+        .get(quote_idx..quote_idx + 3)
+        .is_some_and(|slice| slice == [quote, quote, quote]);
+    Some((
+        DartStringState {
+            quote,
+            triple,
+            raw,
+            escaped: false,
+        },
+        (if raw { 1 } else { 0 }) + if triple { 3 } else { 1 },
+    ))
+}
+
+fn looks_like_textual_function_declaration(
+    line: &str,
+    name_start: usize,
+    open_paren: usize,
+) -> bool {
+    let prefix = line[..name_start].trim_end();
+    let after_paren = &line[open_paren + 1..];
+    let after_args = after_paren
+        .find(')')
+        .and_then(|close| after_paren.get(close + 1..))
+        .unwrap_or_default()
+        .trim_start();
+    let has_declaration_tail = after_args.starts_with('{')
+        || after_args.starts_with("=>")
+        || after_args.starts_with("async")
+        || after_args.starts_with("sync")
+        || after_args.starts_with("external")
+        || after_args.starts_with(';');
+    if !has_declaration_tail {
+        return false;
+    }
+
+    if prefix.is_empty() {
+        return !after_args.starts_with(';');
+    }
+    if prefix.contains(['=', '.', '(', ',', ';']) {
+        return false;
+    }
+    let Some(previous_token) = prefix.split_whitespace().last() else {
+        return false;
+    };
+    previous_token.contains('<')
+        || previous_token
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        || matches!(
+            previous_token,
+            "void"
+                | "int"
+                | "double"
+                | "num"
+                | "String"
+                | "bool"
+                | "dynamic"
+                | "Object"
+                | "Future"
+                | "Stream"
+        )
 }
 
 fn enclosing_symbol(symbols: &[Symbol], byte_offset: usize) -> Option<&Symbol> {
@@ -482,6 +1019,9 @@ fn is_memberish_kind(kind: &str) -> bool {
             | "field_expression"
             | "member_access_expression"
             | "member_call_expression"
+            | "navigation_expression"
+            | "scoped_call_expression"
+            | "dot"
     )
 }
 
@@ -514,6 +1054,21 @@ fn resolve_same_file_callee(
     }
 }
 
+fn resolve_same_file_callee_for_language(
+    language: &str,
+    symbols: &[Symbol],
+    caller_symbol: Option<&Symbol>,
+    callee_name: &str,
+    syntax: CallSyntaxKind,
+) -> Option<String> {
+    if language == "ruby" && syntax == CallSyntaxKind::Bare {
+        // Ruby bare calls are dynamic dispatch/open-class territory; same-file
+        // name matching creates noisy false edges here.
+        return None;
+    }
+    resolve_same_file_callee(symbols, caller_symbol, callee_name, syntax)
+}
+
 fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<String> {
     let mut symbols = symbols;
     let first = symbols.next()?;
@@ -524,28 +1079,238 @@ fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<Str
     }
 }
 
-fn member_root_alias(
+fn member_qualifier_path(
     source: &[u8],
     call_node: tree_sitter::Node,
     name_node: tree_sitter::Node,
 ) -> Option<String> {
     let prefix = String::from_utf8_lossy(&source[call_node.start_byte()..name_node.start_byte()]);
-    let mut chars = prefix.chars().skip_while(|c| !is_identifier_start(*c));
+    let prefix = prefix.trim();
+    if prefix.starts_with('$') || prefix.contains("->") || prefix.contains("?->") {
+        return None;
+    }
+    let is_absolute_namespace = prefix.starts_with('\\');
+
+    let mut chars = prefix
+        .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())
+        .chars()
+        .skip_while(|c| !is_identifier_start(*c));
     let first = chars.next()?;
     if !is_identifier_start(first) {
         return None;
     }
 
-    let mut alias = String::from(first);
+    let mut qualifier = if is_absolute_namespace {
+        "\\".to_string()
+    } else {
+        String::new()
+    };
+    qualifier.push(first);
     for ch in chars {
-        if is_identifier_continue(ch) {
-            alias.push(ch);
+        if is_identifier_continue(ch) || matches!(ch, '.' | ':' | '\\') {
+            qualifier.push(ch);
         } else {
             break;
         }
     }
 
-    Some(alias)
+    let qualifier = qualifier.trim_end_matches(['.', ':', '\\']).to_string();
+    if qualifier.is_empty() {
+        None
+    } else {
+        Some(qualifier)
+    }
+}
+
+fn call_qualifier_path(
+    qualifier_from_name: Option<String>,
+    qualifier_from_member: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    qualifier_from_name.or_else(qualifier_from_member)
+}
+
+fn external_call_is_shadowed(
+    source: &[u8],
+    caller_symbol: Option<&Symbol>,
+    call_byte: usize,
+    callee_name: &str,
+    root_alias: Option<&str>,
+    syntax: CallSyntaxKind,
+) -> bool {
+    let shadow_name = match syntax {
+        CallSyntaxKind::Bare => Some(callee_name),
+        CallSyntaxKind::Member => root_alias,
+        CallSyntaxKind::Other => None,
+    };
+    let Some(shadow_name) = shadow_name.filter(|name| !name.is_empty()) else {
+        return false;
+    };
+    local_name_in_scope_before_call(source, caller_symbol, call_byte, shadow_name)
+}
+
+fn local_name_in_scope_before_call(
+    source: &[u8],
+    caller_symbol: Option<&Symbol>,
+    call_byte: usize,
+    name: &str,
+) -> bool {
+    let start = caller_symbol.map(|symbol| symbol.byte_start).unwrap_or(0);
+    if start >= source.len() || start >= call_byte {
+        return false;
+    }
+    let end = call_byte.min(source.len());
+    let prefix = String::from_utf8_lossy(&source[start..end]);
+    caller_symbol.is_some_and(|_| parameter_list_contains_name(&prefix, name))
+        || prefix
+            .lines()
+            .any(|line| local_binding_line_defines(line, name))
+}
+
+fn parameter_list_contains_name(prefix: &str, name: &str) -> bool {
+    let Some(open) = prefix.find('(') else {
+        return false;
+    };
+    let Some(close) = matching_paren_in_str(prefix, open) else {
+        return false;
+    };
+    prefix[open + 1..close]
+        .split(',')
+        .any(|param| parameter_segment_name(param).is_some_and(|param_name| param_name == name))
+}
+
+fn matching_paren_in_str(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (idx, ch) in text.char_indices().skip_while(|(idx, _)| *idx < open) {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parameter_segment_name(segment: &str) -> Option<&str> {
+    let segment = segment
+        .split('=')
+        .next()
+        .unwrap_or(segment)
+        .split(':')
+        .next()
+        .unwrap_or(segment)
+        .trim();
+    segment
+        .split_whitespace()
+        .find(|token| token.chars().next().is_some_and(is_identifier_start))
+        .map(trim_identifier_token)
+        .filter(|token| !token.is_empty())
+}
+
+fn local_binding_line_defines(line: &str, name: &str) -> bool {
+    let line = line.trim_start();
+    if line.is_empty()
+        || line.starts_with("//")
+        || line.starts_with('#')
+        || line.starts_with("import ")
+        || line.starts_with("from ")
+        || line.starts_with("use ")
+    {
+        return false;
+    }
+    if let Some(left) = line.split(":=").next()
+        && line.contains(":=")
+        && binding_left_side_contains(left, name)
+    {
+        return true;
+    }
+    if let Some((left, _)) = split_assignment(line)
+        && binding_left_side_contains(left, name)
+    {
+        return true;
+    }
+    declaration_without_assignment_contains(line, name)
+}
+
+fn split_assignment(line: &str) -> Option<(&str, &str)> {
+    for (idx, ch) in line.char_indices() {
+        if ch != '=' {
+            continue;
+        }
+        let previous = line[..idx].chars().next_back();
+        let next = line[idx + 1..].chars().next();
+        if matches!(
+            previous,
+            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%')
+        ) || matches!(next, Some('=' | '>'))
+        {
+            continue;
+        }
+        return Some((&line[..idx], &line[idx + 1..]));
+    }
+    None
+}
+
+fn binding_left_side_contains(left: &str, name: &str) -> bool {
+    left.split(',')
+        .filter_map(|part| binding_name_from_left_part(part))
+        .any(|binding_name| binding_name == name)
+}
+
+fn binding_name_from_left_part(part: &str) -> Option<&str> {
+    let part = part.trim();
+    if part.contains(['.', '[', ']']) {
+        return None;
+    }
+    part.split_whitespace()
+        .next_back()
+        .map(trim_identifier_token)
+        .filter(|token| !token.is_empty())
+}
+
+fn declaration_without_assignment_contains(line: &str, name: &str) -> bool {
+    let Some(rest) = line
+        .strip_prefix("let ")
+        .or_else(|| line.strip_prefix("const "))
+        .or_else(|| line.strip_prefix("var "))
+        .or_else(|| line.strip_prefix("final "))
+        .or_else(|| line.strip_prefix("late "))
+        .or_else(|| line.strip_prefix("val "))
+        .or_else(|| line.strip_prefix("auto "))
+    else {
+        return false;
+    };
+    rest.split([',', ';'])
+        .filter_map(binding_name_from_left_part)
+        .any(|binding_name| binding_name == name)
+}
+
+fn trim_identifier_token(token: &str) -> &str {
+    token.trim_matches(|ch: char| !is_identifier_continue(ch))
+}
+
+fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
+    let raw = raw.trim();
+    for separator in ["::", "\\", "."] {
+        if let Some((qualifier, name)) = raw.rsplit_once(separator)
+            && !qualifier.is_empty()
+            && !name.is_empty()
+        {
+            return (name.to_string(), Some(qualifier.to_string()));
+        }
+    }
+    (raw.to_string(), None)
+}
+
+fn qualifier_root_alias(qualifier: &str) -> Option<&str> {
+    qualifier
+        .trim_start_matches('\\')
+        .split(['.', ':', '\\'])
+        .find(|part| !part.is_empty())
 }
 
 fn is_identifier_start(ch: char) -> bool {
@@ -554,6 +1319,28 @@ fn is_identifier_start(ch: char) -> bool {
 
 fn is_identifier_continue(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')
+}
+
+fn is_textual_call_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'!' | b'?')
+}
+
+fn should_ignore_call_name(language: &str, name: &str) -> bool {
+    match language {
+        "dart" => matches!(
+            name,
+            "if" | "for" | "while" | "switch" | "catch" | "assert" | "return" | "throw"
+        ),
+        "elixir" => matches!(
+            name,
+            "def" | "defp" | "defmacro" | "defmodule" | "alias" | "import" | "use" | "require"
+        ),
+        "kotlin" => matches!(
+            name,
+            "if" | "for" | "while" | "when" | "catch" | "return" | "throw"
+        ),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -583,7 +1370,9 @@ mod tests {
         fs::write(&path, source).expect("write test source");
         let candidates = discover_supported_files(root);
         let context = build_import_resolution_context(root, &candidates);
-        parse_file(&path, "proj", root, &[], &context).expect("parse file")
+        parse_file_with_semantic(&path, "proj", root, &[], &context, None)
+            .expect("parse result")
+            .expect("parse file")
     }
 
     fn parse_python(source: &str) -> ParseResult {
@@ -596,6 +1385,46 @@ mod tests {
 
     fn parse_typescript(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
         parse_source("src/sample.ts", source, extra_files)
+    }
+
+    fn parse_go(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("cmd/sample.go", source, extra_files)
+    }
+
+    fn parse_rust(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/main.rs", source, extra_files)
+    }
+
+    fn parse_java(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/main/java/app/Sample.java", source, extra_files)
+    }
+
+    fn parse_csharp(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/Sample.cs", source, extra_files)
+    }
+
+    fn parse_php(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/sample.php", source, extra_files)
+    }
+
+    fn parse_ruby(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("lib/sample.rb", source, extra_files)
+    }
+
+    fn parse_dart(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("lib/sample.dart", source, extra_files)
+    }
+
+    fn parse_elixir(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("lib/sample.ex", source, extra_files)
+    }
+
+    fn parse_kotlin(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/main/kotlin/Sample.kt", source, extra_files)
+    }
+
+    fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("Sources/App/main.swift", source, extra_files)
     }
 
     fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
@@ -617,6 +1446,78 @@ mod tests {
             }
         }
         candidates
+    }
+
+    #[test]
+    fn line_terminator_len_tracks_lf_crlf_and_eof() {
+        let text = "import 'a';\r\nhttp.Client();\nlast()";
+        assert_eq!(line_terminator_len(text, 0, "import 'a';".len()), 2);
+
+        let second_start = "import 'a';\r\n".len();
+        assert_eq!(
+            line_terminator_len(text, second_start, "http.Client();".len()),
+            1
+        );
+
+        let last_start = "import 'a';\r\nhttp.Client();\n".len();
+        assert_eq!(line_terminator_len(text, last_start, "last()".len()), 0);
+    }
+
+    struct FakeSemanticResolver {
+        target: Option<crate::index::semantic::SemanticCallTarget>,
+        expected_language: &'static str,
+        expected_callee: &'static str,
+        requests: Vec<CapturedSemanticRequest>,
+        error: Option<&'static str>,
+    }
+
+    struct CapturedSemanticRequest {
+        language: String,
+        file_path: PathBuf,
+        root_path: PathBuf,
+        callee_name: String,
+        line: usize,
+        column: usize,
+    }
+
+    impl SemanticCallResolver for FakeSemanticResolver {
+        fn resolve(
+            &mut self,
+            request: &SemanticCallRequest<'_>,
+        ) -> anyhow::Result<Option<crate::index::semantic::SemanticCallTarget>> {
+            self.requests.push(CapturedSemanticRequest {
+                language: request.language.to_string(),
+                file_path: request.file_path.to_path_buf(),
+                root_path: request.root_path.to_path_buf(),
+                callee_name: request.callee_name.to_string(),
+                line: request.line,
+                column: request.column,
+            });
+            if let Some(error) = self.error {
+                anyhow::bail!("{error}");
+            }
+            if request.language == self.expected_language
+                && request.callee_name == self.expected_callee
+            {
+                Ok(self.target.clone())
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_qualified_raw_callee_takes_precedence_over_member_prefix() {
+        let mut inferred_called = false;
+        let (_, qualifier_from_name) = split_qualified_callee("Vendor\\Pkg\\helper");
+
+        let qualifier_path = call_qualifier_path(qualifier_from_name, || {
+            inferred_called = true;
+            Some("Vendor".to_string())
+        });
+
+        assert_eq!(qualifier_path.as_deref(), Some("Vendor\\Pkg"));
+        assert!(!inferred_called);
     }
 
     #[test]
@@ -766,6 +1667,27 @@ function run() {
     }
 
     #[test]
+    fn leaves_external_bare_calls_shadowed_by_parameters_unresolved() {
+        let parsed = parse_javascript(
+            r#"
+import { useState } from "react";
+
+function run(useState) {
+  useState();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+        assert!(call.callee_external_module.is_none());
+    }
+
+    #[test]
     fn classifies_external_javascript_namespace_member_calls() {
         let parsed = parse_javascript(
             r#"
@@ -833,6 +1755,32 @@ function run() {
     }
 
     #[test]
+    fn leaves_external_qualified_roots_shadowed_by_locals_unresolved() {
+        let parsed = parse_typescript(
+            r#"
+import React from "react";
+
+function run() {
+  const React = makeLocalReact();
+  React.useState();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "useState")
+            .expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+        assert!(call.callee_external_module.is_none());
+    }
+
+    #[test]
     fn leaves_unlisted_javascript_package_aliases_unresolved() {
         let parsed = parse_javascript(
             r#"
@@ -850,5 +1798,1051 @@ function run() {
 
         let call = parsed.calls.first().expect("call");
         assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_go_import_alias_selector_calls() {
+        let parsed = parse_go(
+            r#"
+package main
+
+import (
+    "fmt"
+    cli "github.com/acme/client"
+    "gopkg.in/yaml.v3"
+)
+
+func run() {
+    fmt.Println("hello")
+    cli.Connect()
+    yaml.Unmarshal(nil, nil)
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
+        );
+
+        let fmt_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Println")
+            .expect("fmt call");
+        assert_eq!(fmt_call.callee_target_kind.as_str(), "external");
+        assert_eq!(fmt_call.callee_external_module.as_deref(), Some("fmt"));
+
+        let alias_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Connect")
+            .expect("alias call");
+        assert_eq!(alias_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            alias_call.callee_external_module.as_deref(),
+            Some("github.com/acme/client")
+        );
+
+        let yaml_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Unmarshal")
+            .expect("yaml call");
+        assert_eq!(yaml_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            yaml_call.callee_external_module.as_deref(),
+            Some("gopkg.in/yaml.v3")
+        );
+    }
+
+    #[test]
+    fn leaves_self_module_go_imports_unresolved() {
+        let parsed = parse_go(
+            r#"
+package main
+
+import "example.com/app/pkg/tool"
+
+func run() {
+    tool.Run()
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn leaves_unimported_go_selector_calls_unresolved() {
+        let parsed = parse_go(
+            r#"
+package main
+
+func run(client Client) {
+    client.Do()
+}
+"#,
+            &[("go.mod", "module example.com/app\n")],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_rust_use_alias_and_path_calls() {
+        let parsed = parse_rust(
+            r#"
+use serde_json::from_str as parse_json;
+use std::fs;
+
+fn run() {
+    parse_json("{}");
+    serde_json::from_str("{}");
+    fs::read("Cargo.toml");
+    std::fs::read("Cargo.toml");
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+
+[dependencies]
+serde_json = { version = "1" }
+"#,
+            )],
+        );
+
+        let parse_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "from_str")
+            .expect("from_str call");
+        assert_eq!(parse_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            parse_call.callee_external_module.as_deref(),
+            Some("serde_json")
+        );
+
+        let read_modules: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter(|call| call.callee_name == "read")
+            .map(|call| call.callee_external_module.as_deref())
+            .collect();
+        assert_eq!(read_modules, vec![Some("std::fs"), Some("std::fs")]);
+    }
+
+    #[test]
+    fn leaves_rust_self_crate_and_glob_imports_unresolved() {
+        let parsed = parse_rust(
+            r#"
+use app::helper;
+use serde_json::*;
+
+fn run() {
+    helper();
+    from_str("{}");
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+
+[dependencies]
+serde_json = "1"
+"#,
+            )],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn leaves_rust_receiver_method_calls_unresolved() {
+        let parsed = parse_rust(
+            r#"
+fn run(value: Parser) {
+    value.parse();
+}
+"#,
+            &[(
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_java_import_and_static_import_calls() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import java.util.Collections;
+import static java.util.Objects.requireNonNull;
+
+class Sample {
+    void run() {
+        Collections.emptyList();
+        requireNonNull("x");
+    }
+}
+"#,
+            &[],
+        );
+
+        let class_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "emptyList")
+            .expect("class call");
+        assert_eq!(class_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            class_call.callee_external_module.as_deref(),
+            Some("java.util.Collections")
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "requireNonNull")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("java.util.Objects")
+        );
+    }
+
+    #[test]
+    fn leaves_java_wildcard_and_instance_calls_unresolved() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import java.util.*;
+
+class Sample {
+    void run(java.util.List<String> list) {
+        list.add("x");
+        emptyList();
+    }
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn leaves_local_java_imports_unresolved() {
+        let parsed = parse_java(
+            r#"
+package app;
+
+import app.helpers.Helper;
+
+class Sample {
+    void run() {
+        Helper.render();
+    }
+}
+"#,
+            &[(
+                "src/main/java/app/helpers/Helper.java",
+                r#"
+package app.helpers;
+
+class Helper {
+    static void render() {}
+}
+"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_csharp_alias_static_and_qualified_calls() {
+        let parsed = parse_csharp(
+            r#"
+using Json = Newtonsoft.Json.JsonConvert;
+using static System.Math;
+using System;
+
+class Sample {
+    void Run() {
+        Json.SerializeObject(this);
+        Sqrt(4);
+        System.Console.WriteLine("x");
+    }
+}
+"#,
+            &[],
+        );
+
+        let alias_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "SerializeObject")
+            .expect("alias call");
+        assert_eq!(alias_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            alias_call.callee_external_module.as_deref(),
+            Some("Newtonsoft.Json.JsonConvert")
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Sqrt")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("System.Math")
+        );
+
+        let qualified_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "WriteLine")
+            .expect("qualified call");
+        assert_eq!(qualified_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            qualified_call.callee_external_module.as_deref(),
+            Some("System.Console")
+        );
+    }
+
+    #[test]
+    fn leaves_csharp_instance_and_local_namespace_calls_unresolved() {
+        let parsed = parse_csharp(
+            r#"
+namespace App;
+
+using App.Helpers;
+
+class Sample {
+    void Run(Client client) {
+        client.Send();
+        App.Helpers.Tool.Render();
+    }
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn classifies_external_php_namespace_and_fully_qualified_calls() {
+        let parsed = parse_php(
+            r#"
+<?php
+namespace App;
+
+use Vendor\Pkg\Client as ApiClient;
+use function Vendor\Pkg\do_work as work;
+
+function run() {
+    ApiClient::connect();
+    work();
+    \Vendor\Pkg\helper();
+    \Vendor\Pkg\Service::build();
+}
+"#,
+            &[],
+        );
+
+        let static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "connect")
+            .expect("static call");
+        assert_eq!(static_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            static_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg\\Client")
+        );
+
+        let function_import_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "do_work")
+            .expect("function import call");
+        assert_eq!(function_import_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            function_import_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg")
+        );
+
+        let qualified_function_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "helper")
+            .expect("qualified function call");
+        assert_eq!(
+            qualified_function_call.callee_target_kind.as_str(),
+            "external"
+        );
+        assert_eq!(
+            qualified_function_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg")
+        );
+
+        let qualified_static_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "build")
+            .expect("qualified static call");
+        assert_eq!(
+            qualified_static_call.callee_target_kind.as_str(),
+            "external"
+        );
+        assert_eq!(
+            qualified_static_call.callee_external_module.as_deref(),
+            Some("Vendor\\Pkg\\Service")
+        );
+    }
+
+    #[test]
+    fn leaves_php_dynamic_member_and_local_import_calls_unresolved() {
+        let parsed = parse_php(
+            r#"
+<?php
+namespace App;
+
+use App\Local\Client;
+
+function run($obj) {
+    $obj->connect();
+    Client::connect();
+    \missing();
+    missing();
+}
+"#,
+            &[(
+                "src/Local/Client.php",
+                r#"
+<?php
+namespace App\Local;
+
+class Client {}
+"#,
+            )],
+        );
+
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn classifies_external_ruby_constant_qualified_require_calls() {
+        let parsed = parse_ruby(
+            r#"
+require "json"
+require "fileutils"
+
+def run
+  JSON.parse("{}")
+  FileUtils.mkdir_p("tmp")
+  parse("{}")
+end
+"#,
+            &[],
+        );
+
+        let json_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "parse")
+            .expect("json call");
+        assert_eq!(json_call.callee_target_kind.as_str(), "external");
+        assert_eq!(json_call.callee_external_module.as_deref(), Some("json"));
+
+        let mkdir_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "mkdir_p")
+            .expect("fileutils call");
+        assert_eq!(mkdir_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            mkdir_call.callee_external_module.as_deref(),
+            Some("fileutils")
+        );
+    }
+
+    #[test]
+    fn leaves_ruby_local_constant_collision_and_receivers_unresolved() {
+        let parsed = parse_ruby(
+            r#"
+require "json"
+
+def run(client)
+  JSON.parse("{}")
+  client.parse("{}")
+  send(:parse, "{}")
+end
+"#,
+            &[(
+                "lib/json.rb",
+                r#"
+module JSON
+end
+"#,
+            )],
+        );
+
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn classifies_external_dart_alias_calls_only() {
+        let parsed = parse_dart(
+            r#"
+import 'dart:convert' as convert;
+import 'package:http/http.dart' as http show Client;
+import 'package:app/local.dart' as local;
+import './relative.dart' as relative;
+
+void run() {
+  convert.jsonDecode("{}");
+  http.Client();
+  local.helper();
+  relative.helper();
+  jsonDecode("{}");
+}
+"#,
+            &[(
+                "pubspec.yaml",
+                r#"
+name: app
+dependencies:
+  http: ^1.0.0
+"#,
+            )],
+        );
+
+        let json_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "jsonDecode")
+            .expect("jsonDecode call");
+        assert_eq!(json_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            json_call.callee_external_module.as_deref(),
+            Some("dart:convert")
+        );
+
+        let client_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Client")
+            .expect("Client call");
+        assert_eq!(client_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            client_call.callee_external_module.as_deref(),
+            Some("package:http/http.dart")
+        );
+
+        let unresolved: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter(|call| matches!(call.callee_name.as_str(), "helper" | "jsonDecode"))
+            .filter(|call| call.callee_target_kind.as_str() == "unresolved")
+            .collect();
+        assert_eq!(unresolved.len(), 3);
+        assert!(parsed.calls.iter().all(|call| call.callee_name != "run"));
+    }
+
+    #[test]
+    fn textual_dart_calls_handle_generics_and_ignore_comments_and_strings() {
+        let parsed = parse_dart(
+            r#"
+void run() {
+  builder<T>();
+  final text = "fakeCall()";
+  final other = 'otherCall()';
+  // commentedCall();
+  /* blockCall();
+     stillBlockCall();
+  */
+  afterBlock(); // trailingCommentCall();
+}
+"#,
+            &[],
+        );
+
+        let call_names: Vec<_> = parsed
+            .calls
+            .iter()
+            .map(|call| call.callee_name.as_str())
+            .collect();
+        assert!(call_names.contains(&"builder"));
+        assert!(call_names.contains(&"afterBlock"));
+        for skipped in [
+            "fakeCall",
+            "otherCall",
+            "commentedCall",
+            "blockCall",
+            "stillBlockCall",
+            "trailingCommentCall",
+        ] {
+            assert!(!call_names.contains(&skipped), "unexpected call {skipped}");
+        }
+    }
+
+    #[test]
+    fn textual_dart_calls_ignore_raw_and_triple_quoted_multiline_strings() {
+        let parsed = parse_dart(
+            r#"
+void run() {
+  final raw = r"rawCall()";
+  final triple = '''
+    tripleCall();
+  ''';
+  final rawTriple = r"""
+    rawTripleCall();
+  """;
+  afterStrings();
+}
+"#,
+            &[],
+        );
+
+        let call_names: Vec<_> = parsed
+            .calls
+            .iter()
+            .map(|call| call.callee_name.as_str())
+            .collect();
+        assert_eq!(call_names, vec!["afterStrings"]);
+    }
+
+    #[test]
+    fn classifies_external_elixir_remote_alias_and_required_calls() {
+        let parsed = parse_elixir(
+            r#"
+defmodule App.Sample do
+  alias HTTPoison, as: HTTP
+  require Jason
+
+  def run(body) do
+    Jason.decode!(body)
+    HTTP.get("https://example.com")
+  end
+end
+"#,
+            &[
+                (
+                    "mix.exs",
+                    r#"
+defmodule App.MixProject do
+  defp deps do
+    [
+      {:jason, "~> 1.4"},
+      {:httpoison, "~> 2.0"}
+    ]
+  end
+end
+"#,
+                ),
+                (
+                    "mix.lock",
+                    r#"{"jason": {:hex, :jason}, "httpoison": {:hex, :httpoison}}"#,
+                ),
+            ],
+        );
+
+        let decode_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "decode!")
+            .expect("decode call");
+        assert_eq!(decode_call.callee_target_kind.as_str(), "external");
+        assert_eq!(decode_call.callee_external_module.as_deref(), Some("Jason"));
+
+        let get_call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "get")
+            .expect("get call");
+        assert_eq!(get_call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            get_call.callee_external_module.as_deref(),
+            Some("HTTPoison")
+        );
+    }
+
+    #[test]
+    fn leaves_elixir_local_module_collision_and_imported_calls_unresolved() {
+        let parsed = parse_elixir(
+            r#"
+defmodule App.Sample do
+  import Jason
+
+  def run(body) do
+    Jason.decode!(body)
+    decode!(body)
+  end
+end
+"#,
+            &[
+                ("mix.exs", "{:jason, \"~> 1.4\"}\n"),
+                (
+                    "lib/jason.ex",
+                    r#"
+defmodule Jason do
+end
+"#,
+                ),
+            ],
+        );
+
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn extracts_kotlin_symbols_imports_and_calls_without_external_classification() {
+        let parsed = parse_kotlin(
+            r#"
+package app
+
+import kotlinx.coroutines.runBlocking
+
+class Runner {
+    fun run() {
+        runBlocking()
+        println("hello")
+    }
+}
+"#,
+            &[],
+        );
+
+        assert!(
+            parsed
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "Runner" && symbol.kind == "class")
+        );
+        assert!(
+            parsed
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "run" && symbol.kind == "method")
+        );
+        assert!(
+            parsed
+                .imports
+                .iter()
+                .any(|import| import.module_name == "import kotlinx.coroutines.runBlocking")
+        );
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .any(|call| call.callee_name == "runBlocking"
+                    && call.callee_target_kind.as_str() == "unresolved")
+        );
+    }
+
+    #[test]
+    fn semantic_resolver_can_classify_cpp_calls_as_external() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("src/main.cpp");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        fs::write(
+            &path,
+            r#"
+void run() {
+    printf("x");
+}
+"#,
+        )
+        .expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: Some(crate::index::semantic::SemanticCallTarget {
+                callee_name: "printf".to_string(),
+                external_module: "/usr/include/stdio.h".to_string(),
+            }),
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
+            error: None,
+        };
+        let parsed =
+            parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+                .expect("parse result")
+                .expect("parse file");
+
+        let call = parsed.calls.first().expect("printf call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            call.callee_external_module.as_deref(),
+            Some("/usr/include/stdio.h")
+        );
+    }
+
+    #[test]
+    fn semantic_resolver_can_classify_textual_dart_calls_as_external() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("lib/sample.dart");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        fs::write(
+            &path,
+            r#"
+void run() {
+  Tooltip(message: 'x');
+}
+"#,
+        )
+        .expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: Some(crate::index::semantic::SemanticCallTarget {
+                callee_name: "Tooltip".to_string(),
+                external_module: "package:flutter/material.dart".to_string(),
+            }),
+            expected_language: "dart",
+            expected_callee: "Tooltip",
+            requests: Vec::new(),
+            error: None,
+        };
+        let parsed =
+            parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+                .expect("parse result")
+                .expect("parse file");
+
+        let call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Tooltip")
+            .expect("Tooltip call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            call.callee_external_module.as_deref(),
+            Some("package:flutter/material.dart")
+        );
+        assert!(resolver.requests.iter().any(|request| {
+            request.language == "dart"
+                && request.file_path == path
+                && request.root_path == root
+                && request.callee_name == "Tooltip"
+        }));
+    }
+
+    #[test]
+    fn semantic_resolver_receives_utf16_columns_for_ast_calls() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("src/main.cpp");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        let source = format!(
+            "void run() {{\n    auto s = \"{}\"; printf(\"x\");\n}}\n",
+            '\u{1F600}'
+        );
+        fs::write(&path, source.as_bytes()).expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
+            error: None,
+        };
+
+        parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            .expect("parse result")
+            .expect("parse file");
+
+        let request = resolver
+            .requests
+            .iter()
+            .find(|request| request.callee_name == "printf")
+            .expect("printf semantic request");
+        let prefix = format!("    auto s = \"{}\"; ", '\u{1F600}');
+        assert_eq!(request.line, 2);
+        assert_eq!(request.column, prefix.encode_utf16().count());
+    }
+
+    #[test]
+    fn semantic_resolver_receives_utf16_columns_for_textual_dart_calls() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("lib/sample.dart");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        let source = format!(
+            "void run() {{\n  final s = '{}'; Tooltip(message: 'x');\n}}\n",
+            '\u{1F600}'
+        );
+        fs::write(&path, source.as_bytes()).expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "dart",
+            expected_callee: "Tooltip",
+            requests: Vec::new(),
+            error: None,
+        };
+
+        parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            .expect("parse result")
+            .expect("parse file");
+
+        let request = resolver
+            .requests
+            .iter()
+            .find(|request| request.callee_name == "Tooltip")
+            .expect("Tooltip semantic request");
+        let prefix = format!("  final s = '{}'; ", '\u{1F600}');
+        assert_eq!(request.line, 2);
+        assert_eq!(request.column, prefix.encode_utf16().count());
+    }
+
+    #[test]
+    fn semantic_resolver_errors_are_propagated() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("src/main.cpp");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        fs::write(
+            &path,
+            r#"
+void run() {
+    printf("x");
+}
+"#,
+        )
+        .expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
+            error: Some("semantic resolver failed"),
+        };
+
+        let err =
+            match parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            {
+                Err(err) => err,
+                Ok(_) => panic!("expected semantic resolver error"),
+            };
+
+        assert_eq!(err.to_string(), "semantic resolver failed");
+    }
+
+    #[test]
+    fn classifies_external_swift_module_qualified_calls() {
+        let parsed = parse_swift(
+            r#"
+import Foundation
+
+func run() {
+    Foundation.Date()
+}
+"#,
+            &[],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "Date");
+        assert_eq!(call.callee_external_module.as_deref(), Some("Foundation"));
+    }
+
+    #[test]
+    fn classifies_external_swift_scoped_import_module_qualified_calls() {
+        let parsed = parse_swift(
+            r#"
+import struct Foundation.Date
+
+func run() {
+    Foundation.Date()
+}
+"#,
+            &[],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "Date");
+        assert_eq!(call.callee_external_module.as_deref(), Some("Foundation"));
+    }
+
+    #[test]
+    fn leaves_swift_unqualified_and_member_calls_unresolved() {
+        let parsed = parse_swift(
+            r#"
+import Foundation
+
+func run(date: Date) {
+    Date()
+    date.formatted()
+}
+"#,
+            &[],
+        );
+
+        assert_eq!(parsed.calls.len(), 2);
+        assert!(
+            parsed
+                .calls
+                .iter()
+                .all(|call| call.callee_target_kind.as_str() == "unresolved")
+        );
     }
 }

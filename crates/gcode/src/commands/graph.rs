@@ -183,11 +183,11 @@ fn run_lifecycle_action(
     match format {
         Format::Json => output::print_json(&payload),
         Format::Text => {
-            println!(
+            eprintln!(
                 "{}",
                 format_success_text(action, &ctx.project_id, &payload)?
             );
-            Ok(())
+            output::print_text(&payload)
         }
     }
 }

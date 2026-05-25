@@ -54,7 +54,8 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
     // PostgreSQL hub must already be configured in Gobby bootstrap.
     let database_url = db::resolve_database_url()?;
     let mut conn = db::connect_readwrite(&database_url)?;
-    let index_result = indexer::index_directory(&mut conn, project_root, &project_id, true, quiet)?;
+    let index_result =
+        indexer::index_directory(&mut conn, project_root, &project_id, true, quiet, false)?;
     if !quiet {
         eprintln!(
             "Indexed {} files, {} symbols in {}ms",
