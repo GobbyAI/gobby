@@ -35,6 +35,22 @@ class TestCreateSpawnAgentRegistry:
 
         assert registry.get_schema("spawn_agent") is not None
 
+    def test_spawn_agent_schema_includes_notify_parent_on_completion_default_true(
+        self, mock_runner
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+        schema = registry.get_schema("spawn_agent")
+
+        assert schema is not None
+        properties = schema["inputSchema"]["properties"]
+        assert properties["notify_parent_on_completion"] == {
+            "type": "boolean",
+            "default": True,
+        }
+        assert "notify_parent_on_completion" not in schema["inputSchema"]["required"]
+
 
 class TestSpawnAgentDefaults:
     """Tests for spawn_agent with default values."""
@@ -84,6 +100,105 @@ class TestSpawnAgentDefaults:
             # Verify "default" agent was loaded
             assert mock_load.call_args[0][0] == "default"
             assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_notify_parent_on_completion_false_skips_subscription(
+        self, mock_runner
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        agent_body = AgentDefinitionBody(name="default", provider="claude")
+        completion_registry = MagicMock()
+        db = MagicMock()
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            db=db,
+            completion_registry=completion_registry,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True, "run_id": "run-123"},
+            ) as mock_spawn_impl,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.subscribe_agent_completion"
+            ) as mock_subscribe,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": "parent-789",
+                    "notify_parent_on_completion": False,
+                },
+            )
+
+        assert result["success"] is True
+        assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-789"
+        mock_subscribe.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_notify_parent_on_completion_defaults_to_subscribe(
+        self, mock_runner
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        agent_body = AgentDefinitionBody(name="default", provider="claude")
+        completion_registry = MagicMock()
+        db = MagicMock()
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            db=db,
+            completion_registry=completion_registry,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True, "run_id": "run-123"},
+            ) as mock_spawn_impl,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.subscribe_agent_completion"
+            ) as mock_subscribe,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": "parent-789",
+                },
+            )
+
+        assert result["success"] is True
+        assert result["run_id"] == "run-123"
+        assert mock_spawn_impl.call_args.kwargs["prompt"] == "Test prompt"
+        assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-789"
+        mock_subscribe.assert_called_once_with(
+            completion_registry=completion_registry,
+            run_id="run-123",
+            subscriber_session_id="parent-789",
+            session_manager=None,
+            db=db,
+        )
 
 
 class TestSpawnAgentParamOverrides:
@@ -587,9 +702,7 @@ class TestRegisterAgentStepWorkflow:
         database = temp_db
         return database
 
-    def test_self_heals_workflow_type_when_existing_row_is_corrupted(
-        self, db: HubDatabase
-    ) -> None:
+    def test_self_heals_workflow_type_when_existing_row_is_corrupted(self, db: HubDatabase) -> None:
         """A pre-existing `<agent>-steps` row with workflow_type='pipeline' must be
         repaired to 'workflow' on the next spawn. Without this, a single corrupted
         row stays corrupted forever and breaks the loader on every restart.

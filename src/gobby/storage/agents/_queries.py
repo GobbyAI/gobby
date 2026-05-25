@@ -217,6 +217,27 @@ class _AgentRunQueryMixin:
         )
         return {row["status"]: row["count"] for row in rows}
 
+    def get_cancelled_session_ids(
+        self: _AgentRunQueryHost,
+        since_hours: int = 24,
+        agent_name: str | None = None,
+    ) -> set[str]:
+        """Return child session IDs for agent runs cancelled within the recency window."""
+        from gobby.storage.sql_dialect import newer_than_now_expr
+
+        recency_sql = newer_than_now_expr(self.db, "completed_at", "?", "hour")
+        sql = (
+            "SELECT child_session_id FROM agent_runs "
+            f"WHERE status = 'cancelled' AND child_session_id IS NOT NULL AND {recency_sql}"
+        )  # nosec B608 - recency_sql is selected by storage dialect.
+        params: list[int | str] = [since_hours]
+        if agent_name is not None:
+            sql += " AND agent_name = ?"
+            params.append(agent_name)
+
+        rows = self.db.fetchall(sql, params)
+        return {row["child_session_id"] for row in rows}
+
     def delete(self: _AgentRunQueryHost, run_id: str) -> bool:
         """Delete an agent run."""
         with self.db.transaction() as conn:
