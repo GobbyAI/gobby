@@ -416,7 +416,6 @@ hub_backend: postgres
 database_url: {postgres_url}
 postgres_install_mode: external
 daemon_port: {http_port}
-database_url: "{db_path}"
 bind_host: localhost
 websocket_port: {ws_port}
 """
@@ -991,6 +990,13 @@ _ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 
+def _is_worktree_bytecode_artifact(rel_path: str) -> bool:
+    """Return true for Python bytecode created by running tests from a task worktree."""
+    return rel_path.startswith("worktrees/") and (
+        "/__pycache__/" in rel_path or rel_path.endswith((".pyc", ".pyo"))
+    )
+
+
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
     """Fail the test if the E2E daemon created new files in real ~/.gobby/.
@@ -1028,6 +1034,8 @@ def assert_no_external_writes() -> Generator[None]:
             basename = Path(rel_path).name
             if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                 continue
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (
@@ -1047,6 +1055,8 @@ def assert_no_external_writes() -> Generator[None]:
             # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue
             leaked.append(f"  MODIFIED: ~/.gobby/{rel_path}")
