@@ -41,6 +41,7 @@ class _TestRegistry(InternalToolRegistry):
 
 
 def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicMock:
+    """Create a terminal session mock with optional tmux pane metadata."""
     session = MagicMock()
     session.session_type = "terminal"
     session.source = source
@@ -51,12 +52,14 @@ def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicM
 
 
 async def _done_stream() -> AsyncIterator[DoneEvent]:
+    """Yield a completed provider stream event for direct tool tests."""
     yield DoneEvent(tool_calls_count=0)
 
 
 def _register_compact_self(
     session: MagicMock, tmux_send_keys_returns: bool = True
 ) -> tuple[_TestRegistry, MagicMock]:
+    """Register compact_self with mocked session and tmux dependencies."""
     registry = _TestRegistry(name="test", description="test")
     session_manager = MagicMock()
     session_manager.get.return_value = session
@@ -78,6 +81,7 @@ def _register_compact_self(
 
 
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
+    """Invoke compact_self through the registry with tmux context patched."""
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
     caller_session_id = kwargs.pop("session_id", "s1")
@@ -97,6 +101,7 @@ def _run_direct_compact_self(
     session_id: str,
     **kwargs: Any,
 ) -> Any:
+    """Run an async compact_self callable from a synchronous test."""
     with session_context_for_test(session_id):
         return asyncio.run(compact_self(**kwargs))
 
@@ -106,6 +111,7 @@ async def _await_direct_compact_self(
     session_id: str,
     **kwargs: Any,
 ) -> Any:
+    """Await compact_self inside an existing event loop with session context."""
     with session_context_for_test(session_id):
         return await compact_self(**kwargs)
 

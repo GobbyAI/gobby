@@ -28,7 +28,7 @@ def db(hub_db: HubDatabase) -> HubDatabase:
 
 
 def _has_column(db: HubDatabase, table: str, column: str) -> bool:
-    if getattr(db, "dialect", None) == "postgres":
+    if str(getattr(db, "dialect", "")).startswith("postgres"):
         row = db.fetchone(
             """
             SELECT 1

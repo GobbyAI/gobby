@@ -6,12 +6,13 @@ required_variables: [skill_name]
 optional_variables: [close_matches, command_prefix]
 ---
 Skill '{{ skill_name }}' not found.
+{% set skill_command = command_prefix | default('gobby skills', true) %}
 {% if close_matches %}
 
 Did you mean:
 {% for match in close_matches %}
-  - `{{ command_prefix }} {{ match }}`
+  - `{{ skill_command }} {{ match }}`
 {% endfor %}
 {% endif %}
 
-Run `{{ command_prefix }}` or `{{ command_prefix }} help` to see all available skills.
+Run `{{ skill_command }}` or `{{ skill_command }} help` to see all available skills.

@@ -90,6 +90,7 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
     temp_db,
     sample_project,
 ) -> None:
+    """Development prompt includes persisted holistic failure context."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import rules
     from gobby.dispatch.dispatcher import build_context
@@ -171,6 +172,7 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
 
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
+    """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _crud
 
     ready = _task(temp_db, sample_project, "ready")
@@ -207,6 +209,7 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
+    """Count active agents scopes by parent session project."""
     from gobby.dispatch.dispatcher import count_active_agents
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.projects import LocalProjectManager
@@ -242,6 +245,7 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Max active agents cap."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -260,6 +264,7 @@ async def test_run_heartbeat_serializes_overlapping_development_start_actions(
     temp_db,
     sample_project,
 ) -> None:
+    """Run heartbeat serializes overlapping development start actions."""
     from gobby.dispatch import dispatcher
 
     first = _task(temp_db, sample_project, "shared refactor", priority=1)
@@ -281,6 +286,7 @@ async def test_run_heartbeat_allows_disjoint_development_write_sets(
     temp_db,
     sample_project,
 ) -> None:
+    """Run heartbeat allows disjoint development write sets."""
     from gobby.dispatch import dispatcher
 
     first = _task(temp_db, sample_project, "config refactor", priority=1)
@@ -302,6 +308,7 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     temp_db,
     sample_project,
 ) -> None:
+    """Run heartbeat blocks ready task behind active overlapping write set."""
     from gobby.dispatch import dispatcher
 
     owner_session_id = _session(temp_db, sample_project, "owner-session")
@@ -327,6 +334,7 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
 async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Run heartbeat skips spawn when daemon not ready."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -350,6 +358,7 @@ async def test_cancelled_spawn_releases_no_run_mutex(
     temp_db,
     sample_project,
 ) -> None:
+    """Cancelled spawn releases no run mutex."""
     from gobby.dispatch import dispatcher
     from gobby.dispatch.mutex import RuntimeDispatchMutex
 
@@ -385,6 +394,7 @@ async def test_cancelled_spawn_releases_no_run_mutex(
 
 
 async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
+    """Mutex lifecycle."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -404,6 +414,7 @@ async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_
 async def test_toctou_skip_on_changed_tuple(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Toctou skip on changed tuple."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -431,6 +442,7 @@ def _task_changed(temp_db, task_id: str):
 async def test_first_match_action_executed(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """First match action executed."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -449,6 +461,7 @@ async def test_first_match_action_executed(
 async def test_spawn_action_links_run_id(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action links run id."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -470,6 +483,7 @@ async def test_spawn_action_links_run_id(
 async def test_spawn_action_uses_services_and_records_agent_run(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action uses services and records agent run."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -536,6 +550,7 @@ async def test_planning_agents_use_main_context_despite_worktree_task(
     temp_db,
     sample_project,
 ) -> None:
+    """Planning agents use main context despite worktree task."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -615,6 +630,7 @@ async def test_expansion_review_uses_main_context_despite_worktree_task(
     temp_db,
     sample_project,
 ) -> None:
+    """Expansion review uses main context despite worktree task."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -690,6 +706,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
     temp_db,
     sample_project,
 ) -> None:
+    """Backend developer inherits task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -751,6 +768,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
 async def test_spawn_action_subscribes_build_coordinator_completion(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action subscribes build coordinator completion."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -829,6 +847,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     temp_db,
     sample_project,
 ) -> None:
+    """Spawn action skips cross project build coordinator completion."""
     from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
     from gobby.storage.build_history import BuildHistoryStorage
     from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -876,6 +895,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
 async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action without coordinator does not subscribe launcher."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -935,6 +955,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
 async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action clears missing worktree artifact before reuse."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1006,6 +1027,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
 async def test_leaf_spawn_recovers_parent_integration_target_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Leaf spawn recovers parent integration target branch."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1089,6 +1111,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Epic holistic spawn refreshes and reuses integration workspace."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1182,6 +1205,7 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
 async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missing(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
 ) -> None:
+    """Epic holistic spawn promotes existing worktree when target missing."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1285,6 +1309,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
 async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
 ) -> None:
+    """Epic holistic spawn recovers missing target from current branch."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1364,6 +1389,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     temp_db,
     sample_project,
 ) -> None:
+    """Epic holistic workspace conflict rolls back without heartbeat error."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.workspaces import BuildWorkspaceError
     from gobby.dispatch import dispatcher
@@ -1437,6 +1463,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
 async def test_spawn_failure_rolls_stage_ready_and_releases(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn failure rolls stage ready and releases."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1483,6 +1510,7 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
     temp_db,
     sample_project,
 ) -> None:
+    """Spawn unavailable does not mark task failed."""
     from gobby.dispatch import dispatcher
 
     task_manager = LocalTaskManager(temp_db)
@@ -1507,6 +1535,7 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
 async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Unregistered spawn records dispatch failure telemetry."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.sessions import SessionManager
@@ -1554,6 +1583,7 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     temp_db,
     sample_project,
 ) -> None:
+    """Spawn failure cleanup tolerates already ready stage."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.sessions import SessionManager
@@ -1604,6 +1634,7 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
 async def test_third_spawn_failure_escalates(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Third spawn failure escalates."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.sessions import SessionManager
@@ -1641,6 +1672,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
     sample_project,
     tmp_path,
 ) -> None:
+    """Spawn prefers project scoped git manager."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch.spawn import spawn_agent
     from gobby.storage.sessions import SessionManager
@@ -1694,6 +1726,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
 async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Bad candidate is skipped and next candidate executes."""
     from gobby.dispatch import dispatcher
 
     first = _task(temp_db, sample_project, "first")
@@ -1730,6 +1763,7 @@ async def test_advance_action_releases_lease_immediately(
     temp_db,
     sample_project,
 ) -> None:
+    """Advance action releases lease immediately."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, stage_name="development")
@@ -1750,6 +1784,7 @@ async def test_start_pipeline_action_links_execution_id(
     temp_db,
     sample_project,
 ) -> None:
+    """Start pipeline action links execution id."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -1770,6 +1805,7 @@ async def test_start_pipeline_action_links_execution_id(
 
 
 def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:
+    """Dispatcher run heartbeat cold imports."""
     result = subprocess.run(
         [
             sys.executable,
@@ -1790,6 +1826,7 @@ def test_dispatch_inputs_invalid_json_logs_debug(
     caplog: pytest.LogCaptureFixture,
     enable_log_propagation: None,
 ) -> None:
+    """Dispatch inputs invalid json logs debug."""
     from gobby.dispatch import rules
 
     registry_entry = SimpleNamespace(
@@ -1813,6 +1850,7 @@ def test_dispatch_inputs_invalid_json_logs_debug(
 
 
 def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_project) -> None:
+    """Build context loads stage registry and bundled agents."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -1827,6 +1865,7 @@ def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_p
 
 
 def test_build_context_project_disabled_agent_override_wins(temp_db, sample_project) -> None:
+    """Build context project disabled agent override wins."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -1858,6 +1897,7 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     temp_db,
     sample_project,
 ) -> None:
+    """Real heartbeat pr stage spawns merge orchestrator without false no agent."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -1882,6 +1922,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     temp_db,
     sample_project,
 ) -> None:
+    """Real heartbeat merge ready starts then spawns merge orchestrator."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -1918,6 +1959,7 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     temp_db,
     sample_project,
 ) -> None:
+    """Dispatcher starts stage pipeline with injected services."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -1954,6 +1996,7 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
 async def test_expansion_terminal_event_releases_lease_via_handlers(
     temp_db, sample_project
 ) -> None:
+    """Expansion terminal event releases lease via handlers."""
     from gobby.hooks.event_handlers import _dispatch
 
     task = _task(temp_db, sample_project)
@@ -1971,6 +2014,7 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     temp_db,
     sample_project,
 ) -> None:
+    """Execution id attaches before background pipeline start."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -2000,6 +2044,7 @@ async def test_pipeline_terminal_handler_releases_lease(
     temp_db,
     sample_project,
 ) -> None:
+    """Pipeline terminal handler releases lease."""
     from gobby.dispatch import dispatcher
     from gobby.hooks.event_handlers import _dispatch
 
@@ -2030,6 +2075,7 @@ async def test_pipeline_terminal_handler_releases_lease(
 
 
 def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -> None:
+    """Terminal handler release by task id fallback."""
     from gobby.hooks.event_handlers import _dispatch
 
     task = _task(temp_db, sample_project)
@@ -2047,6 +2093,7 @@ async def test_invalid_pipeline_target_escalates_and_releases(
     temp_db,
     sample_project,
 ) -> None:
+    """Invalid pipeline target escalates and releases."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -2075,6 +2122,7 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action writes artifact pair and base commit sha atomically."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -2103,6 +2151,7 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action resolves base commit sha from target branch."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -2126,6 +2175,7 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
     temp_db,
     sample_project,
 ) -> None:
+    """Persist spawn artifacts writes base commit sha."""
     from gobby.dispatch.spawn import _persist_spawn_artifacts
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -2246,6 +2296,7 @@ async def test_create_isolation_action_missing_target_branch_escalates(
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action missing target branch escalates."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -2267,6 +2318,7 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     temp_db,
     sample_project,
 ) -> None:
+    """Dev rule fires after isolation and stage start."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -2290,6 +2342,7 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
 
 
 async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> None:
+    """Startup sweep clears expired leases."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, allow_automation=False)
@@ -2307,6 +2360,7 @@ async def test_heartbeat_recovers_orphan_no_run_mutex_before_full_lease(
     temp_db,
     sample_project,
 ) -> None:
+    """Heartbeat recovers orphan no run mutex before full lease."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, stage_state="in_progress")
@@ -2352,6 +2406,7 @@ async def test_heartbeat_preserves_fresh_no_run_mutex(
     temp_db,
     sample_project,
 ) -> None:
+    """Heartbeat preserves fresh no run mutex."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, stage_state="in_progress")

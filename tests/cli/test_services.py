@@ -53,7 +53,7 @@ class TestIsFalkorDBInstalled:
         with patch("gobby.cli.services._open_falkordb_config_db", return_value=hub_db) as open_db:
             assert is_falkordb_installed(gobby_home=tmp_path) is True
 
-        open_db.assert_called_once_with(tmp_path)
+        open_db.assert_called_once_with(tmp_path, bootstrap=False)
 
     def test_gobby_home_with_bootstrap_uses_bootstrap_database_url(
         self,
@@ -65,9 +65,9 @@ class TestIsFalkorDBInstalled:
         store.set("databases.falkordb.port", 16379)
 
         with patch("gobby.cli.services._open_falkordb_config_db", return_value=hub_db) as open_db:
-            assert is_falkordb_installed(gobby_home=tmp_path) is True
+            assert is_falkordb_installed(gobby_home=tmp_path, bootstrap=True) is True
 
-        open_db.assert_called_once_with(tmp_path)
+        open_db.assert_called_once_with(tmp_path, bootstrap=True)
 
 
 @pytest.fixture

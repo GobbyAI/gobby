@@ -247,7 +247,7 @@ class TestHookManagerHandle:
         """Hook activity repairs false-expired terminal sessions before handling."""
         manager = hook_manager_with_mocks
         project_id = manager._resolve_project_id(None, str(temp_dir))
-        session = cast(Any, manager._session_manager).register(
+        session = manager.session_manager.register(
             external_id="codex-ext-1",
             machine_id="test-machine-id",
             source="codex",
@@ -255,7 +255,7 @@ class TestHookManagerHandle:
             transcript_path=str(temp_dir / "codex.jsonl"),
             terminal_context={"parent_pid": 99999},
         )
-        manager._session_manager.update_status(session.id, "expired")
+        manager.session_manager.update_status(session.id, "expired")
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -270,7 +270,7 @@ class TestHookManagerHandle:
         response = manager.handle(event)
 
         assert response.decision == "allow"
-        revived = manager._session_manager.get(session.id)
+        revived = manager.session_manager.get(session.id)
         assert revived is not None
         assert revived.status == "active"
 
@@ -944,7 +944,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        precreated = cast(Any, manager._session_manager).create_web_chat_session(
+        precreated = manager.session_manager.create_web_chat_session(
             machine_id="test-machine-id",
             project_id=project_id,
             source="codex",
@@ -963,9 +963,9 @@ class TestHookManagerSessionLookup:
         )
 
         with patch.object(
-            manager._session_manager,
+            manager.session_manager,
             "register_session",
-            wraps=manager._session_manager.register_session,
+            wraps=manager.session_manager.register_session,
         ) as mock_register:
             response = manager.handle(event)
 
@@ -1028,7 +1028,7 @@ class TestHookManagerSessionLookup:
 
         tokens = resolve_and_seed_contexts(
             session_ref=resumed_event.metadata["_platform_session_id"],
-            session_manager=cast(Any, manager._session_manager),
+            session_manager=manager.session_manager,
             db=manager._database,
         )
         try:
@@ -1144,7 +1144,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        existing = cast(Any, manager._session_manager).register(
+        existing = manager.session_manager.register(
             external_id="shared-session-id",
             machine_id="test-machine-id",
             source="codex",

@@ -128,7 +128,12 @@ class StageStateManifestOps:
         *,
         by_session_id: str | None,
     ) -> list[StageState]:
-        """Insert a manifest for a task created in the caller's transaction."""
+        """Insert a new task's manifest on the caller-owned transaction.
+
+        Use this only while task creation is still open on ``conn`` so stage
+        rows, stage caps, and the lifecycle event commit atomically with the
+        task row.
+        """
         self.rows.validate_specs(specs)
         holder = by_session_id or "system"
         existing = self.rows.list_for_task(task_id)

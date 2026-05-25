@@ -88,6 +88,7 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -> None:
+    """Tracked generated project metadata should be marked skip-worktree."""
     parent = tmp_path / "parent"
     worktree = tmp_path / "worktree"
     parent.mkdir()
@@ -122,6 +123,7 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_repair_excludes_untracked_project_json(tmp_path: Path) -> None:
+    """Untracked generated project metadata should be ignored by git excludes."""
     parent = tmp_path / "parent"
     isolated = tmp_path / "isolated"
     parent.mkdir()

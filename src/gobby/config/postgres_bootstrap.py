@@ -15,12 +15,14 @@ from .bootstrap_io import (
 )
 
 InstallMode = Literal["docker", "native", "external"]
+KEYRING_DATABASE_URL_REF = "keyring:gobby:postgres_database_url"
 
 __all__ = [
     "active_install_mode",
     "bootstrap_path",
     "clear_postgres_fields",
     "default_gobby_home",
+    "KEYRING_DATABASE_URL_REF",
     "read_bootstrap_database_url",
     "read_bootstrap_yaml",
     "set_bootstrap_field",

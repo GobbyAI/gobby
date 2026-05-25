@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 from functools import partial
 from typing import TYPE_CHECKING, Any
+
+import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -171,7 +174,7 @@ async def _relay_signoff_to_build_coordinator(
                 signoff_message=signoff_message,
             ),
         )
-    except Exception:
+    except (sqlite3.DatabaseError, psycopg.Error):
         logger.warning(
             "Failed to relay review signoff to build coordinator",
             extra={"task_id": task_id, "stage_name": stage_name, "action": action},

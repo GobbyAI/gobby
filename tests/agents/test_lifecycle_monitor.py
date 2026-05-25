@@ -702,6 +702,7 @@ class TestCheckIdleAgents:
         sample_session: dict,
         temp_db: HubDatabase,
     ) -> None:
+        """Idle step-workflow agents should get reprompted with current step context."""
         import time
         from datetime import UTC, datetime, timedelta
 

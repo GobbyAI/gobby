@@ -15,6 +15,7 @@ from gobby.agents.isolation import (
 )
 from gobby.agents.worktree_reuse import (
     ReusedWorktreeRebaseConflict,
+    ReusedWorktreeSyncResult,
     sync_reused_worktree_to_base,
 )
 
@@ -33,7 +34,7 @@ async def prepare_reused_worktree(
 ) -> tuple[IsolationContext, Any]:
     """Prepare an explicit reused worktree, falling back to a fresh retry branch on conflict."""
     try:
-        sync_result = await sync_reused_worktree_to_base(
+        sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
             git_manager=git_manager,
             worktree_path=existing_worktree.worktree_path,
             base_branch=spawn_config.base_branch,

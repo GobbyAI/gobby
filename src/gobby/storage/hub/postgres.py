@@ -209,12 +209,7 @@ class PostgresHubDatabase:
         if not callable(open_pool):
             return
 
-        lock = getattr(self, "_open_lock", None)
-        if lock is None:
-            self._open_lock = threading.Lock()
-            lock = self._open_lock
-
-        with lock:
+        with self._open_lock:
             if getattr(self, "_pool_opened", False):
                 return
             open_timeout = timeout

@@ -66,6 +66,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
 
 
 def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
+    """Restricted load-skill steps should instruct agents to use the Gobby proxy."""
     for path in AGENTS_DIR.glob("*.yaml"):
         agent = _load_yaml(path)
         for step in agent.get("steps") or []:

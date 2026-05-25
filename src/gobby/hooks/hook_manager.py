@@ -188,6 +188,11 @@ class HookManager:
 
         self.logger.debug("HookManager initialized")
 
+    @property
+    def session_manager(self) -> "SessionManager":
+        """Return the concrete session manager for diagnostics and tests."""
+        return cast("SessionManager", self._session_manager)
+
     def _reregister_active_sessions(self) -> None:
         """Re-register active sessions with the message processor."""
         self._session_coordinator.reregister_active_sessions()

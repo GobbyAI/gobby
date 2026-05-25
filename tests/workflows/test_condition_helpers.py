@@ -49,6 +49,7 @@ class TestIsGobbyBuildCommand:
             "GOBBY_TEST_PROTECT=1 uv run --frozen gobby build #15117",
             "uv run -- gobby build docs/plan.md --quick",
             "python -m gobby build #15117",
+            "python -u -m gobby build #15117",
             "ruff check src && gobby build #15117",
         ],
     )

@@ -70,7 +70,11 @@ def _coordinated_review_fixture(
     )
 
     ctx = RegistryContext(task_manager=task_manager, sync_manager=MagicMock())
-    ctx.resolve_session_id = MagicMock(return_value=reviewer.id)
+
+    def resolve_session_id(_session_ref: str) -> str:
+        return reviewer.id
+
+    ctx.resolve_session_id = resolve_session_id
     registry = create_stage_ops_registry(ctx)
     return registry, coordinator, reviewer, task
 
@@ -85,7 +89,7 @@ async def _wait_for_messages(
         if messages:
             return messages
         await asyncio.sleep(0.01)
-    return manager.get_messages(to_session)
+    pytest.fail(f"Timed out waiting for signoff message to {to_session}")
 
 
 @pytest.mark.asyncio

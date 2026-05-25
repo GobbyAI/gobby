@@ -99,6 +99,7 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
     ) -> list[StageState]:
+        """Insert initial stage rows using the caller's existing task-create transaction."""
         return self._manifest.insert_new_task_manifest_in_transaction(
             conn,
             task_id,

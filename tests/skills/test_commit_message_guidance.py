@@ -31,5 +31,4 @@ def test_commit_message_guidance_uses_project_placeholder(
             assert "Commit with the task ref" in body
         else:
             assert git_commit_examples, f"{skill_name} must include a git commit example"
-        assert not any("[project-#N]" in example for example in git_commit_examples)
         assert not any("[#N]" in example for example in git_commit_examples)

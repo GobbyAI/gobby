@@ -48,6 +48,7 @@ def _event(
 
 class TestRemovedBuildCoordinatorMonitoringSkillRule:
     def test_removed_rule_is_not_synced(self, temp_db, manager) -> None:
+        """Deprecated monitoring-skill gate should stay removed after sync."""
         manager.create(
             name="require-build-coordinator-monitoring-skill",
             workflow_type="rule",
@@ -77,6 +78,7 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
     async def test_generic_monitoring_inspection_is_allowed_without_build_coordinator(
         self, temp_db
     ) -> None:
+        """Generic inspection commands should not require build-coordinator skill."""
         _sync_bundled(temp_db)
 
         event = _event(
@@ -97,6 +99,7 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
 
 class TestRequireBuildCoordinatorForGobbyBuild:
     def test_rule_structure(self, temp_db, manager) -> None:
+        """Build command gate should retain the expected rule condition and guidance."""
         _sync_bundled(temp_db)
         row = manager.get_by_name("require-build-coordinator-for-gobby-build")
         assert row is not None
@@ -116,6 +119,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_blocks_tmux_agent_gobby_build_before_skill_load(self, temp_db) -> None:
+        """Terminal agents should load build-coordinator before running gobby build."""
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -138,6 +142,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_blocks_web_chat_gobby_build_before_skill_load(self, temp_db) -> None:
+        """Web-chat agents should load build-coordinator before running gobby build."""
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -156,6 +161,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_allows_tmux_agent_gobby_build_after_skill_load(self, temp_db) -> None:
+        """Terminal agents may run gobby build after build-coordinator is loaded."""
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -175,6 +181,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_allows_operator_gobby_build_without_skill_load(self, temp_db) -> None:
+        """Human/operator sessions may run gobby build without agent skill gates."""
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -190,6 +197,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_allows_dispatcher_gobby_build_without_skill_load(self, temp_db) -> None:
+        """Dispatcher-origin build commands are exempt from spawned-agent skill gates."""
         _sync_bundled(temp_db)
         event = _event(
             {
@@ -210,6 +218,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
     @pytest.mark.asyncio
     async def test_allows_commands_that_only_mention_gobby_build(self, temp_db) -> None:
+        """Commands that mention gobby build as text should not trip the gate."""
         _sync_bundled(temp_db)
         event = _event(
             {

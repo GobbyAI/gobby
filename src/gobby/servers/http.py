@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PENDING_INTERACTION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
 _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS = 2.0
 
 
@@ -480,7 +482,10 @@ class HTTPServer:
         manager = getattr(getattr(self.app, "state", None), "pending_interaction_manager", None)
         if manager is None:
             return
-        await manager.cleanup()
+        await asyncio.wait_for(
+            manager.cleanup(),
+            timeout=PENDING_INTERACTION_SHUTDOWN_TIMEOUT_SECONDS,
+        )
 
     async def _process_shutdown(self) -> None:
         """

@@ -348,13 +348,20 @@ def create_spawn_agent_registry(
         # Auto-subscribe parent session + lineage to agent completion events
         run_id = result.get("run_id")
         if result.get("success") and run_id and completion_registry and resolved_parent_session_id:
-            subscribe_agent_completion(
-                completion_registry=completion_registry,
-                run_id=str(run_id),
-                subscriber_session_id=resolved_parent_session_id,
-                session_manager=session_manager,
-                db=db,
-            )
+            try:
+                subscribe_agent_completion(
+                    completion_registry=completion_registry,
+                    run_id=str(run_id),
+                    subscriber_session_id=resolved_parent_session_id,
+                    session_manager=session_manager,
+                    db=db,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe parent session to agent completion for run %s",
+                    run_id,
+                    exc_info=True,
+                )
 
         return result
 

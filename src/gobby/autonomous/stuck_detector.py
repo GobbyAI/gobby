@@ -365,7 +365,9 @@ class StuckDetector:
                     context = json.loads(row["context"])
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"Failed to parse context for task selection: {row['context'][:100]}"
+                        "Failed to parse context for task selection: %s",
+                        row["context"][:100],
+                        exc_info=True,
                     )
                     context = None
             events.append(

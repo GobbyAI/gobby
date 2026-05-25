@@ -202,7 +202,12 @@ def detect_task_claim(
                         raw_task_id,
                     )
             except Exception as e:
-                logger.warning("Cannot resolve task ref %r to UUID: %s", raw_task_id, e)
+                logger.warning(
+                    "Cannot resolve task ref %r to UUID: %s",
+                    raw_task_id,
+                    e,
+                    exc_info=True,
+                )
         elif raw_task_id and not task_manager:
             logger.warning("Cannot resolve task ref %r to UUID - no task_manager", raw_task_id)
     elif inner_tool_name == "create_task":
@@ -224,7 +229,12 @@ def detect_task_claim(
                 if task:
                     task_id = task.id
             except Exception as e:
-                logger.warning("Cannot resolve task ref %r to UUID: %s", raw_task_id, e)
+                logger.warning(
+                    "Cannot resolve task ref %r to UUID: %s",
+                    raw_task_id,
+                    e,
+                    exc_info=True,
+                )
 
     if not task_id:
         logger.debug("Skipping task claim state update - no valid UUID for %s", inner_tool_name)
@@ -239,7 +249,12 @@ def detect_task_claim(
             if task_obj and task_obj.seq_num:
                 ref = f"#{task_obj.seq_num}"
         except Exception as e:
-            logger.debug("Failed to resolve task ref for %s: %s", task_id, e)
+            logger.debug(
+                "Failed to resolve task ref for %s: %s",
+                task_id,
+                e,
+                exc_info=True,
+            )
     merge = add_claimed_task(variables, task_id, ref)
     variables.update(merge)
     variables["session_had_task"] = True
@@ -356,6 +371,7 @@ def _preserve_lineage_claim(
             task_uuid[:8],
             owner_session_id,
             e,
+            exc_info=True,
         )
     else:
         logger.info(
@@ -415,6 +431,7 @@ def _sessions_share_lineage(
             owner_session_id,
             session_id,
             e,
+            exc_info=True,
         )
         return False
 

@@ -20,6 +20,12 @@ class _NonClosingDb:
     def __init__(self, db: HubDatabase) -> None:
         self._db = db
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_db":
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._db, name, value)
+
     def __getattr__(self, name: str) -> object:
         return getattr(self._db, name)
 
@@ -69,7 +75,7 @@ class TestIsFalkorDBInstalled:
         with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
             assert services.is_falkordb_installed(gobby_home=tmp_path) is True
 
-        open_db.assert_called_once_with(tmp_path)
+        open_db.assert_called_once_with(tmp_path, bootstrap=False)
 
     def test_uses_default_gobby_home_when_home_missing(
         self,
@@ -85,7 +91,7 @@ class TestIsFalkorDBInstalled:
         with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
             assert services.is_falkordb_installed() is True
 
-        open_db.assert_called_once_with(None)
+        open_db.assert_called_once_with(None, bootstrap=False)
 
     def test_services_module_does_not_define_default_db_path_helper(self) -> None:
         import gobby.cli.services as services

@@ -192,8 +192,11 @@ def _blocking_status_lines(
 
 
 def _porcelain_path(line: str) -> str:
-    # Git porcelain status is two status chars plus a space before the path. Strip those
-    # chars, use symlink targets after " -> ", then drop surrounding quotes.
+    """Return the best-effort path from a porcelain v1 status line.
+
+    This intentionally supports the simple short-format lines emitted by
+    ``git status --porcelain``. It does not fully unescape quoted pathnames.
+    """
     path = line[3:].strip() if len(line) > 3 else line.strip()
     if " -> " in path:
         path = path.rsplit(" -> ", 1)[1]

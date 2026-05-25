@@ -101,10 +101,12 @@ async def get_qdrant_status(
 # ---------------------------------------------------------------------------
 
 
-def _open_falkordb_config_db(gobby_home: Path | None) -> Any:
+def _open_falkordb_config_db(gobby_home: Path | None, *, bootstrap: bool = False) -> Any:
     from gobby.storage.hub.runtime import open_runtime_hub_database
 
     home = gobby_home if gobby_home is not None else get_gobby_home()
+    if bootstrap:
+        home = home / "bootstrap"
     return open_runtime_hub_database(
         str(home / "bootstrap.yaml"),
         apply_migrations=False,
@@ -149,11 +151,12 @@ def is_falkordb_installed(
     *,
     db: Any | None = None,
     gobby_home: Path | None = None,
+    bootstrap: bool = False,
 ) -> bool:
     """Check whether FalkorDB connection keys were recorded in config_store."""
     owned_db: Any | None = None
     if db is None:
-        db = _open_falkordb_config_db(gobby_home)
+        db = _open_falkordb_config_db(gobby_home, bootstrap=bootstrap)
         owned_db = db
 
     from gobby.storage.config_store import ConfigStore

@@ -48,7 +48,7 @@ def _is_non_actionable_json_response_error(error: ValueError) -> bool:
     message = str(error).lower()
     if "failed to parse" not in message or "response as json" not in message:
         return False
-    return any(marker in message for marker in _CONVERSATIONAL_JSON_RESPONSE_MARKERS) and any(
+    return any(marker in message for marker in _CONVERSATIONAL_JSON_RESPONSE_MARKERS) or any(
         marker in message for marker in _INSTRUCTION_ONLY_RESPONSE_MARKERS
     )
 

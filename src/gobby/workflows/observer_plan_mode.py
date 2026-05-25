@@ -19,6 +19,11 @@ def compute_mode_level(chat_mode: str) -> int:
     return _MODE_LEVEL_MAP.get(chat_mode, 2)
 
 
+def _first_marker(text: str, markers: list[str] | tuple[str, ...]) -> str | None:
+    """Return the first configured marker present in text."""
+    return next((marker for marker in markers if marker in text), None)
+
+
 def detect_plan_mode_from_context(
     prompt: str | None, variables: dict[str, Any], session_id: str
 ) -> None:
@@ -50,19 +55,19 @@ def detect_plan_mode_from_context(
         "You are in plan mode",
     ]
 
-    for indicator in plan_mode_indicators:
-        if indicator in reminder_text:
-            if variables.get("mode_level") != 0:
-                variables["mode_level"] = 0
-                logger.info(
-                    "Session %s: mode_level=0 (plan) (detected from system reminder: %r)",
-                    session_id,
-                    indicator,
-                )
-            if not variables.get("plan_mode"):
-                variables["plan_mode"] = True
-                logger.info("Session %s: plan_mode=True", session_id)
-            return
+    indicator = _first_marker(reminder_text, plan_mode_indicators)
+    if indicator:
+        if variables.get("mode_level") != 0:
+            variables["mode_level"] = 0
+            logger.info(
+                "Session %s: mode_level=0 (plan) (detected from system reminder: %r)",
+                session_id,
+                indicator,
+            )
+        if not variables.get("plan_mode"):
+            variables["plan_mode"] = True
+            logger.info("Session %s: plan_mode=True", session_id)
+        return
 
     reminder_lower = reminder_text.lower()
     mode_indicators = [
@@ -90,66 +95,66 @@ def detect_plan_mode_from_context(
     ]
 
     for chat_mode, indicators in mode_indicators:
-        for indicator in indicators:
-            if indicator in reminder_lower:
-                set_mode(chat_mode, f"detected from system reminder: {indicator!r}")
-                return
+        indicator = _first_marker(reminder_lower, indicators)
+        if indicator:
+            set_mode(chat_mode, f"detected from system reminder: {indicator!r}")
+            return
 
     exit_indicators = [
         "Exited Plan Mode",
         "Plan mode exited",
     ]
 
-    for indicator in exit_indicators:
-        if indicator in reminder_text:
-            if variables.get("mode_level") == 0:
-                chat_mode = variables.get("chat_mode", "bypass")
-                variables["mode_level"] = compute_mode_level(chat_mode)
-                logger.info(
-                    "Session %s: mode_level=%s (detected from system reminder: %r)",
-                    session_id,
-                    variables["mode_level"],
-                    indicator,
-                )
-            if variables.get("plan_mode"):
-                variables["plan_mode"] = False
-                variables["plan_skill_loaded"] = False
-                logger.info("Session %s: plan_mode=False", session_id)
-            return
+    indicator = _first_marker(reminder_text, exit_indicators)
+    if indicator:
+        if variables.get("mode_level") == 0:
+            chat_mode = variables.get("chat_mode", "bypass")
+            variables["mode_level"] = compute_mode_level(chat_mode)
+            logger.info(
+                "Session %s: mode_level=%s (detected from system reminder: %r)",
+                session_id,
+                variables["mode_level"],
+                indicator,
+            )
+        if variables.get("plan_mode"):
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
+            logger.info("Session %s: plan_mode=False", session_id)
+        return
 
     gemini_plan_indicators = [
         "# Active Approval Mode: Plan",
         "You are operating in **Plan Mode**",
     ]
 
-    for indicator in gemini_plan_indicators:
-        if indicator in cleaned:
-            if variables.get("mode_level") != 0:
-                variables["mode_level"] = 0
-                logger.info(
-                    "Session %s: mode_level=0 (plan) (detected from Gemini marker: %r)",
-                    session_id,
-                    indicator,
-                )
-            return
+    indicator = _first_marker(cleaned, gemini_plan_indicators)
+    if indicator:
+        if variables.get("mode_level") != 0:
+            variables["mode_level"] = 0
+            logger.info(
+                "Session %s: mode_level=0 (plan) (detected from Gemini marker: %r)",
+                session_id,
+                indicator,
+            )
+        return
 
     gemini_exit_indicators = [
         "Exited Plan Mode",
         "# Active Approval Mode: Execute",
     ]
 
-    for indicator in gemini_exit_indicators:
-        if indicator in cleaned:
-            if variables.get("mode_level") == 0:
-                chat_mode = variables.get("chat_mode", "bypass")
-                variables["mode_level"] = compute_mode_level(chat_mode)
-                logger.info(
-                    "Session %s: mode_level=%s (detected from Gemini marker: %r)",
-                    session_id,
-                    variables["mode_level"],
-                    indicator,
-                )
-            return
+    indicator = _first_marker(cleaned, gemini_exit_indicators)
+    if indicator:
+        if variables.get("mode_level") == 0:
+            chat_mode = variables.get("chat_mode", "bypass")
+            variables["mode_level"] = compute_mode_level(chat_mode)
+            logger.info(
+                "Session %s: mode_level=%s (detected from Gemini marker: %r)",
+                session_id,
+                variables["mode_level"],
+                indicator,
+            )
+        return
 
     if '<plan-mode status="active">' in cleaned:
         if variables.get("mode_level") != 0:

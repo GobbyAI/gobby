@@ -640,7 +640,6 @@ async def repair_isolation_environment(
             isolated_path,
             exc_info=True,
         )
-        raise
 
 
 async def ensure_isolation_code_index(

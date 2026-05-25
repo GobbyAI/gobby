@@ -178,6 +178,7 @@ class TestRebroadcast:
 class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_wakes_existing_waiter_without_database(self) -> None:
+        """Cleanup should deny and release an already-registered waiter."""
         manager = PendingInteractionManager(MagicMock())
         manager._waiters["interaction-1"] = asyncio.get_running_loop().create_future()
 
@@ -192,6 +193,7 @@ class TestCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_clears_state(self, manager: PendingInteractionManager) -> None:
+        """Cleanup should clear waiter and timeout registries."""
         await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.cleanup()
         assert len(manager._waiters) == 0
@@ -201,6 +203,7 @@ class TestCleanup:
     async def test_cleanup_wakes_waiter_with_shutdown_denial(
         self, manager: PendingInteractionManager
     ) -> None:
+        """Cleanup should wake active waiters with an explicit shutdown denial."""
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
 
         task = asyncio.create_task(manager.wait(iid))

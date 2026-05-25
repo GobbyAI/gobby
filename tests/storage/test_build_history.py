@@ -92,6 +92,7 @@ def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None
 
 
 def test_build_history_finds_latest_coordinated_ancestor_run(temp_db) -> None:
+    """Latest coordinated run lookup should walk task ancestors within the project."""
     from gobby.storage.build_history import BuildHistoryStorage
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager

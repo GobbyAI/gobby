@@ -237,13 +237,18 @@ def _is_plan_markdown(path: Path) -> bool:
     if not path.stem.startswith("task-"):
         return False
     text = path.read_text(encoding="utf-8")
-    if (
+    if _is_orphan_manifest_plan(path, text):
+        return False
+    return _strip_leading_html_comments(text).lstrip().startswith("#")
+
+
+def _is_orphan_manifest_plan(path: Path, text: str) -> bool:
+    """Return whether an active manifest plan has no coverage manifest yet."""
+    return (
         path.parent.name != "completed"
         and "`kind: manifest`" in text
         and not _coverage_manifest_exists(path)
-    ):
-        return False
-    return _strip_leading_html_comments(text).lstrip().startswith("#")
+    )
 
 
 def _coverage_manifest_exists(path: Path) -> bool:

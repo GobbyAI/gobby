@@ -22,8 +22,9 @@ def completion_subscriber_lineage(
 ) -> list[str]:
     """Return root-to-session subscriber ids for wake delivery.
 
-    If lineage support or session lookup is unavailable, the requested session
-    remains the only subscriber so completion wakeup remains best-effort.
+    If lineage support, session lookup, or unexpected lineage resolution fails,
+    the requested session remains the only subscriber and the failure is logged
+    so completion wakeup remains best-effort.
     """
     lineage_ids = [session_id]
     if session_manager is None:

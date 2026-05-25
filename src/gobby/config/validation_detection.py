@@ -529,7 +529,8 @@ def _iter_matchers(config: ValidationDetectionConfig) -> Iterable[ValidationComm
             yield matcher
 
 
-def _command_segments(command: str) -> list[list[str]]:
+def shell_command_segments(command: str) -> list[list[str]]:
+    """Split a shell command into token segments separated by shell operators."""
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -544,6 +545,9 @@ def _command_segments(command: str) -> list[list[str]]:
             continue
         current.append(token)
     return segments
+
+
+_command_segments = shell_command_segments
 
 
 def _normalize_segment(tokens: list[str], wrappers: list[str]) -> list[str]:

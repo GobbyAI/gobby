@@ -241,7 +241,10 @@ class CodexHooksAdapter(BaseAdapter):
                 "decision": {"behavior": "allow"},
             }
 
-        if response.modified_input is not None and hook_event_name == "PreToolUse":
+        if (
+            isinstance(response.modified_input, dict)
+            and hook_event_name == "PreToolUse"
+        ):
             result["hookSpecificOutput"] = {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
