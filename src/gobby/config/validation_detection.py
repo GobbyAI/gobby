@@ -557,6 +557,11 @@ def _normalize_segment(tokens: list[str], wrappers: list[str]) -> list[str]:
     changed = True
     while changed:
         changed = False
+        gsqz_tokens = _strip_gsqz_wrapper(tokens)
+        if gsqz_tokens is not None:
+            tokens = _strip_env_assignments(gsqz_tokens)
+            changed = True
+            continue
         for wrapper in wrappers:
             wrapper_tokens = _safe_split(wrapper)
             if wrapper_tokens and _starts_with(tokens, wrapper_tokens):
@@ -567,6 +572,16 @@ def _normalize_segment(tokens: list[str], wrappers: list[str]) -> list[str]:
                 changed = True
                 break
     return tokens
+
+
+def _strip_gsqz_wrapper(tokens: list[str]) -> list[str] | None:
+    if len(tokens) < 2 or Path(tokens[0]).name != "gsqz" or tokens[1] != "--":
+        return None
+    if len(tokens) == 2:
+        return []
+    if len(tokens) == 3:
+        return _safe_split(tokens[2])
+    return tokens[2:]
 
 
 def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str]) -> bool:

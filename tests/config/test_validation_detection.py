@@ -31,6 +31,8 @@ pytestmark = pytest.mark.unit
         ("cargo clippy --no-default-features -- -D warnings", "rust-validation"),
         ("cargo fmt --all -- --check", "rust-format-check"),
         ("ruff format --check src tests", "python-format-check"),
+        ("/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'", "python-lint-type-format"),
+        ("gsqz -- 'cargo check --no-default-features'", "rust-validation"),
         ("go test ./...", "go-validation"),
         ("dotnet format --verify-no-changes", "csharp-format-check"),
         ("mix format --check-formatted", "elixir-format-check"),
@@ -58,6 +60,7 @@ def test_builtin_validation_detection_accepts_common_commands(
         "ruff check --fix src",
         "eslint . --fix",
         "dotnet format",
+        "gsqz -- 'git status'",
         "python script.py",
     ],
 )

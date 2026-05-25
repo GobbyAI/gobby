@@ -1257,6 +1257,7 @@ class TestDetectVerificationEvidence:
             "cargo check --no-default-features",
             "cargo clippy --no-default-features -- -D warnings",
             "cargo fmt --all -- --check",
+            "/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'",
         ],
     )
     def test_successful_validation_records_evidence(self, variables, command: str) -> None:
