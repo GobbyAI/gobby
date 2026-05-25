@@ -391,7 +391,15 @@ fn extract_calls(
     let symbols = ctx.symbols;
     let import_bindings = ctx.import_bindings;
     if language == "dart" {
-        return extract_textual_dart_calls(source, rel_path, symbols, import_bindings);
+        return extract_textual_dart_calls(
+            source,
+            rel_path,
+            symbols,
+            import_bindings,
+            ctx.file_path,
+            ctx.root_path,
+            semantic_resolver,
+        );
     }
     if spec.call_query.trim().is_empty() {
         return Vec::new();
@@ -520,6 +528,9 @@ fn extract_textual_dart_calls(
     rel_path: &str,
     symbols: &[Symbol],
     import_bindings: &ImportBindings,
+    file_path: &Path,
+    root_path: &Path,
+    mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> Vec<CallRelation> {
     let text = String::from_utf8_lossy(source);
     let mut calls = Vec::new();
@@ -569,6 +580,21 @@ fn extract_textual_dart_calls(
                 candidate.qualifier_path.as_deref(),
                 syntax == CallSyntaxKind::Bare,
             );
+            let semantic_target = if local_target.is_none() && external_target.is_none() {
+                semantic_resolver.as_deref_mut().and_then(|resolver| {
+                    resolver.resolve(&SemanticCallRequest {
+                        language: "dart",
+                        file_path,
+                        root_path,
+                        source,
+                        callee_name: &candidate.name,
+                        line: row + 1,
+                        column: candidate.call_byte.saturating_sub(line_start_byte),
+                    })
+                })
+            } else {
+                None
+            };
 
             let mut call = CallRelation::new(
                 caller_symbol_id,
@@ -583,6 +609,14 @@ fn extract_textual_dart_calls(
                 (None, Some(external_target)) => {
                     call = call
                         .with_external_target(external_target.callee_name, external_target.module);
+                }
+                (None, None) => {
+                    if let Some(semantic_target) = semantic_target {
+                        call = call.with_external_target(
+                            semantic_target.callee_name,
+                            semantic_target.external_module,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -1048,6 +1082,16 @@ mod tests {
 
     struct FakeSemanticResolver {
         target: Option<crate::index::semantic::SemanticCallTarget>,
+        expected_language: &'static str,
+        expected_callee: &'static str,
+        requests: Vec<CapturedSemanticRequest>,
+    }
+
+    struct CapturedSemanticRequest {
+        language: String,
+        file_path: PathBuf,
+        root_path: PathBuf,
+        callee_name: String,
     }
 
     impl SemanticCallResolver for FakeSemanticResolver {
@@ -1055,7 +1099,15 @@ mod tests {
             &mut self,
             request: &SemanticCallRequest<'_>,
         ) -> Option<crate::index::semantic::SemanticCallTarget> {
-            if matches!(request.language, "c" | "cpp") && request.callee_name == "printf" {
+            self.requests.push(CapturedSemanticRequest {
+                language: request.language.to_string(),
+                file_path: request.file_path.to_path_buf(),
+                root_path: request.root_path.to_path_buf(),
+                callee_name: request.callee_name.to_string(),
+            });
+            if request.language == self.expected_language
+                && request.callee_name == self.expected_callee
+            {
                 self.target.clone()
             } else {
                 None
@@ -2059,6 +2111,9 @@ void run() {
                 callee_name: "printf".to_string(),
                 external_module: "/usr/include/stdio.h".to_string(),
             }),
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
         };
         let parsed =
             parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
@@ -2070,6 +2125,54 @@ void run() {
             call.callee_external_module.as_deref(),
             Some("/usr/include/stdio.h")
         );
+    }
+
+    #[test]
+    fn semantic_resolver_can_classify_textual_dart_calls_as_external() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("lib/sample.dart");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        fs::write(
+            &path,
+            r#"
+void run() {
+  Tooltip(message: 'x');
+}
+"#,
+        )
+        .expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: Some(crate::index::semantic::SemanticCallTarget {
+                callee_name: "Tooltip".to_string(),
+                external_module: "package:flutter/material.dart".to_string(),
+            }),
+            expected_language: "dart",
+            expected_callee: "Tooltip",
+            requests: Vec::new(),
+        };
+        let parsed =
+            parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+                .expect("parse file");
+
+        let call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == "Tooltip")
+            .expect("Tooltip call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(
+            call.callee_external_module.as_deref(),
+            Some("package:flutter/material.dart")
+        );
+        assert!(resolver.requests.iter().any(|request| {
+            request.language == "dart"
+                && request.file_path == path
+                && request.root_path == root
+                && request.callee_name == "Tooltip"
+        }));
     }
 
     #[test]
