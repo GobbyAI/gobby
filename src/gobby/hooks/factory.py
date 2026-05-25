@@ -252,6 +252,7 @@ class HookManagerFactory:
             session_coordinator=session_coordinator,
             skill_manager=workflow_components.skill_manager,
             skills_config=config.skills if config else None,
+            memory_recall_helper_config=config.memory_recall_helper if config else None,
             call_tool=call_tool_fn,
             workflow_config=config.workflow if config else None,
             get_machine_id=get_machine_id,
