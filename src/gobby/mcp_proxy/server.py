@@ -171,17 +171,20 @@ class GobbyDaemonTools:
         properly signals errors to LLM clients instead of returning error dicts
         as successful responses.
 
-        When session_id is provided and a workflow is active, checks that the
-        tool is not blocked by the current workflow step's blocked_tools setting.
-        This wrapper context is not injected into target tool arguments.
+        When session_id is provided and a workflow is active, checks the current
+        workflow step's blocked_tools setting.
+        Same-repo calls can use wrapper or ambient session context; if the
+        target schema requires session_id, the resolved UUID is supplied to the
+        target arguments before validation.
 
         Args:
             server_name: Target MCP server name.
             tool_name: Tool to call on the server.
             arguments: Tool arguments (dict or JSON string).
             session_id: Wrapper context for context resolution and workflow checks.
-                Target tool parameters still belong in arguments; pass
-                arguments.session_id when the target tool schema requires it.
+                Use arguments.session_id only to target a different session.
+                Local #N refs resolve in the caller project; cross-project
+                target sessions should be supplied as UUIDs.
             project_id: Optional project UUID or name. When provided, overrides
                 session-derived project context, enabling cross-project tool
                 operations (e.g., an agent in project A creating a task in

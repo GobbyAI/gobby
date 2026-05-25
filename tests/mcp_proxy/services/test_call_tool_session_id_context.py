@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +25,12 @@ OPTIONAL_SESSION_ID_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"session_id": {"type": "string"}, "name": {"type": "string"}},
     "required": [],
+}
+
+SESSION_ID_AND_NAME_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"session_id": {"type": "string"}, "name": {"type": "string"}},
+    "required": ["session_id", "name"],
 }
 
 COMPACT_SELF_SCHEMA: dict[str, Any] = {
@@ -101,7 +108,7 @@ def _use_schema(proxy: ToolProxyService, schema: dict[str, Any]) -> None:
         ("get_session_messages", {"limit": 25}),
     ],
 )
-async def test_top_level_only_session_id_returns_target_argument_error(
+async def test_required_session_id_uses_top_level_wrapper_session(
     tool_proxy: tuple[ToolProxyService, MagicMock],
     tool_name: str,
     arguments: dict[str, Any],
@@ -123,11 +130,83 @@ async def test_top_level_only_session_id_returns_target_argument_error(
         enforce_workflow=False,
     )
 
+    expected_arguments = {**arguments, "session_id": "wrapper-session"}
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-sessions",
+        tool_name,
+        expected_arguments,
+        session_id="wrapper-session",
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_session_id_injection_resolves_wrapper_session_ref(
+    resolving_tool_proxy: tuple[ToolProxyService, MagicMock, MagicMock],
+) -> None:
+    proxy, mcp_manager, _ = resolving_tool_proxy
+    _use_schema(proxy, SESSION_ID_SCHEMA)
+
+    result = await proxy.call_tool(
+        "gobby-sessions",
+        "get_session_messages",
+        arguments={"limit": 25},
+        session_id="#7",
+        enforce_workflow=False,
+    )
+
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-sessions",
+        "get_session_messages",
+        {"limit": 25, "session_id": SESSION_UUID_7},
+        session_id=SESSION_UUID_7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_session_id_uses_ambient_session_context(
+    tool_proxy: tuple[ToolProxyService, MagicMock],
+) -> None:
+    proxy, mcp_manager = tool_proxy
+    _use_schema(proxy, SESSION_ID_SCHEMA)
+
+    with session_context_for_test("ambient-session-uuid"):
+        result = await proxy.call_tool(
+            "gobby-sessions",
+            "get_session",
+            arguments={},
+            enforce_workflow=False,
+        )
+
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-sessions",
+        "get_session",
+        {"session_id": "ambient-session-uuid"},
+        session_id="ambient-session-uuid",
+    )
+
+
+@pytest.mark.asyncio
+async def test_injected_session_id_does_not_mask_missing_required_parameters(
+    tool_proxy: tuple[ToolProxyService, MagicMock],
+) -> None:
+    proxy, mcp_manager = tool_proxy
+    _use_schema(proxy, SESSION_ID_AND_NAME_SCHEMA)
+
+    result = await proxy.call_tool(
+        "gobby-sessions",
+        "rename_session",
+        arguments={},
+        session_id="wrapper-session",
+        enforce_workflow=False,
+    )
+
     assert result["success"] is False
-    assert "arguments.session_id" in result["error"]
-    assert "top-level call_tool.session_id is Gobby wrapper context only" in result["error"]
-    assert result["schema"] == SESSION_ID_SCHEMA
-    mcp_manager.call_tool.assert_not_called()
+    assert result["error_code"] == "invalid_arguments"
+    assert "Missing required parameter 'name'" in result["error"]
+    mcp_manager.call_tool.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -278,7 +357,7 @@ async def test_wrapper_and_nested_session_refs_resolve_independently(
     resolving_tool_proxy: tuple[ToolProxyService, MagicMock, MagicMock],
 ) -> None:
     proxy, mcp_manager, _ = resolving_tool_proxy
-    _use_schema(proxy, OPTIONAL_SESSION_ID_SCHEMA)
+    _use_schema(proxy, SESSION_ID_SCHEMA)
 
     result = await proxy.call_tool(
         "gobby-sessions",

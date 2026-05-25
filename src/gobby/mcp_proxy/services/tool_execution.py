@@ -19,32 +19,18 @@ def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
     return isinstance(required, list) and "session_id" in required
 
 
-def _missing_target_session_id_error(
-    *,
-    service: Any,
-    server_name: str,
-    tool_name: str,
+def _inject_required_session_id_argument(
+    arguments: dict[str, Any],
     input_schema: dict[str, Any],
-    session_id: str | None,
-) -> dict[str, Any]:
-    error_message = (
-        f"Missing required parameter: arguments.session_id for {server_name}:{tool_name}. "
-        "The top-level call_tool.session_id is Gobby wrapper context only; target tool "
-        "parameters must be supplied inside arguments."
-    )
-    return build_invalid_arguments_response(
-        service,
-        server_name=server_name,
-        tool_name=tool_name,
-        validation_errors=[
-            f"Missing required parameter: arguments.session_id for {server_name}:{tool_name}. "
-            "The top-level call_tool.session_id is wrapper context only."
-        ],
-        input_schema=input_schema,
-        session_id=session_id,
-        error_message=error_message,
-        hint="Pass session_id inside arguments when the target tool schema requires it.",
-    )
+    effective_session_id: str | None,
+) -> None:
+    """Use wrapper/ambient session context for same-session target calls."""
+    if (
+        effective_session_id
+        and "session_id" not in arguments
+        and _schema_requires_session_id(input_schema)
+    ):
+        arguments["session_id"] = effective_session_id
 
 
 async def list_tools(
@@ -238,25 +224,18 @@ async def call_tool(
             }
 
     should_check_schema = service._validate_arguments and (
-        bool(arguments) or session_id is not None
+        bool(arguments) or effective_session_id is not None
     )
     if should_check_schema:
         schema_result = await service.get_tool_schema(server_name, tool_name)
         if schema_result.get("success"):
             input_schema = schema_result.get("tool", {}).get("inputSchema", {})
             if input_schema:
-                if (
-                    session_id is not None
-                    and "session_id" not in arguments
-                    and _schema_requires_session_id(input_schema)
-                ):
-                    return _missing_target_session_id_error(
-                        service=service,
-                        server_name=server_name,
-                        tool_name=tool_name,
-                        input_schema=input_schema,
-                        session_id=effective_session_id,
-                    )
+                _inject_required_session_id_argument(
+                    arguments,
+                    input_schema,
+                    effective_session_id,
+                )
                 if not arguments:
                     return await _execute_tool_dispatch(
                         service=service,

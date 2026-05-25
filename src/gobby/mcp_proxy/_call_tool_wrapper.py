@@ -67,9 +67,12 @@ def canonicalize_call_tool_wrapper(
 
     Top-level wrapper fields win. Missing server/tool/project wrapper fields are
     hoisted from the ``arguments``/``args`` payload when present, then stripped so
-    only inner tool arguments reach downstream dispatch. ``session_id`` is wrapper
-    context only at the top level; ``arguments.session_id`` remains a target-tool
-    parameter. If routing fields are already top-level, malformed string
+    only inner tool arguments reach downstream dispatch. Top-level ``session_id``
+    is wrapper context for normal same-repo calls; downstream dispatch may inject
+    its resolved UUID when a target schema requires ``session_id``.
+    ``arguments.session_id`` is a target-tool override for a different session:
+    local ``#N`` refs resolve in the caller project, while cross-project targets
+    should use UUIDs. If routing fields are already top-level, malformed string
     arguments are preserved for target validation.
     """
 
