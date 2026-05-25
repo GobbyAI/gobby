@@ -292,7 +292,10 @@ class DaemonProxy:
         elif tool_name in WAIT_TOOL_NAMES:
             # Extract timeout from arguments, default to 300s if not specified
             arg_map = arguments if isinstance(arguments, dict) else {}
-            arg_timeout = float(arg_map.get("timeout", 300.0))
+            raw_timeout = arg_map.get("timeout")
+            if raw_timeout is None:
+                raw_timeout = arg_map.get("timeout_seconds", 300.0)
+            arg_timeout = float(raw_timeout)
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
         request_kwargs: dict[str, Any] = {
@@ -627,7 +630,9 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         if tool_name in WAIT_TOOL_NAMES:
             raw_timeout = None
             if isinstance(final_args, dict):
-                raw_timeout = final_args.get("timeout") or final_args.get("timeout_seconds")
+                raw_timeout = final_args.get("timeout")
+                if raw_timeout is None:
+                    raw_timeout = final_args.get("timeout_seconds")
             if isinstance(raw_timeout, int | float):
                 requested_timeout = float(raw_timeout)
         elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:

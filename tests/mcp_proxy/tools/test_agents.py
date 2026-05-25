@@ -262,6 +262,79 @@ class TestWaitForAgent:
         assert result["completed"] is False
         assert result["status"] == "running"
         assert result["timeout_seconds"] == 0.0
+        assert result["requested_timeout_seconds"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_long_running_wait_returns_before_transport_boundary(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 116.0]):
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=120,
+                poll_interval_seconds=5,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 115.0
+        assert result["requested_timeout_seconds"] == 120.0
+
+    @pytest.mark.asyncio
+    async def test_shorter_wait_timeout_is_not_reduced(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 5.1]):
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=5,
+                poll_interval_seconds=1,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 5.0
+        assert result["requested_timeout_seconds"] == 5.0
 
     @pytest.mark.asyncio
     async def test_wait_polls_until_run_completes(self):
