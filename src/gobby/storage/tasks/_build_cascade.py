@@ -214,7 +214,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
         task_id,
         from_state=f"manifest:{previous_shape}",
         to_state=f"manifest:{','.join(desired_names)}",
-        reason="build_cascade_remove_skipped_stages",
+        reason="build_cascade_prune_manifest_stages",
         by_actor="build",
     )
     return True

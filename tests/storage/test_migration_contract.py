@@ -87,6 +87,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "261_implementation_domain.sql",
         "262_neo4j_config_to_falkordb.sql",
         "264_drop_migration_state.sql",
+        "265_build_runs_project_root_started.sql",
     ]
 
 

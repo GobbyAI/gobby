@@ -283,75 +283,84 @@ def test_import_workflow_file_not_found(cli_runner) -> None:
 
 def test_audit_no_entries(cli_runner) -> None:
     """Test audit with no entries."""
-    with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
-        with patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit:
-            mock_audit = MagicMock()
-            mock_audit.get_entries.return_value = []
-            MockAudit.return_value = mock_audit
+    with (
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
+        patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
+    ):
+        mock_audit = MagicMock()
+        mock_audit.get_entries.return_value = []
+        MockAudit.return_value = mock_audit
 
-            result = cli_runner.invoke(workflows, ["audit", "--session", "sess1"])
+        result = cli_runner.invoke(workflows, ["audit", "--session", "sess1"])
 
-            assert result.exit_code == 0
-            assert "No audit entries found" in result.output
+        assert result.exit_code == 0
+        assert "No audit entries found" in result.output
 
 
 def test_audit_with_entries(cli_runner) -> None:
     """Test audit with entries."""
     from datetime import UTC, datetime
 
-    with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
-        with patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit:
-            mock_entry = MagicMock()
-            mock_entry.id = "entry-1"
-            mock_entry.timestamp = datetime.now(UTC)
-            mock_entry.step = "plan"
-            mock_entry.event_type = "tool_call"
-            mock_entry.tool_name = "Edit"
-            mock_entry.rule_id = None
-            mock_entry.condition = None
-            mock_entry.result = "block"
-            mock_entry.reason = "Edit not allowed in plan step"
-            mock_entry.context = {}
+    with (
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
+        patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
+    ):
+        mock_entry = MagicMock()
+        mock_entry.id = "entry-1"
+        mock_entry.timestamp = datetime.now(UTC)
+        mock_entry.step = "plan"
+        mock_entry.event_type = "tool_call"
+        mock_entry.tool_name = "Edit"
+        mock_entry.rule_id = None
+        mock_entry.condition = None
+        mock_entry.result = "block"
+        mock_entry.reason = "Edit not allowed in plan step"
+        mock_entry.context = {}
 
-            mock_audit = MagicMock()
-            mock_audit.get_entries.return_value = [mock_entry]
-            MockAudit.return_value = mock_audit
+        mock_audit = MagicMock()
+        mock_audit.get_entries.return_value = [mock_entry]
+        MockAudit.return_value = mock_audit
 
-            result = cli_runner.invoke(workflows, ["audit", "--session", "sess1"])
+        result = cli_runner.invoke(workflows, ["audit", "--session", "sess1"])
 
-            assert result.exit_code == 0
-            assert "BLOCK" in result.output
-            assert "tool_call" in result.output
+        assert result.exit_code == 0
+        assert "BLOCK" in result.output
+        assert "tool_call" in result.output
 
 
 def test_audit_json_format(cli_runner) -> None:
     """Test audit with JSON output."""
     from datetime import UTC, datetime
 
-    with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
-        with patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit:
-            mock_entry = MagicMock()
-            mock_entry.id = "entry-1"
-            mock_entry.timestamp = datetime.now(UTC)
-            mock_entry.step = "plan"
-            mock_entry.event_type = "tool_call"
-            mock_entry.tool_name = "Edit"
-            mock_entry.rule_id = None
-            mock_entry.condition = None
-            mock_entry.result = "allow"
-            mock_entry.reason = None
-            mock_entry.context = {}
+    with (
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
+        patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
+    ):
+        mock_entry = MagicMock()
+        mock_entry.id = "entry-1"
+        mock_entry.timestamp = datetime.now(UTC)
+        mock_entry.step = "plan"
+        mock_entry.event_type = "tool_call"
+        mock_entry.tool_name = "Edit"
+        mock_entry.rule_id = None
+        mock_entry.condition = None
+        mock_entry.result = "allow"
+        mock_entry.reason = None
+        mock_entry.context = {}
 
-            mock_audit = MagicMock()
-            mock_audit.get_entries.return_value = [mock_entry]
-            MockAudit.return_value = mock_audit
+        mock_audit = MagicMock()
+        mock_audit.get_entries.return_value = [mock_entry]
+        MockAudit.return_value = mock_audit
 
-            result = cli_runner.invoke(workflows, ["audit", "--session", "sess1", "--json"])
+        result = cli_runner.invoke(workflows, ["audit", "--session", "sess1", "--json"])
 
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert isinstance(data, list)
-            assert len(data) == 1
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 1
 
 
 # ==============================================================================

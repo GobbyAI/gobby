@@ -47,6 +47,8 @@ Use these **before making changes** to understand what you'll affect:
 
 ## Graph Lifecycle (Gobby daemon required)
 
+These commands operate on the code-index graph projection via the Gobby daemon.
+
 - `gcode graph clear` — clear the current project's graph projection
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
 

@@ -155,12 +155,8 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
 
         gobby memory restore --force
     """
-    from gobby.config.persistence import MemoryBackupConfig
-    from gobby.sync.memories import MemoryBackupManager
     from gobby.utils.project_context import get_project_context
 
-    memory_module = _facade()
-    manager = memory_module.get_memory_manager(ctx)
     project_ctx = get_project_context(cwd=Path.cwd())
     restore_path = (
         Path(input_path).expanduser().resolve() if input_path else _default_backup_path(project_ctx)
@@ -171,6 +167,12 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
         if not quiet:
             click.echo(f"No memory backup found at {restore_path}")
         return
+
+    from gobby.config.persistence import MemoryBackupConfig
+    from gobby.sync.memories import MemoryBackupManager
+
+    memory_module = _facade()
+    manager = memory_module.get_memory_manager(ctx)
     config = MemoryBackupConfig(enabled=True, export_path=restore_path)
     backup_mgr = MemoryBackupManager(
         db=manager.db,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -192,18 +193,25 @@ class KeywordAsyncSearchBackend:
         self._hub = hub
         self._table = table
         self._backend = pick_search_backend(hub, table)
+        self._fitted_items: list[tuple[str, str]] | None = None
 
-    async def fit_async(self, _items: list[tuple[str, str]]) -> None:
+    async def fit_async(self, items: list[tuple[str, str]]) -> None:
         fit = getattr(self._backend, "fit", None)
         if callable(fit):
-            fit(_items)
+            fit(items)
+            self._fitted_items = None
+        else:
+            self._fitted_items = items.copy()
         return None
 
     async def search_async(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        return [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+        return self.search(query, top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        return [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+        hits = [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+        if hits or self._fitted_items is None:
+            return hits
+        return _search_fitted_items(query, self._fitted_items, top_k)
 
     def needs_refit(self) -> bool:
         return False
@@ -218,6 +226,34 @@ class KeywordAsyncSearchBackend:
         clear = getattr(self._backend, "clear", None)
         if callable(clear):
             clear()
+        self._fitted_items = None
+
+
+def _search_fitted_items(
+    query: str,
+    items: Sequence[tuple[str, str]],
+    top_k: int,
+) -> list[tuple[str, float]]:
+    query_terms = set(_tokenize(query))
+    if not query_terms:
+        return []
+
+    scored: list[tuple[str, float]] = []
+    denominator = len(query_terms)
+    for item_id, content in items:
+        content_terms = set(_tokenize(content))
+        if not content_terms:
+            continue
+        matched = len(query_terms & content_terms)
+        if matched:
+            scored.append((item_id, matched / denominator))
+
+    scored.sort(key=lambda row: (-row[1], row[0]))
+    return scored[:top_k]
+
+
+def _tokenize(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", value.lower())
 
 
 def fetch_all(hub: Any, sql: str, params: Sequence[Any]) -> list[Any]:

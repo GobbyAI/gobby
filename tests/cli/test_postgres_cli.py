@@ -237,7 +237,7 @@ def test_postgres_uninstall_preserves_required_runtime_bootstrap(
     assert "PostgreSQL uninstalled" not in result.output
 
 
-def test_postgres_uninstall_rejects_runtime_rollback(
+def test_postgres_uninstall_preserves_runtime_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -248,12 +248,12 @@ def test_postgres_uninstall_rejects_runtime_rollback(
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 0
     bootstrap = _read_bootstrap(tmp_path)
     assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == "docker"
-    assert "requires hub_backend=postgres" in result.output
+    assert "runtime bootstrap preserved" in result.output
 
 
 def test_postgres_activate_refuses_when_daemon_is_running(

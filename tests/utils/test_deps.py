@@ -412,6 +412,7 @@ def test_check_config_mismatches() -> None:
     config.llm_providers.claude = True
     config.llm_providers.codex = True
     config.llm_providers.gemini = True
+    config.llm_providers.grok = False
     config.embeddings.api_base = "http://localhost:1234/v1"
 
     with patch("shutil.which", return_value=False):
@@ -419,7 +420,7 @@ def test_check_config_mismatches() -> None:
         assert len(issues) == 4
         assert issues[0]["subsystem"] == "Claude Code"
         assert issues[1]["subsystem"] == "Codex"
-        assert issues[2]["subsystem"] == "Gemini"
+        assert issues[2]["subsystem"] == "Gemini (deprecated)"
         assert issues[3]["subsystem"] == "LM Studio"
 
     config.embeddings.api_base = "http://localhost:11434/v1"

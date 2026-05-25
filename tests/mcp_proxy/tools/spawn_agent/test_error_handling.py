@@ -484,6 +484,7 @@ class TestSpawnAgentImplErrorBranches:
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_indexes_workspace_before_spawn(self, tmp_path) -> None:
+        from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -500,8 +501,13 @@ class TestSpawnAgentImplErrorBranches:
         git_manager.get_current_branch.return_value = "main"
         events: list[str] = []
 
-        async def sync(**_kwargs: object) -> None:
+        async def sync(**_kwargs: object) -> ReusedWorktreeSyncResult:
             events.append("sync")
+            return ReusedWorktreeSyncResult(
+                status="already_current",
+                base_ref="main",
+                base_commit_sha="base-sha",
+            )
 
         async def repair(**_kwargs: object) -> None:
             events.append("repair")

@@ -19,7 +19,7 @@ _SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|"}
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
-_UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "-p", "-C"]
+_UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "--color", "-p", "-C"]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 

@@ -377,6 +377,8 @@ def protect_production_resources(
             # If creating default, let it happen but in safe location if possible
             # But simpler is to just return a safe config object
             config = DaemonConfig(
+                database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
+                postgres_install_mode="external",
                 telemetry={
                     "log_file": str(safe_log_client),
                     "log_file_error": str(safe_log_error),
@@ -446,6 +448,7 @@ def protect_production_resources(
             "gobby.cli.utils",
             "gobby.cli.tasks._utils",
             "gobby.mcp_proxy.stdio",
+            "gobby.runner_init.storage",
         ]
 
         rogue_replacements: dict[int, tuple[Any, Any]] = {}

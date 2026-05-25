@@ -230,12 +230,20 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
+    @patch("gobby.cli.install._is_grok_cli_installed")
+    @patch("gobby.cli.install._is_agy_cli_installed")
+    @patch("gobby.cli.install._is_qwen_cli_installed")
+    @patch("gobby.cli.install._is_droid_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
     @patch("gobby.cli.install.load_full_config_from_db")
     def test_install_no_clis_detected_no_git(
         self,
         mock_load_config: MagicMock,
         mock_codex: MagicMock,
+        mock_droid: MagicMock,
+        mock_qwen: MagicMock,
+        mock_agy: MagicMock,
+        mock_grok: MagicMock,
         mock_gemini: MagicMock,
         mock_claude: MagicMock,
         runner: CliRunner,
@@ -245,7 +253,11 @@ class TestInstallCommand:
         mock_load_config.return_value = MagicMock()
         mock_claude.return_value = False
         mock_gemini.return_value = False
+        mock_grok.return_value = False
+        mock_agy.return_value = False
+        mock_qwen.return_value = False
         mock_codex.return_value = False
+        mock_droid.return_value = False
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             result = runner.invoke(cli, ["install"])

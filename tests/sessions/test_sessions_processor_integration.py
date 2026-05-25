@@ -7,6 +7,7 @@ via session_manager.  It does NOT write to a session_messages table.
 
 import json
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,8 +19,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_db(tmp_path) -> HubDatabase:
-    return HubDatabase(tmp_path / "test.db")
+def mock_db() -> HubDatabase:
+    return MagicMock(spec=HubDatabase)
 
 
 @pytest.fixture

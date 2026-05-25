@@ -99,7 +99,7 @@ async def test_base_captured_before_first_agent_run(
 async def test_repair_isolation_environment_logs_git_hygiene_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Git hygiene failures are logged before the original exception propagates."""
+    """Git hygiene failures are logged and do not block isolation repair."""
     with (
         patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
@@ -114,12 +114,11 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
         ),
         caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
     ):
-        with pytest.raises(RuntimeError, match="git hygiene failed"):
-            await repair_isolation_environment(
-                main_repo_path="/tmp/main",
-                isolated_path="/tmp/isolated",
-                provider="codex",
-            )
+        await repair_isolation_environment(
+            main_repo_path="/tmp/main",
+            isolated_path="/tmp/isolated",
+            provider="codex",
+        )
 
     assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
 
