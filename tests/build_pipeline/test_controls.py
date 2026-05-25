@@ -263,7 +263,7 @@ async def test_resume_clears_orphan_no_run_dispatch_mutex(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        ttl_seconds=600,
+        ttl_seconds=1,
         now=acquired_at,
     )
 
@@ -282,7 +282,7 @@ async def test_resume_clears_orphan_no_run_dispatch_mutex(
 
 
 @pytest.mark.asyncio
-async def test_resume_preserves_fresh_no_run_dispatch_mutex(
+async def test_resume_preserves_no_run_dispatch_mutex_with_live_lease(
     temp_db,
     sample_project,
 ) -> None:
@@ -297,12 +297,13 @@ async def test_resume_preserves_fresh_no_run_dispatch_mutex(
         task_type="task",
     )
     storage = TaskDispatchMutexManager(temp_db)
+    acquired_at = datetime.now(UTC) - timedelta(seconds=60)
     assert storage.acquire_mutex(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
         ttl_seconds=600,
-        now=datetime.now(UTC),
+        now=acquired_at,
     )
 
     with patch(
