@@ -298,7 +298,7 @@ def sweep_orphan_no_run_dispatch_mutexes(
         params.append(project_id)
     rows = db.fetchall(
         f"""
-        SELECT mutex.task_id, mutex.updated_at
+        SELECT mutex.task_id, mutex.lease_until, mutex.updated_at
           FROM task_dispatch_mutex mutex
           {project_join}
          WHERE mutex.lease_holder = ?
@@ -309,10 +309,22 @@ def sweep_orphan_no_run_dispatch_mutexes(
     )
     cleared = 0
     for row in rows:
+        lease_until = _parse_mutex_timestamp(row["lease_until"])
+        if lease_until is not None:
+            if lease_until >= resolved_now:
+                continue
+            should_release = True
+        else:
+            should_release = False
+
         updated_at = _parse_mutex_timestamp(row["updated_at"])
-        if updated_at is None:
+        if updated_at is None and not should_release:
             continue
-        if resolved_now - updated_at < timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS):
+        if (
+            not should_release
+            and updated_at is not None
+            and resolved_now - updated_at < timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS)
+        ):
             continue
         if _release_orphan_no_run_mutex(
             mutex_storage,

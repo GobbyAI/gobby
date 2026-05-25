@@ -502,6 +502,12 @@ def _clear_stale_dispatch_mutexes(
 def _is_orphan_no_run_dispatch_mutex(mutex: Any, *, now: datetime) -> bool:
     if getattr(mutex, "lease_holder", None) != "dispatcher":
         return False
+    if getattr(mutex, "run_id", None):
+        return False
+
+    lease_until = _parse_mutex_timestamp(getattr(mutex, "lease_until", None))
+    if lease_until is not None:
+        return lease_until < now
 
     updated_at = _parse_mutex_timestamp(getattr(mutex, "updated_at", None))
     if updated_at is None:
