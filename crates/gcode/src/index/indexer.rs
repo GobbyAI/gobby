@@ -126,7 +126,7 @@ pub fn index_directory(
             result.files_skipped += 1;
             continue;
         }
-        if index_content_only(conn, path, project_id, root_path) {
+        if index_content_only(conn, path, project_id, root_path, &excludes) {
             result.files_indexed += 1;
         } else {
             result.files_skipped += 1;
@@ -186,17 +186,33 @@ pub fn index_files(
             continue;
         }
 
-        if let Some(count) = index_file(
-            conn,
-            &abs,
-            project_id,
-            root_path,
-            &excludes,
-            &import_context,
-            semantic_resolver.as_deref_mut(),
-        )? {
-            result.files_indexed += 1;
-            result.symbols_found += count;
+        match explicit_file_route(root_path, &abs, &excludes) {
+            ExplicitFileRoute::Ast => {
+                if let Some(count) = index_file(
+                    conn,
+                    &abs,
+                    project_id,
+                    root_path,
+                    &excludes,
+                    &import_context,
+                    semantic_resolver.as_deref_mut(),
+                )? {
+                    result.files_indexed += 1;
+                    result.symbols_found += count;
+                } else {
+                    result.files_skipped += 1;
+                }
+            }
+            ExplicitFileRoute::ContentOnly => {
+                if index_content_only(conn, &abs, project_id, root_path, &excludes) {
+                    result.files_indexed += 1;
+                } else {
+                    result.files_skipped += 1;
+                }
+            }
+            ExplicitFileRoute::Skip => {
+                result.files_skipped += 1;
+            }
         }
     }
 
@@ -296,8 +312,37 @@ fn create_semantic_resolver_if_needed(
     semantic::create_cpp_semantic_resolver(root_path, require_cpp_semantics)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplicitFileRoute {
+    Ast,
+    ContentOnly,
+    Skip,
+}
+
+fn explicit_file_route(
+    root_path: &Path,
+    path: &Path,
+    exclude_patterns: &[String],
+) -> ExplicitFileRoute {
+    match walker::classify_file(root_path, path, exclude_patterns) {
+        Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
+        Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
+        None => ExplicitFileRoute::Skip,
+    }
+}
+
 /// Index content-only file (no AST, just chunks).
-fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_path: &Path) -> bool {
+fn index_content_only(
+    conn: &mut Client,
+    path: &Path,
+    project_id: &str,
+    root_path: &Path,
+    exclude_patterns: &[String],
+) -> bool {
+    if !walker::is_content_indexable(root_path, path, exclude_patterns) {
+        return false;
+    }
+
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
         Err(_) => return false,
@@ -313,12 +358,7 @@ fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_pat
         Err(_) => return false,
     };
 
-    // Skip binary
-    if source[..source.len().min(8192)].contains(&0) {
-        return false;
-    }
-
-    let lang = path.extension().map(|e| e.to_string_lossy().to_string());
+    let lang = walker::content_language(path);
     let content_hash = hasher::file_content_hash(path).unwrap_or_default();
 
     let mut tx = match conn.transaction() {
@@ -333,7 +373,7 @@ fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_pat
             id: IndexedFile::make_id(project_id, &rel),
             project_id: project_id.to_string(),
             file_path: rel.clone(),
-            language: lang.clone().unwrap_or_else(|| "unknown".to_string()),
+            language: lang.clone(),
             content_hash,
             symbol_count: 0,
             byte_size: meta.len() as usize,
@@ -341,7 +381,7 @@ fn index_content_only(conn: &mut Client, path: &Path, project_id: &str, root_pat
         },
     );
 
-    let chunks = chunker::chunk_file_content(&source, &rel, project_id, lang.as_deref());
+    let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(&lang));
     if !chunks.is_empty() {
         upsert_content_chunks(&mut tx, &chunks);
     }
@@ -742,7 +782,17 @@ fn epoch_secs_str() -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::models::{CallRelation, CallTargetKind};
+    use std::path::Path;
+
+    fn write_file(root: &Path, rel: &str, contents: &[u8]) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent");
+        }
+        std::fs::write(path, contents).expect("write file");
+    }
 
     #[test]
     fn call_relation_contract_uses_empty_optional_storage_values() {
@@ -767,5 +817,44 @@ mod tests {
         assert_eq!(unresolved.callee_symbol_id.as_deref().unwrap_or(""), "");
         assert_eq!(resolved.callee_target_kind, CallTargetKind::Symbol);
         assert_eq!(unresolved.callee_target_kind, CallTargetKind::Unresolved);
+    }
+
+    #[test]
+    fn explicit_file_route_sends_unsupported_text_to_content_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, "src/lib.rs", b"fn main() {}\n");
+        write_file(root, "notes.txt", b"plain notes\n");
+        write_file(root, "Dockerfile", b"FROM rust:latest\n");
+        write_file(root, "api_key.txt", b"secret-ish\n");
+        write_file(root, "target/generated.txt", b"generated\n");
+        write_file(root, "image.bin", b"PNG\0binary");
+
+        let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+
+        assert_eq!(
+            explicit_file_route(root, &root.join("src/lib.rs"), &excludes),
+            ExplicitFileRoute::Ast
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("notes.txt"), &excludes),
+            ExplicitFileRoute::ContentOnly
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("Dockerfile"), &excludes),
+            ExplicitFileRoute::ContentOnly
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("api_key.txt"), &excludes),
+            ExplicitFileRoute::Skip
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("target/generated.txt"), &excludes),
+            ExplicitFileRoute::Skip
+        );
+        assert_eq!(
+            explicit_file_route(root, &root.join("image.bin"), &excludes),
+            ExplicitFileRoute::Skip
+        );
     }
 }

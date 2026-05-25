@@ -1,7 +1,6 @@
 //! Language registry with tree-sitter query definitions.
 //! Ports 16 language specs from src/gobby/code_index/languages.py.
 
-use std::collections::HashSet;
 use tree_sitter::Language;
 
 /// Specification for a single language's tree-sitter queries.
@@ -380,15 +379,4 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         _ => return None,
     };
     Some(lang_fn.into())
-}
-
-/// Set of all file extensions supported for AST parsing.
-pub fn supported_extensions() -> HashSet<&'static str> {
-    let mut exts = HashSet::new();
-    for (_, spec) in SPECS {
-        for ext in spec.extensions {
-            exts.insert(*ext);
-        }
-    }
-    exts
 }

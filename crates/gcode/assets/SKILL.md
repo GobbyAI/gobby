@@ -16,7 +16,7 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
-- `gcode search-content "query" [PATH ...]` — full-text search across file bodies (source, comments, config files, CSS, SQL)
+- `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
 Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. All search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results.
 
@@ -56,7 +56,7 @@ Use these **before making changes** to understand what you'll affect:
 |---|---|
 | A function or class by concept (fuzzy) | `gcode search "concept"` |
 | A symbol you know the exact name of | `gcode search-symbol "name"` |
-| A string literal, config value, comment, CSS rule | `gcode search-content "text"` |
+| A string literal, doc phrase, config value, comment, script line, CSS rule | `gcode search-content "text"` |
 | Structure of a file without reading it | `gcode outline path/to/file` |
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |

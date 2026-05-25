@@ -25,7 +25,9 @@ AI coding agents read entire files to find a single function. A 2000-line module
 
 ## The Fix
 
-gcode indexes your codebase using tree-sitter AST parsing and gives agents (and humans) precise, token-efficient access to symbols, search results, and dependency graphs.
+gcode indexes your codebase using tree-sitter AST parsing plus safe repo text
+chunking, then gives agents (and humans) precise, token-efficient access to
+symbols, docs, configs, search results, and dependency graphs.
 
 ```
 $ gcode search "handleAuth"
@@ -40,17 +42,16 @@ One search call instead of reading 50 files. 90%+ token savings.
 ## How It Works
 
 ```text
-codebase → tree-sitter AST → PostgreSQL hub → search / retrieve / navigate
-                │                   │
-     ┌──────────┼──────────┐        │
-     │          │          │        │
-  symbols    chunks     files    ┌──┴──┐
-  (BM25)    (BM25)   (hashes)   │     │
-                              FalkorDB Qdrant
-                             (calls) (vectors)
+codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / retrieve / navigate
+                │                              │
+     ┌──────────┼──────────┐                   │
+     │          │          │                 ┌──┴──┐
+  symbols    chunks     files               │     │
+  (BM25)    (BM25)   (hashes)             FalkorDB Qdrant
+                                          (calls) (vectors)
 ```
 
-1. **Index** — Walk files, parse ASTs with tree-sitter, extract symbols and content chunks
+1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
 2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
 3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → Reciprocal Rank Fusion
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
@@ -122,7 +123,7 @@ gcode search-symbol "outline" --kind function --language rust
 gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
-gcode search-content "query"              # BM25 on file content, comments, config, CSS
+gcode search-content "query"              # BM25 on source, docs, config, scripts
 gcode search-content "query" docs/**/*.md crates/gcode/src
 
 # Symbol retrieval
@@ -239,13 +240,19 @@ current resolved project.
 
 ## Language Support
 
-gcode parses ASTs using tree-sitter with support for 18 languages:
+gcode parses ASTs using tree-sitter with support for 18 languages. Files that
+pass the same safety checks but do not match a tree-sitter language are indexed
+as content-only text for `search-content`.
 
 | Tier | Languages |
 |------|-----------|
 | **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin |
 | **Tier 2** | Dart, Elixir |
-| **Tier 3** | JSON, YAML, Markdown (content indexing only) |
+| **Tier 3** | JSON, YAML, Markdown (structural symbols + content chunks) |
+
+Content-only indexing covers repo text files such as docs, skill files,
+configs, SQL/CSS, shell scripts, `Dockerfile`/`Makefile`, and other extensionless
+text files. Binary, secret-like, excluded, empty, and >10MB files are skipped.
 
 ## Build
 
