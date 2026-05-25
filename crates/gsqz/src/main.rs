@@ -71,17 +71,18 @@ fn main() {
     let config = Config::load(cli.config.as_deref());
 
     // Auto-export default config to ~/.gobby/gsqz.yaml on first run (creates ~/.gobby/ if needed)
-    if cli.config.is_none() && !cli.init {
-        if let Some(home) = dirs::home_dir() {
-            let global_dir = home.join(".gobby");
-            let global_config = global_dir.join("gsqz.yaml");
-            if !global_config.exists() {
-                let _ = std::fs::create_dir_all(&global_dir);
-                if let Err(e) = std::fs::write(&global_config, config::DEFAULT_CONFIG_YAML) {
-                    eprintln!("Warning: failed to write {}: {e}", global_config.display());
-                } else {
-                    eprintln!("Created ~/.gobby/gsqz.yaml with default config.");
-                }
+    if cli.config.is_none()
+        && !cli.init
+        && let Some(home) = dirs::home_dir()
+    {
+        let global_dir = home.join(".gobby");
+        let global_config = global_dir.join("gsqz.yaml");
+        if !global_config.exists() {
+            let _ = std::fs::create_dir_all(&global_dir);
+            if let Err(e) = std::fs::write(&global_config, config::DEFAULT_CONFIG_YAML) {
+                eprintln!("Warning: failed to write {}: {e}", global_config.display());
+            } else {
+                eprintln!("Created ~/.gobby/gsqz.yaml with default config.");
             }
         }
     }

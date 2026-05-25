@@ -19,12 +19,11 @@ pub fn check(lines: &[String], rules: &[MatchOutputRule]) -> Option<String> {
         }
 
         // Check unless pattern — if it matches, this rule doesn't fire
-        if let Some(ref unless) = rule.unless {
-            if let Ok(unless_re) = Regex::new(unless) {
-                if unless_re.is_match(&blob) {
-                    continue;
-                }
-            }
+        if let Some(ref unless) = rule.unless
+            && let Ok(unless_re) = Regex::new(unless)
+            && unless_re.is_match(&blob)
+        {
+            continue;
         }
 
         return Some(rule.message.clone());
