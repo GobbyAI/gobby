@@ -69,18 +69,26 @@ def _insert_rule(
     return row.id
 
 
+def _sync_bundled(db: HubDatabase) -> None:
+    """Sync bundled rules from the real rules directory."""
+    from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+
+    sync_bundled_rules(db, get_bundled_rules_path())
+    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # deliver-pending-messages
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestDeliverPendingMessages:
-    """deliver-pending-messages calls MCP on turn_start for spawned agents only."""
+    """deliver-pending-messages calls MCP on turn_start for sessions with platform ids."""
 
     def _rule_body(self) -> RuleDefinitionBody:
         return RuleDefinitionBody(
             event=RuleEvent.TURN_START,
-            when="variables.get('is_spawned_agent') and event.metadata.get('_platform_session_id')",
+            when="event.metadata.get('_platform_session_id')",
             effects=[
                 RuleEffect(
                     type="mcp_call",
@@ -89,9 +97,36 @@ class TestDeliverPendingMessages:
                     arguments={
                         "target_session_id": "{{ event.metadata.get('_platform_session_id', '') }}"
                     },
+                    inject_result=True,
                 )
             ],
         )
+
+    def test_bundled_rule_matches_parent_delivery_contract(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("deliver-pending-messages")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert row.enabled is True
+        assert row.priority == 10
+        assert body.event.value == "turn_start"
+        assert body.when is not None
+        assert "event.metadata.get('_platform_session_id')" in body.when
+        assert "is_spawned_agent" not in body.when
+
+        effect = body.effects[0]
+        assert effect.type == "mcp_call"
+        assert effect.server == "gobby-agents"
+        assert effect.tool == "deliver_pending_messages"
+        assert effect.arguments == {
+            "target_session_id": "{{ event.metadata.get('_platform_session_id', '') }}"
+        }
+        assert effect.arguments["target_session_id"] != "{{ event.session_id }}"
+        assert effect.inject_result is True
 
     @pytest.mark.asyncio
     async def test_fires_on_before_agent(
@@ -101,7 +136,7 @@ class TestDeliverPendingMessages:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT)
-        variables: dict[str, Any] = {"is_spawned_agent": True, "servers_listed": True}
+        variables: dict[str, Any] = {"servers_listed": True}
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
@@ -116,16 +151,17 @@ class TestDeliverPendingMessages:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT)
-        variables: dict[str, Any] = {"is_spawned_agent": True, "servers_listed": True}
+        variables: dict[str, Any] = {"servers_listed": True}
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         call = response.metadata["mcp_calls"][0]
         assert call["server"] == "gobby-agents"
         assert call["tool"] == "deliver_pending_messages"
         assert call["arguments"] == {"target_session_id": "plat-sess-1"}
+        assert call["inject_result"] is True
 
     @pytest.mark.asyncio
-    async def test_skips_for_non_agent_session(
+    async def test_fires_for_parent_session_without_spawned_agent_flag(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(manager, "deliver-pending-messages", self._rule_body(), priority=10)
@@ -138,7 +174,7 @@ class TestDeliverPendingMessages:
 
         assert response.decision == "allow"
         mcp_calls = response.metadata.get("mcp_calls", [])
-        assert len(mcp_calls) == 0
+        assert len(mcp_calls) == 1
 
     @pytest.mark.asyncio
     async def test_skips_when_platform_session_id_is_missing(
