@@ -75,7 +75,7 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
                 AND {empty_terminal_created_stale_sql}
             )
         )
-        """,  # nosec B608 - cutoff expressions are selected by storage dialect.
+        """,  # nosec B608 # cutoff expressions are selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_hours, timeout_hours),
     )
     count = cursor.rowcount or 0
@@ -107,7 +107,7 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
         WHERE status = 'handoff_ready'
         AND id != ?
         AND {updated_stale_sql}
-        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
@@ -138,7 +138,7 @@ def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -
         WHERE status = 'active'
         AND id != ?
         AND {updated_stale_sql}
-        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
@@ -171,7 +171,7 @@ def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
         AND id != ?
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
-        """,  # nosec B608 - cutoff expression is selected by storage dialect.
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_hours),
     )
     count = cursor.rowcount or 0
@@ -202,7 +202,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         AND id != ?
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
-    """  # nosec B608 - cutoff expression is selected by storage dialect.
+    """  # nosec B608 # cutoff expression is selected by storage dialect.
     row = db.fetchone(
         f"""
         SELECT COUNT(*) AS count

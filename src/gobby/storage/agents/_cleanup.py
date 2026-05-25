@@ -71,7 +71,7 @@ class _AgentRunCleanupMixin:
                 timeout_seconds IS NULL
                 AND {default_timeout_sql}
             )
-            """,  # nosec B608 - timeout expressions are selected by storage dialect.
+            """,  # nosec B608 # timeout expressions are selected by storage dialect.
             (default_timeout_minutes,),
         )
 
@@ -139,7 +139,7 @@ class _AgentRunCleanupMixin:
                         AND {pending_timeout_sql}
                     )
                 )
-                """,  # nosec B608 - timeout expression is selected by storage dialect.
+                """,  # nosec B608 # timeout expression is selected by storage dialect.
                 (now, now, timeout_minutes, long_timeout_minutes),
             )
         count = _positive_rowcount(cursor)

@@ -272,7 +272,7 @@ class LocalWorkflowDefinitionManager:
                 DELETE FROM workflow_definitions
                 WHERE deleted_at IS NOT NULL
                   AND {deleted_before_sql}
-                """,  # nosec B608 - cutoff expression is selected by storage dialect.
+                """,  # nosec B608 # cutoff expression is selected by storage dialect.
                 (older_than_days,),
             )
             count = cursor.rowcount

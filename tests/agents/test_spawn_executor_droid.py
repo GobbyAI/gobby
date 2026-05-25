@@ -7,7 +7,7 @@ import json
 import os
 import shlex
 import shutil
-import subprocess  # nosec B404 - integration test launches local CLIs.
+import subprocess  # nosec B404 # integration test launches local CLIs.
 import sys
 import time
 from pathlib import Path
@@ -222,7 +222,7 @@ def test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon(
     env = os.environ.copy()
     env["GOBBY_DROID_HOOK_SENTINEL"] = str(sentinel_path)
 
-    result = subprocess.run(  # nosec B603 - opt-in integration against local Droid CLI.
+    result = subprocess.run(  # nosec B603 # opt-in integration against local Droid CLI.
         [
             "droid",
             "exec",

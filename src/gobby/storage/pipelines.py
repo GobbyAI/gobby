@@ -789,7 +789,7 @@ class LocalPipelineExecutionManager:
               AND se.started_at IS NOT NULL
               AND {timeout_expired_sql}
               AND pe.project_id = ?
-            """,  # nosec B608 - timeout expression is selected by storage dialect.
+            """,  # nosec B608 # timeout expression is selected by storage dialect.
             (StepStatus.WAITING_APPROVAL.value, self.project_id),
         )
         return [StepExecution.from_row(row) for row in rows]

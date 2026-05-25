@@ -43,7 +43,7 @@ class MetricSnapshotStorage:
         rows = self.db.fetchall(
             f"SELECT timestamp, metrics_json FROM metric_snapshots "
             f"WHERE {recent_sql} "
-            f"ORDER BY timestamp ASC LIMIT ?",  # nosec B608 - cutoff expr is dialect-owned.
+            f"ORDER BY timestamp ASC LIMIT ?",  # nosec B608 # cutoff expr is dialect-owned.
             (hours, limit),
         )
         results = []

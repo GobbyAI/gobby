@@ -139,7 +139,7 @@ class SpanStorage:
         JOIN SessionTraces st ON r.trace_id = st.trace_id
         WHERE r.rn = 1
         ORDER BY st.last_activity DESC
-        """  # nosec B608 - JSON expression is generated from a static key.
+        """  # nosec B608 # JSON expression is generated from a static key.
         rows = self.db.fetchall(query, (session_id, limit, offset))
         return [self._row_to_dict(row) for row in rows]
 
@@ -150,7 +150,7 @@ class SpanStorage:
         SELECT COUNT(DISTINCT trace_id) as count
         FROM spans
         WHERE {session_id_sql} = ?
-        """  # nosec B608 - JSON expression is generated from a static key.
+        """  # nosec B608 # JSON expression is generated from a static key.
         row = self.db.fetchone(query, (session_id,))
         return row["count"] if row else 0
 

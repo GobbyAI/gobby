@@ -371,7 +371,7 @@ class WorkflowAuditManager:
                 f"""
                 DELETE FROM workflow_audit_log
                 WHERE {cutoff_sql}
-                """,  # nosec B608 - cutoff expression is selected by storage dialect.
+                """,  # nosec B608 # cutoff expression is selected by storage dialect.
                 (days,),
             )
             return cursor.rowcount

@@ -211,7 +211,7 @@ class StageRegistryLoader:
                      WHERE bundled_hash IS NOT NULL
                        AND deleted_at IS NULL
                        AND name NOT IN ({placeholders})
-                    """,  # nosec B608 - placeholders are generated, values are bound.
+                    """,  # nosec B608 # placeholders are generated, values are bound.
                     tuple(sorted(bundled_names)),
                 )
                 if orphaned:

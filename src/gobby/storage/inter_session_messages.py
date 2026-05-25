@@ -256,7 +256,7 @@ class InterSessionMessageManager:
                 OR {execution_id_sql} = ?
               )
             LIMIT 1
-            """,  # nosec B608 - JSON expressions are generated from static keys.
+            """,  # nosec B608 # JSON expressions are generated from static keys.
             (to_session, message_type, completion_id, completion_id, completion_id),
         )
         return row is not None

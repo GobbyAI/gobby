@@ -120,7 +120,7 @@ class BuildProfileLoader:
                        AND bundled_hash IS NOT NULL
                        AND deleted_at IS NULL
                        AND name NOT IN ({placeholders})
-                    """,  # nosec B608 - placeholders are generated, values are bound.
+                    """,  # nosec B608 # placeholders are generated, values are bound.
                     tuple(sorted(names)),
                 )
                 if orphaned:
@@ -242,7 +242,7 @@ class BuildProfileManager:
              WHERE (source = 'installed' OR project_id IS NULL OR project_id = ?)
                {deleted_filter}
              ORDER BY source, COALESCE(project_id, ''), name
-            """,  # nosec B608 - deleted_filter is controlled by a boolean.
+            """,  # nosec B608 # deleted_filter is controlled by a boolean.
             (project_id,),
         )
         return [self._profile_from_row(row) for row in rows]
@@ -275,7 +275,7 @@ class BuildProfileManager:
                {deleted_filter}
              ORDER BY source DESC
              LIMIT 1
-            """,  # nosec B608 - filters are static snippets chosen by arguments.
+            """,  # nosec B608 # filters are static snippets chosen by arguments.
             tuple(params),
         )
         return self._profile_from_row(row) if row is not None else None
@@ -525,7 +525,7 @@ class BuildProfileManager:
                    {deleted_assignment}
                    updated_at = CURRENT_TIMESTAMP
              WHERE id = ?
-            """,  # nosec B608 - deleted_assignment is controlled by a boolean.
+            """,  # nosec B608 # deleted_assignment is controlled by a boolean.
             (
                 profile.display_label,
                 profile.description,

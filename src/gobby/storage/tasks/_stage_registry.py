@@ -56,7 +56,7 @@ class StageRegistryManager:
               FROM task_stages_registry
              {deleted_filter}
              ORDER BY position_hint, name
-            """  # nosec B608 - deleted_filter is controlled by a boolean.
+            """  # nosec B608 # deleted_filter is controlled by a boolean.
         )
         return [self._entry_from_row(row) for row in rows]
 
@@ -68,7 +68,7 @@ class StageRegistryManager:
               FROM task_stages_registry
              WHERE name = ?
                {deleted_filter}
-            """,  # nosec B608 - deleted_filter is controlled by a boolean.
+            """,  # nosec B608 # deleted_filter is controlled by a boolean.
             (name,),
         )
         return self._entry_from_row(row) if row is not None else None

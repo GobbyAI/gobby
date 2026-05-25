@@ -582,7 +582,7 @@ class SkillMetadataMixin:
             query += f""" AND (
                 {category_sql} = ?
                 OR {skillport_category_sql} = ?
-            )"""  # nosec B608 - JSON expressions are generated from static keys.
+            )"""  # nosec B608 # JSON expressions are generated from static keys.
             params.extend([category, category])
 
         query += " ORDER BY name ASC"
