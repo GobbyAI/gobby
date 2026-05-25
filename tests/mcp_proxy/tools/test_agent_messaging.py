@@ -8,7 +8,9 @@ Covers:
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -191,6 +193,58 @@ class TestSendMessage:
         assert '"task_id": "#14760"' in call_kwargs["metadata_json"]
 
     @pytest.mark.asyncio
+    async def test_send_message_defaults_from_session_from_context(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Omitted from_session resolves from the caller's SessionContext."""
+        from gobby.utils.session_context import session_context_for_test
+
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-to": MockSession(id="s-to", project_id="proj-1"),
+        }.get(sid)
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id="msg-context",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+
+        with session_context_for_test("s-from"):
+            result = await messaging_registry.call(
+                "send_message",
+                {"target": "session", "target_id": "s-to", "content": "context send"},
+            )
+
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-to"]
+        assert result["message"]["from_session"] == "s-from"
+        call_kwargs = mock_message_manager.create_message.call_args.kwargs
+        assert call_kwargs["from_session"] == "s-from"
+        assert call_kwargs["to_session"] == "s-to"
+        assert call_kwargs["content"] == "context send"
+
+    @pytest.mark.asyncio
+    async def test_send_message_no_session_context_returns_error(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Omitted from_session outside SessionContext returns a tool error."""
+        result = await messaging_registry.call(
+            "send_message",
+            {"target": "session", "target_id": "s-to", "content": "hi"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "from_session is required and no SessionContext session_id is available",
+        }
+        mock_session_manager.resolve_session_reference.assert_not_called()
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_send_message_direct_function_accepts_keyword_priority(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
@@ -202,7 +256,9 @@ class TestSendMessage:
         send_message = messaging_registry.get_tool("send_message")
         assert send_message is not None
 
-        result = await send_message("s-from", "session", "current", "s-to", priority="high")
+        result = await send_message(
+            "session", "current", "s-to", from_session="s-from", priority="high"
+        )
 
         assert result["success"] is True
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
@@ -219,7 +275,7 @@ class TestSendMessage:
         assert send_message is not None
 
         with pytest.raises(TypeError, match="positional"):
-            await send_message("s-from", "session", "legacy", "s-to", "high")
+            await send_message("session", "legacy", "s-to", "s-from", "high")
 
         mock_session_manager.resolve_session_reference.assert_not_called()
 
@@ -230,12 +286,46 @@ class TestSendMessage:
         assert schema is not None
         description = schema["description"]
         assert "keyword-only" in description
+        assert (
+            "from_session defaults to the calling session's id from SessionContext" in description
+        )
         assert "target='session'" in description
         assert "target='all' forbids target_id" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
+        assert "from_session" in schema["inputSchema"]["properties"]
+        assert "from_session" not in schema["inputSchema"]["required"]
         assert "to_session" not in schema["inputSchema"]["properties"]
         assert "send_to_all" not in schema["inputSchema"]["properties"]
+
+    def test_no_positional_from_session_in_production_callers(self) -> None:
+        """Production callers do not pass from_session as send_message's first positional arg."""
+        repo_root = Path(__file__).resolve().parents[3]
+        offenders: list[str] = []
+
+        for path in (repo_root / "src").rglob("*.py"):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or len(node.args) < 3:
+                    continue
+
+                func = node.func
+                if isinstance(func, ast.Name):
+                    call_name = func.id
+                elif isinstance(func, ast.Attribute):
+                    call_name = func.attr
+                else:
+                    continue
+
+                if call_name != "send_message":
+                    continue
+
+                first_arg = ast.unparse(node.args[0])
+                if "from_session" in first_arg or "session_id" in first_arg:
+                    rel_path = path.relative_to(repo_root)
+                    offenders.append(f"{rel_path}:{node.lineno}: {first_arg}")
+
+        assert offenders == []
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_target_id_with_all(

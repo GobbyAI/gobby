@@ -13,6 +13,7 @@ Provides fixtures for:
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -214,7 +215,29 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 
     try:
         parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
+        try:
+            children = parent.children(recursive=True)
+        except (psutil.AccessDenied, PermissionError):
+            # macOS sandboxing can block full process enumeration. E2E daemons
+            # start in their own session, so the process group is a safe fallback.
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                parent.wait(timeout=timeout / 2)
+            except psutil.TimeoutExpired:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    parent.wait(timeout=1.0)
+                except psutil.NoSuchProcess:
+                    pass
+            except psutil.NoSuchProcess:
+                pass
+            return
 
         # Terminate children first
         for child in children:
