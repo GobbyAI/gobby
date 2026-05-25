@@ -51,6 +51,7 @@ from gobby.config.sessions import (
     ChatHistoryConfig,
     ContextInjectionConfig,
     DigestConfig,
+    MemoryRecallHelperConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
@@ -295,6 +296,10 @@ class DaemonConfig(BaseModel):
     digest: DigestConfig = Field(
         default_factory=DigestConfig,
         description="Rolling digest and title generation configuration",
+    )
+    memory_recall_helper: MemoryRecallHelperConfig = Field(
+        default_factory=MemoryRecallHelperConfig,
+        description="Backgrounded Haiku memory-recall helper agent configuration",
     )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,

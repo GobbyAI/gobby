@@ -5,6 +5,7 @@ Contains session-related Pydantic config models:
 - ContextInjectionConfig: Subagent context injection settings
 - SessionSummaryConfig: Session summary generation settings
 - DigestConfig: Rolling digest and title generation settings
+- MemoryRecallHelperConfig: Background memory recall helper settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 
@@ -19,6 +20,7 @@ __all__ = [
     "ChatHistoryConfig",
     "ContextInjectionConfig",
     "DigestConfig",
+    "MemoryRecallHelperConfig",
     "SessionSummaryConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
@@ -148,6 +150,15 @@ class DigestConfig(FeatureDefaultConfig):
         default=30,
         gt=0,
         description="Timeout in seconds for digest/title LLM calls (default 30s).",
+    )
+
+
+class MemoryRecallHelperConfig(BaseModel):
+    """Backgrounded Haiku memory-recall helper agent runtime toggle."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the backgrounded LLM-driven memory recall helper agent.",
     )
 
 
