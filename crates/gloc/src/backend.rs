@@ -119,15 +119,15 @@ fn ollama_check_model(backend: &Backend, model: &str, timeout_ms: u64) -> Result
 
     // Check if loaded in memory via /api/ps
     let ps_url = format!("{}/api/ps", backend.url);
-    if let Ok(ps_resp) = agent.get(&ps_url).call() {
-        if let Ok(ps_json) = ps_resp.into_json::<serde_json::Value>() {
-            let loaded = ps_json
-                .get("models")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().any(|m| model_name_matches(m, model)))
-                .unwrap_or(false);
-            return Ok(loaded);
-        }
+    if let Ok(ps_resp) = agent.get(&ps_url).call()
+        && let Ok(ps_json) = ps_resp.into_json::<serde_json::Value>()
+    {
+        let loaded = ps_json
+            .get("models")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().any(|m| model_name_matches(m, model)))
+            .unwrap_or(false);
+        return Ok(loaded);
     }
 
     Ok(false)
