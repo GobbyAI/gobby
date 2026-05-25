@@ -691,6 +691,30 @@ class TestDaemonProxy:
                 )
 
     @pytest.mark.asyncio
+    async def test_call_tool_uses_timeout_seconds_buffer_for_wait_tools(self) -> None:
+        """Wait tools use timeout_seconds plus buffer for the daemon HTTP request."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                await proxy.call_tool(
+                    "gobby-agents",
+                    "wait_for_agent",
+                    {"run_id": "run-123", "timeout_seconds": 120},
+                )
+
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-agents/tools/wait_for_agent",
+                    json={"run_id": "run-123", "timeout_seconds": 120},
+                    timeout=150.0,
+                )
+
+    @pytest.mark.asyncio
     async def test_call_tool_proxies_when_timeout_config_load_fails(self) -> None:
         """call_tool should not fail just because optional timeout config is unavailable."""
         from gobby.mcp_proxy.stdio import DaemonProxy
