@@ -169,18 +169,6 @@ class CodexHooksAdapter(BaseAdapter):
             logger=logger,
         )
 
-        if (
-            response.modified_input
-            and response.decision not in ("deny", "block")
-            and hook_event_name == "PreToolUse"
-        ):
-            logger.debug(
-                "Codex PreToolUse hook returned modified_input; Codex does not support "
-                "updatedInput. Proxy will apply rewrite at dispatch via "
-                "apply_before_tool_enforcement. Decision=%s.",
-                response.decision or "allow",
-            )
-
         result: dict[str, Any] = {"continue": True}
 
         if response.decision in ("deny", "block"):
@@ -251,6 +239,13 @@ class CodexHooksAdapter(BaseAdapter):
             result["hookSpecificOutput"] = {
                 "hookEventName": "PermissionRequest",
                 "decision": {"behavior": "allow"},
+            }
+
+        if response.modified_input is not None and hook_event_name == "PreToolUse":
+            result["hookSpecificOutput"] = {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": response.modified_input,
             }
 
         # Build additionalContext from all context sources. Keep high-value

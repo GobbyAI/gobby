@@ -2070,7 +2070,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
-        response = HookResponse(decision="allow")
+        response = HookResponse(decision="allow", modified_input={"command": "echo rewritten"})
         result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
 
         assert result["continue"] is True
@@ -2153,6 +2153,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             reason="Tool not allowed",
             system_message="Use MCP instead",
             context="Run create_task first",
+            modified_input={"command": "echo rewritten"},
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
@@ -2162,28 +2163,34 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Tool not allowed"
+        assert "updatedInput" not in result
+        assert "updatedInput" not in result["hookSpecificOutput"]
         assert "Use MCP instead" in result["systemMessage"]
         assert "Run create_task first" in result["systemMessage"]
 
     def test_pre_tool_use_rewrite_does_not_surface_retry_input(self) -> None:
-        """PreToolUse rewrites proceed without telling Codex to retry."""
+        """PreToolUse rewrites use native updatedInput without retry instructions."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
+        rewritten = {"command": "uv run python hello.py"}
         response = HookResponse(
             decision="allow",
             context="Bare python is not allowed",
-            modified_input={"command": "uv run python hello.py"},
+            modified_input=rewritten,
             auto_approve=True,
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
         assert result["continue"] is True
         assert "decision" not in result
-        assert "hookSpecificOutput" not in result
         assert "updatedInput" not in result
         assert "updatedPermissions" not in result
         assert "interrupt" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert hso["updatedInput"] == rewritten
         assert "Bare python is not allowed" in result["systemMessage"]
         assert "uv run python hello.py" not in result["systemMessage"]
 
@@ -2217,9 +2224,13 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["continue"] is True
         assert "decision" not in result
         assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert hso["updatedInput"] == response.modified_input
 
-    def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
-        """modified_input alone should not block ordinary Codex commands."""
+    def test_pre_tool_use_modified_input_emits_native_updated_input(self) -> None:
+        """modified_input alone becomes native Codex updatedInput."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2231,7 +2242,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         assert result["continue"] is True
         assert "decision" not in result
-        assert "hookSpecificOutput" not in result
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": "sed -n '1,20p' file.txt"},
+        }
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
@@ -2349,10 +2364,12 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             decision="allow",
             system_message="Gate note",
             context="Rule constraint",
+            modified_input={"command": "uv run python check.py"},
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        assert "hookSpecificOutput" not in result
+        assert result["hookSpecificOutput"]["updatedInput"] == {"command": "uv run python check.py"}
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert "Gate note" in result["systemMessage"]
         assert "Rule constraint" in result["systemMessage"]
 

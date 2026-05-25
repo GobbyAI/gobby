@@ -485,10 +485,10 @@ class TestRequireUvBlockRule:
 
 
 class TestCompressBashOutputBundledRule:
-    """Bundled compress-bash-output should skip Codex but keep other CLIs."""
+    """Bundled compress-bash-output should cover shell CLIs and skip gcode."""
 
     @pytest.mark.asyncio
-    async def test_codex_does_not_rewrite_plain_bash(
+    async def test_codex_rewrites_bash_through_gsqz(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _sync_bundled_rules(db)
@@ -507,7 +507,9 @@ class TestCompressBashOutputBundledRule:
         response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
 
         assert response.decision == "allow"
-        assert response.modified_input is None
+        assert response.modified_input is not None
+        assert "gsqz" in response.modified_input["command"]
+        assert "echo ok" in response.modified_input["command"]
 
     @pytest.mark.asyncio
     async def test_claude_still_rewrites_bash_through_gsqz(self, db: HubDatabase) -> None:
@@ -524,6 +526,20 @@ class TestCompressBashOutputBundledRule:
         assert response.modified_input is not None
         assert "gsqz" in response.modified_input["command"]
         assert "echo ok" in response.modified_input["command"]
+
+    @pytest.mark.asyncio
+    async def test_gcode_command_stays_unwrapped(self, db: HubDatabase) -> None:
+        _sync_bundled_rules(db)
+
+        event = _make_event(
+            data={"tool_name": "Bash", "tool_input": {"command": "  gcode search Codex"}},
+            source=SessionSource.CODEX,
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "allow"
+        assert response.modified_input is None
 
 
 class TestPermissionResponseEffects:
