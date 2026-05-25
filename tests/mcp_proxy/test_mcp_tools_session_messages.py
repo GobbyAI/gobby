@@ -91,6 +91,9 @@ async def test_record_verification_evidence_sets_readiness(
             "summary": "Read diff and verified touched rules",
             "evidence_type": "manual_diff_review",
             "supports": "completion readiness",
+            "task_id": "#15186",
+            "stage_name": "development",
+            "scope": "focused regression",
         },
     )
 
@@ -100,6 +103,11 @@ async def test_record_verification_evidence_sets_readiness(
     assert (
         variables["verification_evidence"][0]["summary"] == "Read diff and verified touched rules"
     )
+    assert variables["verification_evidence"][0]["supports"] == "completion readiness"
+    assert variables["verification_evidence"][0]["task_id"] == "#15186"
+    assert variables["verification_evidence"][0]["stage_name"] == "development"
+    assert variables["verification_evidence"][0]["scope"] == "focused regression"
+    assert variables["verification_evidence"][0]["tool_name"] == "record_verification_evidence"
 
 
 @pytest.mark.asyncio
