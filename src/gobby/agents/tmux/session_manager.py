@@ -15,6 +15,10 @@ import time
 from dataclasses import dataclass, field
 
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
+from gobby.agents.tmux.text_injection import (
+    TmuxTextInjectionError,
+    send_literal_text_to_tmux_target,
+)
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
@@ -571,44 +575,18 @@ class TmuxSessionManager:
                 return False
             return True
 
-        # Literal mode: split trailing newline into literal text + Enter.
-        # TUI apps (Claude Code, Gemini CLI) treat a literal \n inside
-        # send-keys -l as "add a line" rather than "submit the prompt".
-        send_enter = keys.endswith("\n")
-        text = keys.rstrip("\n")
-
-        if text:
-            rc, _stdout, stderr = await self._run(
-                "send-keys",
-                "-t",
+        try:
+            await send_literal_text_to_tmux_target(
                 session_name,
-                "-l",
-                text,
+                keys,
+                tmux_cmd=self._base_args(),
             )
-            if rc != 0:
-                logger.warning(
-                    f"Failed to send keys to tmux session '{session_name}': {stderr.strip()}"
-                )
-                return False
-
-        if send_enter:
-            # Brief pause so TUI apps (Claude Code, Gemini CLI) finish
-            # processing literal text before receiving the Enter keystroke.
-            # Without this, Enter can arrive before the TUI has committed
-            # the preceding characters to its input state, causing it to
-            # be silently dropped.
-            if text:
-                await asyncio.sleep(0.05)
-            rc, _stdout, stderr = await self._run(
-                "send-keys",
-                "-t",
+        except TmuxTextInjectionError as exc:
+            logger.warning(
+                "Failed to send keys to tmux session '%s': %s",
                 session_name,
-                "Enter",
+                exc,
             )
-            if rc != 0:
-                logger.warning(
-                    f"Failed to send Enter to tmux session '{session_name}': {stderr.strip()}"
-                )
-                return False
+            return False
 
         return True

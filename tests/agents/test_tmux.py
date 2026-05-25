@@ -18,6 +18,13 @@ from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.agents.tmux.text_injection import (
+    TmuxPaneModeUnavailableError,
+    TmuxTargetUnavailableError,
+    TmuxTextInjectionTimeout,
+    classify_tmux_text_injection_error,
+    send_literal_text_to_tmux_target,
+)
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
 
@@ -118,6 +125,94 @@ class TestTmuxErrors:
         err = TmuxSessionError("generic failure")
         assert "tmux:" in str(err)
         assert err.session_name is None
+
+
+class TestTmuxTextInjection:
+    """Tests for literal tmux text injection."""
+
+    @pytest.mark.asyncio
+    async def test_uses_buffer_paste_with_configured_tmux_args(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        tmux_cmd = ["/opt/tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/tmp/tmux.conf"]
+        await send_literal_text_to_tmux_target(
+            "%12",
+            "-X message\n",
+            tmux_cmd=tmux_cmd,
+            enter_delay_seconds=0,
+        )
+
+        assert len(commands) == 3
+        buffer_name = commands[0][7]
+        assert commands[0][:5] == tmux_cmd
+        assert commands[0][5:] == ["set-buffer", "-b", buffer_name, "--", "-X message"]
+        assert commands[1] == [
+            *tmux_cmd,
+            "paste-buffer",
+            "-d",
+            "-b",
+            buffer_name,
+            "-t",
+            "%12",
+        ]
+        assert commands[2] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
+        assert not any("send-keys" in command and "-l" in command for command in commands)
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_expected_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proc = MagicMock()
+        proc.communicate = AsyncMock(side_effect=[TimeoutError, (b"", b"")])
+        proc.kill = MagicMock()
+
+        async def fake_exec(*_args: str, **_kwargs: object) -> MagicMock:
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        with pytest.raises(TmuxTextInjectionTimeout) as exc_info:
+            await send_literal_text_to_tmux_target("%12", "hello", timeout=0.01)
+
+        assert exc_info.value.expected is True
+        assert exc_info.value.error_code == "tmux_command_timeout"
+        proc.kill.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("stderr", "expected_type", "error_code"),
+        [
+            ("can't find pane: %12", TmuxTargetUnavailableError, "tmux_target_unavailable"),
+            ("pane is dead", TmuxTargetUnavailableError, "tmux_target_unavailable"),
+            ("not in a mode", TmuxPaneModeUnavailableError, "tmux_pane_mode_unavailable"),
+        ],
+    )
+    def test_classifies_expected_tmux_failures(
+        self,
+        stderr: str,
+        expected_type: type[Exception],
+        error_code: str,
+    ) -> None:
+        error = classify_tmux_text_injection_error(("tmux", "paste-buffer"), 1, stderr)
+
+        assert isinstance(error, expected_type)
+        assert error.expected is True
+        assert error.error_code == error_code
 
 
 # =============================================================================
@@ -387,9 +482,16 @@ class TestTmuxSessionManager:
     @pytest.mark.asyncio
     async def test_send_keys(self) -> None:
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             assert await mgr.send_keys("test", "hello") is True
+        mock_send.assert_awaited_once_with(
+            "test",
+            "hello",
+            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_get_pane_pid(self) -> None:
@@ -1044,44 +1146,63 @@ class TestTmuxSessionManagerExtended:
 
     @pytest.mark.asyncio
     async def test_send_keys_with_newline(self) -> None:
-        """send_keys with trailing newline sends Enter separately."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        """send_keys delegates literal text, including trailing newline, to the helper."""
+        config = TmuxConfig(socket_name="ignored", socket_path="/tmp/tmux-501/gobby")
+        mgr = TmuxSessionManager(config)
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             result = await mgr.send_keys("test-sess", "hello\n")
         assert result is True
-        assert mock_run.call_count == 2  # one for text, one for Enter
+        mock_send.assert_awaited_once_with(
+            "test-sess",
+            "hello\n",
+            tmux_cmd=["tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_send_keys_without_newline(self) -> None:
-        """send_keys without trailing newline only sends text."""
+        """send_keys without trailing newline still uses paste-buffer helper."""
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             result = await mgr.send_keys("test-sess", "hello")
         assert result is True
-        assert mock_run.call_count == 1
+        mock_send.assert_awaited_once_with(
+            "test-sess",
+            "hello",
+            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_send_keys_text_failure(self) -> None:
-        """send_keys returns False when send-keys fails."""
+        """send_keys returns False when literal text injection fails."""
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "no such session")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            mock_send.side_effect = TmuxTargetUnavailableError(
+                "tmux target is unavailable: no such session",
+                command=("tmux", "paste-buffer"),
+                stderr="no such session",
+                returncode=1,
+            )
             result = await mgr.send_keys("missing", "text")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_send_keys_enter_failure(self) -> None:
-        """send_keys returns False when Enter send fails."""
+    async def test_send_keys_raw_key_mode_uses_send_keys(self) -> None:
+        """Raw key mode still sends tmux key names through send-keys."""
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.side_effect = [
-                (0, "", ""),  # text succeeds
-                (1, "", "error"),  # Enter fails
-            ]
-            result = await mgr.send_keys("test", "text\n")
-        assert result is False
+            mock_run.return_value = (0, "", "")
+            result = await mgr.send_keys("test", "C-c", literal=False)
+        assert result is True
+        mock_run.assert_awaited_once_with("send-keys", "-t", "test", "C-c")
 
     @pytest.mark.asyncio
     async def test_get_pane_pid_invalid_output(self) -> None:

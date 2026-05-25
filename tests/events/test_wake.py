@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 
 
@@ -342,6 +344,44 @@ class TestWakeDispatch:
         assert tmux_pane_sender.await_args is not None
 
     @pytest.mark.asyncio
+    async def test_expected_pane_wake_failure_returns_structured_result_without_warning(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Expected tmux pane failures return structured diagnostics without stack traces."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+        )
+        tmux_pane_sender = AsyncMock(
+            side_effect=TmuxTargetUnavailableError(
+                "tmux target is unavailable: can't find pane: %12",
+                command=("tmux", "paste-buffer"),
+                stderr="can't find pane: %12",
+                returncode=1,
+            )
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
+            result = await dispatcher.dispatch_live_wake("sess-1")
+
+        assert result["delivered"] is False
+        assert result["method"] == "tmux_pane"
+        assert result["error_code"] == "tmux_pane_wake_failed"
+        assert "can't find pane" in result["error_message"]
+        assert "sess-1" not in dispatcher._last_live_wake
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert not [record for record in caplog.records if record.exc_info]
+
+    @pytest.mark.asyncio
     async def test_expired_session_returns_structured_wake_failure(
         self,
         session_manager: MagicMock,
@@ -658,22 +698,39 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """If send-keys raises, the next completion should still try to wake the pane."""
+        """Expected pane failures stay retryable and do not emit warning stack traces."""
         session_manager.get.return_value = FakeSession(
             id="sess-1",
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
         )
-        tmux_pane_sender = AsyncMock(side_effect=[RuntimeError("boom"), None])
+        tmux_pane_sender = AsyncMock(
+            side_effect=[
+                TmuxTargetUnavailableError(
+                    "tmux target is unavailable: can't find pane: %12",
+                    command=("tmux", "paste-buffer"),
+                    stderr="can't find pane: %12",
+                    returncode=1,
+                ),
+                None,
+            ]
+        )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+        with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
+            await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+
+        assert "sess-1" not in dispatcher._last_live_wake
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert not [record for record in caplog.records if record.exc_info]
+
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
 
         assert tmux_pane_sender.await_count == 2

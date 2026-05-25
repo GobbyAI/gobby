@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
 if TYPE_CHECKING:
@@ -198,10 +199,26 @@ class WakeDispatcher:
                     "delivered": True,
                     "method": "tmux_pane",
                 }
+            except TmuxExpectedTextInjectionError as exc:
+                detail = str(exc) or type(exc).__name__
+                logger.info(
+                    "tmux pane wake skipped for session %s (pane=%s): %s",
+                    session_id,
+                    tmux_pane,
+                    detail,
+                )
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="tmux_pane_wake_failed",
+                    error_message=detail,
+                )
             except Exception as exc:
                 detail = str(exc) or type(exc).__name__
                 logger.warning(
-                    f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
+                    "tmux pane wake failed for session %s (pane=%s)",
+                    session_id,
+                    tmux_pane,
                     exc_info=True,
                 )
                 return self._live_wake_failure(
@@ -248,6 +265,14 @@ class WakeDispatcher:
                         "delivered": True,
                         "method": "tmux_pane",
                     }
+                except TmuxExpectedTextInjectionError as exc:
+                    logger.info(
+                        "tmux pane wake skipped for terminal agent session %s (pane=%s), "
+                        "trying SDK resume: %s",
+                        session_id,
+                        tmux_pane,
+                        str(exc) or type(exc).__name__,
+                    )
                 except Exception:
                     logger.warning(
                         "tmux pane wake failed for terminal agent session %s (pane=%s), "
