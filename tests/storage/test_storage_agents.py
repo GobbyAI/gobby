@@ -1,5 +1,6 @@
 """Tests for the LocalAgentRunManager storage layer."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -161,6 +162,30 @@ class TestAgentRun:
 
 class TestLocalAgentRunManager:
     """Tests for LocalAgentRunManager class."""
+
+    @staticmethod
+    def _create_run_with_child(
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+        external_id: str,
+        agent_name: str | None = None,
+    ) -> tuple[AgentRun, str]:
+        child_session = session_manager.register(
+            external_id=external_id,
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt=f"Run for {external_id}",
+            child_session_id=child_session.id,
+            agent_name=agent_name,
+        )
+        return agent_run, child_session.id
 
     def test_create_agent_run(
         self,
@@ -629,6 +654,205 @@ class TestLocalAgentRunManager:
         """Test cancelling nonexistent run returns None."""
         result = agent_manager.cancel("nonexistent-id")
         assert result is None
+
+    def test_get_cancelled_session_ids_honors_recency_window(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        recent_cancelled, recent_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "recent-cancelled-child",
+        )
+        two_hour_cancelled, two_hour_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "two-hour-cancelled-child",
+        )
+        old_cancelled, _old_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "old-cancelled-child",
+        )
+        success_run, _success_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "success-child",
+        )
+        running_run, _running_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "running-child",
+        )
+
+        agent_manager.cancel(recent_cancelled.id)
+        agent_manager.cancel(two_hour_cancelled.id)
+        agent_manager.cancel(old_cancelled.id)
+        agent_manager.complete(success_run.id, result="Done")
+        agent_manager.start(running_run.id)
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '2 hours' WHERE id = ?",
+            (two_hour_cancelled.id,),
+        )
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
+            (old_cancelled.id,),
+        )
+
+        assert agent_manager.get_cancelled_session_ids(since_hours=24) == {
+            recent_child_id,
+            two_hour_child_id,
+        }
+        assert agent_manager.get_cancelled_session_ids(since_hours=1) == {recent_child_id}
+
+    def test_get_cancelled_session_ids_empty(
+        self,
+        agent_manager: LocalAgentRunManager,
+    ) -> None:
+        assert agent_manager.get_cancelled_session_ids() == set()
+
+    def test_get_cancelled_session_ids_agent_name_scoping(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        helper_run, helper_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "helper-cancelled-child",
+            agent_name="memory-recall-helper",
+        )
+        other_run, other_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "other-cancelled-child",
+            agent_name="other-agent",
+        )
+        unscoped_run, unscoped_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "unscoped-cancelled-child",
+        )
+
+        agent_manager.cancel(helper_run.id)
+        agent_manager.cancel(other_run.id)
+        agent_manager.cancel(unscoped_run.id)
+
+        assert agent_manager.get_cancelled_session_ids(agent_name="memory-recall-helper") == {
+            helper_child_id
+        }
+        assert agent_manager.get_cancelled_session_ids() == {
+            helper_child_id,
+            other_child_id,
+            unscoped_child_id,
+        }
+
+    def test_get_cancelled_session_ids_recency_uses_completed_at(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        old_created_run, old_created_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "old-created-recently-cancelled-child",
+        )
+        recent_created_run, _recent_created_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "recent-created-old-cancelled-child",
+        )
+
+        agent_manager.cancel(old_created_run.id)
+        agent_manager.cancel(recent_created_run.id)
+        agent_manager.db.execute(
+            """
+            UPDATE agent_runs
+            SET created_at = NOW() - INTERVAL '48 hours',
+                completed_at = NOW() - INTERVAL '5 minutes',
+                updated_at = NOW() - INTERVAL '5 minutes'
+            WHERE id = ?
+            """,
+            (old_created_run.id,),
+        )
+        agent_manager.db.execute(
+            """
+            UPDATE agent_runs
+            SET created_at = NOW() - INTERVAL '30 minutes',
+                completed_at = NOW() - INTERVAL '25 hours',
+                updated_at = NOW() - INTERVAL '25 hours'
+            WHERE id = ?
+            """,
+            (recent_created_run.id,),
+        )
+
+        assert agent_manager.get_cancelled_session_ids(since_hours=1) == {old_created_child_id}
+        assert agent_manager.get_cancelled_session_ids(since_hours=24) == {old_created_child_id}
+
+    def test_get_cancelled_session_ids_postgres_timezone_handling(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        recent_run, recent_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "timezone-recent-child",
+        )
+        old_run, _old_child_id = self._create_run_with_child(
+            agent_manager,
+            session_manager,
+            sample_session,
+            sample_project,
+            "timezone-old-child",
+        )
+
+        agent_manager.cancel(recent_run.id)
+        agent_manager.cancel(old_run.id)
+        now = datetime.now(UTC)
+        recent_completed = (now - timedelta(minutes=30)).isoformat()
+        old_completed = (now - timedelta(minutes=90)).isoformat()
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET completed_at = ?, updated_at = ? WHERE id = ?",
+            (recent_completed, recent_completed, recent_run.id),
+        )
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET completed_at = ?, updated_at = ? WHERE id = ?",
+            (old_completed, old_completed, old_run.id),
+        )
+
+        assert agent_manager.get_cancelled_session_ids(since_hours=1) == {recent_child_id}
 
     def test_terminal_transition_first_write_wins(
         self,
