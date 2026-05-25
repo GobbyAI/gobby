@@ -26,8 +26,10 @@ AI coding agents read entire files to find a single function. A 2000-line module
 ## The Fix
 
 gcode indexes your codebase using tree-sitter AST parsing plus safe repo text
-chunking, then gives agents (and humans) precise, token-efficient access to
-symbols, docs, configs, search results, and dependency graphs.
+chunking, where content chunks stay within file boundaries and skip binary,
+large, and excluded files, then gives agents (and humans) precise,
+token-efficient access to symbols, docs, configs, content chunks, and dependency
+graphs.
 
 ```
 $ gcode search "handleAuth"
@@ -123,7 +125,7 @@ gcode search-symbol "outline" --kind function --language rust
 gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
-gcode search-content "query"              # BM25 on source, docs, config, scripts
+gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
 gcode search-content "query" docs/**/*.md crates/gcode/src
 
 # Symbol retrieval
@@ -250,9 +252,14 @@ as content-only text for `search-content`.
 | **Tier 2** | Dart, Elixir |
 | **Tier 3** | JSON, YAML, Markdown (structural symbols + content chunks) |
 
-Content-only indexing covers repo text files such as docs, skill files,
-configs, SQL/CSS, shell scripts, `Dockerfile`/`Makefile`, and other extensionless
-text files. Binary, secret-like, excluded, empty, and >10MB files are skipped.
+Content-only indexing covers repo text files such as source comments, skill
+files, docs/Markdown, configs, scripts, CSS, SQL, `Dockerfile`/`Makefile`, and
+other extensionless text files. Binary, excluded, empty, and >10MB files are
+skipped. Secret-like skips are filename/path checks from `src/index/security.rs`:
+extensions such as `.env`, `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
+and `.secret`; prefixes such as `credentials`, `.env`, `id_rsa`, `id_ed25519`,
+and `token`; and substrings such as `api_key`, `apikey`, `_secret.`, and
+`_token.`. No content secret scanner or external detector is currently used.
 
 ## Build
 

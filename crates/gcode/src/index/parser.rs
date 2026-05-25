@@ -118,6 +118,7 @@ pub(crate) fn parse_file_with_semantic(
             ts_lang: &ts_lang,
             rel_path: &rel_path,
             symbols: &symbols,
+            import_context,
             import_bindings: &extracted_imports.bindings,
             file_path,
             root_path,
@@ -388,6 +389,7 @@ struct CallExtractionContext<'a> {
     ts_lang: &'a tree_sitter::Language,
     rel_path: &'a str,
     symbols: &'a [Symbol],
+    import_context: &'a ImportResolutionContext,
     import_bindings: &'a ImportBindings,
     file_path: &'a Path,
     root_path: &'a Path,
@@ -403,17 +405,10 @@ fn extract_calls(
     let language = ctx.language;
     let rel_path = ctx.rel_path;
     let symbols = ctx.symbols;
+    let import_context = ctx.import_context;
     let import_bindings = ctx.import_bindings;
     if language == "dart" {
-        return extract_textual_dart_calls(
-            source,
-            rel_path,
-            symbols,
-            import_bindings,
-            ctx.file_path,
-            ctx.root_path,
-            semantic_resolver,
-        );
+        return extract_textual_dart_calls(source, ctx, semantic_resolver);
     }
     if spec.call_query.trim().is_empty() {
         return Ok(Vec::new());
@@ -484,6 +479,7 @@ fn extract_calls(
             .and_then(qualifier_root_alias)
             .map(ToOwned::to_owned);
         let external_target = import_resolution::resolve_external_callee(
+            import_context,
             import_bindings,
             symbols,
             &callee_name,
@@ -541,13 +537,15 @@ fn extract_calls(
 
 fn extract_textual_dart_calls(
     source: &[u8],
-    rel_path: &str,
-    symbols: &[Symbol],
-    import_bindings: &ImportBindings,
-    file_path: &Path,
-    root_path: &Path,
+    ctx: CallExtractionContext<'_>,
     mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Vec<CallRelation>> {
+    let rel_path = ctx.rel_path;
+    let symbols = ctx.symbols;
+    let import_context = ctx.import_context;
+    let import_bindings = ctx.import_bindings;
+    let file_path = ctx.file_path;
+    let root_path = ctx.root_path;
     let text = String::from_utf8_lossy(source);
     let mut calls = Vec::new();
     let mut line_start_byte = 0usize;
@@ -599,6 +597,7 @@ fn extract_textual_dart_calls(
                 .and_then(qualifier_root_alias)
                 .map(ToOwned::to_owned);
             let external_target = import_resolution::resolve_external_callee(
+                import_context,
                 import_bindings,
                 symbols,
                 &candidate.name,

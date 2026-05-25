@@ -175,6 +175,7 @@ pub(crate) fn seed_import_bindings(
 }
 
 pub(crate) fn resolve_external_callee(
+    import_context: &ImportResolutionContext,
     import_bindings: &ImportBindings,
     symbols: &[Symbol],
     callee_name: &str,
@@ -217,6 +218,12 @@ pub(crate) fn resolve_external_callee(
     if qualifier_path.starts_with('\\') {
         let module = qualifier_path.trim_start_matches('\\');
         if module.is_empty() {
+            return None;
+        }
+        let local_symbol = format!("{module}\\{callee_name}");
+        if import_context.php_local_symbols.contains(module)
+            || import_context.php_local_symbols.contains(&local_symbol)
+        {
             return None;
         }
         return Some(ExternalCallTarget {
@@ -1382,7 +1389,7 @@ fn extract_js_import_clause(text: &str) -> Option<&str> {
 }
 
 fn extract_quoted_string(text: &str) -> Option<String> {
-    let quote = text.find(['"', '\''])?;
+    let quote = text.find(['"', '\'', '`'])?;
     let quote_char = text[quote..].chars().next()?;
     let after_quote = &text[quote + quote_char.len_utf8()..];
     let end = after_quote.find(quote_char)?;
@@ -2034,6 +2041,35 @@ name = "my-crate"
     }
 
     #[test]
+    fn go_backtick_imports_register_external_bindings() {
+        let import_context = ImportResolutionContext {
+            go_module_path: Some("example.com/local".to_string()),
+            ..Default::default()
+        };
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "go",
+            "import api `github.com/acme/api-client`",
+            "main.go",
+            &import_context,
+            &mut extracted,
+        );
+
+        assert_eq!(
+            extracted
+                .imports
+                .first()
+                .map(|import| import.module_name.as_str()),
+            Some("github.com/acme/api-client")
+        );
+        assert_eq!(
+            extracted.bindings.member.get("api").map(String::as_str),
+            Some("github.com/acme/api-client")
+        );
+    }
+
+    #[test]
     fn csharp_declared_types_includes_structs() {
         let names = csharp_declared_types(
             "public struct Point {} class Sample {} interface IThing {} enum Mode {} record Data;",
@@ -2049,11 +2085,52 @@ name = "my-crate"
     #[test]
     fn empty_php_fully_qualified_namespace_stays_unresolved() {
         let target = resolve_external_callee(
+            &ImportResolutionContext::default(),
             &ImportBindings::default(),
             &[],
             "helper",
             Some(""),
             Some("\\"),
+            false,
+        );
+
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn php_local_fully_qualified_class_stays_unresolved() {
+        let mut import_context = ImportResolutionContext::default();
+        import_context
+            .php_local_symbols
+            .insert(r"App\Services\Mailer".to_string());
+
+        let target = resolve_external_callee(
+            &import_context,
+            &ImportBindings::default(),
+            &[],
+            "send",
+            Some("App"),
+            Some(r"\App\Services\Mailer"),
+            false,
+        );
+
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn php_local_fully_qualified_function_stays_unresolved() {
+        let mut import_context = ImportResolutionContext::default();
+        import_context
+            .php_local_symbols
+            .insert(r"App\Helpers\render".to_string());
+
+        let target = resolve_external_callee(
+            &import_context,
+            &ImportBindings::default(),
+            &[],
+            "render",
+            Some("App"),
+            Some(r"\App\Helpers"),
             false,
         );
 
