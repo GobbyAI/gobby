@@ -551,6 +551,7 @@ fn extract_textual_dart_calls(
     let text = String::from_utf8_lossy(source);
     let mut calls = Vec::new();
     let mut line_start_byte = 0usize;
+    let mut in_block_comment = false;
 
     for (row, line) in text.lines().enumerate() {
         let terminator_len = line_terminator_len(&text, line_start_byte, line.len());
@@ -561,11 +562,20 @@ fn extract_textual_dart_calls(
             || trimmed.starts_with("enum ")
             || trimmed.starts_with("typedef ")
         {
+            in_block_comment = dart_block_comment_state_after_line(line, in_block_comment);
             line_start_byte += line.len() + terminator_len;
             continue;
         }
 
         for candidate in textual_call_candidates(line, line_start_byte, &['.']) {
+            let candidate_line_byte = candidate.call_byte.saturating_sub(line_start_byte);
+            if dart_textual_candidate_in_ignored_context(
+                line,
+                candidate_line_byte,
+                in_block_comment,
+            ) {
+                continue;
+            }
             if should_ignore_call_name("dart", &candidate.name) {
                 continue;
             }
@@ -641,6 +651,7 @@ fn extract_textual_dart_calls(
             calls.push(call);
         }
 
+        in_block_comment = dart_block_comment_state_after_line(line, in_block_comment);
         line_start_byte += line.len() + terminator_len;
     }
 
@@ -698,16 +709,33 @@ fn textual_call_candidates(
         while end > 0 && bytes[end - 1].is_ascii_whitespace() {
             end -= 1;
         }
-        let mut start = end;
-        while start > 0 && is_textual_call_name_byte(bytes[start - 1]) {
-            start -= 1;
-        }
+        let (start, name_end) = if end > 0 && bytes[end - 1] == b'>' {
+            let Some(generic_start) = matching_angle_start(bytes, end - 1) else {
+                idx += 1;
+                continue;
+            };
+            let mut start = generic_start;
+            while start > 0 && is_textual_call_name_byte(bytes[start - 1]) {
+                start -= 1;
+            }
+            (start, generic_start)
+        } else {
+            let mut start = end;
+            while start > 0 && is_textual_call_name_byte(bytes[start - 1]) {
+                start -= 1;
+            }
+            (start, end)
+        };
         if start == end {
             idx += 1;
             continue;
         }
 
-        let name = &line[start..end];
+        let name = &line[start..name_end];
+        if name.is_empty() {
+            idx += 1;
+            continue;
+        }
         if looks_like_textual_function_declaration(line, start, idx) {
             idx += 1;
             continue;
@@ -742,6 +770,120 @@ fn textual_call_candidates(
     }
 
     candidates
+}
+
+fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for idx in (0..=close_idx).rev() {
+        match bytes[idx] {
+            b'>' => depth += 1,
+            b'<' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn dart_textual_candidate_in_ignored_context(
+    line: &str,
+    candidate_byte: usize,
+    mut in_block_comment: bool,
+) -> bool {
+    let bytes = line.as_bytes();
+    let limit = candidate_byte.min(bytes.len());
+    let mut idx = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    while idx < limit {
+        if in_block_comment {
+            if bytes[idx..].starts_with(b"*/") {
+                in_block_comment = false;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if let Some(quote_byte) = quote {
+            if escaped {
+                escaped = false;
+            } else if bytes[idx] == b'\\' {
+                escaped = true;
+            } else if bytes[idx] == quote_byte {
+                quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if bytes[idx..].starts_with(b"//") {
+            return true;
+        }
+        if bytes[idx..].starts_with(b"/*") {
+            in_block_comment = true;
+            idx += 2;
+            continue;
+        }
+        if matches!(bytes[idx], b'\'' | b'"') {
+            quote = Some(bytes[idx]);
+        }
+        idx += 1;
+    }
+
+    in_block_comment || quote.is_some()
+}
+
+fn dart_block_comment_state_after_line(line: &str, mut in_block_comment: bool) -> bool {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    while idx < bytes.len() {
+        if in_block_comment {
+            if bytes[idx..].starts_with(b"*/") {
+                in_block_comment = false;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if let Some(quote_byte) = quote {
+            if escaped {
+                escaped = false;
+            } else if bytes[idx] == b'\\' {
+                escaped = true;
+            } else if bytes[idx] == quote_byte {
+                quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if bytes[idx..].starts_with(b"//") {
+            break;
+        }
+        if bytes[idx..].starts_with(b"/*") {
+            in_block_comment = true;
+            idx += 2;
+            continue;
+        }
+        if matches!(bytes[idx], b'\'' | b'"') {
+            quote = Some(bytes[idx]);
+        }
+        idx += 1;
+    }
+
+    in_block_comment
 }
 
 fn looks_like_textual_function_declaration(
@@ -1994,6 +2136,43 @@ dependencies:
             .collect();
         assert_eq!(unresolved.len(), 3);
         assert!(parsed.calls.iter().all(|call| call.callee_name != "run"));
+    }
+
+    #[test]
+    fn textual_dart_calls_handle_generics_and_ignore_comments_and_strings() {
+        let parsed = parse_dart(
+            r#"
+void run() {
+  builder<T>();
+  final text = "fakeCall()";
+  final other = 'otherCall()';
+  // commentedCall();
+  /* blockCall();
+     stillBlockCall();
+  */
+  afterBlock(); // trailingCommentCall();
+}
+"#,
+            &[],
+        );
+
+        let call_names: Vec<_> = parsed
+            .calls
+            .iter()
+            .map(|call| call.callee_name.as_str())
+            .collect();
+        assert!(call_names.contains(&"builder"));
+        assert!(call_names.contains(&"afterBlock"));
+        for skipped in [
+            "fakeCall",
+            "otherCall",
+            "commentedCall",
+            "blockCall",
+            "stillBlockCall",
+            "trailingCommentCall",
+        ] {
+            assert!(!call_names.contains(&skipped), "unexpected call {skipped}");
+        }
     }
 
     #[test]

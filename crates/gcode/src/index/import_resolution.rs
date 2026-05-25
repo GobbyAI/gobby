@@ -1088,12 +1088,32 @@ fn parse_php_import_statement(
         });
         return;
     };
-    let (is_function, rest) = rest
-        .strip_prefix("function ")
-        .map(|target| (true, target.trim()))
-        .unwrap_or((false, rest.trim()));
+    let (kind, rest) = if let Some(target) = rest.strip_prefix("function ") {
+        (PhpImportKind::Function, target.trim())
+    } else if let Some(target) = rest.strip_prefix("const ") {
+        (PhpImportKind::Const, target.trim())
+    } else {
+        (PhpImportKind::ClassLike, rest.trim())
+    };
 
-    if rest.contains('{') || rest.contains('}') || rest.contains('*') {
+    if rest.contains('*') {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: rest.to_string(),
+        });
+        return;
+    }
+
+    if let Some((base, group)) = split_php_use_group(rest) {
+        for item in split_top_level(group, ',') {
+            if let Some(target) = php_join_use_path(base, item) {
+                register_php_import_item(&target, kind, rel_path, import_context, extracted);
+            }
+        }
+        return;
+    }
+
+    if rest.contains('{') || rest.contains('}') {
         extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: rest.to_string(),
@@ -1102,41 +1122,88 @@ fn parse_php_import_statement(
     }
 
     for item in split_top_level(rest, ',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let (target, alias) = split_alias(item);
-        let target = target.trim_start_matches('\\');
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: target.to_string(),
-        });
-        if !is_external_php_symbol(target, import_context) {
-            continue;
-        }
-
-        let imported_name = target.rsplit('\\').next().unwrap_or(target);
-        let local_alias = alias.unwrap_or(imported_name);
-        if is_function {
-            let module = target
-                .rsplit_once('\\')
-                .map(|(module, _)| module)
-                .unwrap_or(target);
-            extracted.bindings.bare.insert(
-                local_alias.to_string(),
-                ExternalImportBinding {
-                    module: module.to_string(),
-                    callee_name: imported_name.to_string(),
-                },
-            );
-        } else {
-            extracted
-                .bindings
-                .member
-                .insert(local_alias.to_string(), target.to_string());
-        }
+        register_php_import_item(item, kind, rel_path, import_context, extracted);
     }
+}
+
+#[derive(Clone, Copy)]
+enum PhpImportKind {
+    ClassLike,
+    Function,
+    Const,
+}
+
+fn register_php_import_item(
+    item: &str,
+    kind: PhpImportKind,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let item = item.trim();
+    if item.is_empty() {
+        return;
+    }
+    let (target, alias) = split_alias(item);
+    let target = target.trim_start_matches('\\');
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: target.to_string(),
+    });
+    if !is_external_php_symbol(target, import_context) {
+        return;
+    }
+
+    let imported_name = target.rsplit('\\').next().unwrap_or(target);
+    let local_alias = alias.unwrap_or(imported_name);
+    if matches!(kind, PhpImportKind::Function) {
+        let module = target
+            .rsplit_once('\\')
+            .map(|(module, _)| module)
+            .unwrap_or(target);
+        extracted.bindings.bare.insert(
+            local_alias.to_string(),
+            ExternalImportBinding {
+                module: module.to_string(),
+                callee_name: imported_name.to_string(),
+            },
+        );
+    } else {
+        extracted
+            .bindings
+            .member
+            .insert(local_alias.to_string(), target.to_string());
+    }
+}
+
+fn split_php_use_group(text: &str) -> Option<(&str, &str)> {
+    let (base, group) = split_rust_use_group(text)?;
+    if base.is_empty() || group.is_empty() {
+        return None;
+    }
+    Some((base, group))
+}
+
+fn php_join_use_path(prefix: &str, item: &str) -> Option<String> {
+    let prefix = prefix.trim().trim_start_matches('\\');
+    let (item_path, alias) = split_alias(item);
+    let item_path = item_path.trim().trim_start_matches('\\');
+    if item_path.is_empty() {
+        return None;
+    }
+
+    let path = if prefix.is_empty() {
+        item_path.to_string()
+    } else if prefix.ends_with('\\') {
+        format!("{prefix}{item_path}")
+    } else {
+        format!("{prefix}\\{item_path}")
+    };
+
+    Some(match alias {
+        Some(alias) if !alias.is_empty() => format!("{path} as {alias}"),
+        _ => path,
+    })
 }
 
 fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut ExtractedImports) {
@@ -1849,6 +1916,92 @@ name = "my-crate"
 
         assert!(extracted.bindings.bare.is_empty());
         assert!(extracted.bindings.member.is_empty());
+    }
+
+    #[test]
+    fn php_grouped_imports_register_concrete_member_bindings() {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "php",
+            r"use Vendor\Pkg\{Client, Helper as H};",
+            "src/sample.php",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
+
+        assert!(
+            extracted
+                .imports
+                .iter()
+                .any(|import| import.module_name == r"Vendor\Pkg\Client")
+        );
+        assert!(
+            extracted
+                .imports
+                .iter()
+                .any(|import| import.module_name == r"Vendor\Pkg\Helper")
+        );
+        assert_eq!(
+            extracted.bindings.member.get("Client").map(String::as_str),
+            Some(r"Vendor\Pkg\Client")
+        );
+        assert_eq!(
+            extracted.bindings.member.get("H").map(String::as_str),
+            Some(r"Vendor\Pkg\Helper")
+        );
+    }
+
+    #[test]
+    fn php_grouped_function_imports_register_concrete_bare_bindings() {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "php",
+            r"use function Vendor\Pkg\{work, helper as do_help};",
+            "src/sample.php",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
+
+        assert!(
+            extracted
+                .imports
+                .iter()
+                .any(|import| import.module_name == r"Vendor\Pkg\work")
+        );
+        let work = extracted
+            .bindings
+            .bare
+            .get("work")
+            .expect("function binding");
+        assert_eq!(work.module, r"Vendor\Pkg");
+        assert_eq!(work.callee_name, "work");
+        let helper = extracted
+            .bindings
+            .bare
+            .get("do_help")
+            .expect("aliased function binding");
+        assert_eq!(helper.module, r"Vendor\Pkg");
+        assert_eq!(helper.callee_name, "helper");
+    }
+
+    #[test]
+    fn php_grouped_const_imports_preserve_aliases() {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            "php",
+            r"use const Vendor\Pkg\{VALUE as V};",
+            "src/sample.php",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
+
+        assert_eq!(
+            extracted.bindings.member.get("V").map(String::as_str),
+            Some(r"Vendor\Pkg\VALUE")
+        );
     }
 
     #[test]
