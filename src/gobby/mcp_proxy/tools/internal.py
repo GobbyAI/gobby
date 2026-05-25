@@ -191,7 +191,15 @@ class InternalToolRegistry:
 
                 annotation = resolved_hints.get(param_name, param.annotation)
                 param_type = _get_json_schema_type(annotation)
-                properties[param_name] = {"type": param_type}
+                prop: dict[str, Any] = {"type": param_type}
+                if param.default is not inspect.Parameter.empty and param.default is not None:
+                    try:
+                        json.dumps(param.default)
+                    except TypeError:
+                        pass
+                    else:
+                        prop["default"] = param.default
+                properties[param_name] = prop
 
                 if param.default == inspect.Parameter.empty:
                     required.append(param_name)
