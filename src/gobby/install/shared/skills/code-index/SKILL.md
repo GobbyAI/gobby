@@ -9,20 +9,20 @@ metadata:
 
 # Code Index (gcode)
 
-This project is indexed. Use `gcode` via the shell for fast code search and navigation — saves 90%+ tokens vs reading entire files.
+This project is indexed. Use `gcode` via Bash for fast code search and navigation — saves 90%+ tokens vs reading entire files.
 
 ## Search
 
-- `gcode search "query" [PATH ...]` — hybrid search: FTS + semantic + graph boost (best for fuzzy or natural-language queries)
-- `gcode search-symbol "name"` — exact-first symbol/name lookup with deterministic ranking (when you know most of the name)
-- `gcode search-text "query" [PATH ...]` — full-text search on symbol names, signatures, and docstrings
-- `gcode search-content "query" [PATH ...]` — full-text search across file content chunks (source, comments, CSS, SQL, config files)
+- `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
+- `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
+- `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
+- `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--limit N`, and `--offset N`. Use positional path filters for scoped results, for example `gcode search "TaskArtifactManager" src/gobby/storage tests/storage` or `gcode search-content "base_commit_sha" src/gobby/dispatch/*.py`.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. All search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results.
 
 ## Retrieval
 
-- `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than reading the whole file)
+- `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than Read)
 - `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
 - `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve symbols by exact stored IDs
 
@@ -34,7 +34,7 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 - `gcode tree` — whole-project file tree with symbol counts per file; it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
-For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional path filters.
+For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
 
 ## Impact Analysis
 
@@ -47,8 +47,8 @@ Use these **before making changes** to understand what you'll affect:
 
 ## Graph Lifecycle (Gobby daemon required)
 
-- `gcode graph clear` — clear the current project's code-index graph projection via the Gobby daemon
-- `gcode graph rebuild` — rebuild the current project's code-index graph projection via the Gobby daemon
+- `gcode graph clear` — clear the current project's graph projection
+- `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
 
 ## When to use which
 
@@ -56,7 +56,7 @@ Use these **before making changes** to understand what you'll affect:
 |---|---|
 | A function or class by concept (fuzzy) | `gcode search "concept"` |
 | A symbol you know the exact name of | `gcode search-symbol "name"` |
-| A string literal, config value, comment, CSS rule | `gcode search-content "text"` |
+| A string literal, doc phrase, config value, comment, script line, CSS rule | `gcode search-content "text"` |
 | Structure of a file without reading it | `gcode outline path/to/file` |
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |
