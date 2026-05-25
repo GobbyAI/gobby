@@ -120,6 +120,7 @@ async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> 
 
 @pytest.mark.asyncio
 async def test_bin_freshness_loop_shutdown_exit_before_initial_delay() -> None:
+    """Shutdown is checked before initial sleep so no freshness update is scheduled."""
     updates = 0
 
     def update_once(db: object, config: BinFreshnessConfig) -> list[object]:

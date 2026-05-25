@@ -242,6 +242,7 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
     assert count_active_agents(temp_db, project_id=other_project.id) == 1
 
 
+@pytest.mark.asyncio
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -260,6 +261,7 @@ async def test_max_active_agents_cap(
     assert spawned == []
 
 
+@pytest.mark.asyncio
 async def test_run_heartbeat_serializes_overlapping_development_start_actions(
     temp_db,
     sample_project,
@@ -282,6 +284,7 @@ async def test_run_heartbeat_serializes_overlapping_development_start_actions(
     assert stage_states.get(second.id, "development").state == "ready"
 
 
+@pytest.mark.asyncio
 async def test_run_heartbeat_allows_disjoint_development_write_sets(
     temp_db,
     sample_project,
@@ -304,6 +307,7 @@ async def test_run_heartbeat_allows_disjoint_development_write_sets(
     assert stage_states.get(second.id, "development").state == "in_progress"
 
 
+@pytest.mark.asyncio
 async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
     temp_db,
     sample_project,
@@ -331,6 +335,7 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     assert LocalTaskManager(temp_db).stage_states.get(waiting.id, "development").state == "ready"
 
 
+@pytest.mark.asyncio
 async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -353,6 +358,7 @@ async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     assert spawned == []
 
 
+@pytest.mark.asyncio
 async def test_cancelled_spawn_releases_no_run_mutex(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -393,6 +399,7 @@ async def test_cancelled_spawn_releases_no_run_mutex(
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
     """Mutex lifecycle."""
     from gobby.dispatch import dispatcher
@@ -411,6 +418,7 @@ async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_
     assert "### Dispatch" in get_task(temp_db, task.id).description
 
 
+@pytest.mark.asyncio
 async def test_toctou_skip_on_changed_tuple(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -439,6 +447,7 @@ def _task_changed(temp_db, task_id: str):
     return get_task(temp_db, task_id)
 
 
+@pytest.mark.asyncio
 async def test_first_match_action_executed(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -458,6 +467,7 @@ async def test_first_match_action_executed(
     assert executed == [action]
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_links_run_id(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -480,6 +490,7 @@ async def test_spawn_action_links_run_id(
     assert storage.get_mutex(task.id).run_id == "run-1"
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_uses_services_and_records_agent_run(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -544,6 +555,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
 
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
+@pytest.mark.asyncio
 async def test_planning_agents_use_main_context_despite_worktree_task(
     agent_slug: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -625,6 +637,7 @@ async def test_planning_agents_use_main_context_despite_worktree_task(
     assert artifacts.base_commit_sha == "old-base"
 
 
+@pytest.mark.asyncio
 async def test_expansion_review_uses_main_context_despite_worktree_task(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -701,6 +714,7 @@ async def test_expansion_review_uses_main_context_despite_worktree_task(
     assert artifacts.worktree_path == "/tmp/missing-expansion-worktree"
 
 
+@pytest.mark.asyncio
 async def test_backend_developer_inherits_task_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -892,6 +906,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     assert subscribers == []
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -952,6 +967,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     assert subscribers == []
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1024,6 +1040,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     assert artifacts.target_branch == "main"
 
 
+@pytest.mark.asyncio
 async def test_leaf_spawn_recovers_parent_integration_target_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1108,6 +1125,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     assert artifacts.target_branch == "gobby/integration/phase"
 
 
+@pytest.mark.asyncio
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1202,6 +1220,7 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     assert artifacts.base_commit_sha is None
 
 
+@pytest.mark.asyncio
 async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missing(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
 ) -> None:
@@ -1306,6 +1325,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
     assert stored_worktree.workspace_role == "integration"
 
 
+@pytest.mark.asyncio
 async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
 ) -> None:
@@ -1383,6 +1403,7 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
     assert artifacts.target_branch == "main"
 
 
+@pytest.mark.asyncio
 async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1460,6 +1481,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     assert "Dispatcher heartbeat candidate failed" not in caplog.text
 
 
+@pytest.mark.asyncio
 async def test_spawn_failure_rolls_stage_ready_and_releases(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1505,6 +1527,7 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("run-services") is None
 
 
+@pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1532,6 +1555,7 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
     assert "### Dispatch spawn failed" not in (updated.description or "")
 
 
+@pytest.mark.asyncio
 async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1577,6 +1601,7 @@ async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     assert "agent_did_not_register" in updated.description
 
 
+@pytest.mark.asyncio
 async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1631,6 +1656,7 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     assert "Failed to roll back stage after dispatch spawn failure" not in caplog.text
 
 
+@pytest.mark.asyncio
 async def test_third_spawn_failure_escalates(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1666,6 +1692,7 @@ async def test_third_spawn_failure_escalates(
     assert updated.escalation_reason.startswith("dispatch_spawn_max_attempts:broken")
 
 
+@pytest.mark.asyncio
 async def test_spawn_prefers_project_scoped_git_manager(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1723,6 +1750,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
     assert captured["base_branch"] == "dev"
 
 
+@pytest.mark.asyncio
 async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -1758,6 +1786,7 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     assert "### Dispatch failed" in get_task(temp_db, first.id).description
 
 
+@pytest.mark.asyncio
 async def test_advance_action_releases_lease_immediately(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1779,6 +1808,7 @@ async def test_advance_action_releases_lease_immediately(
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_start_pipeline_action_links_execution_id(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1892,6 +1922,7 @@ def test_build_context_project_disabled_agent_override_wins(temp_db, sample_proj
     assert context.agents["merge-orchestrator"].project_id == sample_project["id"]
 
 
+@pytest.mark.asyncio
 async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_no_agent(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1917,6 +1948,7 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     assert get_task(temp_db, task.id).is_escalated is False
 
 
+@pytest.mark.asyncio
 async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1954,6 +1986,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     assert spawned == ["merge-orchestrator"]
 
 
+@pytest.mark.asyncio
 async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -1993,6 +2026,7 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     assert calls[0]["session_id"] == "session-1"
 
 
+@pytest.mark.asyncio
 async def test_expansion_terminal_event_releases_lease_via_handlers(
     temp_db, sample_project
 ) -> None:
@@ -2009,6 +2043,7 @@ async def test_expansion_terminal_event_releases_lease_via_handlers(
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2039,6 +2074,7 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     assert storage.get_mutex(task.id).run_id == execution_id
 
 
+@pytest.mark.asyncio
 async def test_pipeline_terminal_handler_releases_lease(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2088,6 +2124,7 @@ def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_invalid_pipeline_target_escalates_and_releases(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2117,6 +2154,7 @@ async def test_invalid_pipeline_target_escalates_and_releases(
     assert get_task(temp_db, task.id).is_escalated is True
 
 
+@pytest.mark.asyncio
 async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_atomically(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2146,6 +2184,7 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
     assert artifacts.base_commit_sha == "abc123"
 
 
+@pytest.mark.asyncio
 async def test_create_isolation_action_resolves_base_commit_sha_from_target_branch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2235,6 +2274,7 @@ def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
     assert artifacts.base_commit_sha == "new-base"
 
 
+@pytest.mark.asyncio
 async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2291,6 +2331,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     assert run_id == "run-subscribe-failure"
 
 
+@pytest.mark.asyncio
 async def test_create_isolation_action_missing_target_branch_escalates(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2313,6 +2354,7 @@ async def test_create_isolation_action_missing_target_branch_escalates(
     assert escalations[0]["reason"] == "isolation_missing_target_branch"
 
 
+@pytest.mark.asyncio
 async def test_dev_rule_fires_after_isolation_and_stage_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2341,6 +2383,7 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     assert spawned == [task.id]
 
 
+@pytest.mark.asyncio
 async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> None:
     """Startup sweep clears expired leases."""
     from gobby.dispatch import dispatcher
@@ -2355,6 +2398,7 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_heartbeat_recovers_orphan_no_run_mutex_before_full_lease(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -2401,6 +2445,7 @@ async def test_heartbeat_recovers_orphan_no_run_mutex_before_full_lease(
     assert mutex.run_id == "run-recovered"
 
 
+@pytest.mark.asyncio
 async def test_heartbeat_preserves_fresh_no_run_mutex(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

@@ -47,7 +47,11 @@ def _event(
 
 
 class TestRemovedBuildCoordinatorMonitoringSkillRule:
-    def test_removed_rule_is_not_synced(self, temp_db, manager) -> None:
+    def test_removed_rule_is_not_synced(
+        self,
+        temp_db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Deprecated monitoring-skill gate should stay removed after sync."""
         manager.create(
             name="require-build-coordinator-monitoring-skill",
@@ -76,7 +80,7 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
 
     @pytest.mark.asyncio
     async def test_generic_monitoring_inspection_is_allowed_without_build_coordinator(
-        self, temp_db
+        self, temp_db: HubDatabase
     ) -> None:
         """Generic inspection commands should not require build-coordinator skill."""
         _sync_bundled(temp_db)
@@ -98,7 +102,11 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
 
 
 class TestRequireBuildCoordinatorForGobbyBuild:
-    def test_rule_structure(self, temp_db, manager) -> None:
+    def test_rule_structure(
+        self,
+        temp_db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Build command gate should retain the expected rule condition and guidance."""
         _sync_bundled(temp_db)
         row = manager.get_by_name("require-build-coordinator-for-gobby-build")
@@ -118,7 +126,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert body.effects[0].reason == skill_fetch_directive("build-coordinator")
 
     @pytest.mark.asyncio
-    async def test_blocks_tmux_agent_gobby_build_before_skill_load(self, temp_db) -> None:
+    async def test_blocks_tmux_agent_gobby_build_before_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Terminal agents should load build-coordinator before running gobby build."""
         _sync_bundled(temp_db)
         event = _event(
@@ -141,7 +151,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert 'Call get_skill(name="build-coordinator") on gobby-skills' in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocks_web_chat_gobby_build_before_skill_load(self, temp_db) -> None:
+    async def test_blocks_web_chat_gobby_build_before_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Web-chat agents should load build-coordinator before running gobby build."""
         _sync_bundled(temp_db)
         event = _event(
@@ -160,7 +172,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert "require-build-coordinator-for-gobby-build" in response.reason
 
     @pytest.mark.asyncio
-    async def test_allows_tmux_agent_gobby_build_after_skill_load(self, temp_db) -> None:
+    async def test_allows_tmux_agent_gobby_build_after_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Terminal agents may run gobby build after build-coordinator is loaded."""
         _sync_bundled(temp_db)
         event = _event(
@@ -180,7 +194,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_allows_operator_gobby_build_without_skill_load(self, temp_db) -> None:
+    async def test_allows_operator_gobby_build_without_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Human/operator sessions may run gobby build without agent skill gates."""
         _sync_bundled(temp_db)
         event = _event(
@@ -196,7 +212,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_allows_dispatcher_gobby_build_without_skill_load(self, temp_db) -> None:
+    async def test_allows_dispatcher_gobby_build_without_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Dispatcher-origin build commands are exempt from spawned-agent skill gates."""
         _sync_bundled(temp_db)
         event = _event(
@@ -217,7 +235,9 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_allows_commands_that_only_mention_gobby_build(self, temp_db) -> None:
+    async def test_allows_commands_that_only_mention_gobby_build(
+        self, temp_db: HubDatabase
+    ) -> None:
         """Commands that mention gobby build as text should not trip the gate."""
         _sync_bundled(temp_db)
         event = _event(

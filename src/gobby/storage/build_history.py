@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -303,24 +304,21 @@ class BuildHistoryStorage:
             return None
         # Ancestor ids come from the CTE and filter root_task_id for coordinated runs.
         placeholders = ", ".join("?" for _ in ancestor_ids)
-        rows = self.db.fetchall(
+        coordinator_session_expr = json_text_expr(self.db, "summary_json", "coordinator_session_id")
+        row = self.db.fetchone(
             f"""
             SELECT *
               FROM build_runs
              WHERE project_id = ?
                AND root_task_id IN ({placeholders})
-             -- Newest started_at wins, id breaks ties; LIMIT 100 caps the scan pragmatically.
+               AND NULLIF({coordinator_session_expr}, '') IS NOT NULL
+             -- Newest started_at wins, id breaks ties.
              ORDER BY started_at DESC, id DESC
-             LIMIT 100
+             LIMIT 1
             """,  # nosec B608 # placeholders are generated from trusted list length only.
             (project_id, *ancestor_ids),
         )
-        # Return the first recent build run whose summary names a coordinator session.
-        for row in rows:
-            run = BuildRun.from_row(row)
-            if run.summary and run.summary.get("coordinator_session_id"):
-                return run
-        return None
+        return BuildRun.from_row(row) if row is not None else None
 
     def list_runs(
         self,

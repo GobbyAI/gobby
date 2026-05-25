@@ -25,7 +25,7 @@ PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
 )
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
-_KIND_LINE_RE = re.compile(r"^`?kind:\s*(?P<kind>[a-z_]+)`?$")
+_KIND_LINE_RE = re.compile(r"^`?\s*kind:\s*(?P<kind>[a-z_]+)\s*`?$")
 _PLAN_ID_RE = re.compile(r"^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$")
 _TASK_PLAN_FILENAME_RE = re.compile(r"^task-(?P<seq>\d+)(?:[-_].*)?$")
 _SECTION_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)

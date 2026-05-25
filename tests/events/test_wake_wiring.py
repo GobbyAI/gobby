@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Protocol
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,7 +28,27 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     return database
 
 
-def _has_column(db: HubDatabase, table: str, column: str) -> bool:
+class _ColumnLookupDatabase(Protocol):
+    dialect: object
+
+    def fetchone(
+        self,
+        sql: str,
+        params: Sequence[object] = (),
+    ) -> Mapping[str, object] | None: ...
+
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[object] = (),
+    ) -> list[Mapping[str, object]]: ...
+
+
+def _has_column(db: _ColumnLookupDatabase, table: str, column: str) -> bool:
+    """Return whether a backend table exposes a column.
+
+    Uses the Postgres catalog when available.
+    """
     if str(getattr(db, "dialect", "")).startswith("postgres"):
         row = db.fetchone(
             """
@@ -191,7 +212,7 @@ class TestRegistryWakeCallback:
 class TestContinuationPromptStorage:
     """continuation_prompt persisted in pipeline_executions and agent_runs."""
 
-    def test_pipeline_execution_stores_continuation_prompt(self, db: Any) -> None:
+    def test_pipeline_execution_stores_continuation_prompt(self, db: HubDatabase) -> None:
         """continuation_prompt column stored and retrieved."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -205,7 +226,7 @@ class TestContinuationPromptStorage:
         assert fetched is not None
         assert fetched.continuation_prompt == "Review the results and create subtasks"
 
-    def test_pipeline_execution_no_continuation_prompt(self, db: Any) -> None:
+    def test_pipeline_execution_no_continuation_prompt(self, db: HubDatabase) -> None:
         """continuation_prompt defaults to None."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -237,7 +258,7 @@ class TestContinuationPromptStorage:
 class TestAutoSubscribeLineage:
     """Auto-subscribe wires completion events when run_pipeline is called."""
 
-    def test_auto_subscribe_registers_and_persists(self, db: Any) -> None:
+    def test_auto_subscribe_registers_and_persists(self, db: HubDatabase) -> None:
         """_auto_subscribe_lineage registers event and persists to DB."""
         from gobby.mcp_proxy.tools.workflows._pipelines import _auto_subscribe_lineage
         from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -301,7 +322,7 @@ class TestStartupRecovery:
     """Startup recovery notifies subscribers of interrupted pipelines."""
 
     @pytest.mark.asyncio
-    async def test_interrupted_pipeline_wakes_subscribers(self, db: Any) -> None:
+    async def test_interrupted_pipeline_wakes_subscribers(self, db: HubDatabase) -> None:
         """Subscribers of interrupted pipelines are notified on startup."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
@@ -350,10 +371,10 @@ class TestStartupRecovery:
 class TestMigration137:
     """Migration 137 adds continuation_prompt columns."""
 
-    def test_pipeline_execution_has_continuation_prompt(self, db: Any) -> None:
+    def test_pipeline_execution_has_continuation_prompt(self, db: HubDatabase) -> None:
         """pipeline_executions table has continuation_prompt column."""
         assert _has_column(db, "pipeline_executions", "continuation_prompt")
 
-    def test_agent_runs_has_continuation_prompt(self, db: Any) -> None:
+    def test_agent_runs_has_continuation_prompt(self, db: HubDatabase) -> None:
         """agent_runs table has continuation_prompt column."""
         assert _has_column(db, "agent_runs", "continuation_prompt")

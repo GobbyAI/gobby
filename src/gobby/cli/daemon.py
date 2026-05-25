@@ -282,7 +282,9 @@ def _is_daemon_healthy(http_port: int) -> bool:
     try:
         response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
         return response.status_code == 200
-    except (httpx.RequestError, httpx.TimeoutException):
+    except httpx.TimeoutException:
+        return False
+    except httpx.RequestError:
         return False
 
 

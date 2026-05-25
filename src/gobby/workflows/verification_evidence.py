@@ -25,13 +25,21 @@ logger = logging.getLogger(__name__)
 class VerificationEvidence(BaseModel):
     """Typed verification evidence item stored in session variables."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     evidence_type: str = Field(strict=True)
     success: bool = Field(strict=True)
     timestamp: str | None = Field(default=None, strict=True)
     command: str | None = Field(default=None, strict=True)
     summary: str | None = Field(default=None, strict=True)
+    cwd: str | None = Field(default=None, strict=True)
+    project_path: str | None = Field(default=None, strict=True)
+    matcher_id: str | None = Field(default=None, strict=True)
+    matcher_label: str | None = Field(default=None, strict=True)
+    categories: list[str] | None = None
+    languages: list[str] | None = None
+    tool_name: str | None = Field(default=None, strict=True)
+    exit_code: int | None = Field(default=None, strict=True)
 
     @field_validator("evidence_type")
     @classmethod
@@ -89,6 +97,15 @@ def _validate_verification_evidence_model(
     try:
         return VerificationEvidence.model_validate(dict(evidence))
     except ValidationError as exc:
+        extra_fields = sorted(
+            str(error.get("loc", ("",))[0])
+            for error in exc.errors()
+            if error.get("type") == "extra_forbidden" and error.get("loc")
+        )
+        if extra_fields:
+            raise ValueError(
+                f"verification evidence contains unsupported fields: {', '.join(extra_fields)}"
+            ) from exc
         for error in exc.errors():
             loc = error.get("loc", ())
             if loc == ("evidence_type",):

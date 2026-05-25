@@ -32,25 +32,43 @@ def test_append_verification_evidence_warns_for_malformed_existing_value(
 
     assert result == [evidence]
     assert "Ignoring malformed verification_evidence value" in caplog.text
-    assert caplog.records[0].session_id == "sess-1"
+    assert getattr(caplog.records[0], "session_id", None) == "sess-1"
 
 
-def test_append_verification_evidence_preserves_metadata_fields() -> None:
-    """Extra evidence metadata remains available to downstream observers."""
+def test_append_verification_evidence_preserves_supported_metadata_fields() -> None:
+    """Supported evidence metadata remains available to downstream observers."""
     evidence = {
+        "categories": ["tests"],
         "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_x.py",
         "cwd": "/repo",
         "evidence_type": "validation_command",
-        "scope": "focused",
+        "exit_code": 0,
+        "languages": ["python"],
+        "matcher_id": "pytest",
+        "matcher_label": "pytest",
+        "project_path": "/repo",
         "success": True,
-        "supports": ["task-1"],
-        "task_id": "#15175",
         "tool_name": "pytest",
     }
 
     result = append_verification_evidence([], evidence)
 
     assert result == [evidence]
+
+
+def test_validate_verification_evidence_rejects_unsupported_metadata_fields() -> None:
+    """Unsupported evidence metadata is rejected at the session-variable boundary."""
+    assert (
+        validate_verification_evidence(
+            {
+                "summary": "Reviewed diff",
+                "evidence_type": VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+                "scope": "focused",
+                "success": True,
+            }
+        )
+        == "verification evidence contains unsupported fields: scope"
+    )
 
 
 def test_validate_verification_evidence_requires_type_and_success() -> None:

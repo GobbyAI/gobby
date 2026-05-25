@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -90,6 +91,40 @@ async def _wait_for_messages(
             return messages
         await asyncio.sleep(0.01)
     pytest.fail(f"Timed out waiting for signoff message to {to_session}")
+
+
+def test_schedule_signoff_warning_includes_project_and_exception(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Scheduling failures log enough context for review signoff diagnostics."""
+    from gobby.mcp_proxy.tools.tasks._stage_review import _schedule_signoff_relay
+
+    _registry, _coordinator, reviewer, task = _coordinated_review_fixture(
+        temp_db,
+        name="schedule-warning",
+    )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.asyncio.get_running_loop",
+            side_effect=RuntimeError("no loop"),
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._stage_review"),
+    ):
+        _schedule_signoff_relay(
+            MagicMock(),
+            task=task,
+            task_id=task.id,
+            stage_name="planning",
+            action="approve_review",
+            from_session_id=reviewer.id,
+            signoff_message="approved",
+        )
+
+    record = caplog.records[0]
+    assert record.project_id == task.project_id
+    assert record.exc_info is not None
 
 
 @pytest.mark.asyncio

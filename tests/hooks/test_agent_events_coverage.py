@@ -239,7 +239,10 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
-        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
         assert "# Expand skill" not in result
 
     def test_gobby_space_skill(self) -> None:
@@ -251,7 +254,10 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
-        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
         assert "some args" in result
 
     def test_codex_gobby_space_skill(self) -> None:
@@ -264,7 +270,10 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("$gobby expand some args")
 
         assert result is not None
-        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
         assert "some args" in result
 
     def test_gobby_plan_does_not_inline_oversized_skill_body(self) -> None:
@@ -277,7 +286,10 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby plan draft auth")
 
         assert result is not None
-        assert 'Call get_skill(name="plan") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="plan") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
         assert "User arguments: draft auth" in result
         assert "<skill-context" not in result
         assert "# Plan" not in result
@@ -329,7 +341,10 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
-        assert 'Call get_skill(name="bridge") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="bridge") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
         assert "# Bridge skill" not in result
         handler._skill_manager.resolve_skill_name.assert_called_with("bridge")
 
@@ -342,7 +357,10 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
-        assert 'Call get_skill(name="bridge") on gobby-skills, then continue.' in result
+        assert (
+            'Call get_skill(name="bridge") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
 
     def test_gobby_skills_namespace_with_args(self) -> None:
         handler = _TestHandler()

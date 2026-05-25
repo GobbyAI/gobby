@@ -224,6 +224,26 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert entry.labels == ("covers:test-plan:A1:A1.1",)
 
 
+def test_manifest_kind_line_allows_plain_and_spaced_backticked_forms(tmp_path: Path) -> None:
+    """Manifest detection accepts plain kind lines and backticked kind lines with spaces."""
+    for index, kind_line in enumerate(("kind: manifest", "` kind: manifest `"), start=1):
+        body = (
+            f"> **Plan ID:** test-plan\n\n"
+            f"{_MINIMAL_DELIVERABLE.rstrip()}\n\n"
+            f"## M1 Task Manifest\n{kind_line}\n\n"
+            f"```yaml\n{_MINIMAL_MANIFEST.rstrip()}\n```\n"
+        )
+        plan = _write_plan(
+            tmp_path,
+            body,
+            name=f"manifest-kind-{index}.md",
+        )
+
+        document = parse_plan(plan)
+
+        assert len(document.manifest_entries) == 1
+
+
 def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
     """Reject manual as an automated expansion manifest category."""
     plan = _plan_with_manifest(

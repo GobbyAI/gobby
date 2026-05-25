@@ -1362,6 +1362,40 @@ class TestStuckDetectorSelectionHistory:
         history = stuck_detector.get_selection_history(session_id)
         assert history == []
 
+    def test_get_selection_history_migrates_legacy_python_literal_context(
+        self,
+        stuck_detector: StuckDetector,
+        test_db: HubDatabase,
+        session_id: str,
+    ) -> None:
+        """Legacy Python-literal contexts are migrated before JSON-only parsing."""
+        test_db.execute(
+            "ALTER TABLE task_selection_history ALTER COLUMN context TYPE TEXT USING context::text"
+        )
+        test_db.execute(
+            """
+            INSERT INTO task_selection_history (session_id, task_id, selected_at, context)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "task-legacy",
+                datetime.now(UTC).isoformat(),
+                "{'method': 'suggest_next_task'}",
+            ),
+        )
+
+        history = stuck_detector.get_selection_history(session_id)
+        row = test_db.fetchone(
+            "SELECT context FROM task_selection_history WHERE session_id = ?",
+            (session_id,),
+        )
+
+        assert len(history) == 1
+        assert history[0].context == {"method": "suggest_next_task"}
+        assert row is not None
+        assert row["context"] == '{"method": "suggest_next_task"}'
+
 
 class TestStuckDetectorThreadSafety:
     """Tests for StuckDetector thread safety."""

@@ -25,6 +25,26 @@ pytestmark = pytest.mark.unit
 class TestDaemonHealthWait:
     """Tests for daemon health polling."""
 
+    @pytest.mark.parametrize(
+        "side_effect",
+        [
+            httpx.TimeoutException("timed out"),
+            httpx.RequestError("request failed"),
+        ],
+    )
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_is_daemon_healthy_returns_false_on_request_failures(
+        self,
+        mock_httpx_get: MagicMock,
+        side_effect: Exception,
+    ) -> None:
+        """Timeouts and request failures both mean the daemon is unhealthy."""
+        from gobby.cli.daemon import _is_daemon_healthy
+
+        mock_httpx_get.side_effect = side_effect
+
+        assert _is_daemon_healthy(60887) is False
+
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.daemon.time.monotonic")
     @patch("gobby.cli.daemon.httpx.get")

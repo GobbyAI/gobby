@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_types import StageManifestSpec, StageState, _coerce_artifact_refs
 
 VALID_STAGE_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved", "done"})
+_StageStateReader = HubDatabase | Transaction
 
 
 def row_value(row: Mapping[str, Any], column: str) -> Any:
@@ -68,8 +69,14 @@ class StageStateRows:
         self.db = db
         self.registry = registry
 
-    def list_for_task(self, task_id: str) -> list[StageState]:
-        rows = self.db.fetchall(
+    def list_for_task(
+        self,
+        task_id: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> list[StageState]:
+        active_reader = reader or self.db
+        rows = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
@@ -77,22 +84,35 @@ class StageStateRows:
              ORDER BY position, stage_name
             """,
             (task_id,),
-        )
+        ).fetchall()
         return [self.state_from_row(row) for row in rows]
 
-    def get(self, task_id: str, stage_name: str) -> StageState | None:
-        row = self.db.fetchone(
+    def get(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> StageState | None:
+        active_reader = reader or self.db
+        row = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
              WHERE task_id = ? AND stage_name = ?
             """,
             (task_id, stage_name),
-        )
+        ).fetchone()
         return self.state_from_row(row) if row is not None else None
 
-    def current_stage(self, task_id: str) -> StageState | None:
-        row = self.db.fetchone(
+    def current_stage(
+        self,
+        task_id: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> StageState | None:
+        active_reader = reader or self.db
+        row = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
@@ -101,7 +121,7 @@ class StageStateRows:
              LIMIT 1
             """,
             (task_id,),
-        )
+        ).fetchone()
         return self.state_from_row(row) if row is not None else None
 
     def list_tasks_at_stage(

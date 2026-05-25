@@ -198,7 +198,13 @@ def _schedule_signoff_relay(
         logger.warning(
             "Failed to schedule review signoff relay to build coordinator: %s",
             exc,
-            extra={"task_id": task_id, "stage_name": stage_name, "action": action},
+            extra={
+                "task_id": task_id,
+                "stage_name": stage_name,
+                "action": action,
+                "project_id": task.project_id,
+            },
+            exc_info=True,
         )
         return
     loop.create_task(

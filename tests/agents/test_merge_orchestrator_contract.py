@@ -76,11 +76,23 @@ FORBIDDEN_EXECUTE_TOOLS = {
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
+    _create_contract_schema(temp_db)
     return temp_db
 
 
 def _create_contract_schema(db: HubDatabase) -> None:
     """Create the narrow workflow schema this contract test exercises."""
+    if str(getattr(db, "dialect", "")).startswith("postgres"):
+        row = db.fetchone(
+            """
+            SELECT 1
+              FROM information_schema.tables
+             WHERE table_schema = current_schema()
+               AND table_name = 'projects'
+            """
+        )
+        if row is not None:
+            return
     statements = [
         """
         CREATE TABLE projects (

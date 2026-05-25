@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Keep this export list as the compatibility surface for legacy observer imports.
 __all__ = [
     "_extract_loaded_skill_name",
     "_extract_shell_command",

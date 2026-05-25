@@ -6,6 +6,7 @@ Provides multi-layer stuck detection for autonomous workflows:
 3. Tool call patterns - repeated identical tool calls
 """
 
+import ast
 import json
 import logging
 import threading
@@ -28,6 +29,57 @@ class TaskSelectionEvent:
     task_id: str
     selected_at: datetime
     context: dict[str, Any] | None = None
+
+
+def migrate_task_selection_history_contexts(db: "HubDatabase") -> int:
+    """Migrate legacy Python-literal selection contexts to JSON strings."""
+    migrated = 0
+    rows = db.fetchall(
+        """
+        SELECT id, context
+          FROM task_selection_history
+         WHERE context IS NOT NULL
+        """
+    )
+    for row in rows:
+        context = row["context"]
+        if not isinstance(context, str):
+            continue
+        try:
+            json.loads(context)
+            continue
+        except json.JSONDecodeError:
+            pass
+        try:
+            parsed = ast.literal_eval(context)
+            context_json = json.dumps(parsed)
+        except (SyntaxError, ValueError, TypeError):
+            continue
+        db.execute(
+            "UPDATE task_selection_history SET context = ? WHERE id = ?",
+            (context_json, row["id"]),
+        )
+        migrated += 1
+    return migrated
+
+
+def _decode_task_selection_context(raw_context: Any) -> dict[str, Any] | None:
+    if not raw_context:
+        return None
+    if isinstance(raw_context, dict):
+        return raw_context
+    if not isinstance(raw_context, str):
+        return None
+    try:
+        decoded = json.loads(raw_context)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Failed to parse context for task selection: %s",
+            raw_context[:100],
+            exc_info=True,
+        )
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 @dataclass
@@ -346,6 +398,7 @@ class StuckDetector:
         Returns:
             List of recent TaskSelectionEvents
         """
+        migrate_task_selection_history_contexts(self.db)
         rows = self.db.fetchall(
             """
             SELECT session_id, task_id, selected_at, context
@@ -359,17 +412,7 @@ class StuckDetector:
 
         events = []
         for row in rows:
-            context = None
-            if row["context"]:
-                try:
-                    context = json.loads(row["context"])
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Failed to parse context for task selection: %s",
-                        row["context"][:100],
-                        exc_info=True,
-                    )
-                    context = None
+            context = _decode_task_selection_context(row["context"])
             events.append(
                 TaskSelectionEvent(
                     session_id=row["session_id"],

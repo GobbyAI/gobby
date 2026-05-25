@@ -26,7 +26,7 @@ Before closing or changing task status, complete ALL gates below. They fire in o
 
 **Non-work close reasons** (skip commit gates 2-3): `duplicate`, `already_implemented`, `wont_fix`, `obsolete`, `out_of_repo`
 
-Fresh evidence and memory review still apply for non-work closes.
+Fresh evidence and memory review still apply for non-work closures.
 
 ---
 

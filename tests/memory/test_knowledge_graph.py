@@ -148,6 +148,7 @@ class TestAddToGraph:
         mock_falkor.ensure_memory_graph_schema.assert_awaited_once()
         assert service._graph_schema_ensured is True
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_blocks_writes_when_schema_connection_fails(
         self,
         service: KnowledgeGraphService,
@@ -180,6 +181,7 @@ class TestAddToGraph:
             TimeoutError("constraint readiness timed out"),
         ],
     )
+    @pytest.mark.asyncio
     async def test_add_to_graph_stops_writes_when_schema_readiness_fails(
         self,
         service: KnowledgeGraphService,
@@ -204,6 +206,7 @@ class TestAddToGraph:
         mock_falkor.set_node_vector.assert_not_awaited()
         mock_embed_fn.assert_not_awaited()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_extracts_entities(
         self,
         service: KnowledgeGraphService,
@@ -236,6 +239,7 @@ class TestAddToGraph:
         assert first_call.kwargs["model"] is None
         assert first_call.kwargs["caller"] == "memory.kg.extract_entities"
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_instructs_entity_extraction_as_data_contract(
         self,
         service: KnowledgeGraphService,
@@ -260,6 +264,7 @@ class TestAddToGraph:
         assert 'return {"entities":[]}' in system_prompt
         assert first_call.kwargs["caller"] == "memory.kg.extract_entities"
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_routes_entity_extraction_through_feature_json_call(
         self,
         mock_falkor: AsyncMock,
@@ -297,6 +302,7 @@ class TestAddToGraph:
         assert len(calls) == 2
         mock_llm.generate_json.assert_not_awaited()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_extracts_relationships(
         self,
         service: KnowledgeGraphService,
@@ -326,6 +332,7 @@ class TestAddToGraph:
         assert mock_prompt_loader.render.call_count >= 1
         assert mock_prompt_loader.render.call_args is not None
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_merges_nodes(
         self,
         service: KnowledgeGraphService,
@@ -353,6 +360,7 @@ class TestAddToGraph:
         first_call = mock_falkor.merge_node.call_args_list[0]
         assert first_call.kwargs["name"] == "Josh"
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_merges_relationships(
         self,
         service: KnowledgeGraphService,
@@ -385,6 +393,7 @@ class TestAddToGraph:
         assert call_kwargs["target_key"] == entity_key(None, "Python")
         assert call_kwargs["rel_type"] == "uses"
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_sets_embeddings(
         self,
         service: KnowledgeGraphService,
@@ -413,6 +422,7 @@ class TestAddToGraph:
         assert vector_call_kwargs["entity_key"] == entity_key(None, "Josh")
         assert "node_key" not in vector_call_kwargs
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_succeeds_without_embed_fn(
         self,
         mock_falkor: AsyncMock,
@@ -440,6 +450,7 @@ class TestAddToGraph:
         mock_falkor.merge_node.assert_called_once()
         mock_falkor.set_node_vector.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_deletes_outdated_relations(
         self,
         service: KnowledgeGraphService,
@@ -485,6 +496,7 @@ class TestAddToGraph:
             == "memory.kg.select_outdated_relations"
         )
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_no_entities_returns_early(
         self,
         service: KnowledgeGraphService,
@@ -511,6 +523,7 @@ class TestAddToGraph:
 class TestGetEntityGraph:
     """Tests for get_entity_graph read method."""
 
+    @pytest.mark.asyncio
     async def test_get_entity_graph_delegates_to_client(
         self,
         service: KnowledgeGraphService,
@@ -529,6 +542,7 @@ class TestGetEntityGraph:
 class TestGetEntityNeighbors:
     """Tests for get_entity_neighbors read method."""
 
+    @pytest.mark.asyncio
     async def test_get_entity_neighbors_delegates(
         self,
         service: KnowledgeGraphService,
@@ -547,6 +561,7 @@ class TestGetEntityNeighbors:
 class TestSearchGraph:
     """Tests for search_graph read method."""
 
+    @pytest.mark.asyncio
     async def test_search_graph_returns_matching_entities(
         self,
         service: KnowledgeGraphService,
@@ -573,6 +588,7 @@ class TestSearchGraph:
 class TestGracefulDegradation:
     """Tests for graceful behavior when FalkorDB is unavailable."""
 
+    @pytest.mark.asyncio
     async def test_get_entity_graph_returns_none_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
@@ -585,6 +601,7 @@ class TestGracefulDegradation:
 
         assert result is None
 
+    @pytest.mark.asyncio
     async def test_get_entity_neighbors_returns_none_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
@@ -597,6 +614,7 @@ class TestGracefulDegradation:
 
         assert result is None
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_handles_falkordb_down(
         self,
         service: KnowledgeGraphService,
@@ -618,6 +636,7 @@ class TestGracefulDegradation:
         assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
         assert mock_falkor.merge_node.await_count == 1
 
+    @pytest.mark.asyncio
     async def test_search_graph_returns_empty_when_falkordb_down(
         self,
         service: KnowledgeGraphService,
@@ -630,6 +649,7 @@ class TestGracefulDegradation:
 
         assert result == []
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_handles_llm_failure(
         self,
         service: KnowledgeGraphService,
@@ -646,6 +666,7 @@ class TestGracefulDegradation:
         assert mock_falkor.merge_node.call_count == 0
         assert not mock_falkor.merge_node.called
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_treats_llm_cancellation_as_retryable(
         self,
         service: KnowledgeGraphService,
@@ -667,6 +688,7 @@ class TestGracefulDegradation:
         assert not any(record.levelname == "WARNING" for record in caplog.records)
         mock_falkor.merge_node.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
         self,
         service: KnowledgeGraphService,
@@ -681,6 +703,7 @@ class TestGracefulDegradation:
 
         assert "memory mem-123" in caplog.text
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_treats_conversational_parse_failure_as_no_entities(
         self,
         service: KnowledgeGraphService,
@@ -705,6 +728,7 @@ class TestGracefulDegradation:
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
         mock_falkor.merge_node.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_treats_instruction_only_parse_failure_as_no_entities(
         self,
         service: KnowledgeGraphService,
@@ -730,6 +754,7 @@ class TestGracefulDegradation:
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
         mock_falkor.merge_node.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_still_warns_on_real_parse_failure(
         self,
         service: KnowledgeGraphService,
@@ -766,6 +791,7 @@ class TestGracefulDegradation:
             ),
         ],
     )
+    @pytest.mark.asyncio
     async def test_add_to_graph_treats_observed_conversational_parse_failures_as_no_entities(
         self,
         service: KnowledgeGraphService,
@@ -833,6 +859,7 @@ def _stub_llm_for_entities(mock_llm: AsyncMock, entities: list[dict[str, str]]) 
 class TestRelatesToCode:
     """Tests for RELATES_TO_CODE cross-graph linking (Step 9)."""
 
+    @pytest.mark.asyncio
     async def test_writes_edges_for_hits_above_threshold(
         self,
         service_with_vector_store: KnowledgeGraphService,
@@ -864,6 +891,7 @@ class TestRelatesToCode:
         assert links[0]["symbol_id"] == "sym-uuid-1"
         assert links[0]["score"] == 0.90
 
+    @pytest.mark.asyncio
     async def test_filters_hits_below_threshold(
         self,
         service_with_vector_store: KnowledgeGraphService,
@@ -884,6 +912,7 @@ class TestRelatesToCode:
         relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
+    @pytest.mark.asyncio
     async def test_skips_when_no_project_id(
         self,
         service_with_vector_store: KnowledgeGraphService,
@@ -899,6 +928,7 @@ class TestRelatesToCode:
         assert mock_vector_store.search.call_count == 0
         assert not mock_vector_store.search.called
 
+    @pytest.mark.asyncio
     async def test_skips_when_no_vector_store(
         self,
         service: KnowledgeGraphService,
@@ -913,6 +943,7 @@ class TestRelatesToCode:
         relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
+    @pytest.mark.asyncio
     async def test_graceful_noop_when_collection_missing(
         self,
         service_with_vector_store: KnowledgeGraphService,
@@ -934,6 +965,7 @@ class TestRelatesToCode:
         relates_calls = [c for c in mock_falkor.query.call_args_list if "RELATES_TO_CODE" in str(c)]
         assert len(relates_calls) == 0
 
+    @pytest.mark.asyncio
     async def test_uses_correct_collection_name(
         self,
         service_with_vector_store: KnowledgeGraphService,
@@ -961,6 +993,7 @@ class TestRelatesToCode:
 class TestMemoryNodeProjectIdScoping:
     """Tests for project_id scoping on :Memory nodes."""
 
+    @pytest.mark.asyncio
     async def test_link_entities_sets_project_id_on_memory_node(
         self,
         service: KnowledgeGraphService,
@@ -982,6 +1015,7 @@ class TestMemoryNodeProjectIdScoping:
         assert params["project_id"] == "proj-A"
         assert params["memory_id"] == "mem-1"
 
+    @pytest.mark.asyncio
     async def test_link_entities_with_none_project_id(
         self,
         service: KnowledgeGraphService,
@@ -999,6 +1033,7 @@ class TestMemoryNodeProjectIdScoping:
         # coalesce(NULL, m.project_id) preserves existing value
         assert params["project_id"] is None
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_passes_project_id_to_link(
         self,
         service: KnowledgeGraphService,
@@ -1023,6 +1058,7 @@ class TestMemoryNodeProjectIdScoping:
         assert len(memory_merges) == 1
         assert memory_merges[0].args[1]["project_id"] == "proj-B"
 
+    @pytest.mark.asyncio
     async def test_search_entities_by_vector_filters_by_project_id(
         self,
         service: KnowledgeGraphService,
@@ -1056,6 +1092,7 @@ class TestMemoryNodeProjectIdScoping:
         assert "m.project_id = $project_id" in cypher
         assert params["project_id"] == "proj-A"
 
+    @pytest.mark.asyncio
     async def test_find_related_memory_ids_filters_by_project_id(
         self,
         service: KnowledgeGraphService,
@@ -1079,6 +1116,7 @@ class TestMemoryNodeProjectIdScoping:
 class TestRemoveMemoryFromGraph:
     """Tests for remove_memory_from_graph."""
 
+    @pytest.mark.asyncio
     async def test_remove_memory_from_graph_deletes_node(
         self,
         service: KnowledgeGraphService,
@@ -1097,6 +1135,7 @@ class TestRemoveMemoryFromGraph:
         assert "memory_id: $memory_id" in cypher
         assert params["memory_id"] == "mem-1"
 
+    @pytest.mark.asyncio
     async def test_remove_memory_from_graph_nonexistent_is_noop(
         self,
         service: KnowledgeGraphService,
@@ -1110,6 +1149,7 @@ class TestRemoveMemoryFromGraph:
         ]
         assert len(delete_calls) == 1
 
+    @pytest.mark.asyncio
     async def test_remove_memory_from_graph_FalkorDB_unreachable(
         self,
         service: KnowledgeGraphService,

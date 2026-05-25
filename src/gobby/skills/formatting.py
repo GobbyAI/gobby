@@ -17,18 +17,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+SKILL_FETCH_PROXY_PATH_TEMPLATE = (
+    'list_mcp_servers -> list_tools("gobby-skills") -> '
+    'get_tool_schema("gobby-skills", "get_skill") -> '
+    'call_tool("gobby-skills", "get_skill", {{"name": {name_json}}})'
+)
+
+
+def skill_fetch_proxy_path(name: str) -> str:
+    """Return the progressive-discovery proxy path for fetching a skill."""
+    return SKILL_FETCH_PROXY_PATH_TEMPLATE.format(name_json=json.dumps(name))
+
 
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
     name_json = json.dumps(name)
     return (
-        f"Call get_skill(name={name_json}) on gobby-skills, then continue. "
-        "Use the Gobby MCP proxy path exactly: list_mcp_servers -> "
-        'list_tools("gobby-skills") -> '
-        'get_tool_schema("gobby-skills", "get_skill") -> '
-        f'call_tool("gobby-skills", "get_skill", {{"name": {name_json}}}). '
-        "Use only mcp__gobby__* proxy tools while loading the skill; do not use "
-        "native Skill, GitHub/app connector, or Computer Use tools."
+        f"Call get_skill(name={name_json}) on gobby-skills through "
+        f"mcp__gobby__ progressive discovery: {skill_fetch_proxy_path(name)}. "
+        "Then continue."
     )
 
 

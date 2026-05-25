@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, cast
+from typing import Any
 
 import msgspec
 
@@ -127,11 +127,11 @@ def json_equal(left: Any, right: Any) -> bool:
     return left_value == right_value
 
 
-def _decode_json_if_text(value: JSONValue) -> JSONValue:
+def _decode_json_if_text(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     try:
-        return cast(JSONValue, json.loads(value))
+        return json.loads(value)
     except json.JSONDecodeError:
         return value
 

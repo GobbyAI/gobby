@@ -10,6 +10,8 @@ import pytest
 from gobby.storage.hub._ambient import enter_transaction
 from gobby.storage.hub.protocol import LockTarget
 
+pytestmark = pytest.mark.unit
+
 
 @dataclass(frozen=True)
 class _TestLock:

@@ -178,7 +178,7 @@ class TestRebroadcast:
 class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_wakes_existing_waiter_without_database(self) -> None:
-        """Cleanup should deny and release an already-registered waiter."""
+        """Cleanup denies an in-memory waiter even when DB cleanup is unavailable."""
         manager = PendingInteractionManager(MagicMock())
         manager._waiters["interaction-1"] = asyncio.get_running_loop().create_future()
 

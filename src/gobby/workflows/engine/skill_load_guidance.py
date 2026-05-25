@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import re
 
+from gobby.skills.formatting import skill_fetch_proxy_path
 from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
@@ -17,19 +17,17 @@ def skill_load_block_guidance(step: WorkflowStep) -> str:
 
     targets = _skill_load_targets(step)
     if targets:
-        calls = ", then ".join(
-            f'call_tool("gobby-skills", "get_skill", {{"name": {json.dumps(target)}}})'
-            for target in targets
-        )
+        calls = ", then ".join(skill_fetch_proxy_path(target) for target in targets)
     else:
-        calls = 'call_tool("gobby-skills", "get_skill", {"name": "<skill-name>"})'
+        calls = (
+            'list_mcp_servers -> list_tools("gobby-skills") -> '
+            'get_tool_schema("gobby-skills", "get_skill") -> '
+            'call_tool("gobby-skills", "get_skill", {"name": "<skill-name>"})'
+        )
 
     return (
-        "\nDuring this skill-loading step, use only mcp__gobby__* proxy tools. "
-        "The next allowed MCP tool is gobby-skills:get_skill via: "
-        'list_mcp_servers -> list_tools("gobby-skills") -> '
-        'get_tool_schema("gobby-skills", "get_skill") -> '
-        f"{calls}. Do not use native Skill, GitHub/app connector, or Computer Use tools."
+        "\nDuring this skill-loading step, call gobby-skills:get_skill through "
+        f"mcp__gobby__ progressive discovery: {calls}."
     )
 
 

@@ -32,57 +32,91 @@ _VALIDATION_GATE_WORDS = (
     r")"
 )
 _VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
+_ZERO_FAILURE_TOKEN_RE = re.compile(
+    r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_NONZERO_FAILURE_COUNT_RE = re.compile(
+    # Example: "1 failed" or "2 failures".
+    r"\b(?:[1-9]\d*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"fail(?:ed|ures?)\b|\bfail(?:ed|ures?)\s*[=:]\s*[1-9]\d*\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+
+_ACCEPTANCE_CRITERIA_THEN_FAILURE_RE = re.compile(
+    # Example: "Acceptance criteria failed for the delivered implementation."
+    r"\b(?:acceptance\s+)?criteri(?:on|a)\b.{0,80}"
+    r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_THEN_ACCEPTANCE_CRITERIA_RE = re.compile(
+    # Example: "Failed acceptance criteria remain unresolved."
+    r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b.{0,80}"
+    r"\b(?:acceptance\s+)?criteri(?:on|a)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_GATE_THEN_FAILURE_RE = re.compile(
+    # Example: "Required validation gate did not pass."
+    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\b{_VALIDATION_FAILURE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_THEN_VALIDATION_GATE_RE = re.compile(
+    # Example: "Tests are failing in the required validation check."
+    rf"\b{_VALIDATION_FAILURE_WORDS}\b.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_GATE_THEN_ERRORS_REMAIN_RE = re.compile(
+    # Example: "Validation gate errors remain unresolved."
+    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\berrors?\b.{{0,40}}"
+    r"\b(?:remain|remaining|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_ERRORS_REMAIN_RE = re.compile(
+    # Example: "Validation errors remain in the package."
+    r"\b(?:validation|verification)\s+errors?\b.{0,40}"
+    r"\b(?:remain|remaining|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_ERRORS_REMAIN_THEN_VALIDATION_GATE_RE = re.compile(
+    # Example: "Errors remain in the validation step."
+    r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
+    rf"\b{_VALIDATION_GATE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_ERRORS_PREVENTED_CLEAN_PASS_RE = re.compile(
+    # Example: "Errors prevented a clean pass."
+    r"\berrors?\b.{0,80}\bprevented\b.{0,80}\b(?:clean|pass(?:ing)?|valid)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_REMAINING_GAP_IS_VALIDATION_RE = re.compile(
+    # Example: "The only gap is the coverage gate."
+    r"\b(?:only|remaining)\s+gap\s+(?:is|remains)\b.{0,120}"
+    rf"\b(?:{_VALIDATION_GATE_WORDS}|criteri(?:on|a))\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_MYPY_THEN_INCOMPLETE_RE = re.compile(
+    # Example: "mypy is incomplete at the service boundary."
+    r"\bmypy\b.{0,80}\b(?:incomplete|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_INCOMPLETE_THEN_MYPY_RE = re.compile(
+    # Example: "Incomplete mypy work remains."
+    r"\b(?:incomplete|unresolved)\b.{0,80}\bmypy\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"\b(?:acceptance\s+)?criteri(?:on|a)\b.{0,80}"
-        r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b.{0,80}"
-        r"\b(?:acceptance\s+)?criteri(?:on|a)\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\b{_VALIDATION_FAILURE_WORDS}\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        rf"\b{_VALIDATION_FAILURE_WORDS}\b.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\berrors?\b.{{0,40}}"
-        r"\b(?:remain|remaining|unresolved)\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\b(?:validation|verification)\s+errors?\b.{0,40}"
-        r"\b(?:remain|remaining|unresolved)\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
-        rf"\b{_VALIDATION_GATE_WORDS}\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\berrors?\b.{0,80}\bprevented\b.{0,80}\b(?:clean|pass(?:ing)?|valid)\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\b(?:only|remaining)\s+gap\s+(?:is|remains)\b.{0,120}"
-        rf"\b(?:{_VALIDATION_GATE_WORDS}|criteri(?:on|a))\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\bmypy\b.{0,80}\b(?:incomplete|unresolved)\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
-    re.compile(
-        r"\b(?:incomplete|unresolved)\b.{0,80}\bmypy\b",
-        _FAILURE_FEEDBACK_FLAGS,
-    ),
+    _NONZERO_FAILURE_COUNT_RE,
+    _ACCEPTANCE_CRITERIA_THEN_FAILURE_RE,
+    _FAILURE_THEN_ACCEPTANCE_CRITERIA_RE,
+    _VALIDATION_GATE_THEN_FAILURE_RE,
+    _FAILURE_THEN_VALIDATION_GATE_RE,
+    _VALIDATION_GATE_THEN_ERRORS_REMAIN_RE,
+    _VALIDATION_ERRORS_REMAIN_RE,
+    _ERRORS_REMAIN_THEN_VALIDATION_GATE_RE,
+    _ERRORS_PREVENTED_CLEAN_PASS_RE,
+    _REMAINING_GAP_IS_VALIDATION_RE,
+    _MYPY_THEN_INCOMPLETE_RE,
+    _INCOMPLETE_THEN_MYPY_RE,
 )
 
 
@@ -106,7 +140,7 @@ def matched_required_validation_failure_pattern(feedback: str | None) -> re.Patt
     if not feedback:
         return None
 
-    normalized_feedback = " ".join(feedback.split())
+    normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
     for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS:
         if pattern.search(normalized_feedback) is not None:
             return pattern

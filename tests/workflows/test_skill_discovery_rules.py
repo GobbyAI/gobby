@@ -181,9 +181,7 @@ class TestDiscoverSkillHubsOnTurnStart:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.context is not None
-        assert 'Call get_skill(name="loading-skills") on gobby-skills, then continue.' in (
-            response.context
-        )
+        assert skill_fetch_directive("loading-skills") in response.context
         assert "<available-skill-hubs>" in response.context
         assert "- clawdhub (clawdhub, auth: not required)" in response.context
         assert variables["skill_discovery_instructions_shown"] is True

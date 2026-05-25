@@ -406,7 +406,7 @@ class TestLLMServiceCallFeature:
 
         service = LLMService(llm_config_with_local)
         local_provider = service.get_provider("local")
-        local_provider.generate_json = AsyncMock(side_effect=ConnectionError("local down"))
+        local_provider.generate_json = AsyncMock(side_effect=RuntimeError("local down"))
 
         config = DigestConfig(provider="local", model="test-model")
         result = await service.call_json_feature(
@@ -427,6 +427,29 @@ class TestLLMServiceCallFeature:
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")
     @patch("openai.AsyncOpenAI")
+    async def test_call_json_feature_unexpected_local_failure_does_not_fallback(
+        self,
+        mock_openai: MagicMock,
+        mock_claude_cls: MagicMock,
+        llm_config_with_local: DaemonConfig,
+    ) -> None:
+        """Unexpected local JSON failures propagate without Claude fallback."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_json = AsyncMock(return_value={"entities": []})
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_json = AsyncMock(side_effect=ConnectionError("local down"))
+
+        config = DigestConfig(provider="local", model="test-model")
+        with pytest.raises(ConnectionError, match="local down"):
+            await service.call_json_feature(config, "rendered prompt")
+        mock_claude_instance.generate_json.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    @patch("openai.AsyncOpenAI")
     async def test_call_feature_fallback_on_local_failure(
         self,
         mock_openai: MagicMock,
@@ -440,7 +463,7 @@ class TestLLMServiceCallFeature:
 
         service = LLMService(llm_config_with_local)
         local_provider = service.get_provider("local")
-        local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local server down"))
+        local_provider.generate_text = AsyncMock(side_effect=RuntimeError("local server down"))
 
         config = DigestConfig(provider="local", model="test-model")
         result = await service.call_feature(
@@ -461,6 +484,29 @@ class TestLLMServiceCallFeature:
             bound_model = call_args.args[2]
         assert bound_model == "haiku"
         assert call_args.kwargs["caller"] == "memory.title_synthesis"
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    @patch("openai.AsyncOpenAI")
+    async def test_call_feature_unexpected_local_failure_does_not_fallback(
+        self,
+        mock_openai: MagicMock,
+        mock_claude_cls: MagicMock,
+        llm_config_with_local: DaemonConfig,
+    ) -> None:
+        """Unexpected local text failures propagate without Claude fallback."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_text = AsyncMock(return_value="Fallback Title")
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local down"))
+
+        config = DigestConfig(provider="local", model="test-model")
+        with pytest.raises(ConnectionError, match="local down"):
+            await service.call_feature(config, "prompt text")
+        mock_claude_instance.generate_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")

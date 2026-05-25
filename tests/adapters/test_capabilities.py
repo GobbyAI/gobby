@@ -115,7 +115,7 @@ def test_claude_reason_compaction_records_degradation(
     calls = _capture_degradations(monkeypatch)
     reason = (
         "Rule enforced by Gobby: [require-code-index-skill]\n"
-        'Call get_skill(name="code-index") on gobby-skills, then continue.'
+        'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ progressive discovery'
     )
 
     result = ClaudeCodeAdapter().translate_from_hook_response(

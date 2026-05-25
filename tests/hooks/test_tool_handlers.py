@@ -326,8 +326,9 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.' in (
-            response.context or ""
+        assert (
+            'Call get_skill(name="build-coordinator") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (response.context or "")
         )
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
@@ -344,8 +345,9 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="build-coordinator") on gobby-skills, then continue.' in (
-            response.context or ""
+        assert (
+            'Call get_skill(name="build-coordinator") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (response.context or "")
         )
         skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
 
@@ -500,8 +502,9 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="playwright") on gobby-skills, then continue.' in (
-            response.context or ""
+        assert (
+            'Call get_skill(name="playwright") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (response.context or "")
         )
         assert "Browser automation" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
@@ -588,6 +591,7 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="playwright") on gobby-skills, then continue.' in (
-            response.context or ""
+        assert (
+            'Call get_skill(name="playwright") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (response.context or "")
         )

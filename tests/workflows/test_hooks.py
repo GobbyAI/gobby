@@ -971,8 +971,9 @@ class TestVariablePersistence:
         response = await handler._evaluate_rules(after_event)
 
         assert before_response.decision == "block"
-        assert 'Call get_skill(name="task-transitions") on gobby-skills, then continue.' in (
-            before_response.reason or ""
+        assert (
+            'Call get_skill(name="task-transitions") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (before_response.reason or "")
         )
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {

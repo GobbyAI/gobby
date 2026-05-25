@@ -136,7 +136,7 @@ class StageStateManifestOps:
         """
         self.rows.validate_specs(specs)
         holder = by_session_id or "system"
-        existing = self.rows.list_for_task(task_id)
+        existing = self.rows.list_for_task(task_id, reader=conn)
         if existing:
             raise ManifestAlreadyInitializedError(task_id)
 
@@ -157,7 +157,7 @@ class StageStateManifestOps:
                     spec.stage_name,
                     spec.position,
                     registry.review_policy,
-                    resolve_stage_reviewer(self.db, task_id, registry),
+                    resolve_stage_reviewer(conn, task_id, registry),
                     spec.max_work_attempts,
                     spec.max_review_rounds,
                     now,
@@ -170,7 +170,7 @@ class StageStateManifestOps:
             "initialize_manifest",
             by_actor=holder,
         )
-        return self.rows.list_for_task(task_id)
+        return self.rows.list_for_task(task_id, reader=conn)
 
     def _update_stage_caps(
         self,
@@ -281,7 +281,7 @@ class StageStateManifestOps:
                         spec.stage_name,
                         spec.position,
                         registry.review_policy,
-                        resolve_stage_reviewer(self.db, task_id, registry),
+                        resolve_stage_reviewer(conn, task_id, registry),
                         spec.max_work_attempts,
                         spec.max_review_rounds,
                         now,
@@ -349,7 +349,7 @@ class StageStateManifestOps:
                         spec.stage_name,
                         spec.position,
                         registry.review_policy,
-                        resolve_stage_reviewer(self.db, task_id, registry),
+                        resolve_stage_reviewer(conn, task_id, registry),
                         spec.max_work_attempts,
                         spec.max_review_rounds,
                         now,

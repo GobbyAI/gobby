@@ -386,6 +386,7 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """Generated integration worktree metadata is adopted when the DB row is missing."""
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -761,6 +762,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """Non-generated worktree-local project metadata is preserved during merge."""
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"

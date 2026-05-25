@@ -115,8 +115,9 @@ async def test_synthesized_before_tool_blocks_for_task_creation_skill(
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
     assert response.decision == "block"
-    assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
-        response.reason or ""
+    assert (
+        'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
+        in (response.reason or "")
     )
     assert "loaded_skills" not in variables
 
@@ -253,8 +254,9 @@ async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
     assert response.decision == "block"
-    assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
-        response.reason or ""
+    assert (
+        'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
+        in (response.reason or "")
     )
 
 

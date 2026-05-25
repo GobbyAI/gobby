@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .models import Entity, Relationship, _GraphEntity
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryKnowledgeGraphConfig
     from gobby.llm.base import LLMProvider
-    from gobby.llm.service import LLMService
     from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
@@ -46,11 +45,29 @@ _INSTRUCTION_ONLY_RESPONSE_MARKERS = (
 def _is_non_actionable_json_response_error(error: ValueError) -> bool:
     """Return True when the model replied with chatter instead of extraction JSON."""
     message = str(error).lower()
-    if "failed to parse" not in message or "response as json" not in message:
-        return False
-    return any(marker in message for marker in _CONVERSATIONAL_JSON_RESPONSE_MARKERS) or any(
+    is_parse_error = "failed to parse" in message and "response as json" in message
+    has_conversational_marker = any(
+        marker in message for marker in _CONVERSATIONAL_JSON_RESPONSE_MARKERS
+    )
+    has_instruction_only_marker = any(
         marker in message for marker in _INSTRUCTION_ONLY_RESPONSE_MARKERS
     )
+    return is_parse_error and (has_conversational_marker or has_instruction_only_marker)
+
+
+class JSONFeatureProvider(Protocol):
+    """Protocol for feature-routed JSON generation."""
+
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate a JSON object for a configured feature."""
+        ...
 
 
 class KnowledgeGraphExtractor:
@@ -61,7 +78,7 @@ class KnowledgeGraphExtractor:
         llm_provider: LLMProvider,
         prompt_loader: PromptLoader,
         model: str | None = None,
-        llm_service: LLMService | None = None,
+        llm_service: JSONFeatureProvider | None = None,
         feature_config: MemoryKnowledgeGraphConfig | None = None,
     ) -> None:
         self._llm = llm_provider
@@ -77,9 +94,8 @@ class KnowledgeGraphExtractor:
         system_prompt: str | None = None,
         caller: str,
     ) -> dict[str, Any]:
-        call_json_feature = getattr(self._llm_service, "call_json_feature", None)
-        if self._feature_config is not None and callable(call_json_feature):
-            response = await call_json_feature(
+        if self._feature_config is not None and self._llm_service is not None:
+            response = await self._llm_service.call_json_feature(
                 self._feature_config,
                 prompt,
                 system_prompt=system_prompt,

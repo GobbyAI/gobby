@@ -237,9 +237,9 @@ class LLMService:
     ) -> str:
         """Call generate_text for a feature config with tier-based fallback.
 
-        When the primary provider is ``"local"`` and the call fails, this
-        method automatically retries with the Claude provider using the
-        tier-appropriate model (haiku / sonnet / opus).
+        When the primary provider is ``"local"`` and the call fails with a
+        local feature error, this method automatically retries with the Claude
+        provider using the tier-appropriate model (haiku / sonnet / opus).
 
         Args:
             feature_config: A FeatureDefaultConfig (or subclass) with
@@ -260,7 +260,7 @@ class LLMService:
                 max_tokens,
                 caller=caller,
             )
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             if provider.provider_name != "local":
                 raise
 
@@ -300,7 +300,8 @@ class LLMService:
         Returns:
             Parsed JSON object as a dict.
 
-        When the selected provider is "local" and it raises, falls back to claude using
+        When the selected provider is "local" and it raises a local feature error,
+        falls back to claude using
         TIER_FALLBACK_MODEL[getattr(feature_config, "tier", ModelTier.LOW)] via
         get_provider("claude").
         """
@@ -312,7 +313,7 @@ class LLMService:
                 model,
                 caller=caller,
             )
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             if provider.provider_name != "local":
                 raise
 

@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.merge_resolutions import MergeResolutionManager
 
 pytestmark = pytest.mark.unit
 
@@ -494,9 +495,9 @@ class TestMergeResolutionManagerGet:
 class TestMergeResolutionManagerMergeLookup:
     """Tests for exact merge lookup and idempotent creation helpers."""
 
-    def _manager_with_worktree(self, hub_db: HubDatabase) -> Any:
-        from gobby.storage.merge_resolutions import MergeResolutionManager
-
+    def _manager_with_worktree(
+        self, hub_db: HubDatabase
+    ) -> tuple[MergeResolutionManager, HubDatabase]:
         db = hub_db
         db.execute(
             "INSERT INTO projects (id, name) VALUES (?, ?)",
