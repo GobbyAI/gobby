@@ -18,7 +18,7 @@ _CODING_CLI_LABELS = (
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
-    ("gemini", "Gemini CLI (deprecated)"),
+    ("gemini", "Gemini CLI"),
     ("grok", "Grok CLI"),
     ("qwen", "Qwen CLI"),
 )
@@ -122,6 +122,8 @@ def _provider_model_count(provider_models: Any, provider: str) -> int | None:
 
 def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name: str) -> str:
     parts = []
+    if name == "gemini":
+        parts.append("deprecated")
     if hooks.get(name):
         parts.append("hooks installed")
     if name == "agy":

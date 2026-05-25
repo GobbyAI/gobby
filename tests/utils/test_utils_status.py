@@ -200,6 +200,7 @@ class TestFormatStatusMessage:
                         "model_count": 4,
                         "error": "probe failed",
                     },
+                    "gemini": {"source": "live", "model_count": 9, "error": None},
                 },
             },
             deps_info={
@@ -207,9 +208,9 @@ class TestFormatStatusMessage:
                     "claude": "installed",
                     "codex": "installed",
                     "droid": None,
-                    "gemini": None,
+                    "gemini": "0.43.0",
                     "qwen": None,
-                    "hooks": {"claude": True},
+                    "hooks": {"claude": True, "gemini": True},
                 },
             },
         )
@@ -218,6 +219,9 @@ class TestFormatStatusMessage:
         assert "hooks installed, 3 models available" in _status_line(result, "Claude Code")
         assert "Codex CLI:" in result
         assert "4 models available" in _status_line(result, "Codex CLI")
+        gemini_line = _status_line(result, "Gemini CLI")
+        assert "0.43.0 (deprecated, hooks installed, 9 models available)" in gemini_line
+        assert "Gemini CLI (deprecated):" not in result
         assert "Models claude:" not in result
         assert "(live)" not in result
         assert "using cache (probe failed)" in result
