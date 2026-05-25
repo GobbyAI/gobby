@@ -317,42 +317,23 @@ fn load_go_module_path(root_path: &Path) -> Option<String> {
 }
 
 fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {
-    let contents = std::fs::read_to_string(root_path.join("Cargo.toml")).unwrap_or_default();
+    let Ok(contents) = std::fs::read_to_string(root_path.join("Cargo.toml")) else {
+        return HashSet::new();
+    };
+    let Ok(cargo_toml) = toml::from_str::<toml::Table>(&contents) else {
+        return HashSet::new();
+    };
     let mut crates = HashSet::new();
-    let mut in_dependency_section = false;
 
-    for line in contents.lines() {
-        let line = line.split('#').next().unwrap_or(line).trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let section = line.trim_matches(['[', ']']);
-            in_dependency_section = matches!(
-                section,
-                "dependencies" | "dev-dependencies" | "build-dependencies"
-            ) || section.ends_with(".dependencies")
-                || section.ends_with(".dev-dependencies")
-                || section.ends_with(".build-dependencies");
-            continue;
-        }
-        if !in_dependency_section {
-            continue;
-        }
-        let mut parts = line.splitn(2, '=');
-        let Some(name) = parts.next() else {
-            continue;
-        };
-        if parts.next().is_none() {
-            continue;
-        }
-        let name = name
-            .trim()
-            .trim_matches(['"', '\''])
-            .trim()
-            .replace('-', "_");
-        if !name.is_empty() {
-            crates.insert(name);
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        collect_rust_dependency_keys(cargo_toml.get(section), &mut crates);
+    }
+
+    if let Some(targets) = cargo_toml.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values() {
+            for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                collect_rust_dependency_keys(target.get(section), &mut crates);
+            }
         }
     }
 
@@ -361,29 +342,29 @@ fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {
 
 fn load_rust_self_crate_name(root_path: &Path) -> Option<String> {
     let contents = std::fs::read_to_string(root_path.join("Cargo.toml")).ok()?;
-    let mut in_package_section = false;
+    let cargo_toml = toml::from_str::<toml::Table>(&contents).ok()?;
+    cargo_toml
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .map(normalize_rust_crate_name)
+        .filter(|name| !name.is_empty())
+}
 
-    for line in contents.lines() {
-        let line = line.split('#').next().unwrap_or(line).trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_package_section = line == "[package]";
-            continue;
-        }
-        if !in_package_section {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if name.trim() == "name" {
-            return Some(value.trim().trim_matches('"').replace('-', "_"));
+fn collect_rust_dependency_keys(value: Option<&toml::Value>, crates: &mut HashSet<String>) {
+    let Some(table) = value.and_then(toml::Value::as_table) else {
+        return;
+    };
+    for name in table.keys() {
+        let name = normalize_rust_crate_name(name);
+        if !name.is_empty() {
+            crates.insert(name);
         }
     }
+}
 
-    None
+fn normalize_rust_crate_name(name: &str) -> String {
+    name.trim().replace('-', "_")
 }
 
 fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashSet<String> {
@@ -1733,6 +1714,96 @@ serde = { version = "1.0" }
 
         assert!(crates.contains("serde"));
         assert!(crates.contains("tokio_util"));
+    }
+
+    #[test]
+    fn loads_rust_dependency_names_from_real_toml_tables() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+serde = "1" # keep comment parsing delegated to TOML
+
+[dev-dependencies]
+pretty-assertions = "1"
+
+[build-dependencies]
+bindgen = "0.69"
+
+[target.'cfg(unix)'.dependencies]
+nix = "0.27"
+
+[target.x86_64-pc-windows-msvc.dev-dependencies]
+windows-sys = "0.52"
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+cc = "1"
+"#,
+        )
+        .expect("cargo toml");
+
+        let crates = load_rust_external_crates(tempdir.path());
+
+        for name in [
+            "serde",
+            "pretty_assertions",
+            "bindgen",
+            "nix",
+            "windows_sys",
+            "cc",
+        ] {
+            assert!(crates.contains(name), "missing {name}");
+        }
+    }
+
+    #[test]
+    fn ignores_rust_non_dependency_toml_tables() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "app"
+
+[workspace.dependencies]
+workspace-only = "1"
+
+[package.metadata.dependencies]
+metadata-only = "1"
+
+[features]
+serde = []
+"#,
+        )
+        .expect("cargo toml");
+
+        let crates = load_rust_external_crates(tempdir.path());
+
+        assert!(!crates.contains("workspace_only"));
+        assert!(!crates.contains("metadata_only"));
+        assert!(!crates.contains("serde"));
+    }
+
+    #[test]
+    fn normalizes_rust_package_name_from_cargo_toml() {
+        let tempdir = TempDir::new().expect("tempdir");
+        fs::write(
+            tempdir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "my-crate"
+"#,
+        )
+        .expect("cargo toml");
+
+        assert_eq!(
+            load_rust_self_crate_name(tempdir.path()).as_deref(),
+            Some("my_crate")
+        );
     }
 
     #[test]

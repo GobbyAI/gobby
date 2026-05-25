@@ -35,40 +35,54 @@ pub(crate) fn parse_file_with_semantic(
     exclude_patterns: &[String],
     import_context: &ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
-) -> Option<ParseResult> {
+) -> anyhow::Result<Option<ParseResult>> {
     // Security checks
     if !security::validate_path(file_path, root_path) {
-        return None;
+        return Ok(None);
     }
     if !security::is_symlink_safe(file_path, root_path) {
-        return None;
+        return Ok(None);
     }
     if security::should_exclude(file_path, exclude_patterns) {
-        return None;
+        return Ok(None);
     }
     if security::has_secret_extension(file_path) {
-        return None;
+        return Ok(None);
     }
 
-    let meta = file_path.metadata().ok()?;
+    let Ok(meta) = file_path.metadata() else {
+        return Ok(None);
+    };
     if meta.len() == 0 || meta.len() > MAX_FILE_SIZE {
-        return None;
+        return Ok(None);
     }
 
     if security::is_binary(file_path) {
-        return None;
+        return Ok(None);
     }
 
     let file_str = file_path.to_string_lossy();
-    let language = languages::detect_language(&file_str)?;
-    let spec = languages::get_spec(language)?;
-    let ts_lang = languages::get_ts_language(language)?;
+    let Some(language) = languages::detect_language(&file_str) else {
+        return Ok(None);
+    };
+    let Some(spec) = languages::get_spec(language) else {
+        return Ok(None);
+    };
+    let Some(ts_lang) = languages::get_ts_language(language) else {
+        return Ok(None);
+    };
 
-    let source = std::fs::read(file_path).ok()?;
+    let Ok(source) = std::fs::read(file_path) else {
+        return Ok(None);
+    };
 
     let mut parser = Parser::new();
-    parser.set_language(&ts_lang).ok()?;
-    let tree = parser.parse(&source, None)?;
+    if parser.set_language(&ts_lang).is_err() {
+        return Ok(None);
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return Ok(None);
+    };
 
     let rel_path = file_path
         .canonicalize()
@@ -109,14 +123,14 @@ pub(crate) fn parse_file_with_semantic(
             root_path,
         },
         semantic_resolver,
-    );
+    )?;
 
-    Some(ParseResult {
+    Ok(Some(ParseResult {
         symbols,
         imports: extracted_imports.imports,
         calls,
         source,
-    })
+    }))
 }
 
 fn extract_symbols(
@@ -385,7 +399,7 @@ fn extract_calls(
     spec: &languages::LanguageSpec,
     ctx: CallExtractionContext<'_>,
     mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
-) -> Vec<CallRelation> {
+) -> anyhow::Result<Vec<CallRelation>> {
     let language = ctx.language;
     let rel_path = ctx.rel_path;
     let symbols = ctx.symbols;
@@ -402,12 +416,12 @@ fn extract_calls(
         );
     }
     if spec.call_query.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let query = match Query::new(ctx.ts_lang, spec.call_query) {
         Ok(q) => q,
-        Err(_) => return Vec::new(),
+        Err(_) => return Ok(Vec::new()),
     };
 
     let mut cursor = QueryCursor::new();
@@ -478,7 +492,7 @@ fn extract_calls(
             syntax == CallSyntaxKind::Bare,
         );
         let semantic_target = if local_target.is_none() && external_target.is_none() {
-            semantic_resolver.as_deref_mut().and_then(|resolver| {
+            if let Some(resolver) = semantic_resolver.as_deref_mut() {
                 resolver.resolve(&SemanticCallRequest {
                     language,
                     file_path: ctx.file_path,
@@ -486,9 +500,11 @@ fn extract_calls(
                     source,
                     callee_name: &callee_name,
                     line: name_n.start_position().row + 1,
-                    column: name_n.start_position().column,
-                })
-            })
+                    column: utf16_column_at_byte(source, name_n.start_byte()),
+                })?
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -520,7 +536,7 @@ fn extract_calls(
         calls.push(call);
     }
 
-    calls
+    Ok(calls)
 }
 
 fn extract_textual_dart_calls(
@@ -531,7 +547,7 @@ fn extract_textual_dart_calls(
     file_path: &Path,
     root_path: &Path,
     mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
-) -> Vec<CallRelation> {
+) -> anyhow::Result<Vec<CallRelation>> {
     let text = String::from_utf8_lossy(source);
     let mut calls = Vec::new();
     let mut line_start_byte = 0usize;
@@ -581,7 +597,7 @@ fn extract_textual_dart_calls(
                 syntax == CallSyntaxKind::Bare,
             );
             let semantic_target = if local_target.is_none() && external_target.is_none() {
-                semantic_resolver.as_deref_mut().and_then(|resolver| {
+                if let Some(resolver) = semantic_resolver.as_deref_mut() {
                     resolver.resolve(&SemanticCallRequest {
                         language: "dart",
                         file_path,
@@ -589,9 +605,11 @@ fn extract_textual_dart_calls(
                         source,
                         callee_name: &candidate.name,
                         line: row + 1,
-                        column: candidate.call_byte.saturating_sub(line_start_byte),
-                    })
-                })
+                        column: utf16_column_at_byte(source, candidate.call_byte),
+                    })?
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -626,7 +644,7 @@ fn extract_textual_dart_calls(
         line_start_byte += line.len() + terminator_len;
     }
 
-    calls
+    Ok(calls)
 }
 
 fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> usize {
@@ -641,6 +659,18 @@ fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> u
     } else {
         0
     }
+}
+
+fn utf16_column_at_byte(source: &[u8], byte_offset: usize) -> usize {
+    let byte_offset = byte_offset.min(source.len());
+    let line_start = source[..byte_offset]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    String::from_utf8_lossy(&source[line_start..byte_offset])
+        .encode_utf16()
+        .count()
 }
 
 #[derive(Debug)]
@@ -989,7 +1019,9 @@ mod tests {
         fs::write(&path, source).expect("write test source");
         let candidates = discover_supported_files(root);
         let context = build_import_resolution_context(root, &candidates);
-        parse_file_with_semantic(&path, "proj", root, &[], &context, None).expect("parse file")
+        parse_file_with_semantic(&path, "proj", root, &[], &context, None)
+            .expect("parse result")
+            .expect("parse file")
     }
 
     fn parse_python(source: &str) -> ParseResult {
@@ -1085,6 +1117,7 @@ mod tests {
         expected_language: &'static str,
         expected_callee: &'static str,
         requests: Vec<CapturedSemanticRequest>,
+        error: Option<&'static str>,
     }
 
     struct CapturedSemanticRequest {
@@ -1092,25 +1125,32 @@ mod tests {
         file_path: PathBuf,
         root_path: PathBuf,
         callee_name: String,
+        line: usize,
+        column: usize,
     }
 
     impl SemanticCallResolver for FakeSemanticResolver {
         fn resolve(
             &mut self,
             request: &SemanticCallRequest<'_>,
-        ) -> Option<crate::index::semantic::SemanticCallTarget> {
+        ) -> anyhow::Result<Option<crate::index::semantic::SemanticCallTarget>> {
             self.requests.push(CapturedSemanticRequest {
                 language: request.language.to_string(),
                 file_path: request.file_path.to_path_buf(),
                 root_path: request.root_path.to_path_buf(),
                 callee_name: request.callee_name.to_string(),
+                line: request.line,
+                column: request.column,
             });
+            if let Some(error) = self.error {
+                anyhow::bail!("{error}");
+            }
             if request.language == self.expected_language
                 && request.callee_name == self.expected_callee
             {
-                self.target.clone()
+                Ok(self.target.clone())
             } else {
-                None
+                Ok(None)
             }
         }
     }
@@ -2114,9 +2154,11 @@ void run() {
             expected_language: "cpp",
             expected_callee: "printf",
             requests: Vec::new(),
+            error: None,
         };
         let parsed =
             parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+                .expect("parse result")
                 .expect("parse file");
 
         let call = parsed.calls.first().expect("printf call");
@@ -2152,9 +2194,11 @@ void run() {
             expected_language: "dart",
             expected_callee: "Tooltip",
             requests: Vec::new(),
+            error: None,
         };
         let parsed =
             parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+                .expect("parse result")
                 .expect("parse file");
 
         let call = parsed
@@ -2173,6 +2217,111 @@ void run() {
                 && request.root_path == root
                 && request.callee_name == "Tooltip"
         }));
+    }
+
+    #[test]
+    fn semantic_resolver_receives_utf16_columns_for_ast_calls() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("src/main.cpp");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        let source = format!(
+            "void run() {{\n    auto s = \"{}\"; printf(\"x\");\n}}\n",
+            '\u{1F600}'
+        );
+        fs::write(&path, source.as_bytes()).expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
+            error: None,
+        };
+
+        parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            .expect("parse result")
+            .expect("parse file");
+
+        let request = resolver
+            .requests
+            .iter()
+            .find(|request| request.callee_name == "printf")
+            .expect("printf semantic request");
+        let prefix = format!("    auto s = \"{}\"; ", '\u{1F600}');
+        assert_eq!(request.line, 2);
+        assert_eq!(request.column, prefix.encode_utf16().count());
+    }
+
+    #[test]
+    fn semantic_resolver_receives_utf16_columns_for_textual_dart_calls() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("lib/sample.dart");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        let source = format!(
+            "void run() {{\n  final s = '{}'; Tooltip(message: 'x');\n}}\n",
+            '\u{1F600}'
+        );
+        fs::write(&path, source.as_bytes()).expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "dart",
+            expected_callee: "Tooltip",
+            requests: Vec::new(),
+            error: None,
+        };
+
+        parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            .expect("parse result")
+            .expect("parse file");
+
+        let request = resolver
+            .requests
+            .iter()
+            .find(|request| request.callee_name == "Tooltip")
+            .expect("Tooltip semantic request");
+        let prefix = format!("  final s = '{}'; ", '\u{1F600}');
+        assert_eq!(request.line, 2);
+        assert_eq!(request.column, prefix.encode_utf16().count());
+    }
+
+    #[test]
+    fn semantic_resolver_errors_are_propagated() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("src/main.cpp");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+        fs::write(
+            &path,
+            r#"
+void run() {
+    printf("x");
+}
+"#,
+        )
+        .expect("write source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        let mut resolver = FakeSemanticResolver {
+            target: None,
+            expected_language: "cpp",
+            expected_callee: "printf",
+            requests: Vec::new(),
+            error: Some("semantic resolver failed"),
+        };
+
+        let err =
+            match parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+            {
+                Err(err) => err,
+                Ok(_) => panic!("expected semantic resolver error"),
+            };
+
+        assert_eq!(err.to_string(), "semantic resolver failed");
     }
 
     #[test]

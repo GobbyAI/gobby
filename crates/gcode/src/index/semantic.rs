@@ -29,7 +29,10 @@ pub(crate) struct SemanticCallTarget {
 }
 
 pub(crate) trait SemanticCallResolver {
-    fn resolve(&mut self, request: &SemanticCallRequest<'_>) -> Option<SemanticCallTarget>;
+    fn resolve(
+        &mut self,
+        request: &SemanticCallRequest<'_>,
+    ) -> anyhow::Result<Option<SemanticCallTarget>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,11 +221,51 @@ fn parse_clangd_command(command: &str) -> anyhow::Result<Vec<String>> {
     Ok(parts)
 }
 
+#[cfg(not(windows))]
 fn find_executable_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))
         .find(|path| path.is_file())
+}
+
+#[cfg(windows)]
+fn find_executable_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let candidates = executable_name_candidates(name);
+    for dir in std::env::split_paths(&path) {
+        for candidate in &candidates {
+            let path = dir.join(candidate);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn executable_name_candidates(name: &str) -> Vec<PathBuf> {
+    if Path::new(name).extension().is_some() {
+        return vec![PathBuf::from(name)];
+    }
+
+    let mut candidates = vec![PathBuf::from(name)];
+    if let Some(pathext) = std::env::var_os("PATHEXT") {
+        for ext in pathext.to_string_lossy().split(';') {
+            let ext = ext.trim();
+            if ext.is_empty() {
+                continue;
+            }
+            let ext = if ext.starts_with('.') {
+                ext.to_string()
+            } else {
+                format!(".{ext}")
+            };
+            candidates.push(PathBuf::from(format!("{name}{ext}")));
+        }
+    }
+    candidates
 }
 
 fn env_flag(name: &str) -> bool {
@@ -436,23 +479,30 @@ impl Drop for ClangdResolver {
 }
 
 impl SemanticCallResolver for ClangdResolver {
-    fn resolve(&mut self, request: &SemanticCallRequest<'_>) -> Option<SemanticCallTarget> {
+    fn resolve(
+        &mut self,
+        request: &SemanticCallRequest<'_>,
+    ) -> anyhow::Result<Option<SemanticCallTarget>> {
         if !matches!(request.language, "c" | "cpp") {
-            return None;
+            return Ok(None);
         }
         let result = (|| -> anyhow::Result<Option<SemanticCallTarget>> {
-            self.ensure_open(request)?;
-            let id = self.send_request(
-                "textDocument/definition",
-                json!({
-                    "textDocument": { "uri": path_to_uri(request.file_path) },
-                    "position": {
-                        "line": request.line.saturating_sub(1),
-                        "character": request.column,
-                    }
-                }),
-            )?;
-            let response = self.read_response(id)?;
+            self.ensure_open(request).context("open clangd document")?;
+            let id = self
+                .send_request(
+                    "textDocument/definition",
+                    json!({
+                        "textDocument": { "uri": path_to_uri(request.file_path) },
+                        "position": {
+                            "line": request.line.saturating_sub(1),
+                            "character": request.column,
+                        }
+                    }),
+                )
+                .context("send clangd definition request")?;
+            let response = self
+                .read_response(id)
+                .context("read clangd definition response")?;
             let locations = locations_from_lsp_response(&response);
             Ok(classify_definition(
                 request.root_path,
@@ -461,8 +511,11 @@ impl SemanticCallResolver for ClangdResolver {
                 &locations,
             ))
         })();
-        let _ = self.close_open_files();
-        result.ok().flatten()
+        if let Err(close_err) = self.close_open_files() {
+            result?;
+            return Err(close_err).context("close clangd open files");
+        }
+        result
     }
 }
 
@@ -740,6 +793,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    #[serial_test::serial]
+    fn find_executable_in_path_honors_pathext_on_windows() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let exe = tempdir.path().join("clangd.CMD");
+        fs::write(&exe, "").expect("fake executable");
+        let old_path = std::env::var_os("PATH");
+        let old_pathext = std::env::var_os("PATHEXT");
+
+        unsafe {
+            std::env::set_var("PATH", tempdir.path());
+            std::env::set_var("PATHEXT", ".COM;.EXE;.CMD");
+        }
+        let found = find_executable_in_path("clangd");
+        unsafe {
+            match old_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+            match old_pathext {
+                Some(value) => std::env::set_var("PATHEXT", value),
+                None => std::env::remove_var("PATHEXT"),
+            }
+        }
+
+        assert_eq!(found.as_deref(), Some(exe.as_path()));
+    }
+
+    #[test]
     fn optional_clangd_integration_resolves_external_definition() {
         if std::env::var("GCODE_TEST_CLANGD").ok().as_deref() != Some("1") {
             return;
@@ -763,15 +845,17 @@ mod tests {
 
         let mut resolver =
             ClangdResolver::start(tempdir.path(), tempdir.path(), &clangd).expect("clangd");
-        let target = resolver.resolve(&SemanticCallRequest {
-            language: "c",
-            file_path: &source_path,
-            root_path: tempdir.path(),
-            source,
-            callee_name: "printf",
-            line: 3,
-            column: 4,
-        });
+        let target = resolver
+            .resolve(&SemanticCallRequest {
+                language: "c",
+                file_path: &source_path,
+                root_path: tempdir.path(),
+                source,
+                callee_name: "printf",
+                line: 3,
+                column: 4,
+            })
+            .expect("resolve external definition");
         assert!(target.is_some());
     }
 }

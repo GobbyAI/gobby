@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+use anyhow::Context;
 use postgres::{Client, GenericClient};
 
 use crate::index::chunker;
@@ -126,7 +127,7 @@ pub fn index_directory(
             result.files_skipped += 1;
             continue;
         }
-        if index_content_only(conn, path, project_id, root_path, &excludes) {
+        if index_content_only(conn, path, project_id, root_path, &excludes)? {
             result.files_indexed += 1;
         } else {
             result.files_skipped += 1;
@@ -170,8 +171,8 @@ pub fn index_files(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
-    let mut semantic_resolver =
-        create_semantic_resolver_if_needed(root_path, &candidates, require_cpp_semantics)?;
+    let mut routed_files = Vec::new();
+    let mut ast_files = Vec::new();
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -187,6 +188,24 @@ pub fn index_files(
         }
 
         match explicit_file_route(root_path, &abs, &excludes) {
+            ExplicitFileRoute::Ast => {
+                ast_files.push(abs.clone());
+                routed_files.push((abs, ExplicitFileRoute::Ast));
+            }
+            ExplicitFileRoute::ContentOnly => {
+                routed_files.push((abs, ExplicitFileRoute::ContentOnly));
+            }
+            ExplicitFileRoute::Skip => {
+                result.files_skipped += 1;
+            }
+        }
+    }
+
+    let mut semantic_resolver =
+        create_semantic_resolver_if_needed(root_path, &ast_files, require_cpp_semantics)?;
+
+    for (abs, route) in routed_files {
+        match route {
             ExplicitFileRoute::Ast => {
                 if let Some(count) = index_file(
                     conn,
@@ -204,7 +223,7 @@ pub fn index_files(
                 }
             }
             ExplicitFileRoute::ContentOnly => {
-                if index_content_only(conn, &abs, project_id, root_path, &excludes) {
+                if index_content_only(conn, &abs, project_id, root_path, &excludes)? {
                     result.files_indexed += 1;
                 } else {
                     result.files_skipped += 1;
@@ -249,14 +268,17 @@ fn index_file(
         exclude_patterns,
         import_context,
         semantic_resolver,
-    ) else {
+    )?
+    else {
         return Ok(None);
     };
 
     let count = parse_result.symbols.len();
 
     // PostgreSQL hub writes (transactional).
-    let mut tx = conn.transaction()?;
+    let mut tx = conn
+        .transaction()
+        .context("start indexed file transaction")?;
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
     upsert_symbols(&mut tx, &parse_result.symbols)?;
@@ -288,9 +310,7 @@ fn index_file(
         upsert_content_chunks(&mut tx, &chunks);
     }
 
-    if tx.commit().is_err() {
-        return Ok(None);
-    }
+    tx.commit().context("commit indexed file transaction")?;
 
     Ok(Some(count))
 }
@@ -338,33 +358,32 @@ fn index_content_only(
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
-) -> bool {
+) -> anyhow::Result<bool> {
     if !walker::is_content_indexable(root_path, path, exclude_patterns) {
-        return false;
+        return Ok(false);
     }
 
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
 
     let meta = match path.metadata() {
         Ok(m) if m.len() > 0 && m.len() <= 10 * 1024 * 1024 => m,
-        _ => return false,
+        _ => return Ok(false),
     };
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
 
     let lang = walker::content_language(path);
     let content_hash = hasher::file_content_hash(path).unwrap_or_default();
 
-    let mut tx = match conn.transaction() {
-        Ok(tx) => tx,
-        Err(_) => return false,
-    };
+    let mut tx = conn
+        .transaction()
+        .context("start content-only file transaction")?;
 
     delete_file_postgres_data(&mut tx, project_id, &rel);
     upsert_file(
@@ -386,7 +405,9 @@ fn index_content_only(
         upsert_content_chunks(&mut tx, &chunks);
     }
 
-    tx.commit().is_ok()
+    tx.commit()
+        .context("commit content-only file transaction")?;
+    Ok(true)
 }
 
 /// Invalidate all index data for a project.
