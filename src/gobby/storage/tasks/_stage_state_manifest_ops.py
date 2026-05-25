@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_reviewer_selector import resolve_stage_reviewer
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
@@ -119,6 +119,53 @@ class StageStateManifestOps:
                     by_actor=holder,
                 )
             return self.rows.list_for_task(task_id)
+
+    def insert_new_task_manifest_in_transaction(
+        self,
+        conn: Transaction,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+        *,
+        by_session_id: str | None,
+    ) -> list[StageState]:
+        """Insert a manifest for a task created in the caller's transaction."""
+        self.rows.validate_specs(specs)
+        holder = by_session_id or "system"
+        existing = self.rows.list_for_task(task_id)
+        if existing:
+            raise ManifestAlreadyInitializedError(task_id)
+
+        now = _now()
+        for spec in sorted(specs, key=lambda item: item.position):
+            registry = self.rows.registry_entry(spec.stage_name)
+            conn.execute(
+                """
+                INSERT INTO task_stage_states (
+                    task_id, stage_name, position, state, review_policy,
+                    reviewer_agent, work_attempt_count, review_round_count,
+                    max_work_attempts, max_review_rounds, updated_at
+                )
+                VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    spec.stage_name,
+                    spec.position,
+                    registry.review_policy,
+                    resolve_stage_reviewer(self.db, task_id, registry),
+                    spec.max_work_attempts,
+                    spec.max_review_rounds,
+                    now,
+                ),
+            )
+        self.events.record_lifecycle_event(
+            task_id,
+            None,
+            f"manifest:{shape_signature_for_specs(specs)}",
+            "initialize_manifest",
+            by_actor=holder,
+        )
+        return self.rows.list_for_task(task_id)
 
     def _update_stage_caps(
         self,

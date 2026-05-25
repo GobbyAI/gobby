@@ -6,7 +6,9 @@ from collections import defaultdict
 from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
+from gobby.storage.hub.protocol import TaskSeqAllocation
 from gobby.storage.tasks import Task
+from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.tasks.expansion._common import _manifest_stage_names
 
@@ -123,14 +125,16 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
         labels.append(provenance_label)
         task_label_map[task_item["id"]] = labels or None
 
-    with self.db.transaction():
+    with self.db.transaction_immediate(TaskSeqAllocation(project_id=task.project_id)) as conn:
         self.run_manager.mark_applying(run_id)
         self.run_manager.append_log(run_id, level="info", message="Applying compiled expansion")
 
         # Create phase subepics first for genuinely multi-phase expansions.
         if multi_phase:
             for phase in phase_list:
-                result = self.task_manager.create_task_with_decomposition(
+                created_id = _create_task_in_transaction(
+                    self.db,
+                    conn,
                     project_id=task.project_id,
                     title=phase["title"],
                     task_type="epic",
@@ -141,17 +145,18 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     description=phase.get("summary"),
                     labels=[provenance_label],
                 )
-                phase_parent_map[phase["id"]] = result["task"]["id"]
+                phase_parent_map[phase["id"]] = created_id
                 if phase_manifest_specs:
-                    self.task_manager.stage_states.initialize_manifest(
-                        result["task"]["id"],
+                    self.task_manager.stage_states.insert_new_task_manifest_in_transaction(
+                        conn,
+                        created_id,
                         phase_manifest_specs,
                         by_session_id=session_id,
                     )
                 _inherit_build_state(
                     self,
                     parent=task,
-                    task_id=result["task"]["id"],
+                    task_id=created_id,
                     target_branch=target_branch,
                 )
         else:
@@ -170,7 +175,9 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                 description = (
                     f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
                 )
-                create_result = self.task_manager.create_task_with_decomposition(
+                created_id = _create_task_in_transaction(
+                    self.db,
+                    conn,
                     project_id=task.project_id,
                     title=task_item["title"],
                     description=description or None,
@@ -185,11 +192,11 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     implementation_domain=task_item.get("implementation_domain"),
                     additional_skills=task_item.get("additional_skills"),
                 )
-                created_id = create_result["task"]["id"]
                 created_task_map[task_item["id"]] = created_id
                 phase_child_ids[phase_id].append(created_id)
                 if leaf_manifest_specs:
-                    self.task_manager.stage_states.initialize_manifest(
+                    self.task_manager.stage_states.insert_new_task_manifest_in_transaction(
+                        conn,
                         created_id,
                         leaf_manifest_specs,
                         by_session_id=session_id,
@@ -253,6 +260,7 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
             },
             completed=True,
         )
+        conn.after_commit(self.task_manager._notify_listeners)
     self.run_manager.append_log(
         run_id,
         level="info",

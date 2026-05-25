@@ -91,6 +91,21 @@ class StageStatesManager:
     ) -> list[StageState]:
         return self._manifest.initialize_manifest(task_id, specs, by_session_id=by_session_id)
 
+    def insert_new_task_manifest_in_transaction(
+        self,
+        conn: Transaction,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+        *,
+        by_session_id: str | None,
+    ) -> list[StageState]:
+        return self._manifest.insert_new_task_manifest_in_transaction(
+            conn,
+            task_id,
+            specs,
+            by_session_id=by_session_id,
+        )
+
     def add_stage(
         self,
         task_id: str,
