@@ -1248,30 +1248,64 @@ class TestDetectVerificationEvidence:
     """Verify validation commands record completion-readiness evidence."""
 
     @pytest.mark.parametrize(
-        "command",
+        "command,normalized_argv,wrapper_chain",
         [
-            "uv run pytest tests/workflows/test_hooks.py -v",
-            "uv run ruff check src/gobby/workflows/observers.py",
-            "uv run mypy src/gobby/workflows/observers.py",
-            "npm test",
-            "cargo check --no-default-features",
-            "cargo clippy --no-default-features -- -D warnings",
-            "cargo fmt --all -- --check",
-            "/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'",
+            (
+                "uv run pytest tests/workflows/test_hooks.py -v",
+                ["pytest", "tests/workflows/test_hooks.py", "-v"],
+                ["uv-run"],
+            ),
+            (
+                "uv run ruff check src/gobby/workflows/observers.py",
+                ["ruff", "check", "src/gobby/workflows/observers.py"],
+                ["uv-run"],
+            ),
+            (
+                "uv run mypy src/gobby/workflows/observers.py",
+                ["mypy", "src/gobby/workflows/observers.py"],
+                ["uv-run"],
+            ),
+            ("npm test", ["npm", "test"], []),
+            (
+                "cargo check --no-default-features",
+                ["cargo", "check", "--no-default-features"],
+                [],
+            ),
+            (
+                "cargo clippy --no-default-features -- -D warnings",
+                ["cargo", "clippy", "--no-default-features", "--", "-D", "warnings"],
+                [],
+            ),
+            ("cargo fmt --all -- --check", ["cargo", "fmt", "--all", "--", "--check"], []),
+            (
+                "/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'",
+                ["ruff", "check", "src/"],
+                ["gsqz-command-string", "uv-run"],
+            ),
         ],
     )
-    def test_successful_validation_records_evidence(self, variables, command: str) -> None:
+    def test_successful_validation_records_evidence(
+        self,
+        variables,
+        command: str,
+        normalized_argv: list[str],
+        wrapper_chain: list[str],
+    ) -> None:
         event = _make_bash_event("passed", command=command, cwd="/repo")
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
         assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["command"] == command
-        assert variables["verification_evidence"][-1]["cwd"] == "/repo"
-        assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
-        assert variables["verification_evidence"][-1]["tool_name"] == "Bash"
-        assert variables["verification_evidence"][-1]["success"] is True
-        assert variables["verification_evidence"][-1]["matcher_id"]
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["command"] == command
+        assert evidence["cwd"] == "/repo"
+        assert evidence["evidence_type"] == "validation_command"
+        assert evidence["tool_name"] == "Bash"
+        assert evidence["success"] is True
+        assert evidence["matcher_id"]
+        assert evidence["normalized_argv"] == normalized_argv
+        assert evidence["wrapper_chain"] == wrapper_chain
+        assert evidence["normalized_command"]
 
     def test_successful_validation_log_omits_raw_command(
         self,

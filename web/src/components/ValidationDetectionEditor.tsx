@@ -16,6 +16,7 @@ const DEFAULT_DETECTION_CONFIG = {
   builtin_matchers_enabled: true,
   disabled_builtin_matcher_ids: [],
   recognized_wrappers: [],
+  wrapper_rules: [],
   custom_matchers: [],
 }
 
@@ -100,7 +101,7 @@ export function ValidationDetectionEditor({
           </label>
           <span className={FIELD_HELP_CLS}>
             JSON object with enabled, builtin_matchers_enabled, disabled_builtin_matcher_ids,
-            recognized_wrappers, and custom_matchers.
+            recognized_wrappers, wrapper_rules, and custom_matchers.
           </span>
           <textarea
             id="validation-detection-json"

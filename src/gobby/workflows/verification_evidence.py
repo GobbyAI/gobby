@@ -38,6 +38,9 @@ class VerificationEvidence(BaseModel):
     matcher_label: str | None = Field(default=None, strict=True)
     categories: list[str] | None = None
     languages: list[str] | None = None
+    normalized_command: str | None = Field(default=None, strict=True)
+    normalized_argv: list[str] | None = None
+    wrapper_chain: list[str] | None = None
     tool_name: str | None = Field(default=None, strict=True)
     exit_code: int | None = Field(default=None, strict=True)
 

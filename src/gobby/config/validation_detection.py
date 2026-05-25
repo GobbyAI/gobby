@@ -8,7 +8,7 @@ import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,6 +18,9 @@ PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
 _SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|"}
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
+_MAX_WRAPPER_NORMALIZATION_DEPTH = 8
+_UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "-p", "-C"]
+WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 
 class ValidationCommandMatcher(BaseModel):
@@ -52,6 +55,35 @@ class ValidationCommandMatcher(BaseModel):
         return value
 
 
+class ValidationCommandWrapper(BaseModel):
+    """One command wrapper that exposes an inner validation command."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(description="Stable wrapper id")
+    label: str = Field(description="Human-readable wrapper label")
+    prefixes: list[str] = Field(default_factory=list)
+    kind: WrapperKind = "prefix"
+    delimiter: str = "--"
+    strip_options_with_values: list[str] = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("wrapper id is required")
+        return value
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("wrapper label is required")
+        return value
+
+
 class ValidationDetectionConfig(BaseModel):
     """Configuration for validation command recognition."""
 
@@ -61,6 +93,7 @@ class ValidationDetectionConfig(BaseModel):
     builtin_matchers_enabled: bool = True
     disabled_builtin_matcher_ids: list[str] = Field(default_factory=list)
     recognized_wrappers: list[str] = Field(default_factory=list)
+    wrapper_rules: list[ValidationCommandWrapper] = Field(default_factory=list)
     custom_matchers: list[ValidationCommandMatcher] = Field(default_factory=list)
 
 
@@ -72,6 +105,18 @@ class ValidationCommandMatch:
     label: str
     categories: tuple[str, ...]
     languages: tuple[str, ...]
+    command: str = ""
+    normalized_command: str = ""
+    normalized_argv: tuple[str, ...] = ()
+    wrapper_chain: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _NormalizedCommandSegment:
+    """Normalized argv and wrapper metadata for one shell segment."""
+
+    argv: tuple[str, ...]
+    wrapper_chain: tuple[str, ...]
 
 
 def default_validation_wrappers() -> list[str]:
@@ -88,6 +133,43 @@ def default_validation_wrappers() -> list[str]:
         "pnpm exec",
         "yarn exec",
         "bunx",
+    ]
+
+
+def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
+    """Return default wrapper normalization rules."""
+    return [
+        _wrapper_rule(
+            "uv-run",
+            "uv run",
+            "prefix",
+            ["uv run"],
+            strip_options_with_values=_UV_RUN_OPTIONS_WITH_VALUES,
+        ),
+        _wrapper_rule("poetry-run", "poetry run", "prefix", ["poetry run"]),
+        _wrapper_rule("pdm-run", "pdm run", "prefix", ["pdm run"]),
+        _wrapper_rule("pipenv-run", "pipenv run", "prefix", ["pipenv run"]),
+        _wrapper_rule("bundle-exec", "bundle exec", "prefix", ["bundle exec"]),
+        _wrapper_rule("pnpm-exec", "pnpm exec", "prefix", ["pnpm exec"]),
+        _wrapper_rule("npx", "npx", "prefix", ["npx"]),
+        _wrapper_rule("bunx", "bunx", "prefix", ["bunx"]),
+        _wrapper_rule("timeout", "timeout", "delimiter", ["timeout"]),
+        _wrapper_rule("env", "env", "delimiter", ["env"]),
+        _wrapper_rule("command", "command", "delimiter", ["command"]),
+        _wrapper_rule("nice", "nice", "delimiter", ["nice"]),
+        _wrapper_rule("rust-token-killer", "rust-token-killer", "delimiter", ["rust-token-killer"]),
+        _wrapper_rule("gsqz-command-string", "gsqz command string", "command_string", ["gsqz --"]),
+        _wrapper_rule(
+            "rust-token-killer-command-string",
+            "rust-token-killer command string",
+            "command_string",
+            ["rust-token-killer --"],
+        ),
+        _wrapper_rule("bash-c", "bash -c", "command_string", ["bash -c"]),
+        _wrapper_rule("bash-lc", "bash -lc", "command_string", ["bash -lc"]),
+        _wrapper_rule("sh-c", "sh -c", "command_string", ["sh -c"]),
+        _wrapper_rule("zsh-c", "zsh -c", "command_string", ["zsh -c"]),
+        _wrapper_rule("fish-c", "fish -c", "command_string", ["fish -c"]),
     ]
 
 
@@ -367,17 +449,22 @@ def classify_validation_command(
     if not detection_config.enabled:
         return None
 
+    wrapper_rules = _iter_wrapper_rules(detection_config)
     for segment in _command_segments(command):
-        normalized = _normalize_segment(segment, detection_config.recognized_wrappers)
-        if not normalized:
+        normalized = _normalize_segment(segment, wrapper_rules)
+        if not normalized.argv:
             continue
         for matcher in _iter_matchers(detection_config):
-            if _matcher_matches_segment(matcher, normalized):
+            if _matcher_matches_segment(matcher, list(normalized.argv)):
                 return ValidationCommandMatch(
                     matcher_id=matcher.id,
                     label=matcher.label,
                     categories=tuple(matcher.categories),
                     languages=tuple(matcher.languages),
+                    command=command,
+                    normalized_command=shlex.join(normalized.argv),
+                    normalized_argv=normalized.argv,
+                    wrapper_chain=normalized.wrapper_chain,
                 )
     return None
 
@@ -459,6 +546,14 @@ def resolve_validation_detection_config(
         resolved.recognized_wrappers = _unique_strings(
             [*resolved.recognized_wrappers, *project_override.get("recognized_wrappers", [])]
         )
+    if "wrapper_rules" in project_override:
+        resolved.wrapper_rules = [
+            *resolved.wrapper_rules,
+            *[
+                ValidationCommandWrapper.model_validate(item)
+                for item in project_override.get("wrapper_rules", [])
+            ],
+        ]
     if "disabled_builtin_matcher_ids" in project_override:
         resolved.disabled_builtin_matcher_ids = _unique_strings(
             [
@@ -518,6 +613,25 @@ def _matcher(
     )
 
 
+def _wrapper_rule(
+    wrapper_id: str,
+    label: str,
+    kind: WrapperKind,
+    prefixes: list[str],
+    *,
+    delimiter: str = "--",
+    strip_options_with_values: list[str] | None = None,
+) -> ValidationCommandWrapper:
+    return ValidationCommandWrapper(
+        id=wrapper_id,
+        label=label,
+        kind=kind,
+        prefixes=prefixes,
+        delimiter=delimiter,
+        strip_options_with_values=strip_options_with_values or [],
+    )
+
+
 def _iter_matchers(config: ValidationDetectionConfig) -> Iterable[ValidationCommandMatcher]:
     disabled_ids = set(config.disabled_builtin_matcher_ids)
     if config.builtin_matchers_enabled:
@@ -527,6 +641,24 @@ def _iter_matchers(config: ValidationDetectionConfig) -> Iterable[ValidationComm
     for matcher in config.custom_matchers:
         if matcher.enabled:
             yield matcher
+
+
+def _iter_wrapper_rules(config: ValidationDetectionConfig) -> list[ValidationCommandWrapper]:
+    rules = [*default_validation_wrapper_rules(), *config.wrapper_rules]
+    for wrapper in _unique_strings(config.recognized_wrappers):
+        wrapper_tokens = _safe_split(wrapper)
+        rules.append(
+            ValidationCommandWrapper(
+                id=f"recognized-wrapper-{_wrapper_id_suffix(wrapper)}",
+                label=f"Recognized wrapper: {wrapper}",
+                kind="prefix",
+                prefixes=[wrapper],
+                strip_options_with_values=(
+                    _UV_RUN_OPTIONS_WITH_VALUES if wrapper_tokens == ["uv", "run"] else []
+                ),
+            )
+        )
+    return rules
 
 
 def shell_command_segments(command: str) -> list[list[str]]:
@@ -550,38 +682,74 @@ def shell_command_segments(command: str) -> list[list[str]]:
 _command_segments = shell_command_segments
 
 
-def _normalize_segment(tokens: list[str], wrappers: list[str]) -> list[str]:
+def _normalize_segment(
+    tokens: list[str],
+    wrappers: list[ValidationCommandWrapper],
+) -> _NormalizedCommandSegment:
     tokens = _strip_env_assignments(tokens)
-    if not tokens:
-        return []
-    changed = True
-    while changed:
-        changed = False
-        gsqz_tokens = _strip_gsqz_wrapper(tokens)
-        if gsqz_tokens is not None:
-            tokens = _strip_env_assignments(gsqz_tokens)
-            changed = True
-            continue
-        for wrapper in wrappers:
-            wrapper_tokens = _safe_split(wrapper)
-            if wrapper_tokens and _starts_with(tokens, wrapper_tokens):
-                tokens = tokens[len(wrapper_tokens) :]
-                if wrapper_tokens == ["uv", "run"]:
-                    tokens = _strip_uv_run_options(tokens)
-                tokens = _strip_env_assignments(tokens)
-                changed = True
-                break
-    return tokens
+    wrapper_chain: list[str] = []
+    for _ in range(_MAX_WRAPPER_NORMALIZATION_DEPTH):
+        if not tokens:
+            return _NormalizedCommandSegment((), tuple(wrapper_chain))
+        applied = _apply_wrapper_rule(tokens, wrappers)
+        if applied is None:
+            return _NormalizedCommandSegment(tuple(tokens), tuple(wrapper_chain))
+        tokens, wrapper_id = applied
+        wrapper_chain.append(wrapper_id)
+        tokens = _strip_env_assignments(tokens)
+    return _NormalizedCommandSegment(tuple(tokens), tuple(wrapper_chain))
 
 
-def _strip_gsqz_wrapper(tokens: list[str]) -> list[str] | None:
-    if len(tokens) < 2 or Path(tokens[0]).name != "gsqz" or tokens[1] != "--":
-        return None
-    if len(tokens) == 2:
+def _apply_wrapper_rule(
+    tokens: list[str],
+    wrappers: list[ValidationCommandWrapper],
+) -> tuple[list[str], str] | None:
+    matches = sorted(
+        _matching_wrapper_prefixes(tokens, wrappers),
+        key=lambda match: (-len(match[2]), match[0]),
+    )
+    for _, wrapper, prefix_tokens in matches:
+        normalized = _unwrap_matched_rule(tokens, wrapper, prefix_tokens)
+        if normalized is not None:
+            return normalized, wrapper.id
+    return None
+
+
+def _matching_wrapper_prefixes(
+    tokens: list[str],
+    wrappers: list[ValidationCommandWrapper],
+) -> Iterable[tuple[int, ValidationCommandWrapper, list[str]]]:
+    for index, wrapper in enumerate(wrappers):
+        for prefix in wrapper.prefixes:
+            prefix_tokens = _safe_split(prefix)
+            if prefix_tokens and _starts_with_command_prefix(tokens, prefix_tokens):
+                yield index, wrapper, prefix_tokens
+
+
+def _unwrap_matched_rule(
+    tokens: list[str],
+    wrapper: ValidationCommandWrapper,
+    prefix_tokens: list[str],
+) -> list[str] | None:
+    if wrapper.kind == "prefix":
+        remaining = tokens[len(prefix_tokens) :]
+        if wrapper.strip_options_with_values:
+            return _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
+        return remaining
+
+    if wrapper.kind == "delimiter":
+        try:
+            delimiter_index = tokens.index(wrapper.delimiter, len(prefix_tokens))
+        except ValueError:
+            return None
+        return tokens[delimiter_index + 1 :]
+
+    command_tokens = tokens[len(prefix_tokens) :]
+    if not command_tokens:
         return []
-    if len(tokens) == 3:
-        return _safe_split(tokens[2])
-    return tokens[2:]
+    if len(command_tokens) == 1:
+        return _safe_split(command_tokens[0])
+    return command_tokens
 
 
 def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str]) -> bool:
@@ -612,9 +780,8 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
     return tokens[index:]
 
 
-def _strip_uv_run_options(tokens: list[str]) -> list[str]:
+def _strip_wrapper_options(tokens: list[str], options_with_values: set[str]) -> list[str]:
     index = 0
-    options_with_values = {"--project", "--cache-dir", "--python", "-p", "-C"}
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
@@ -643,10 +810,27 @@ def _safe_split(value: str) -> list[str]:
         return value.split()
 
 
+def _starts_with_command_prefix(tokens: list[str], prefix: list[str]) -> bool:
+    if len(tokens) < len(prefix):
+        return False
+    return _matches_command_token(tokens[0], prefix[0]) and tokens[1 : len(prefix)] == prefix[1:]
+
+
+def _matches_command_token(token: str, expected: str) -> bool:
+    return token == expected or ("/" not in expected and Path(token).name == expected)
+
+
 def _starts_with(tokens: list[str], prefix: list[str]) -> bool:
     if len(tokens) < len(prefix):
         return False
     return tokens[: len(prefix)] == prefix
+
+
+def _wrapper_id_suffix(wrapper: str) -> str:
+    pieces = _safe_split(wrapper) or [wrapper]
+    suffix = "-".join(pieces)
+    suffix = "".join(char if char.isalnum() else "-" for char in suffix).strip("-")
+    return suffix or "custom"
 
 
 def _unique_strings(values: Iterable[Any]) -> list[str]:

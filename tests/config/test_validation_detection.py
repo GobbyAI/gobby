@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shlex
 
 import pytest
 
 from gobby.config.validation_detection import (
     ValidationCommandMatcher,
+    ValidationCommandWrapper,
     ValidationDetectionConfig,
     classify_validation_command,
     is_validation_command,
@@ -32,7 +34,13 @@ pytestmark = pytest.mark.unit
         ("cargo fmt --all -- --check", "rust-format-check"),
         ("ruff format --check src tests", "python-format-check"),
         ("/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'", "python-lint-type-format"),
+        ("/Users/josh/.gobby/bin/gsqz -- 'cargo check'", "rust-validation"),
         ("gsqz -- 'cargo check --no-default-features'", "rust-validation"),
+        ("rust-token-killer -- cargo check", "rust-validation"),
+        ("rust-token-killer -- 'cargo check --no-default-features'", "rust-validation"),
+        ("timeout 30 -- npm test", "js-ts-tests"),
+        ("bash -lc 'GOBBY_TEST_PROTECT=1 uv run pytest tests/config'", "python-tests"),
+        ("env RUSTFLAGS=-Awarnings -- cargo check", "rust-validation"),
         ("go test ./...", "go-validation"),
         ("dotnet format --verify-no-changes", "csharp-format-check"),
         ("mix format --check-formatted", "elixir-format-check"),
@@ -61,11 +69,66 @@ def test_builtin_validation_detection_accepts_common_commands(
         "eslint . --fix",
         "dotnet format",
         "gsqz -- 'git status'",
+        "rust-token-killer -- 'git status'",
         "python script.py",
     ],
 )
 def test_builtin_validation_detection_rejects_non_validation_commands(command: str) -> None:
     assert is_validation_command(command) is False
+
+
+def test_default_wrapper_rules_apply_to_explicit_config() -> None:
+    match = classify_validation_command("gsqz -- 'cargo check'", ValidationDetectionConfig())
+
+    assert match is not None
+    assert match.matcher_id == "rust-validation"
+    assert match.wrapper_chain == ("gsqz-command-string",)
+
+
+@pytest.mark.parametrize(
+    "command,normalized_argv,wrapper_chain",
+    [
+        (
+            "gsqz -- 'uv run ruff check src/'",
+            ("ruff", "check", "src/"),
+            ("gsqz-command-string", "uv-run"),
+        ),
+        (
+            "/Users/josh/.gobby/bin/gsqz -- 'cargo check'",
+            ("cargo", "check"),
+            ("gsqz-command-string",),
+        ),
+        (
+            "rust-token-killer -- cargo check",
+            ("cargo", "check"),
+            ("rust-token-killer-command-string",),
+        ),
+        (
+            "rust-token-killer -- 'cargo check --no-default-features'",
+            ("cargo", "check", "--no-default-features"),
+            ("rust-token-killer-command-string",),
+        ),
+        ("timeout 30 -- npm test", ("npm", "test"), ("timeout",)),
+        (
+            "bash -lc 'GOBBY_TEST_PROTECT=1 uv run pytest tests/config'",
+            ("pytest", "tests/config"),
+            ("bash-lc", "uv-run"),
+        ),
+        ("env RUSTFLAGS=-Awarnings -- cargo check", ("cargo", "check"), ("env",)),
+    ],
+)
+def test_wrapped_validation_commands_record_normalized_metadata(
+    command: str,
+    normalized_argv: tuple[str, ...],
+    wrapper_chain: tuple[str, ...],
+) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.command == command
+    assert match.normalized_argv == normalized_argv
+    assert match.normalized_command == shlex.join(normalized_argv)
+    assert match.wrapper_chain == wrapper_chain
 
 
 def test_disabled_builtin_matcher_is_not_used() -> None:
@@ -92,6 +155,34 @@ def test_custom_matcher_extends_detection() -> None:
 
     assert match is not None
     assert match.matcher_id == "project-ci"
+
+
+def test_custom_wrapper_rule_extends_detection() -> None:
+    config = ValidationDetectionConfig(
+        builtin_matchers_enabled=False,
+        wrapper_rules=[
+            ValidationCommandWrapper(
+                id="project-wrapper",
+                label="Project wrapper",
+                kind="command_string",
+                prefixes=["project-wrapper --"],
+            )
+        ],
+        custom_matchers=[
+            ValidationCommandMatcher(
+                id="project-ci",
+                label="Project CI",
+                categories=["test"],
+                prefixes=["./scripts/ci"],
+            )
+        ],
+    )
+
+    match = classify_validation_command("project-wrapper -- './scripts/ci --fast'", config)
+
+    assert match is not None
+    assert match.matcher_id == "project-ci"
+    assert match.wrapper_chain == ("project-wrapper",)
 
 
 def test_project_validation_detection_round_trip(tmp_path) -> None:
