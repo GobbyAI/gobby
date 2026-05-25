@@ -79,7 +79,10 @@ behavior. Do not silently drop stale comments.
    fixed or documented. Leave unrelated report artifacts alone.
 9. Run focused validation for the touched areas, plus scoped lint/type checks
    when available.
-10. Commit with the task ref as `[gobby-#NNNNN] <type>: <summary>` and close the task with `commit_sha`.
+10. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
+    and close the task with `commit_sha`. Use the real project name in the task
+    reference, such as `[gobby-#123]`; `project_name` is a placeholder, never a
+    literal prefix.
     Allowed types: `fix`, `feat`, `refactor`, `chore`, `docs`, and `test`.
 
 ## Verification Discipline

@@ -20,12 +20,16 @@ def test_commit_message_guidance_uses_project_placeholder(
 ) -> None:
     skill_bodies = {
         name: (bundled_skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-        for name in ("task-transitions", "source-control")
+        for name in ("coderabbit", "task-transitions", "source-control")
     }
     for skill_name, body in skill_bodies.items():
         assert "[<project_name>-#<task_number>]" in body
         assert "[gobby-#" in body
+        assert "[gobby-#NNNNN]" not in body
         git_commit_examples = re.findall(r"git commit -m \"([^\"]+)\"", body)
-        assert git_commit_examples, f"{skill_name} must include a git commit example"
+        if skill_name == "coderabbit":
+            assert "Commit with the task ref" in body
+        else:
+            assert git_commit_examples, f"{skill_name} must include a git commit example"
         assert not any("[project-#N]" in example for example in git_commit_examples)
         assert not any("[#N]" in example for example in git_commit_examples)
