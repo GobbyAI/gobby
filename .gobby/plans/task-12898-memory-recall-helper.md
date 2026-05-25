@@ -1998,3 +1998,233 @@ Spawn-surface bug (#15100): `plan-adversary-taskless`'s `review` step whitelists
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Add `MemoryRecallHelperConfig` (single field) to `DaemonConfig`
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: gobby.config.sessions.MemoryRecallHelperConfig
+  labels:
+  - covers:12898:1.2:1.2.1
+  - covers:12898:1.2:1.2.2
+  - covers:12898:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Thread `memory_recall_helper` config to `EventHandlers` and seed `memory_recall_helper_enabled`
+    on session_start
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: gobby.hooks.event_handlers._base.EventHandlersBase
+  labels:
+  - covers:12898:1.3:1.3.1
+  - covers:12898:1.3:1.3.2
+  - covers:12898:1.3:1.3.3
+  - covers:12898:1.3:1.3.4
+  - covers:12898:1.3:1.3.5
+  - covers:12898:1.3:1.3.6
+  - covers:12898:1.3:1.3.7
+  - covers:12898:1.3:1.3.8
+  - covers:12898:1.3:1.3.9
+  - covers:12898:1.3:1.3.10
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Create `memory-recall-helper` agent definition
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml
+  labels:
+  - covers:12898:1.4:1.4.1
+  - covers:12898:1.4:1.4.2
+  - covers:12898:1.4:1.4.3
+  - covers:12898:1.4:1.4.4
+  tdd: true
+  source_section: '1.4'
+  assigned_agent: backend-developer
+- title: Default `from_session` on `send_message` from SessionContext when omitted
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: gobby.mcp_proxy.tools.agent_messaging.send_message
+  labels:
+  - covers:12898:2.1:2.1.1
+  - covers:12898:2.1:2.1.2
+  - covers:12898:2.1:2.1.3
+  - covers:12898:2.1:2.1.4
+  - covers:12898:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Reorder `_check_agent_tool_enforcement` so `blocked_tools` overrides the
+    infrastructure-tool exempt
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: gobby.workflows.engine.enforcement.EnforcementMixin._check_agent_tool_enforcement
+  labels:
+  - covers:12898:2.2:2.2.1
+  - covers:12898:2.2:2.2.2
+  - covers:12898:2.2:2.2.3
+  - covers:12898:2.2:2.2.4
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Add `get_cancelled_session_ids` to `_AgentRunQueryMixin`
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: gobby.storage.agents._queries._AgentRunQueryMixin.get_cancelled_session_ids
+  labels:
+  - covers:12898:2.3:2.3.1
+  - covers:12898:2.3:2.3.2
+  - covers:12898:2.3:2.3.3
+  - covers:12898:2.3:2.3.4
+  - covers:12898:2.3:2.3.5
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Helper-aware delivery + same-turn dedup on the inline `inject_result` path
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.3'
+  validation_criteria: gobby.workflows.engine.effects.EffectsMixin._format_delivery_result
+  labels:
+  - covers:12898:2.4:2.4.1
+  - covers:12898:2.4:2.4.2
+  - covers:12898:2.4:2.4.3
+  - covers:12898:2.4:2.4.4
+  - covers:12898:2.4:2.4.5
+  - covers:12898:2.4:2.4.6
+  - covers:12898:2.4:2.4.7
+  - covers:12898:2.4:2.4.8
+  - covers:12898:2.4:2.4.9
+  - covers:12898:2.4:2.4.10
+  - covers:12898:2.4:2.4.11
+  - covers:12898:2.4:2.4.12
+  - covers:12898:2.4:2.4.13
+  - covers:12898:2.4:2.4.14
+  - covers:12898:2.4:2.4.15
+  - covers:12898:2.4:2.4.16
+  - covers:12898:2.4:2.4.17
+  - covers:12898:2.4:2.4.18
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Add `cancel_stale_helpers` MCP tool sharing `stop_agent`'s lifecycle path
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: gobby.mcp_proxy.tools.agent_cancellation.stop_agent_run
+  labels:
+  - covers:12898:2.5:2.5.1
+  - covers:12898:2.5:2.5.2
+  - covers:12898:2.5:2.5.3
+  - covers:12898:2.5:2.5.4
+  - covers:12898:2.5:2.5.5
+  - covers:12898:2.5:2.5.6
+  - covers:12898:2.5:2.5.7
+  - covers:12898:2.5:2.5.8
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Add `notify_parent_on_completion` to `spawn_agent`
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: gobby.mcp_proxy.tools.spawn_agent._factory.create_spawn_agent_registry
+  labels:
+  - covers:12898:2.6:2.6.1
+  - covers:12898:2.6:2.6.2
+  - covers:12898:2.6:2.6.3
+  - covers:12898:2.6:2.6.4
+  - covers:12898:2.6:2.6.5
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Modify `deliver-pending-messages` rule to fire for parent sessions
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml
+  labels:
+  - covers:12898:3.1:3.1.1
+  - covers:12898:3.1:3.1.2
+  - covers:12898:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  assigned_agent: backend-developer
+- title: Create `cancel-stale-memory-recall-helpers` rule (priority 5, before delivery)
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/install/shared/workflows/rules/memory-lifecycle/cancel-stale-memory-recall-helpers.yaml
+  labels:
+  - covers:12898:3.2:3.2.1
+  - covers:12898:3.2:3.2.2
+  - covers:12898:3.2:3.2.3
+  - covers:12898:3.2:3.2.4
+  tdd: true
+  source_section: '3.2'
+  assigned_agent: backend-developer
+- title: Create `spawn-memory-recall-helper` rule
+  category: config
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.4'
+  validation_criteria: src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml
+  labels:
+  - covers:12898:3.3:3.3.1
+  - covers:12898:3.3:3.3.2
+  - covers:12898:3.3:3.3.3
+  - covers:12898:3.3:3.3.4
+  tdd: true
+  source_section: '3.3'
+  assigned_agent: backend-developer
+- title: Create `increment-parent-turn-seq` rule (priority 1, before all other turn_start
+    rules)
+  category: config
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml
+  labels:
+  - covers:12898:3.4:3.4.1
+  - covers:12898:3.4:3.4.2
+  - covers:12898:3.4:3.4.3
+  - covers:12898:3.4:3.4.4
+  tdd: true
+  source_section: '3.4'
+  assigned_agent: backend-developer
+- title: 'Phase 3 integration test: four-rule turn-sequence + session-id sensitivity
+    + memory_recall freshness end-to-end'
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  validation_criteria: tests/workflows/test_memory_recall_helper_ordering.py::test_three_rule_session_id_sensitivity_integration
+  labels:
+  - covers:12898:3.5:3.5.1
+  - covers:12898:3.5:3.5.2
+  - covers:12898:3.5:3.5.3
+  - covers:12898:3.5:3.5.4
+  - covers:12898:3.5:3.5.5
+  tdd: false
+  source_section: '3.5'
+  assigned_agent: backend-developer
+```

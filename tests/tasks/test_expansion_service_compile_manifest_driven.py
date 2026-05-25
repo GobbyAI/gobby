@@ -374,7 +374,7 @@ def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
     assert document.plan_id == "12761"
 
 
-def test_missing_manifest_returns_none_for_llm_fallback(
+def test_missing_manifest_synthesizes_manifest_for_contract_plan(
     service: ExpansionService,
     sample_project,
     tmp_path: Path,
@@ -401,7 +401,12 @@ def test_missing_manifest_returns_none_for_llm_fallback(
         plan_file=str(plan_path),
     )
 
-    assert service._parse_contract_plan(run, parent) is None
+    document = service._parse_contract_plan(run, parent)
+
+    assert document is not None
+    assert len(document.manifest_entries) == 1
+    assert document.manifest_entries[0].source_section == "A1"
+    assert "## M1 Task Manifest" in plan_path.read_text(encoding="utf-8")
 
 
 def test_deferrals_preserved(

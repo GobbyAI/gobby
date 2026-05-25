@@ -9,6 +9,7 @@ from typing import Any
 
 import psycopg
 
+from gobby.plans.manifest_emitter import emit_stub_manifest
 from gobby.plans.parser import (
     Kind,
     ManifestEntry,
@@ -328,6 +329,33 @@ def _parse_contract_plan(self: Any, run: ExpansionRun, task: Task) -> PlanDocume
 
         if not draft_doc.manifest_entries:
             if manifest_marker_present:
+                first_error = first_error or PlanParseError(
+                    [(max(len(draft_doc.source_lines), 1), "missing manifest entries")],
+                    plan_path,
+                )
+                continue
+            if any(section.kind is Kind.deliverable for section in draft_doc.sections):
+                outcome = emit_stub_manifest(
+                    plan_path,
+                    by_actor="expansion-compiler",
+                    plan_id=plan_id_override,
+                )
+                if outcome != "fallback_force_approve":
+                    self.run_manager.append_log(
+                        run.id,
+                        level="info",
+                        message="Synthesized missing Plan-Coverage Contract manifest",
+                        extra={"plan_file": str(plan_path), "outcome": outcome},
+                    )
+                    try:
+                        return parse_plan(
+                            plan_path,
+                            parse_mode="expansion",
+                            plan_id_override=plan_id_override,
+                        )
+                    except (OSError, PlanParseError) as exc:
+                        first_error = first_error or exc
+                        continue
                 first_error = first_error or PlanParseError(
                     [(max(len(draft_doc.source_lines), 1), "missing manifest entries")],
                     plan_path,

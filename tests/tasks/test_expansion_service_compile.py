@@ -181,7 +181,7 @@ def test_compile_contract_plan_prefers_manifest_assigned_agent_over_prose_regex(
     assert all(task["additional_skills"] == ["test-driven-development"] for task in section_tasks)
 
 
-def test_compile_12898_contract_plan_requires_manifest(
+def test_compile_12898_contract_plan_preserves_manifest_deliverables(
     service: ExpansionService,
     sample_project,
 ) -> None:
@@ -189,8 +189,15 @@ def test_compile_12898_contract_plan_requires_manifest(
     plan_path = (
         Path(__file__).resolve().parents[2] / ".gobby/plans/task-12898-memory-recall-helper.md"
     )
-    with pytest.raises(ValueError, match="kind: deliverable sections without manifest entries"):
-        service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
+
+    assert spec["deliverable_count"] == 14
+    assert len(spec["tasks"]) == 14
+    assert len(spec["phases"]) == 3
+    assert any(
+        task["source_section_id"] == "2.6" and "notify_parent_on_completion" in task["title"]
+        for task in spec["tasks"]
+    )
 
 
 def test_compile_rejects_missing_manifest_entry(
