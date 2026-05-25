@@ -23,7 +23,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
+from gobby.events import CompletionEventRegistry
+from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 pytestmark = pytest.mark.unit
 
@@ -517,7 +520,7 @@ class TestStopAgent:
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
                 return_value={"success": True},
-            ),
+            ) as kill_process,
             patch(
                 "gobby.mcp_proxy.tools.agents.terminalize_cancelled_agent_run",
                 new_callable=AsyncMock,
@@ -528,6 +531,14 @@ class TestStopAgent:
             result = await stop_agent(run_id="run-123")
 
         assert result["success"] is True
+        assert result["run_id"] == "run-123"
+        assert result["status"] == "cancelled"
+        assert result["terminal_reason"] == "user_cancelled"
+        runner.get_run.assert_called_once_with("run-123")
+        kill_process.assert_awaited_once()
+        assert kill_process.call_args.args[0] is runner.get_run.return_value
+        assert kill_process.call_args.kwargs["signal_name"] == "TERM"
+        assert kill_process.call_args.kwargs["close_terminal"] is True
         terminalize.assert_awaited_once_with(
             runner=runner,
             run_id="run-123",
@@ -1080,6 +1091,51 @@ class TestEndAgentRun:
 
         assert result["success"] is False
         assert "No agent found for session sess-456" == result["error"]
+
+    @pytest.mark.asyncio
+    async def test_unsubscribed_memory_helper_end_agent_run_does_not_notify_parent(
+        self, temp_db
+    ) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.complete_run.return_value = True
+
+        ism_manager = InterSessionMessageManager(temp_db)
+        session_manager = MagicMock()
+        session_manager.get.return_value = MagicMock(id="sess-parent", agent_depth=0)
+        wake_dispatcher = WakeDispatcher(session_manager, ism_manager)
+        completion_registry = CompletionEventRegistry(wake_callback=wake_dispatcher.wake)
+        registry = create_agents_registry(
+            runner,
+            completion_registry=completion_registry,
+            session_manager=session_manager,
+        )
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert ism_manager.list_messages("sess-parent") == []
+        assert not ism_manager.has_completion_notification(
+            "sess-parent",
+            "completion_notification",
+            "run-123",
+        )
 
 
 class TestKillAgentSelfTerminationViaRunId:

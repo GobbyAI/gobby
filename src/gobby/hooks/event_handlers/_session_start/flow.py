@@ -8,6 +8,7 @@ from typing import Any, cast
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
 
+from .agents import _seed_memory_recall_helper_vars
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .types import AgentActivationResult
 
@@ -203,6 +204,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             extra={"workflow_name": workflow_name, "session_id": session_id},
         )
 
+    if session_id and handler._session_manager is not None:
+        try:
+            _seed_memory_recall_helper_vars(handler, session_id)
+        except Exception as e:
+            handler.logger.warning(f"Failed to seed memory-recall-helper vars: {e}")
+
     _t_activate = time.monotonic()
     agent_result: AgentActivationResult | None = None
     if session_id and not input_data.get("skip_default_agent_activation"):
@@ -391,6 +398,12 @@ def handle_pre_created_session(
         )
 
     handler._setup_code_index(session_id, session_obj.project_id)
+
+    if handler._session_manager is not None:
+        try:
+            _seed_memory_recall_helper_vars(handler, session_id)
+        except Exception as e:
+            handler.logger.warning(f"Failed to seed memory-recall-helper vars: {e}")
 
     agent_result: AgentActivationResult | None = None
     input_data = event.data if event else {}

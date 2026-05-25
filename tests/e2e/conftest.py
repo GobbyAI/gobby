@@ -13,6 +13,7 @@ Provides fixtures for:
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -214,7 +215,29 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 
     try:
         parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
+        try:
+            children = parent.children(recursive=True)
+        except (psutil.AccessDenied, PermissionError):
+            # macOS sandboxing can block full process enumeration. E2E daemons
+            # start in their own session, so the process group is a safe fallback.
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                parent.wait(timeout=timeout / 2)
+            except psutil.TimeoutExpired:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    parent.wait(timeout=1.0)
+                except psutil.NoSuchProcess:
+                    pass
+            except psutil.NoSuchProcess:
+                pass
+            return
 
         # Terminate children first
         for child in children:
@@ -393,7 +416,6 @@ hub_backend: postgres
 database_url: {postgres_url}
 postgres_install_mode: external
 daemon_port: {http_port}
-database_url: "{db_path}"
 bind_host: localhost
 websocket_port: {ws_port}
 """
@@ -968,6 +990,13 @@ _ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 
+def _is_worktree_bytecode_artifact(rel_path: str) -> bool:
+    """Return true for Python bytecode created by running tests from a task worktree."""
+    return rel_path.startswith("worktrees/") and (
+        "/__pycache__/" in rel_path or rel_path.endswith((".pyc", ".pyo"))
+    )
+
+
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
     """Fail the test if the E2E daemon created new files in real ~/.gobby/.
@@ -1005,6 +1034,8 @@ def assert_no_external_writes() -> Generator[None]:
             basename = Path(rel_path).name
             if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                 continue
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (
@@ -1024,6 +1055,8 @@ def assert_no_external_writes() -> Generator[None]:
             # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue
             leaked.append(f"  MODIFIED: ~/.gobby/{rel_path}")

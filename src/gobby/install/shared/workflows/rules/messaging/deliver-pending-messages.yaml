@@ -5,7 +5,7 @@ rules:
     description: "Deliver pending inter-session messages on each agent turn"
     event: turn_start
     enabled: true
-    when: "variables.get('is_spawned_agent') and event.metadata.get('_platform_session_id')"
+    when: "event.metadata.get('_platform_session_id')"
     priority: 10
     effects:
       - type: mcp_call
@@ -13,3 +13,4 @@ rules:
         tool: deliver_pending_messages
         arguments:
           target_session_id: "{{ event.metadata.get('_platform_session_id', '') }}"
+        inject_result: true

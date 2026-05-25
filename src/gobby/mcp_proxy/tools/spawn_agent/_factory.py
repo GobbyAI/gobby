@@ -182,6 +182,7 @@ def create_spawn_agent_registry(
         # Context
         parent_session_id: str | None = None,
         project_path: str | None = None,
+        notify_parent_on_completion: bool = True,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -204,6 +205,7 @@ def create_spawn_agent_registry(
             max_turns: Maximum conversation turns
             parent_session_id: Session reference (accepts #N, N, UUID, or prefix) for the parent session
             project_path: Project path override
+            notify_parent_on_completion: Whether to notify the parent when the agent completes
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -347,7 +349,13 @@ def create_spawn_agent_registry(
 
         # Auto-subscribe parent session + lineage to agent completion events
         run_id = result.get("run_id")
-        if result.get("success") and run_id and completion_registry and resolved_parent_session_id:
+        if (
+            notify_parent_on_completion
+            and result.get("success")
+            and run_id
+            and completion_registry
+            and resolved_parent_session_id
+        ):
             try:
                 subscribe_agent_completion(
                     completion_registry=completion_registry,
@@ -387,6 +395,7 @@ def create_spawn_agent_registry(
         reasoning_required: bool | None = None,
         parent_session_id: str | None = None,
         timeout: float | None = None,
+        notify_parent_on_completion: bool = True,
     ) -> dict[str, Any]:
         """Dispatch multiple agents for non-conflicting tasks.
 
@@ -402,6 +411,7 @@ def create_spawn_agent_registry(
             model: Model override
             parent_session_id: Parent session reference
             timeout: Timeout in seconds for each agent
+            notify_parent_on_completion: Whether to notify parent sessions on completion
 
         Returns:
             Dict with dispatched count and per-task results
@@ -475,6 +485,12 @@ def create_spawn_agent_registry(
                     parent_session_id=_coalesce_string(
                         suggestion, "parent_session_id", parent_session_id
                     ),
+                    notify_parent_on_completion=_coalesce_bool(
+                        suggestion,
+                        "notify_parent_on_completion",
+                        notify_parent_on_completion,
+                    )
+                    is not False,
                 )
                 out: dict[str, Any] = {
                     "task_ref": task_ref,

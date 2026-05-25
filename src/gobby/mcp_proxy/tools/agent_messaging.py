@@ -108,15 +108,17 @@ def add_messaging_tools(
             "target='session' (session ref), target='agent' (agent run id), "
             "target='project' (project id/name), and target='build' (build run id, "
             "build input ref, or root task ref). target='all' forbids target_id. "
+            "from_session defaults to the calling session's id from SessionContext "
+            "when omitted. "
             "Optional fields such as priority, message_type, metadata, and "
             "include_wakeup are keyword-only."
         ),
     )
     async def send_message(
-        from_session: str,
         target: str,
         content: str,
         target_id: str | None = None,
+        from_session: str | None = None,
         *,
         priority: str = "normal",
         include_wakeup: bool = False,
@@ -124,6 +126,19 @@ def add_messaging_tools(
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
+            if from_session is None:
+                from gobby.utils.session_context import get_current_session_id
+
+                ctx_session_id = get_current_session_id()
+                if not ctx_session_id:
+                    return {
+                        "success": False,
+                        "error": (
+                            "from_session is required and no SessionContext session_id is available"
+                        ),
+                    }
+                from_session = ctx_session_id
+
             content = content.strip()
             if not content:
                 return {"success": False, "error": "content is required."}
