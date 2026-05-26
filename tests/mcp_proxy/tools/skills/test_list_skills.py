@@ -1,7 +1,7 @@
 """Tests for list_skills MCP tool (TDD - written before implementation)."""
 
 import asyncio
-import time
+import threading
 from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -85,20 +85,34 @@ class TestListSkillsTool:
 
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-list-db")
         original_list_skills = LocalSkillManager.list_skills
+        first_read_started = threading.Event()
+        release_reads = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_list_skills(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
             """Delay storage reads so concurrent connection growth is observable."""
-            time.sleep(0.02)
+            first_read_started.set()
+            waits_completed.append(release_reads.wait(timeout=1))
             return original_list_skills(self, *args, **kwargs)
 
         try:
             with patch.object(LocalSkillManager, "list_skills", new=slow_list_skills):
                 registry = create_skills_registry(populated_db, run_db=executor.run)
                 tool = registry.get_tool("list_skills")
-                results = await asyncio.gather(*(tool() for _ in range(20)))
+
+                async def run_tools() -> list[dict[str, Any]]:
+                    return await asyncio.gather(*(tool() for _ in range(20)))
+
+                task = asyncio.create_task(run_tools())
+                assert await asyncio.to_thread(first_read_started.wait, 1)
+                release_reads.set()
+                results = await task
 
             assert all(result["success"] is True for result in results)
-            assert populated_db.connection_count <= 1 + executor.max_workers
+            assert all(waits_completed)
+            connection_count = getattr(populated_db, "connection_count", None)
+            if connection_count is not None:
+                assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
 

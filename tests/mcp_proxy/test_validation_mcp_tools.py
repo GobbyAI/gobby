@@ -726,11 +726,12 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.get_task.return_value = escalated_task
 
-        await task_registry_with_patches.call(
+        result = await task_registry_with_patches.call(
             "de_escalate_task",
             {"task_id": "t1", "reason": "Fixed", "reset_stage_attempts": True},
         )
 
+        assert "error" not in result
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Fixed",

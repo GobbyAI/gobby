@@ -4,7 +4,6 @@ import os
 import queue
 import re
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -156,6 +155,8 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
 
     try:
         errors: queue.Queue[BaseException] = queue.Queue()
+        first_writer_read = threading.Event()
+        release_first_writer = threading.Event()
 
         def worker() -> None:
             try:
@@ -163,7 +164,9 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
                     row = txn.execute(f'SELECT value FROM "{table}" WHERE id = $1', (1,)).fetchone()
                     assert row is not None
                     next_value = int(row["value"]) + 1
-                    time.sleep(0.05)
+                    if not first_writer_read.is_set():
+                        first_writer_read.set()
+                        assert release_first_writer.wait(timeout=1)
                     txn.execute(f'UPDATE "{table}" SET value = $1 WHERE id = $2', (next_value, 1))
             except BaseException as exc:  # pragma: no cover - re-raised in main thread
                 errors.put(exc)
@@ -171,6 +174,8 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         threads = [threading.Thread(target=worker) for _ in range(2)]
         for thread in threads:
             thread.start()
+        assert first_writer_read.wait(timeout=1)
+        release_first_writer.set()
         for thread in threads:
             thread.join(timeout=10)
 

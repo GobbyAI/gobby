@@ -489,7 +489,8 @@ class TestEnsureDaemonRunning:
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    await ensure_daemon_running()
+                    result = await ensure_daemon_running()
+                    assert result is None
                     assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
@@ -516,7 +517,8 @@ class TestEnsureDaemonRunning:
                             ) as mock_sleep:
                                 from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                                await ensure_daemon_running()
+                                result = await ensure_daemon_running()
+                                assert result is None
                                 mock_restart.assert_not_called()
                                 assert mock_sleep.await_count == 2
 
@@ -543,9 +545,10 @@ class TestEnsureDaemonRunning:
                                 with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
                                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                                    with pytest.raises(SystemExit):
+                                    with pytest.raises(SystemExit) as exc_info:
                                         await ensure_daemon_running()
 
+                                    assert exc_info.value.code == 1
                                     mock_restart.assert_not_called()
                                     mock_exit.assert_called_with(1)
 
@@ -589,9 +592,10 @@ class TestEnsureDaemonRunning:
                     with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
                         from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                        with pytest.raises(SystemExit):
+                        with pytest.raises(SystemExit) as exc_info:
                             await ensure_daemon_running()
 
+                        assert exc_info.value.code == 1
                         mock_start.assert_not_called()
                         mock_exit.assert_called_with(1)
 
@@ -651,12 +655,14 @@ class TestDaemonProxy:
             with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
                 mock_request.return_value = {"success": True}
 
-                await proxy.call_tool(
+                result = await proxy.call_tool(
                     "gobby-merge",
                     "merge_resolve",
                     {"conflict_id": "mc-one", "use_ai": True},
                 )
 
+                assert result == {"success": True}
+                assert result["success"] is True
                 mock_request.assert_called_once_with(
                     "POST",
                     "/api/mcp/gobby-merge/tools/merge_resolve",
@@ -675,13 +681,15 @@ class TestDaemonProxy:
             with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
                 mock_request.return_value = {"success": True}
 
-                await proxy.call_tool(
+                result = await proxy.call_tool(
                     "gobby-sessions",
                     "compact_self",
                     {"rule_name": "build-coordinator-handoff"},
                     session_id="#6074",
                 )
 
+                assert result == {"success": True}
+                assert result["success"] is True
                 mock_request.assert_called_once_with(
                     "POST",
                     "/api/mcp/gobby-sessions/tools/compact_self",
@@ -701,12 +709,14 @@ class TestDaemonProxy:
             with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
                 mock_request.return_value = {"success": True}
 
-                await proxy.call_tool(
+                result = await proxy.call_tool(
                     "gobby-agents",
                     "wait_for_agent",
                     {"run_id": "run-123", "timeout_seconds": 120},
                 )
 
+                assert result == {"success": True}
+                assert result["success"] is True
                 mock_request.assert_called_once_with(
                     "POST",
                     "/api/mcp/gobby-agents/tools/wait_for_agent",
@@ -724,8 +734,9 @@ class TestDaemonProxy:
             with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
                 mock_request.return_value = {"success": True}
 
-                await proxy.call_tool("gobby-tasks", "get_task", {"task_id": "#1"})
+                result = await proxy.call_tool("gobby-tasks", "get_task", {"task_id": "#1"})
 
+                assert result == {"success": True}
                 mock_request.assert_called_once_with(
                     "POST",
                     "/api/mcp/gobby-tasks/tools/get_task",

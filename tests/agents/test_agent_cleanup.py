@@ -65,6 +65,7 @@ def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None
         result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == []
+    assert len(result) == 0
     cleanup.assert_not_called()
 
 
@@ -88,6 +89,7 @@ def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> N
         result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == artifacts
+    assert result[0].deleted is True
     cleanup.assert_called_once_with(db, "task-1")
 
 
@@ -107,6 +109,7 @@ def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
         result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == artifacts
+    assert result[0].deferred is False
     cleanup.assert_called_once_with(db, "task-1")
 
 
@@ -151,6 +154,7 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
         lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
     )
 
-    await _handler(object()).post_terminal_cleanup(_run(task_id=None))
+    result = await _handler(object()).post_terminal_cleanup(_run(task_id=None))
 
+    assert result is None
     cleanup.assert_not_called()

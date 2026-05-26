@@ -176,7 +176,7 @@ class TestMCPDiscoveryRoutes:
 
         async def slow_connect(server_name: str) -> MagicMock:
             assert server_name == "slow-server"
-            await asyncio.sleep(1)
+            await asyncio.Event().wait()
             return MagicMock()
 
         mock_server.mcp_manager.ensure_connected = AsyncMock(side_effect=slow_connect)
@@ -345,7 +345,7 @@ class TestMCPDiscoveryRoutes:
         mock_session = AsyncMock()
 
         async def slow_list_tools() -> MagicMock:
-            await asyncio.sleep(1)
+            await asyncio.Event().wait()
             return MagicMock(tools=[])
 
         mock_session.list_tools.side_effect = slow_list_tools

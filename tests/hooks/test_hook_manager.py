@@ -720,11 +720,18 @@ class TestShutdown:
 
         async def run_shutdown() -> None:
             manager = manager_with_mocks
+            closed = asyncio.Event()
+
+            async def close_dispatcher() -> None:
+                closed.set()
+
             manager._webhook_dispatcher.close = AsyncMock()
+            manager._webhook_dispatcher.close.side_effect = close_dispatcher
             manager.logger = MagicMock()
 
             await manager.shutdown_async()
 
+            assert closed.is_set()
             manager._webhook_dispatcher.close.assert_awaited_once()
             manager.logger.warning.assert_not_called()
 
@@ -740,14 +747,21 @@ class TestShutdown:
         async def run_shutdown() -> None:
             manager = manager_with_mocks
             loop = asyncio.get_event_loop()
+            closed = asyncio.Event()
+
+            async def close_dispatcher() -> None:
+                closed.set()
+
             manager._loop = loop
             manager._webhook_dispatcher.close = AsyncMock()
+            manager._webhook_dispatcher.close.side_effect = close_dispatcher
             manager.logger = MagicMock()
 
             with patch("gobby.hooks.hook_manager.asyncio.get_running_loop", return_value=loop):
                 manager.shutdown()
-            await asyncio.sleep(0)
+            await asyncio.wait_for(closed.wait(), timeout=1)
 
+            assert closed.is_set()
             manager._webhook_dispatcher.close.assert_awaited_once()
             manager.logger.warning.assert_not_called()
 

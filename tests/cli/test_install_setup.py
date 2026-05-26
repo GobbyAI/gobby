@@ -254,6 +254,8 @@ class TestRunDaemonSetup:
 
         run_daemon_setup(tmp_path)
 
+        assert mock_sync.return_value == {"total_synced": 0, "errors": []}
+        assert mock_mcp.return_value["success"] is True
         mock_verify.assert_called_once_with()
         mock_run.assert_not_called()
         mock_gsqz.assert_not_called()
@@ -463,6 +465,7 @@ class TestGcodeHelpers:
             res = _install_gcode()
 
         assert res == {"installed": False, "skipped": True, "version": "0.8.4"}
+        assert (bin_dir / "gcode").exists()
         mock_submodule.assert_not_called()
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")

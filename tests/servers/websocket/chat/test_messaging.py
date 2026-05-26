@@ -487,6 +487,7 @@ class TestStreamChatResponse:
             "chat_stream",
             "chat_stream",
         ]
+        assert len(matching_messages) >= 2
         other_ws.send.assert_not_called()
         unbound_ws.send.assert_not_called()
 

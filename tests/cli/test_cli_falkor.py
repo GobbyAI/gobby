@@ -103,9 +103,10 @@ class TestDaemonDockerFlag:
                 ),
             )
             mock_run.return_value = MagicMock(returncode=0)
-            _services_start(tmp_path)
+            result = _services_start(tmp_path)
 
         compose_calls = [call for call in mock_run.call_args_list if "up" in str(call)]
+        assert result is None
         assert compose_calls
 
     def test_services_start_skips_when_no_docker(self, tmp_path: Path) -> None:
@@ -113,8 +114,9 @@ class TestDaemonDockerFlag:
 
         with patch("shutil.which", return_value=None):
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
-                _services_start(tmp_path)
+                result = _services_start(tmp_path)
 
+        assert result is None
         mock_run.assert_not_called()
 
     def test_services_start_skips_when_config_unavailable(self, tmp_path: Path) -> None:
@@ -129,8 +131,9 @@ class TestDaemonDockerFlag:
             patch("gobby.cli.daemon._open_services_config_db", side_effect=RuntimeError("db")),
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
         ):
-            _services_start(tmp_path)
+            result = _services_start(tmp_path)
 
+        assert result is None
         mock_run.assert_not_called()
 
     def test_services_stop_runs_compose_down(self, tmp_path: Path) -> None:
@@ -155,8 +158,9 @@ class TestDaemonDockerFlag:
 
         with patch("shutil.which", return_value=None):
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
-                _services_stop(tmp_path)
+                result = _services_stop(tmp_path)
 
+        assert result is None
         mock_run.assert_not_called()
 
 

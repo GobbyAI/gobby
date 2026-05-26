@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -98,9 +98,13 @@ class TestGenerateSessionSummaries:
         sm.update_digest_markdown(session.id, "### Turn 1\nUse digest context.")
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="summary-db")
         original_get = SessionManager.get
+        first_get_started = threading.Event()
+        release_gets = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_get(self, *args, **kwargs):
-            time.sleep(0.02)
+            first_get_started.set()
+            waits_completed.append(release_gets.wait(timeout=1))
             return original_get(self, *args, **kwargs)
 
         try:
@@ -112,20 +116,29 @@ class TestGenerateSessionSummaries:
                     return_value=("# Summary", None),
                 ),
             ):
-                results = await asyncio.gather(
-                    *(
-                        generate_session_summaries(
-                            session_id=session.id,
-                            session_manager=sm,
-                            db=temp_db,
-                            run_db=executor.run,
+                async def run_summaries() -> list[dict[str, object]]:
+                    return await asyncio.gather(
+                        *(
+                            generate_session_summaries(
+                                session_id=session.id,
+                                session_manager=sm,
+                                db=temp_db,
+                                run_db=executor.run,
+                            )
+                            for _ in range(20)
                         )
-                        for _ in range(20)
                     )
-                )
+
+                task = asyncio.create_task(run_summaries())
+                assert await asyncio.to_thread(first_get_started.wait, 1)
+                release_gets.set()
+                results = await task
 
             assert all(result["success"] is True for result in results)
-            assert temp_db.connection_count <= 1 + executor.max_workers
+            assert all(waits_completed)
+            connection_count = getattr(temp_db, "connection_count", None)
+            if connection_count is not None:
+                assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
 

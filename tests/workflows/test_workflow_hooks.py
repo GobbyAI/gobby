@@ -278,6 +278,7 @@ class TestProjectPathResolution:
             await handler._evaluate_rules(event)
 
         assert "no project_path resolved" not in caplog.text
+        assert not caplog.records
         mock_run.assert_not_called()
 
     def test_no_repo_project_ids_include_constants_and_legacy_literals(self) -> None:

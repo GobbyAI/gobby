@@ -167,7 +167,7 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
     async def _slow_broadcast(event: str, session_id: str) -> None:
         broadcast_started.set()
         try:
-            await asyncio.sleep(30)
+            await asyncio.Event().wait()
         except asyncio.CancelledError:
             broadcast_cancelled.set()
             raise

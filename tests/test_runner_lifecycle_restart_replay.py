@@ -55,6 +55,7 @@ class TestAgentRestartReconciliation:
         # One live tmux-backed run performs three recovery actions: completion
         # registry hydration, runtime PID refresh, and output-reader restart.
         assert reconciled == 3
+        assert run.tmux_session_name == "gobby-run-1"
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
             subscribers=["parent-1"],

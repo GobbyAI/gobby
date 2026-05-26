@@ -360,6 +360,7 @@ class TestCloseTask:
             )
 
         assert result == {"success": True}
+        assert result["success"] is True
         mock_task_manager.update_task.assert_called_once_with(
             task.id,
             validation_status="valid",

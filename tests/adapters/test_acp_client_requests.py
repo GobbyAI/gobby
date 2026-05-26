@@ -24,7 +24,9 @@ async def test_write_json_rpc_result_ignores_closed_client_pipe() -> None:
     """A closed ACP client pipe is ignored when sending a JSON-RPC result."""
     client = SimpleNamespace(_process=SimpleNamespace(stdin=_ClosedStdin()))
 
-    await acp_client_requests.write_json_rpc_result(client, "request-1", {"ok": True})
+    result = await acp_client_requests.write_json_rpc_result(client, "request-1", {"ok": True})
+
+    assert result is None
 
 
 @pytest.mark.asyncio

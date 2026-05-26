@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import threading
-import time
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path, PureWindowsPath
@@ -331,6 +330,9 @@ class TestModelDiscoveryTrust:
         active = 0
         max_active = 0
         counter_lock = threading.Lock()
+        first_started = threading.Event()
+        release_seed = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_seed(
             cli: str,
@@ -343,20 +345,29 @@ class TestModelDiscoveryTrust:
                 active += 1
                 max_active = max(max_active, active)
             try:
-                time.sleep(0.02)
+                if Path(directory).name == "a":
+                    first_started.set()
+                    waits_completed.append(release_seed.wait(timeout=1))
                 return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
             finally:
                 with counter_lock:
                     active -= 1
 
         with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
-            first, second = await asyncio.gather(
-                authorize_model_discovery_trust("gemini", tmp_path / "a"),
-                authorize_model_discovery_trust("gemini", tmp_path / "b"),
+            first_task = asyncio.create_task(
+                authorize_model_discovery_trust("gemini", tmp_path / "a")
             )
+            assert await asyncio.to_thread(first_started.wait, 1)
+            second_task = asyncio.create_task(
+                authorize_model_discovery_trust("gemini", tmp_path / "b")
+            )
+            await asyncio.to_thread(lambda: None)
+            release_seed.set()
+            first, second = await asyncio.gather(first_task, second_task)
 
         assert first.success is True
         assert second.success is True
+        assert waits_completed == [True]
         assert max_active == 1
 
     @pytest.mark.asyncio
@@ -364,6 +375,8 @@ class TestModelDiscoveryTrust:
         active = 0
         max_active = 0
         counter_lock = threading.Lock()
+        started_by_cli = {"gemini": threading.Event(), "qwen": threading.Event()}
+        release_seed = threading.Event()
 
         def slow_seed(
             cli: str,
@@ -375,18 +388,25 @@ class TestModelDiscoveryTrust:
             with counter_lock:
                 active += 1
                 max_active = max(max_active, active)
+                started_by_cli[cli].set()
             try:
-                time.sleep(0.02)
+                release_seed.wait(timeout=1)
                 return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
             finally:
                 with counter_lock:
                     active -= 1
 
         with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
-            first, second = await asyncio.gather(
-                authorize_model_discovery_trust("gemini", tmp_path / "a"),
-                authorize_model_discovery_trust("qwen", tmp_path / "b"),
+            first_task = asyncio.create_task(
+                authorize_model_discovery_trust("gemini", tmp_path / "a")
             )
+            assert await asyncio.to_thread(started_by_cli["gemini"].wait, 1)
+            second_task = asyncio.create_task(
+                authorize_model_discovery_trust("qwen", tmp_path / "b")
+            )
+            assert await asyncio.to_thread(started_by_cli["qwen"].wait, 1)
+            release_seed.set()
+            first, second = await asyncio.gather(first_task, second_task)
 
         assert first.success is True
         assert second.success is True
@@ -423,8 +443,6 @@ class TestModelDiscoveryTrust:
             second_task = asyncio.create_task(
                 authorize_model_discovery_trust("gemini", tmp_path / "second")
             )
-            await asyncio.sleep(0.05)
-            assert not second_task.done()
 
             qwen_task = asyncio.create_task(
                 authorize_model_discovery_trust("qwen", tmp_path / "qwen")
@@ -435,6 +453,7 @@ class TestModelDiscoveryTrust:
                     asyncio.to_thread(qwen_started.wait, 1),
                     timeout=2,
                 )
+                assert not second_task.done()
             finally:
                 release_first.set()
 

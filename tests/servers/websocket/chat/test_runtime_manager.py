@@ -127,8 +127,10 @@ class TestWebChatRuntimeManager:
         manager._qwen_backend.start = AsyncMock()
         manager._droid_backend.start = AsyncMock()
 
-        await manager.start(background=True)
+        result = await manager.start(background=True)
 
+        assert result is None
+        assert manager.sandbox_config.enabled is True
         manager._codex_backend.start.assert_awaited_once_with(background=True)
         manager._droid_backend.start.assert_awaited_once_with(background=True)
         manager._gemini_backend.start.assert_not_awaited()

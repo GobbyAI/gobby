@@ -159,6 +159,7 @@ class TestProcessShutdown:
         await task
 
         assert task.cancelled() is False
+        assert task.done() is True
         server._terminate_streamable_http_sessions.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -297,6 +298,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert events == ["cleanup", "terminate", "disconnect"]
+        assert len(events) == 3
 
     @pytest.mark.asyncio
     async def test_shutdown_continues_when_http_session_termination_fails(

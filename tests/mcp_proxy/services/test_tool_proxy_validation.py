@@ -1150,7 +1150,7 @@ class TestDirectMcpAfterToolWorkflow:
         mock_registry.call = AsyncMock(return_value={"id": "task-123"})
         mock_internal_manager.get_registry.return_value = mock_registry
 
-        await tool_proxy_with_hooks.call_tool(
+        result = await tool_proxy_with_hooks.call_tool(
             server_name="gobby-tasks",
             tool_name="create_task",
             arguments={"title": "Test task"},
@@ -1158,6 +1158,7 @@ class TestDirectMcpAfterToolWorkflow:
             enforce_workflow=False,
         )
 
+        assert result == {"id": "task-123"}
         mock_hook_manager.handle.assert_not_called()
 
 

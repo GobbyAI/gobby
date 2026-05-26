@@ -1044,3 +1044,4 @@ class TestInstallDefaultMCPServers:
         ):
             with pytest.raises(TypeError, match="bad read"):
                 install_default_mcp_servers()
+        assert mock_secret_store.exists.side_effect.args == ("bad read",)

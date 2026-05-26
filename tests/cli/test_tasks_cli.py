@@ -124,11 +124,13 @@ def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> N
     db = MagicMock()
     open_hub = MagicMock(return_value=db)
     monkeypatch.setattr(task_config_utils, "open_runtime_hub_database", open_hub)
-    manager_cls = MagicMock()
+    manager_cls = MagicMock(return_value=SimpleNamespace(db=db))
     monkeypatch.setattr(task_config_utils, "LocalTaskManager", manager_cls)
 
-    task_config_utils.get_task_manager()
+    manager = task_config_utils.get_task_manager()
 
+    assert manager is manager_cls.return_value
+    assert manager.db is db
     open_hub.assert_called_once_with(apply_migrations=False)
     manager_cls.assert_called_once_with(db)
 

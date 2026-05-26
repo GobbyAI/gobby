@@ -54,6 +54,7 @@ def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -
 
     # Ensure it's using the safe DB
     assert "test-safe-postgres" in str(runner.database.database_url)
+    assert runner.database.database_url == runner.config.database_url
 
 
 def test_fixture_redirects_gobby_home(protect_production_resources) -> None:

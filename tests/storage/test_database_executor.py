@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 import pytest
 
@@ -22,6 +21,7 @@ async def test_database_executor_limits_worker_count() -> None:
     active = 0
     max_active = 0
     thread_ids: set[int] = set()
+    workers_started = threading.Event()
 
     def work(value: int) -> int:
         nonlocal active, max_active
@@ -29,9 +29,10 @@ async def test_database_executor_limits_worker_count() -> None:
             active += 1
             max_active = max(max_active, active)
             thread_ids.add(threading.get_ident())
+            if active == 2:
+                workers_started.set()
         try:
             start_event.wait(timeout=5)
-            time.sleep(0.02)
             return value
         finally:
             with lock:
@@ -39,7 +40,7 @@ async def test_database_executor_limits_worker_count() -> None:
 
     try:
         tasks = [asyncio.create_task(executor.run(work, index)) for index in range(8)]
-        await asyncio.sleep(0.05)
+        assert await asyncio.to_thread(workers_started.wait, 1)
 
         stats = executor.stats()
         assert stats.max_workers == 2

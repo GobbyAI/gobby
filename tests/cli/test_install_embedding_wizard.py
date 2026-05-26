@@ -376,6 +376,7 @@ class TestRunEmbeddingInstallNoInteractive:
             )
 
         assert provider == "openai"
+        assert results == {}
         mock_get_key.assert_called_once_with(no_interactive=True, results=results)
         installer.assert_not_called()
 

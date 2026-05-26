@@ -417,6 +417,7 @@ class TestLLMServiceCallFeature:
         )
 
         assert result == {"entities": []}
+        assert result["entities"] == []
         mock_claude_instance.generate_json.assert_awaited_once_with(
             "rendered prompt",
             "strict JSON system prompt",
@@ -443,8 +444,9 @@ class TestLLMServiceCallFeature:
         local_provider.generate_json = AsyncMock(side_effect=ConnectionError("local down"))
 
         config = DigestConfig(provider="local", model="test-model")
-        with pytest.raises(ConnectionError, match="local down"):
+        with pytest.raises(ConnectionError, match="local down") as exc_info:
             await service.call_json_feature(config, "rendered prompt")
+        assert exc_info.value.args == ("local down",)
         mock_claude_instance.generate_json.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -504,8 +506,9 @@ class TestLLMServiceCallFeature:
         local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local down"))
 
         config = DigestConfig(provider="local", model="test-model")
-        with pytest.raises(ConnectionError, match="local down"):
+        with pytest.raises(ConnectionError, match="local down") as exc_info:
             await service.call_feature(config, "prompt text")
+        assert exc_info.value.args == ("local down",)
         mock_claude_instance.generate_text.assert_not_awaited()
 
     @pytest.mark.asyncio

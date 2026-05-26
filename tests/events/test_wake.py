@@ -13,6 +13,7 @@ import pytest
 
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from tests._timing import drain_asyncio_tasks
 
 
 def test_live_wake_signal_is_neutral() -> None:
@@ -555,8 +556,11 @@ class TestWakeDispatch:
             _message: str,
             _socket_path: str | None,
         ) -> None:
-            await asyncio.sleep(0.01)
+            send_started.set()
+            await release_send.wait()
 
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
         tmux_pane_sender = AsyncMock(side_effect=slow_pane_send)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -564,11 +568,18 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await asyncio.gather(
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
-        )
+        async def run_wakes() -> list[None]:
+            return await asyncio.gather(
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
+            )
+
+        wakes = asyncio.create_task(run_wakes())
+        await asyncio.wait_for(send_started.wait(), timeout=1)
+        await drain_asyncio_tasks(cycles=2)
+        release_send.set()
+        await wakes
 
         tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
         assert ism_manager.create_message.call_count == 3
@@ -588,8 +599,11 @@ class TestWakeDispatch:
         )
 
         async def slow_tmux_send(_tmux_session_name: str, _message: str) -> None:
-            await asyncio.sleep(0.01)
+            send_started.set()
+            await release_send.wait()
 
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
         tmux_sender = AsyncMock(side_effect=slow_tmux_send)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -597,11 +611,18 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
         )
 
-        await asyncio.gather(
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
-            dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
-        )
+        async def run_wakes() -> list[None]:
+            return await asyncio.gather(
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"}),
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"}),
+                dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"}),
+            )
+
+        wakes = asyncio.create_task(run_wakes())
+        await asyncio.wait_for(send_started.wait(), timeout=1)
+        await drain_asyncio_tasks(cycles=2)
+        release_send.set()
+        await wakes
 
         tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
         assert ism_manager.create_message.call_count == 3
@@ -806,7 +827,8 @@ class TestWakeDispatch:
         )
 
         async def slow_web_wake(_session_id: str) -> dict[str, object]:
-            await asyncio.sleep(0.01)
+            wake_started.set()
+            await release_wake.wait()
             return {
                 "session_id": "web-1",
                 "delivered": True,
@@ -814,6 +836,8 @@ class TestWakeDispatch:
                 "queued": False,
             }
 
+        wake_started = asyncio.Event()
+        release_wake = asyncio.Event()
         registry = MagicMock()
         registry.wake_session = AsyncMock(side_effect=slow_web_wake)
         dispatcher = WakeDispatcher(
@@ -822,11 +846,18 @@ class TestWakeDispatch:
             web_chat_session_registry=registry,
         )
 
-        results = await asyncio.gather(
-            dispatcher.dispatch_live_wake("web-1"),
-            dispatcher.dispatch_live_wake("web-1"),
-            dispatcher.dispatch_live_wake("web-1"),
-        )
+        async def run_wakes() -> list[dict[str, object]]:
+            return await asyncio.gather(
+                dispatcher.dispatch_live_wake("web-1"),
+                dispatcher.dispatch_live_wake("web-1"),
+                dispatcher.dispatch_live_wake("web-1"),
+            )
+
+        wakes = asyncio.create_task(run_wakes())
+        await asyncio.wait_for(wake_started.wait(), timeout=1)
+        await drain_asyncio_tasks(cycles=2)
+        release_wake.set()
+        results = await wakes
 
         registry.wake_session.assert_awaited_once_with("web-1")
         assert [result.get("skipped") for result in results].count("debounced") == 2

@@ -81,7 +81,7 @@ class TestSessionLifecycleManager:
         """Shutdown should not block on best-effort background work."""
 
         async def slow_to_cancel():
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
         async def fake_wait(tasks, timeout):
             assert timeout == 0.01

@@ -232,6 +232,7 @@ class TestAgentWorkflowCompletion:
         await engine.evaluate(_after_tool_event(), session_id="agent-session", variables=variables)
 
         assert variables["step_workflow_complete"] is True
+        assert "step_workflow_complete" in variables
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
             "run-123",

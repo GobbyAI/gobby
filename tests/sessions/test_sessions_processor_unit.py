@@ -270,6 +270,7 @@ class TestProcessSession:
 
         await processor._process_session("session-1", str(transcript))
 
+        assert processor._active_sessions["session-1"] == str(transcript)
         session_manager.revive_expired_terminal_session.assert_called_once_with("session-1")
 
     @pytest.mark.asyncio
@@ -477,6 +478,9 @@ class TestWebSocketBroadcast:
 
         mock_ws_server.feed_attached_session_tts.assert_awaited()
         mock_ws_server.broadcast.assert_awaited_once()
+        broadcast_payload = mock_ws_server.broadcast.await_args.args[0]
+        assert broadcast_payload["type"] == "session_message"
+        assert broadcast_payload["message"]["content"] == "hello"
         inc_counter.assert_called_once_with("tts_feed_failures_total")
 
     @pytest.mark.asyncio

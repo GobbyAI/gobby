@@ -32,6 +32,7 @@ async def test_terminalize_cancelled_agent_run_uses_lifecycle_monitor() -> None:
     )
 
     assert transitioned is True
+    assert isinstance(transitioned, bool)
     lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
         "run-123",
         terminal_reason="user_cancelled",
@@ -66,6 +67,7 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() ->
         )
 
     assert transitioned is True
+    assert isinstance(transitioned, bool)
     runner.cancel_run.assert_called_once_with("run-123")
     runner.run_storage.get.assert_called_once_with("run-123")
     recovery_cls.assert_called_once_with(task_manager, runner.run_storage, ANY)
@@ -104,6 +106,7 @@ async def test_terminalize_cancelled_agent_run_fallback_skips_recovery_when_not_
     )
 
     assert transitioned is False
+    assert isinstance(transitioned, bool)
     runner.cancel_run.assert_called_once_with("run-123")
     runner.run_storage.get.assert_not_called()
     completion_registry.notify.assert_not_awaited()

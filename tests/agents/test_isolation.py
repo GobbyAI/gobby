@@ -180,12 +180,14 @@ class TestRepairIsolationEnvironment:
             ) as preseed,
             patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
         ):
-            await repair_isolation_environment(
+            result = await repair_isolation_environment(
                 main_repo_path="/main/repo",
                 isolated_path=str(tmp_path),
                 provider="codex",
             )
 
+        assert result is None
+        assert tmp_path.exists()
         preseed.assert_awaited_once_with(str(tmp_path))
 
 

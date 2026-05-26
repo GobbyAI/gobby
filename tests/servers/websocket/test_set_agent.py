@@ -342,4 +342,5 @@ class TestSetAgentAttachedSession:
             "target_session_id": "term-1",
             "agent_name": "persona-agent",
         }
+        assert msg["target_session_id"] == "term-1"
         server._send_error.assert_not_awaited()

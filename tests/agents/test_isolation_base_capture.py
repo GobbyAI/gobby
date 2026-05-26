@@ -114,12 +114,13 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
         ),
         caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
     ):
-        await repair_isolation_environment(
+        result = await repair_isolation_environment(
             main_repo_path="/tmp/main",
             isolated_path="/tmp/isolated",
             provider="codex",
         )
 
+    assert result is None
     assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
 
 

@@ -31,7 +31,11 @@ class FailingTTS:
 
 
 class HangingTTS:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
+        self.started.set()
         await asyncio.Event().wait()
         yield text.encode("utf-8"), 24000
 
@@ -73,14 +77,15 @@ class TestTTSPipeline:
     @pytest.mark.asyncio
     async def test_cancel_stops_worker_before_clearing_buffer_and_queue(self) -> None:
         ws = DummyWebSocket()
+        tts = HangingTTS()
         pipeline = TTSPipeline(
-            tts=HangingTTS(),
+            tts=tts,
             conversation_id="conv-1234",
             clients={ws: {"conversation_id": "conv-1234"}},
         )
 
         pipeline.feed_text("First sentence. Queued sentence.")
-        await asyncio.sleep(0)
+        await asyncio.wait_for(tts.started.wait(), timeout=1)
         await pipeline.cancel()
 
         assert pipeline._worker_task.done()

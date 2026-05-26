@@ -632,6 +632,7 @@ class TestSpawnAgentPreRegistration:
 
         _health_check_tasks.discard(health_task)
         assert result["success"] is True
+        assert result["run_id"].startswith("run-")
         mock_runner.run_storage.update_child_session.assert_called_once_with(ANY, "child-456")
         mock_runner.run_storage.update_runtime.assert_called_once_with(
             ANY,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -204,6 +205,7 @@ class TestCheckDeadAgents:
             sample_session,
             run_id="run-dead",
             tmux_session_name="gobby-dead",
+            pid=999999,
         )
 
         with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -332,6 +334,7 @@ class TestCheckDeadAgents:
             run_id="run-wt",
             tmux_session_name="gobby-wt",
             child_session_id=child_session.id,
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -1257,6 +1260,7 @@ class TestCheckTrustPrompts:
             sample_session,
             run_id="run-cleanup",
             tmux_session_name="gobby-cleanup",
+            pid=999999,
         )
 
         # Pre-mark as dismissed
@@ -1356,7 +1360,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
 
@@ -1403,7 +1411,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
 
@@ -1667,7 +1679,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             await mon.check_unhealthy_agents()
 
@@ -1713,7 +1729,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             await mon.check_unhealthy_agents()
 
@@ -2495,8 +2515,12 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     )
     original_list_active = agent_run_manager.list_active
 
+    list_active_started = threading.Event()
+    release_list_active = threading.Event()
+
     def slow_list_active() -> list[AgentRun]:
-        time.sleep(0.02)
+        list_active_started.set()
+        release_list_active.wait(timeout=1)
         return original_list_active()
 
     try:
@@ -2504,7 +2528,15 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
             patch.object(agent_run_manager, "list_active", side_effect=slow_list_active),
             patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
         ):
-            await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
+            async def run_checks() -> list[None]:
+                return await asyncio.gather(
+                    *(monitor.check_periodic_enters() for _ in range(20))
+                )
+
+            checks = asyncio.create_task(run_checks())
+            assert await asyncio.to_thread(list_active_started.wait, 1)
+            release_list_active.set()
+            await checks
 
         await monitor._recover_task_from_failed_agent(run.id)
 
@@ -2557,6 +2589,7 @@ class TestDeadAgentCompletionEvent:
             sample_session,
             run_id="run-dead-cr",
             tmux_session_name="gobby-dead-cr",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2588,6 +2621,7 @@ class TestDeadAgentCompletionEvent:
             run_id="run-dead-clone",
             tmux_session_name="gobby-dead-clone",
             clone_id="clone-789",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2655,6 +2689,7 @@ class TestSessionExpirationOnCleanup:
             run_id="run-expire-sess",
             tmux_session_name="gobby-expire-sess",
             child_session_id=child_session.id,
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2686,6 +2721,7 @@ class TestSessionExpirationOnCleanup:
             sample_session,
             run_id="run-no-sm",
             tmux_session_name="gobby-no-sm",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):

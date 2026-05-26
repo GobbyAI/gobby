@@ -527,6 +527,7 @@ class TestKillAllGobbyDaemons:
                         mock_proc_cls.return_value = parent_proc
                         result = kill_all_gobby_daemons()
                     assert result == 0
+                    assert isinstance(result, int)
 
     def test_finds_and_kills_daemon(self) -> None:
         """Test finding and killing a gobby daemon."""

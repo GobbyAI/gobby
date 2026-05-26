@@ -168,8 +168,11 @@ class TestInstallFalkorDB:
             mock_subprocess.run.return_value = MagicMock(returncode=0)
             mock_subprocess.TimeoutExpired = TimeoutError
 
-            install_falkordb(gobby_home=tmp_path)
+            result = install_falkordb(gobby_home=tmp_path)
 
+        assert result["success"] is True
+        assert result["password_source"] == "provided"
+        assert mock_subprocess.run.return_value.returncode == 0
         mock_update.assert_called_once_with(
             host="127.0.0.1",
             port=16379,

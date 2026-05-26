@@ -554,7 +554,10 @@ class TestShutdownDaemonServices:
     async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         server = SimpleNamespace(should_exit=False)
-        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        async def server_done() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(server_done())
         events: list[str] = []
 
         async def grace_window() -> None:
@@ -595,7 +598,10 @@ class TestShutdownDaemonServices:
     ) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
         server = SimpleNamespace(should_exit=False)
-        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        async def server_done() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(server_done())
         real_wait_for = asyncio.wait_for
         call_count = 0
 
@@ -635,7 +641,10 @@ class TestShutdownDaemonServices:
     ) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         server = SimpleNamespace(should_exit=False)
-        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        async def server_done() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(server_done())
         real_wait_for = asyncio.wait_for
         call_count = 0
 
@@ -666,6 +675,7 @@ class TestShutdownDaemonServices:
             )
 
         assert "Lifecycle manager shutdown timed out" in caplog.text
+        assert any("Lifecycle manager shutdown timed out" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_restart_reaps_only_non_terminal_agent_children(

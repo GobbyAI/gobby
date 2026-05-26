@@ -259,7 +259,7 @@ class TestBroadcastScheduling:
         broadcaster.broadcast_event = MagicMock(side_effect=broadcast_event)
         loop = MagicMock()
 
-        schedule_hook_broadcast(
+        result = schedule_hook_broadcast(
             broadcaster,
             _event(),
             HookResponse(decision="allow"),
@@ -267,5 +267,7 @@ class TestBroadcastScheduling:
             MagicMock(),
         )
 
+        assert result is None
+        assert loop is mock_threadsafe.call_args.args[1]
         mock_get_loop.assert_called_once()
         mock_threadsafe.assert_called_once()

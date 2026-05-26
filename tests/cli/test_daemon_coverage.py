@@ -130,6 +130,7 @@ class TestServicesStart:
             with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
                 result = _services_start(tmp_path)
             assert result is None
+            assert compose.exists()
             mock_run.assert_not_called()
 
 

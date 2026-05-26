@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -85,6 +84,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     graph.clear_project.assert_awaited_once_with("proj-missing")
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
+    assert not missing_root.exists()
     assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
 
 
@@ -94,14 +94,19 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     lock = threading.Lock()
     active = 0
     max_active = 0
+    all_slots_busy = threading.Event()
+    release_updates = threading.Event()
+    waits_completed: list[bool] = []
 
     def update_symbol_summary(_symbol_id: str, _summary: str) -> None:
         nonlocal active, max_active
         with lock:
             active += 1
             max_active = max(max_active, active)
+            if active == 4:
+                all_slots_busy.set()
         try:
-            time.sleep(0.01)
+            waits_completed.append(release_updates.wait(timeout=1))
         finally:
             with lock:
                 active -= 1
@@ -115,9 +120,13 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
 
-    await _update_symbol_summaries(context, results)
+    update_task = asyncio.create_task(_update_symbol_summaries(context, results))
+    assert await asyncio.to_thread(all_slots_busy.wait, 1)
+    release_updates.set()
+    await update_task
 
     assert max_active <= 4
+    assert all(waits_completed)
 
 
 @pytest.mark.asyncio
