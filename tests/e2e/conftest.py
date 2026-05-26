@@ -114,10 +114,12 @@ def prepare_daemon_env(
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
 
-    # Disable any LLM providers to avoid external calls
-    env["ANTHROPIC_API_KEY"] = ""
-    env["OPENAI_API_KEY"] = ""
-    env["GEMINI_API_KEY"] = ""
+    # Disable any LLM providers to avoid external calls. The memory-helper
+    # live smoke is explicitly opt-in and needs the real provider credentials.
+    if env.get("GOBBY_LIVE_MEMORY_HELPER_E2E") != "1":
+        env["ANTHROPIC_API_KEY"] = ""
+        env["OPENAI_API_KEY"] = ""
+        env["GEMINI_API_KEY"] = ""
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
     # the user's real home directory. This is the single most effective
@@ -426,15 +428,22 @@ websocket_port: {ws_port}
 
 
 @pytest.fixture(scope="function")
+def e2e_pre_daemon_setup() -> None:
+    """Optional per-test setup that must run after DB reset and before daemon start."""
+
+
+@pytest.fixture(scope="function")
 def daemon_instance(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
+    e2e_pre_daemon_setup: None,
 ) -> Generator[DaemonInstance]:
     """
     Spawn an isolated daemon instance for E2E testing.
 
     Yields a DaemonInstance with running daemon, then cleans up on teardown.
     """
+    _ = e2e_pre_daemon_setup
     config_path, http_port, ws_port = e2e_config
     gobby_home = config_path.parent
     log_dir = gobby_home / "logs"
@@ -589,14 +598,20 @@ class CLIEventSimulator:
         machine_id: str = "test-machine",
         source: str = "claude",
         project_id: str | None = None,
+        cwd: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Simulate session start hook event via /hooks/execute endpoint."""
-        input_data = {
+        input_data: dict[str, Any] = {
             "session_id": session_id,
             "machine_id": machine_id,
         }
         if project_id:
             input_data["project_id"] = project_id
+        if cwd:
+            input_data["cwd"] = cwd
+        if terminal_context:
+            input_data["terminal_context"] = terminal_context
 
         payload = {
             "hook_type": "session-start",
@@ -650,12 +665,57 @@ class CLIEventSimulator:
         response.raise_for_status()
         return response.json()
 
+    def user_prompt_submit(
+        self,
+        session_id: str,
+        prompt: str,
+        source: str = "claude",
+        machine_id: str = "test-machine",
+        cwd: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Simulate a provider-specific turn-start/user-prompt hook."""
+        hook_type_by_source = {
+            "claude": "user-prompt-submit",
+            "codex": "UserPromptSubmit",
+            "droid": "UserPromptSubmit",
+            "gemini": "BeforeAgent",
+        }
+        hook_type = hook_type_by_source[source]
+        input_data: dict[str, Any] = {
+            "session_id": session_id,
+            "machine_id": machine_id,
+        }
+        if cwd:
+            input_data["cwd"] = cwd
+        if project_id:
+            input_data["project_id"] = project_id
+
+        if source in {"claude", "droid"}:
+            input_data["user_prompt"] = prompt
+        else:
+            input_data["prompt"] = prompt
+        if source == "gemini":
+            input_data["hook_event_name"] = hook_type
+
+        payload = {
+            "hook_type": hook_type,
+            "source": source,
+            "input_data": input_data,
+        }
+
+        response = self.client.post("/api/hooks/execute", json=payload)
+        response.raise_for_status()
+        return response.json()
+
     def register_test_agent(
         self,
         run_id: str,
         session_id: str,
         parent_session_id: str,
         mode: str = "interactive",
+        agent_name: str | None = None,
+        status: str = "running",
     ) -> dict[str, Any]:
         """Register a test agent in the running agent registry.
 
@@ -667,7 +727,10 @@ class CLIEventSimulator:
             "session_id": session_id,
             "parent_session_id": parent_session_id,
             "mode": mode,
+            "status": status,
         }
+        if agent_name is not None:
+            payload["agent_name"] = agent_name
 
         response = self.client.post("/api/admin/test/register-agent", json=payload)
         response.raise_for_status()

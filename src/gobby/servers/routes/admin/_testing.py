@@ -95,6 +95,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         run_id: str
         session_id: str
         parent_session_id: str
+        agent_name: str | None = None
+        status: str = "running"
 
     @router.post("/test/register-agent")
     async def register_test_agent(request: TestAgentRegisterRequest) -> dict[str, Any]:
@@ -123,6 +125,22 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             db = server.services.database
+            if request.status not in {
+                "pending",
+                "running",
+                "success",
+                "cancelled",
+                "error",
+                "timeout",
+            }:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "status must be one of: pending, running, success, "
+                        "cancelled, error, timeout"
+                    ),
+                )
+
             arm = LocalAgentRunManager(db)
 
             # Create agent run in DB
@@ -131,10 +149,19 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 parent_session_id=request.parent_session_id,
                 provider="test",
                 prompt="test agent",
+                agent_name=request.agent_name,
             )
-            # Mark as running with child session
-            arm.start(request.run_id)
+            if request.status != "pending":
+                arm.start(request.run_id)
             arm.update_child_session(request.run_id, request.session_id)
+            if request.status == "success":
+                arm.complete(request.run_id, result="test agent completed")
+            elif request.status == "cancelled":
+                arm.cancel(request.run_id)
+            elif request.status == "error":
+                arm.fail(request.run_id, error="test agent failed")
+            elif request.status == "timeout":
+                arm.timeout(request.run_id)
 
             run = arm.get(request.run_id)
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -146,6 +173,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "response_time_ms": response_time_ms,
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error registering test agent: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
