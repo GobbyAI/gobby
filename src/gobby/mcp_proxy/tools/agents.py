@@ -23,7 +23,7 @@ from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.mcp_proxy.tools.agent_cancellation import (
-    terminalize_cancelled_agent_run,
+    stop_agent_run,
     terminalize_killed_agent_run,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -412,56 +412,74 @@ def create_agents_registry(
         Returns:
             Dict with success status.
         """
-        run = runner.get_run(run_id)
-        if not run:
-            return {"success": False, "error": f"Agent run {run_id} not found"}
-        if run.status not in ("pending", "running"):
-            return {"success": False, "error": f"Cannot stop agent in status: {run.status}"}
-
-        kill_db = db or agent_run_manager.db
-        result = await _kill_agent_process(
-            run,
-            kill_db,
-            signal_name="TERM",
-            close_terminal=True,
-        )
-        if not result.get("success") and result.get("error") != "No target PID found":
-            return result
-
-        transitioned = await terminalize_cancelled_agent_run(
-            runner=runner,
+        return await stop_agent_run(
             run_id=run_id,
-            terminal_reason="user_cancelled",
+            runner=runner,
+            agent_run_manager=agent_run_manager,
+            db=db,
             lifecycle_monitor=lifecycle_monitor,
             completion_registry=completion_registry,
             task_manager=task_manager,
-            message=f"Agent {run_id} cancelled",
-        )
-
-        if not transitioned:
-            current = runner.get_run(run_id)
-            logger.debug(
-                "stop_agent no-op for run %s; current status=%s",
-                run_id,
-                current.status if current else "missing",
-            )
-
-        await _cleanup_terminal_artifacts(
-            run_id=run.id,
-            db=kill_db,
-            tmux_session_name=run.tmux_session_name,
-            agent_session_id=run.child_session_id,
-            debug=False,
             session_manager=session_manager,
             hook_manager_resolver=hook_manager_resolver,
-            result=result,
+            kill_agent_process=_kill_agent_process,
+            cleanup_terminal_artifacts=_cleanup_terminal_artifacts,
         )
+
+    @registry.tool(
+        name="cancel_stale_helpers",
+        description=(
+            "Cancel all still-running runs of an agent spawned by a parent session. "
+            "Used by freshness rules before parent turn delivery."
+        ),
+    )
+    async def cancel_stale_helpers(
+        parent_session_id: str,
+        agent_name: str,
+    ) -> dict[str, Any]:
+        """Cancel active helper runs for a parent session, continuing after per-run errors."""
+        if not parent_session_id:
+            return {"success": False, "error": "parent_session_id is required"}
+        if not agent_name:
+            return {"success": False, "error": "agent_name is required"}
+
+        resolved_parent = _resolve_session_id(parent_session_id)
+        stale = [
+            run
+            for run in agent_run_manager.list_by_parent(resolved_parent)
+            if run.agent_name == agent_name and run.status in ("pending", "running")
+        ]
+
+        cancelled: list[str] = []
+        errors: list[dict[str, str]] = []
+        for run in stale:
+            try:
+                result = await stop_agent_run(
+                    run_id=run.id,
+                    runner=runner,
+                    agent_run_manager=agent_run_manager,
+                    db=db,
+                    lifecycle_monitor=lifecycle_monitor,
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                    session_manager=session_manager,
+                    hook_manager_resolver=hook_manager_resolver,
+                    kill_agent_process=_kill_agent_process,
+                    cleanup_terminal_artifacts=_cleanup_terminal_artifacts,
+                )
+                if result.get("success"):
+                    cancelled.append(run.id)
+                else:
+                    errors.append({"run_id": run.id, "error": str(result.get("error", "unknown"))})
+            except Exception as e:  # noqa: BLE001 - best-effort cancellation
+                errors.append({"run_id": run.id, "error": str(e)})
+                logger.warning("cancel_stale_helpers: failed to stop %s: %s", run.id, e)
+
         return {
             "success": True,
-            "message": f"Agent run {run_id} stopped",
-            "run_id": run_id,
-            "status": "cancelled",
-            "terminal_reason": "user_cancelled",
+            "cancelled": cancelled,
+            "errors": errors,
+            "count": len(cancelled),
         }
 
     @registry.tool(
