@@ -18,6 +18,7 @@ This file tests the agent-related MCP tools:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -117,6 +118,7 @@ class TestCreateAgentsRegistry:
             "wait_for_agent",
             "list_agent_runs",
             "stop_agent",
+            "cancel_stale_helpers",
             "end_agent_run",
             "kill_agent",
             "can_spawn_agent",
@@ -148,6 +150,13 @@ class TestCreateAgentsRegistry:
         # Should not raise — param is accepted for backward compat
         registry = create_agents_registry(runner, running_registry=MagicMock())
         assert registry is not None
+
+    def test_agents_py_under_monolith_limit(self) -> None:
+        """Guard against growing the non-test agents module into a monolith."""
+        repo_root = Path(__file__).parents[3]
+        agents_py = repo_root / "src/gobby/mcp_proxy/tools/agents.py"
+
+        assert agents_py.read_text(encoding="utf-8").count("\n") < 1000
 
 
 class TestGetAgentResult:
@@ -522,7 +531,7 @@ class TestStopAgent:
                 return_value={"success": True},
             ) as kill_process,
             patch(
-                "gobby.mcp_proxy.tools.agents.terminalize_cancelled_agent_run",
+                "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
                 new_callable=AsyncMock,
                 return_value=True,
             ) as terminalize,
