@@ -7,6 +7,7 @@ are tested there instead.
 Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
 - bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
+- cancel-stale-memory-recall-helpers: mcp_call on turn_start before delivery
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
 - require-memory-review-before-status: block on before_tool (close_task, submit_for_review, approve_review, reject_review)
@@ -32,6 +33,7 @@ pytestmark = pytest.mark.unit
 MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "bootstrap-session-title-on-prompt",
+    "cancel-stale-memory-recall-helpers",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
     "require-memory-review-before-status",
@@ -215,6 +217,45 @@ class TestMemoryRecallOnPrompt:
         row = manager.get_by_name("memory-recall-on-prompt")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.effects[0].background is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# cancel-stale-memory-recall-helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCancelStaleMemoryRecallHelpers:
+    """Cancel stale recall helpers before pending-message delivery."""
+
+    def test_event_priority_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("cancel-stale-memory-recall-helpers")
+        assert row is not None
+        assert row.enabled is True
+        assert row.priority == 5
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.effects[0].type == "mcp_call"
+        assert body.effects[0].server == "gobby-agents"
+        assert body.effects[0].tool == "cancel_stale_helpers"
+        assert body.effects[0].arguments["parent_session_id"] == (
+            "{{ event.metadata.get('_platform_session_id') }}"
+        )
+        assert body.effects[0].arguments["agent_name"] == "memory-recall-helper"
+        assert body.effects[0].inject_result is True
+        assert body.effects[0].background is False
+
+    def test_has_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("cancel-stale-memory-recall-helpers")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert "_platform_session_id" in body.when
+        assert "memory_recall_helper_enabled" not in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════
