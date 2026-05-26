@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.tasks.state_semantics import (
     current_stage,
@@ -15,6 +15,9 @@ from gobby.tasks.state_semantics import (
 
 logger = logging.getLogger(__name__)
 RECOVERABLE_TERMINAL_STATUSES = ("error", "timeout", "cancelled")
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import LocalTaskManager
 
 
 class _AgentRun(Protocol):
@@ -61,42 +64,6 @@ class _Task(Protocol):
     dispatch_failure_count: int | None
 
 
-class _StageStates(Protocol):
-    def fail_stage(
-        self,
-        task_id: str,
-        stage_name: str,
-        *,
-        reason: str,
-        by_session_id: str | None,
-    ) -> Any: ...
-
-    def get(self, task_id: str, stage_name: str) -> Any | None: ...
-
-
-class _TaskManager(Protocol):
-    db: Any
-    stage_states: _StageStates
-
-    def list_tasks(
-        self,
-        *,
-        claimed_by_session_id: str | None = ...,
-        closed: bool | None = ...,
-    ) -> list[_Task]: ...
-
-    def get_task(self, task_id: str) -> _Task | None: ...
-
-    def release_task_claim(
-        self,
-        task_id: str,
-        *,
-        dispatch_failure_count: int | None = ...,
-        escalated_at: str | None = ...,
-        escalation_reason: str | None = ...,
-    ) -> _Task: ...
-
-
 def _stage_name(stage: Any) -> str | None:
     if isinstance(stage, dict):
         raw = stage.get("stage_name") or stage.get("name")
@@ -122,7 +89,7 @@ class TaskRecoveryHandler:
 
     def __init__(
         self,
-        task_manager: _TaskManager | None,
+        task_manager: LocalTaskManager | None,
         agent_run_manager: _AgentRunManager,
         stall_classifier: _StallClassifier,
         failure_threshold: int | None = None,
