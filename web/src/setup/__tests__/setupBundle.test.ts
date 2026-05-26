@@ -38,5 +38,5 @@ describe("setup bundle FalkorDB contract", () => {
 
   it("keeps the checked-in npm and Python setup bundles byte-identical", () => {
     expect(readFileSync(pyBundlePath)).toEqual(readFileSync(distBundlePath));
-  });
+  }, 15000);
 });

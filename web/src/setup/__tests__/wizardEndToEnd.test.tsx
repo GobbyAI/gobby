@@ -242,7 +242,8 @@ describe("setup wizard end-to-end", () => {
     await click(/No, use defaults/i);
     await flush(300);
 
-    await click(/Skip/i);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Skip$/i })).toBeTruthy());
+    await click(/^Skip$/i);
     await flush(300);
 
     await waitFor(() => expect(screen.getByText(/No uninitialized git repositories/i)).toBeTruthy());
@@ -301,5 +302,5 @@ describe("setup wizard end-to-end", () => {
     expect(summary).toContain("- FalkorDB: installed (Docker)");
     expect(summary).toContain("- FalkorDB password: custom");
     expect(summary).not.toContain("Neo4j");
-  });
+  }, 15000);
 });

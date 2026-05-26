@@ -159,6 +159,62 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
     assert _has_run(runs, "uv run pytest")
 
 
+def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -> None:
+    workflow = _load_yaml(repo_root / ".github/workflows/ci.yml")
+    build_job = _mapping(_mapping(workflow["jobs"])["build"])
+    runs = _step_runs(_sequence(build_job["steps"]))
+    env = _mapping(build_job.get("env", {}))
+
+    assert "services" not in build_job, "CI must local-build Postgres instead of pulling a service"
+    assert "DATABASE_URL" not in env
+    assert _job_env(env) == {
+        _POSTGRES_TEST_CONTAINER_ENV: _POSTGRES_TEST_CONTAINER,
+        _POSTGRES_TEST_DB_ENV: _POSTGRES_TEST_DB,
+        _POSTGRES_TEST_IMAGE_ENV: _POSTGRES_TEST_IMAGE,
+        _POSTGRES_TEST_PASSWORD_ENV: _POSTGRES_TEST_PASSWORD,
+        _POSTGRES_TEST_PORT_ENV: _POSTGRES_TEST_PORT,
+        _POSTGRES_TEST_USER_ENV: _POSTGRES_TEST_USER,
+    }
+    assert _has_run(
+        runs,
+        _expected_database_authority_assignment(),
+        _expected_database_host_assignment(),
+        _expected_database_url_assignment(),
+        'echo "DATABASE_URL=$database_url"',
+    )
+    assert _has_run(
+        runs,
+        "docker build",
+        '-t "${GOBBY_POSTGRES_TEST_IMAGE}"',
+        "src/gobby/data/postgres-pgsearch",
+    )
+    assert _has_run(
+        runs,
+        "docker run --rm",
+        '"${GOBBY_POSTGRES_TEST_IMAGE}"',
+        "/usr/local/bin/pg_audit_export.sh",
+    )
+    assert _has_run(
+        runs,
+        "docker run -d",
+        '--name "${GOBBY_POSTGRES_TEST_CONTAINER}"',
+        '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
+        '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
+        '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
+        '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
+        "--tmpfs /var/lib/postgresql",
+        '"${GOBBY_POSTGRES_TEST_IMAGE}"',
+        "postgres",
+        *_PGAUDIT_COMMAND_OPTIONS,
+    )
+    assert _has_run(
+        runs,
+        "GOBBY_RUN_WHEEL_UI_SMOKE=1",
+        'GOBBY_WHEEL_PATH="$wheel"',
+        "uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v",
+    )
+
+
 def _load_yaml(path: Path) -> Mapping[str, Any]:
     data = yaml.safe_load(path.read_text())
     assert isinstance(data, dict)

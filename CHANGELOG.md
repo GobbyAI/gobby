@@ -60,6 +60,9 @@ cleanup.
 - Stabilize pre-push validation by fixing high test-quality assertion gaps,
   local install/config/handoff workflow tests, local coverage reporting, and
   generated report cleanup.
+- Run the installed-wheel UI smoke test against the same local PostgreSQL
+  pg_search test container as Python CI and make setup wizard coverage less
+  sensitive to CI timing jitter.
 - Quiet expected validation, CodeRabbit, tmux, KG extraction, websocket, and
   terminal shutdown noise without hiding actionable failures.
 
