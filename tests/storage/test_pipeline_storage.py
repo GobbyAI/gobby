@@ -3,6 +3,8 @@
 TDD tests for pipeline execution CRUD operations.
 """
 
+import json
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -54,7 +56,8 @@ class TestCreateExecution:
             inputs_json='{"files": ["a.py", "b.py"]}',
         )
 
-        assert execution.inputs_json == '{"files": ["a.py", "b.py"]}'
+        assert execution.inputs_json is not None
+        assert json.loads(execution.inputs_json) == {"files": ["a.py", "b.py"]}
 
     def test_create_execution_with_session(self, manager, db) -> None:
         """Test creating execution linked to a session."""
@@ -136,7 +139,8 @@ class TestUpdateExecutionStatus:
 
         assert updated is not None
         assert updated.status == ExecutionStatus.COMPLETED
-        assert updated.outputs_json == '{"result": "success"}'
+        assert updated.outputs_json is not None
+        assert json.loads(updated.outputs_json) == {"result": "success"}
         assert updated.completed_at is not None
 
     def test_update_nonexistent_execution(self, manager) -> None:
@@ -318,7 +322,8 @@ class TestStepExecutions:
             input_json='{"data": "test"}',
         )
 
-        assert step.input_json == '{"data": "test"}'
+        assert step.input_json is not None
+        assert json.loads(step.input_json) == {"data": "test"}
 
     def test_update_step_execution_status(self, manager) -> None:
         """Test updating step execution status."""
@@ -353,7 +358,8 @@ class TestStepExecutions:
 
         assert updated is not None
         assert updated.status == StepStatus.COMPLETED
-        assert updated.output_json == '{"passed": true}'
+        assert updated.output_json is not None
+        assert json.loads(updated.output_json) == {"passed": True}
         assert updated.completed_at is not None
 
     def test_update_step_execution_failed(self, manager) -> None:
@@ -642,7 +648,8 @@ class TestReviewStorage:
         manager.store_review(execution.id, review)
 
         updated = manager.get_execution(execution.id)
-        assert updated.review_json == review
+        assert updated.review_json is not None
+        assert json.loads(updated.review_json) == json.loads(review)
 
     def test_get_unreviewed_completions_returns_terminal_without_review(self, manager) -> None:
         """Only returns completed/failed/cancelled executions without reviews."""

@@ -193,4 +193,4 @@ def test_resolve_memory_recall_helper(db: HubDatabase) -> None:
     assert result.max_turns == 3
     assert result.timeout == 60
     assert "mcp__gobby__set_variable" in result.blocked_tools
-    assert result.blocked_mcp_tools == []
+    assert result.blocked_mcp_tools == ["gobby-agents:kill_agent"]

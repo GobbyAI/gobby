@@ -443,7 +443,10 @@ class TestSpawnAgentStepVariables:
         assert task_manager.get_task(task.id).assignee == instance.session_id
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
-        assert instance.variables["required_skills"] == ["development-discipline"]
+        assert instance.variables["required_skills"] == [
+            "development-discipline",
+            "task-transitions",
+        ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
         assert instance.variables["additional_skills_loaded"] is True
@@ -469,7 +472,10 @@ class TestSpawnAgentStepVariables:
         assert instance is not None
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
-        assert instance.variables["required_skills"] == ["development-discipline"]
+        assert instance.variables["required_skills"] == [
+            "development-discipline",
+            "task-transitions",
+        ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]
         assert instance.variables["additional_skills_loaded"] is False

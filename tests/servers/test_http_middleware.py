@@ -57,6 +57,7 @@ class TestLifespan:
         )
 
         with patch("gobby.servers.app_factory.HookManager") as MockHM:
+            MockHM.return_value.shutdown_async = AsyncMock()
             with TestClient(server.app):
                 MockHM.assert_called_once()
                 hook_manager_kwargs = MockHM.call_args.kwargs

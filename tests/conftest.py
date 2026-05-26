@@ -374,6 +374,15 @@ def protect_production_resources(
             _real_load_config = None
 
         def safe_load_config(*args, **kwargs):
+            config_store = kwargs.get("config_store")
+            config_store_db = getattr(config_store, "db", None)
+            if (
+                config_store is not None
+                and _real_load_config is not None
+                and not isinstance(config_store_db, MagicMock)
+            ):
+                return _real_load_config(*args, **kwargs)
+
             # If creating default, let it happen but in safe location if possible
             # But simpler is to just return a safe config object
             config = DaemonConfig(

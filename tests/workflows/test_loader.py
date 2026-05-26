@@ -121,10 +121,10 @@ class TestWorkflowLoader:
         loader: WorkflowLoader,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
-        """Test loading a workflow with invalid JSON returns None."""
+        """Test loading a workflow with an invalid JSON shape returns None."""
         def_manager.create(
             name="invalid",
-            definition_json="{bad json",
+            definition_json=json.dumps("bad workflow payload"),
             workflow_type="workflow",
         )
 

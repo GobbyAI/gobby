@@ -124,7 +124,8 @@ def test_create_with_all_fields(manager: LocalWorkflowDefinitionManager) -> None
     assert row.enabled is True
     assert row.priority == 50
     assert row.sources == ["claude", "gemini"]
-    assert row.canvas_json == '{"nodes": [], "edges": []}'
+    assert row.canvas_json is not None
+    assert json.loads(row.canvas_json) == {"nodes": [], "edges": []}
     assert row.source == "installed"
     assert row.tags == ["tag1", "tag2"]
     assert row.project_id is None
@@ -379,9 +380,7 @@ def test_list_all_filter_enabled(manager: LocalWorkflowDefinitionManager) -> Non
     assert "disabled-wf" in disabled_names
 
 
-def test_list_all_filter_project(
-    db: HubDatabase, manager: LocalWorkflowDefinitionManager
-) -> None:
+def test_list_all_filter_project(db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
     """Test listing definitions filtered by project_id (includes global)."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "

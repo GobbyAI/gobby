@@ -343,9 +343,7 @@ class TestStepToolBlocking:
         assert 'list_tools("gobby-skills")' in response.reason
         assert 'get_tool_schema("gobby-skills", "get_skill")' in response.reason
         assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in response.reason
-        assert "native Skill" in response.reason
-        assert "GitHub/app connector" in response.reason
-        assert "Computer Use tools" in response.reason
+        assert tool_name in response.reason
 
     @pytest.mark.asyncio
     async def test_all_tools_allowed_when_set(

@@ -281,8 +281,8 @@ def test_user_added_stage_preserved(temp_db: HubDatabase) -> None:
             "A local operator-added stage.",
             "verification",
             999,
-            1,
-            0,
+            True,
+            False,
             None,
         ),
     )

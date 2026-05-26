@@ -72,6 +72,10 @@ class TestStaleNeo4jConfigStartup:
         """Stale Neo4j config is warned, cleaned, and migrated before services read config."""
         from gobby.runner_init.storage import init_storage_and_config
 
+        temp_db.execute(
+            "DELETE FROM config_store WHERE key = ?",
+            ("databases.falkordb.rrf_k",),
+        )
         _set_config_value(temp_db, "databases.neo4j.rrf_k", 80)
         _set_config_value(temp_db, "databases.neo4j.auth", "$secret:auth", is_secret=True)
         _set_config_value(temp_db, "mock.test.auth", "$secret:auth", is_secret=True)

@@ -136,7 +136,6 @@ def test_db_source_ignores_filesystem_task_export(
     from gobby.storage.projects import LocalProjectManager
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(temp_db.db_path))
     project = LocalProjectManager(temp_db).create("project")
     (tmp_path / ".gobby").mkdir()
     (tmp_path / ".gobby" / "tasks.jsonl").write_text(
@@ -155,6 +154,7 @@ def test_db_source_ignores_filesystem_task_export(
         task_tree=TaskTreeSource.db,
         root_task_ref="#1",
         project_id=project.id,
+        db=temp_db,
     )
 
     assert report.rows[0].status is CoverageStatus.missing
@@ -167,7 +167,6 @@ def test_db_source_loads_live_task_records(
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
-    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(temp_db.db_path))
     project = LocalProjectManager(temp_db).create("project")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(project.id, "Root")
@@ -186,6 +185,7 @@ def test_db_source_loads_live_task_records(
         task_tree=TaskTreeSource.db,
         root_task_ref=f"#{root.seq_num}",
         project_id=project.id,
+        db=temp_db,
     )
 
     assert report.rows[0].status is CoverageStatus.covered

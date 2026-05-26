@@ -564,4 +564,4 @@ def test_memory_recall_helper_synced(temp_db: HubDatabase) -> None:
     assert body.max_turns == 3
     assert body.timeout == 60
     assert "mcp__gobby__set_variable" in body.blocked_tools
-    assert body.blocked_mcp_tools == []
+    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]

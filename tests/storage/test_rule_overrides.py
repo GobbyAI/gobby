@@ -36,14 +36,14 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (override_id, session_id, "require-task-before-edit", 0),
+            (override_id, session_id, "require-task-before-edit", False),
         )
 
         row = db.fetchone("SELECT * FROM rule_overrides WHERE id = ?", (override_id,))
         assert row is not None
         assert row["session_id"] == session_id
         assert row["rule_name"] == "require-task-before-edit"
-        assert row["enabled"] == 0
+        assert row["enabled"] is False
 
     def test_query_by_session_and_rule(self, db: HubDatabase) -> None:
         """Should be able to query overrides by session_id and rule_name."""
@@ -52,12 +52,12 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_id, "rule-a", 0),
+            (str(uuid.uuid4()), session_id, "rule-a", False),
         )
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_id, "rule-b", 1),
+            (str(uuid.uuid4()), session_id, "rule-b", True),
         )
 
         row = db.fetchone(
@@ -65,14 +65,14 @@ class TestRuleOverridesTable:
             (session_id, "rule-a"),
         )
         assert row is not None
-        assert row["enabled"] == 0
+        assert row["enabled"] is False
 
         row = db.fetchone(
             "SELECT * FROM rule_overrides WHERE session_id = ? AND rule_name = ?",
             (session_id, "rule-b"),
         )
         assert row is not None
-        assert row["enabled"] == 1
+        assert row["enabled"] is True
 
     def test_unique_constraint(self, db: HubDatabase) -> None:
         """session_id + rule_name should be unique."""
@@ -81,14 +81,14 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_id, "rule-a", 0),
+            (str(uuid.uuid4()), session_id, "rule-a", False),
         )
 
         with pytest.raises(UniqueViolation):
             db.execute(
                 """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                    VALUES (?, ?, ?, ?)""",
-                (str(uuid.uuid4()), session_id, "rule-a", 1),
+                (str(uuid.uuid4()), session_id, "rule-a", True),
             )
 
     def test_different_sessions_same_rule(self, db: HubDatabase) -> None:
@@ -99,12 +99,12 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_a, "rule-x", 0),
+            (str(uuid.uuid4()), session_a, "rule-x", False),
         )
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), session_b, "rule-x", 1),
+            (str(uuid.uuid4()), session_b, "rule-x", True),
         )
 
         rows = db.fetchall("SELECT * FROM rule_overrides WHERE rule_name = ?", ("rule-x",))
@@ -119,12 +119,12 @@ class TestRuleOverridesTable:
             db.execute(
                 """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                    VALUES (?, ?, ?, ?)""",
-                (str(uuid.uuid4()), session_id, name, 0),
+                (str(uuid.uuid4()), session_id, name, False),
             )
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), other_session, "rule-d", 1),
+            (str(uuid.uuid4()), other_session, "rule-d", True),
         )
 
         rows = db.fetchall("SELECT * FROM rule_overrides WHERE session_id = ?", (session_id,))
@@ -136,7 +136,7 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (override_id, str(uuid.uuid4()), "rule-a", 0),
+            (override_id, str(uuid.uuid4()), "rule-a", False),
         )
 
         row = db.fetchone("SELECT * FROM rule_overrides WHERE id = ?", (override_id,))
@@ -150,7 +150,7 @@ class TestRuleOverridesTable:
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (?, ?, ?, ?)""",
-            (override_id, session_id, "rule-a", 0),
+            (override_id, session_id, "rule-a", False),
         )
 
         db.execute("DELETE FROM rule_overrides WHERE id = ?", (override_id,))

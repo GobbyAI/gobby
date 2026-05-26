@@ -244,7 +244,7 @@ class TestGetSkillTool:
             (session.id,),
         )
         assert row is not None
-        assert row[0] == "git-commit"
+        assert row["skill_name"] == "git-commit"
 
     @pytest.mark.asyncio
     async def test_get_skill_without_session_id_skips_tracking(self, populated_db):
@@ -259,8 +259,8 @@ class TestGetSkillTool:
         assert result["success"] is True
 
         # No usage should be recorded
-        row = populated_db.fetchone("SELECT COUNT(*) FROM session_skills", ())
-        assert row[0] == 0
+        row = populated_db.fetchone("SELECT COUNT(*) AS count FROM session_skills", ())
+        assert row["count"] == 0
 
     @pytest.mark.asyncio
     async def test_get_skill_tracking_is_idempotent(self, populated_db, project_id):
@@ -282,10 +282,10 @@ class TestGetSkillTool:
         await tool(name="git-commit", session_id=session.id)
 
         row = populated_db.fetchone(
-            "SELECT COUNT(*) FROM session_skills WHERE session_id = ?",
+            "SELECT COUNT(*) AS count FROM session_skills WHERE session_id = ?",
             (session.id,),
         )
-        assert row[0] == 1
+        assert row["count"] == 1
 
     @pytest.mark.asyncio
     async def test_get_skill_tracking_bad_session_does_not_fail(self, populated_db):

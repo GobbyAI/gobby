@@ -93,15 +93,19 @@ class TestHubDatabase:
         assert row is not None
         assert row["value"] == "original"
 
-    def test_nested_transaction_can_roll_back_inner_scope(self, temp_db: HubDatabase) -> None:
+    def test_savepoint_can_roll_back_inner_scope(self, temp_db: HubDatabase) -> None:
         temp_db.execute("CREATE TABLE test_nested_rollback (id INTEGER PRIMARY KEY, value TEXT)")
 
         with temp_db.transaction() as txn:
             txn.execute("INSERT INTO test_nested_rollback VALUES (1, 'outer')")
-            with pytest.raises(UniqueViolation):
-                with temp_db.transaction() as nested:
-                    nested.execute("INSERT INTO test_nested_rollback VALUES (2, 'inner')")
-                    nested.execute("INSERT INTO test_nested_rollback VALUES (2, 'duplicate')")
+            savepoint = txn.savepoint("inner")
+            try:
+                txn.execute("INSERT INTO test_nested_rollback VALUES (2, 'inner')")
+                txn.execute("INSERT INTO test_nested_rollback VALUES (2, 'duplicate')")
+            except UniqueViolation:
+                savepoint.rollback()
+            else:
+                savepoint.release()
             txn.execute("INSERT INTO test_nested_rollback VALUES (3, 'outer-after')")
 
         rows = temp_db.fetchall("SELECT id, value FROM test_nested_rollback ORDER BY id")

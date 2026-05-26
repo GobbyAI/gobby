@@ -106,6 +106,10 @@ async def test_expired_isolation_loop_uses_bounded_db_runner(
             ),
             timeout=2,
         )
-        assert temp_db.connection_count <= 1 + executor.max_workers
+        stats = executor.stats()
+        assert stats.submitted == stats.completed
+        assert stats.active == 0
+        assert stats.queued == 0
+        assert stats.threads <= executor.max_workers
     finally:
         executor.shutdown(wait=True)

@@ -165,6 +165,7 @@ class TestEpicWithIndependentSubtasks:
                 "description": "Epic for testing parallel clone orchestration",
                 "task_type": "epic",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -184,6 +185,7 @@ class TestEpicWithIndependentSubtasks:
                     "task_type": "task",
                     "parent_task_id": epic_id,
                     "category": "code",
+                    "implementation_domain": "backend",
                     "validation_criteria": "Tests pass and task is functional",
                 },
             )
@@ -414,6 +416,7 @@ class TestParallelTaskProcessing:
                 "title": "Parallel Completion Epic",
                 "task_type": "epic",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -430,6 +433,7 @@ class TestParallelTaskProcessing:
                     "task_type": "task",
                     "parent_task_id": epic_id,
                     "category": "code",
+                    "implementation_domain": "backend",
                     "validation_criteria": "Tests pass and task is functional",
                 },
             )

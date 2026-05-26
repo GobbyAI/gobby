@@ -166,7 +166,7 @@ class TestAdminRoutesExtended:
                 "status": "paused",
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     @patch("gobby.storage.agents.LocalAgentRunManager")
     def test_unregister_test_agent(self, mock_arm_cls, client, mock_server) -> None:

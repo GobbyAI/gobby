@@ -386,8 +386,7 @@ class TestLoadPipeline:
 
     @pytest.mark.asyncio
     async def test_load_pipeline_invalid_json(self, loader, db) -> None:
-        """Test that invalid JSON in the DB returns None."""
-        # Insert invalid JSON directly into the database
+        """Test that an invalid JSON shape in the DB returns None."""
         with db.transaction() as conn:
             conn.execute(
                 """INSERT INTO workflow_definitions
@@ -398,9 +397,9 @@ class TestLoadPipeline:
                     "bad-json-id",
                     "invalid",
                     "pipeline",
-                    1,
+                    True,
                     100,
-                    "{this is not valid json",
+                    json.dumps("bad pipeline payload"),
                     "custom",
                     "2026-01-01T00:00:00",
                     "2026-01-01T00:00:00",

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 
@@ -104,14 +105,19 @@ class LifecycleRepair:
         return self._tasks_with_label(provenance)
 
     def _tasks_with_label(self, label: str) -> list[Task]:
+        label_condition, label_params = json_array_contains_condition(
+            self.task_manager.db,
+            "labels",
+            label,
+        )
         rows = self.task_manager.db.fetchall(
-            """
+            f"""
             SELECT id, labels
               FROM tasks
-             WHERE labels LIKE ?
+             WHERE {label_condition}
              ORDER BY seq_num, created_at
             """,
-            (f"%{label}%",),
+            label_params,
         )
         task_ids: list[str] = []
         for row in rows:

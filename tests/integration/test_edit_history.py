@@ -79,7 +79,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     # 7. Verify non-edit tool doesn't trigger it (if it was false)
     # Reset session for negative test
     # (Manually unset in DB because we don't have a method to unset it)
-    temp_db.execute("UPDATE sessions SET had_edits = 0 WHERE id = ?", (session.id,))
+    temp_db.execute("UPDATE sessions SET had_edits = FALSE WHERE id = ?", (session.id,))
     session = session_manager.get(session.id)
     assert not session.had_edits
 

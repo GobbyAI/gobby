@@ -204,7 +204,7 @@ rules:
 
             row = manager.get_by_name("bundled-rule")
             assert row is not None
-            assert '"event": "stop"' in row.definition_json
+            assert json.loads(row.definition_json)["event"] == "stop"
 
             rule_yaml.write_text(
                 """
@@ -225,7 +225,7 @@ rules:
 
         row = manager.get_by_name("bundled-rule")
         assert row is not None
-        assert '"event": "turn_end"' in row.definition_json
+        assert json.loads(row.definition_json)["event"] == "turn_end"
 
 
 # ═══════════════════════════════════════════════════════════════════════

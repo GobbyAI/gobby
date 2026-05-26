@@ -362,7 +362,7 @@ def _build_rule_update_fields(
     """Build the minimal field set needed to refresh a bundled rule row."""
     update_fields: dict[str, Any] = {}
 
-    if existing.definition_json != definition_json:
+    if not _json_payloads_equal(existing.definition_json, definition_json):
         update_fields["definition_json"] = definition_json
     if existing.description != description:
         update_fields["description"] = description
@@ -374,3 +374,12 @@ def _build_rule_update_fields(
         update_fields["tags"] = tags
 
     return update_fields
+
+
+def _json_payloads_equal(left: str, right: str) -> bool:
+    try:
+        left_payload: object = json.loads(left)
+        right_payload: object = json.loads(right)
+        return left_payload == right_payload
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return left == right
