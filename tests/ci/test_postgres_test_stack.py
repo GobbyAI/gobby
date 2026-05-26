@@ -193,6 +193,7 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
         "docker run --rm",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "/usr/local/bin/pg_audit_export.sh",
+        "--help",
     )
     assert _has_run(
         runs,
