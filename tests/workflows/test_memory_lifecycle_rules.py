@@ -7,6 +7,7 @@ are tested there instead.
 Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
 - bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
+- increment-parent-turn-seq: set_variable on turn_start before helper rules
 - cancel-stale-memory-recall-helpers: mcp_call on turn_start before delivery
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.unit
 MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "bootstrap-session-title-on-prompt",
+    "increment-parent-turn-seq",
     "cancel-stale-memory-recall-helpers",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
@@ -217,6 +219,40 @@ class TestMemoryRecallOnPrompt:
         row = manager.get_by_name("memory-recall-on-prompt")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.effects[0].background is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# increment-parent-turn-seq
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestIncrementParentTurnSeq:
+    """Increment the parent turn counter before helper turn_start rules."""
+
+    def test_event_priority_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("increment-parent-turn-seq")
+        assert row is not None
+        assert row.enabled is True
+        assert row.priority == 1
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.effects[0].type == "set_variable"
+        assert body.effects[0].variable == "parent_turn_seq"
+        assert body.effects[0].value == "{{ (variables.parent_turn_seq | int) + 1 }}"
+
+    def test_has_fail_closed_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("increment-parent-turn-seq")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert "variables.get('parent_turn_seq') is not none" in body.when
+        assert "memory_recall_helper_enabled" not in body.when
+        assert "default(0)" not in body.effects[0].value
 
 
 # ═══════════════════════════════════════════════════════════════════════

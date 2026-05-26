@@ -17,10 +17,9 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
-RULE_NAME = "cancel-stale-memory-recall-helpers"
-RULE_SOURCE = (
-    Path("src/gobby/install/shared/workflows/rules/memory-lifecycle") / f"{RULE_NAME}.yaml"
-)
+RULES_ROOT = Path("src/gobby/install/shared/workflows/rules/memory-lifecycle")
+CANCEL_RULE_NAME = "cancel-stale-memory-recall-helpers"
+INCREMENT_RULE_NAME = "increment-parent-turn-seq"
 
 
 @pytest.fixture
@@ -28,11 +27,12 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     return temp_db
 
 
-def _sync_cancel_rule_only(db: HubDatabase, tmp_path: Path) -> None:
+def _sync_rule_only(db: HubDatabase, tmp_path: Path, rule_name: str) -> None:
     rules_root = tmp_path / "rules"
     target_dir = rules_root / "memory-lifecycle"
     target_dir.mkdir(parents=True)
-    shutil.copy2(RULE_SOURCE, target_dir / RULE_SOURCE.name)
+    rule_source = RULES_ROOT / f"{rule_name}.yaml"
+    shutil.copy2(rule_source, target_dir / rule_source.name)
     result = sync_bundled_rules(db, rules_path=rules_root)
     assert result["errors"] == []
 
@@ -53,7 +53,7 @@ async def test_cancel_rule_parent_session_id_resolves_to_platform_session_id(
     db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    _sync_cancel_rule_only(db, tmp_path)
+    _sync_rule_only(db, tmp_path, CANCEL_RULE_NAME)
     dispatched: list[tuple[str, str, dict[str, Any]]] = []
 
     async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
@@ -90,7 +90,7 @@ async def test_cancel_rule_parent_session_id_resolves_to_platform_session_id(
     ]
     assert dispatched[0][2]["parent_session_id"] != "external-X"
 
-    row = engine.definition_manager.get_by_name(RULE_NAME)
+    row = engine.definition_manager.get_by_name(CANCEL_RULE_NAME)
     body = RuleDefinitionBody.model_validate_json(row.definition_json)
     body.effects[0].arguments["parent_session_id"] = "{{ event.session_id }}"
     engine.definition_manager.update(row.id, definition_json=body.model_dump_json())
@@ -119,3 +119,32 @@ async def test_cancel_rule_parent_session_id_resolves_to_platform_session_id(
     )
 
     assert patched_dispatches[0][2]["parent_session_id"] == "external-X"
+
+
+@pytest.mark.asyncio
+async def test_increment_parent_turn_seq_counter_isolated(
+    db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    _sync_rule_only(db, tmp_path, INCREMENT_RULE_NAME)
+    engine = RuleEngine(db)
+    event = _platform_event()
+
+    variables: dict[str, Any] = {"parent_turn_seq": 0}
+
+    await engine.evaluate(event, session_id="platform-Y", variables=variables)
+    assert variables["parent_turn_seq"] == 1
+
+    await engine.evaluate(event, session_id="platform-Y", variables=variables)
+    assert variables["parent_turn_seq"] == 2
+
+    spawned_variables: dict[str, Any] = {
+        "is_spawned_agent": True,
+        "parent_turn_seq": 2,
+    }
+    await engine.evaluate(event, session_id="spawned-Z", variables=spawned_variables)
+    assert spawned_variables["parent_turn_seq"] == 2
+
+    unseeded_variables: dict[str, Any] = {}
+    await engine.evaluate(event, session_id="unseeded-Z", variables=unseeded_variables)
+    assert "parent_turn_seq" not in unseeded_variables
