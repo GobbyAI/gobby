@@ -187,7 +187,7 @@ fn run_lifecycle_action(
                 "{}",
                 format_success_text(action, &ctx.project_id, &payload)?
             );
-            output::print_text(&payload)
+            output::print_json_compact(&payload)
         }
     }
 }

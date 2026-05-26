@@ -170,8 +170,12 @@ fn resolve_database_url_from_bootstrap(bootstrap: &BootstrapDatabase) -> anyhow:
 }
 
 fn non_empty_trimmed(value: Option<String>) -> Option<String> {
-    let value = value?.trim().to_string();
-    if value.is_empty() { None } else { Some(value) }
+    let trimmed = value.as_ref()?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn resolve_brokered_database_url_at(

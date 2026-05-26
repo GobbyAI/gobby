@@ -13,8 +13,8 @@ pub fn print_json<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Print a JSON payload to stdout as compact text.
-pub fn print_text(value: &serde_json::Value) -> anyhow::Result<()> {
+/// Print a serializable value to stdout as compact JSON.
+pub fn print_json_compact<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
 }
