@@ -34,6 +34,12 @@ def _context_value(context: Mapping[str, object], name: str) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _artifact_value(context: Mapping[str, object], name: str) -> str | None:
+    artifacts = context.get("artifacts")
+    value = _field(artifacts, name) if artifacts is not None else None
+    return str(value) if value not in (None, "") else None
+
+
 def _prompt(task: object, context: Mapping[str, object], *, role: str, contract: str) -> str:
     reason = _context_value(context, "reason")
     reason_line = f"\nDispatch reason: {reason}." if reason else ""
@@ -56,8 +62,14 @@ def _planner(task: object, context: Mapping[str, object]) -> str:
         role="Revise the plan",
         contract="planner.yaml agent",
     )
+    plan_file_path = _artifact_value(context, "plan_file_path")
+    plan_file_line = (
+        f"\nUse plan_file_path as the exact plan artifact path to edit: {plan_file_path}."
+        if plan_file_path
+        else ""
+    )
     return (
-        f"{base}\nTreat discovery marker blocks in the task description as "
+        f"{base}{plan_file_line}\nTreat discovery marker blocks in the task description as "
         "authoritative upstream context for planning."
     )
 

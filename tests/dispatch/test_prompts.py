@@ -75,6 +75,18 @@ def test_prompt_builder_uses_seq_ref_when_loaded_task_has_no_ref() -> None:
     assert "2bc4656b-f91a-4434-8272-8167e6cb924b" not in prompt
 
 
+def test_planner_prompt_includes_plan_file_path_from_artifacts() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    task = SimpleNamespace(ref="#99", title="Plan build")
+    artifacts = SimpleNamespace(plan_file_path=".gobby/plans/task-99-plan.md")
+
+    prompt = PROMPT_BUILDERS["planner"](task, {"artifacts": artifacts})
+
+    assert "plan_file_path" in prompt
+    assert ".gobby/plans/task-99-plan.md" in prompt
+
+
 def test_doc_reviewer_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 

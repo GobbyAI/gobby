@@ -31,7 +31,7 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 from ._code_index import (
     append_code_index_warning,
-    prepare_isolation_code_index,
+    prepare_spawn_code_index,
     without_code_index_skill,
 )
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
@@ -608,17 +608,22 @@ async def spawn_agent_impl(
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
-    code_index_preflight_warning: dict[str, str] | None = None
-    code_index_preflight_env: dict[str, str] = {}
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             return {"success": False, "error": config_error}
-        if task_category != "docs":
-            (
-                code_index_preflight_warning,
-                code_index_preflight_env,
-            ) = await prepare_isolation_code_index(isolation_ctx.cwd, daemon_config)
+    code_index_preflight = await prepare_spawn_code_index(
+        cwd=isolation_ctx.cwd,
+        daemon_config=daemon_config,
+        isolation=effective_isolation,
+        agent_name=requested_agent_name,
+        initial_variables=initial_variables,
+        task_category=task_category,
+    )
+    if code_index_preflight.error is not None:
+        return {"success": False, "error": code_index_preflight.error}
+    code_index_preflight_warning = code_index_preflight.warning
+    code_index_preflight_env = code_index_preflight.env or {}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
