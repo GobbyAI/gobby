@@ -20,6 +20,7 @@ __all__ = [
     "Savepoint",
     "SessionRecoveryByProject",
     "SessionRegistration",
+    "SessionVariableMutation",
     "SystemSessionBootstrap",
     "TaskLifecycleMutation",
     "TaskSeqAllocation",
@@ -118,6 +119,14 @@ class SystemSessionBootstrap:
     """Serializes one-time system-session bootstrap."""
 
     PRIORITY: ClassVar[int] = 800
+
+
+@dataclass(frozen=True)
+class SessionVariableMutation:
+    """Serializes read-modify-write updates to one session variable row."""
+
+    PRIORITY: ClassVar[int] = 950
+    session_id: str
 
 
 @dataclass(frozen=True)

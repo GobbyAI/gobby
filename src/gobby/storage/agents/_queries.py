@@ -84,6 +84,31 @@ class _AgentRunQueryMixin:
             limit=limit,
         )
 
+    def get_cancelled_session_ids(
+        self: _AgentRunQueryHost,
+        agent_name: str | None = None,
+    ) -> set[str]:
+        """Return child session ids for cancelled agent runs, optionally scoped by agent."""
+        conditions = ["status = 'cancelled'", "child_session_id IS NOT NULL"]
+        params: list[object] = []
+        if agent_name is not None:
+            conditions.append("agent_name = ?")
+            params.append(agent_name)
+
+        rows = self.db.fetchall(
+            f"""
+            SELECT child_session_id
+            FROM agent_runs
+            WHERE {" AND ".join(conditions)}
+            """,
+            params,
+        )
+        return {
+            row["child_session_id"]
+            for row in rows
+            if isinstance(row["child_session_id"], str) and row["child_session_id"]
+        }
+
     def list_by_status(
         self: _AgentRunQueryHost,
         status: str | None = None,
