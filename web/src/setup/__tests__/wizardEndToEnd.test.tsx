@@ -166,6 +166,15 @@ async function submit(value: string): Promise<void> {
   await flush();
 }
 
+async function continuePastNetworkSecurity(): Promise<void> {
+  await waitFor(() => expect(screen.getByText(/Network Security/i)).toBeTruthy());
+  const button =
+    screen.queryByRole("button", { name: /^Skip$/i }) ??
+    screen.getByRole("button", { name: /^Continue$/i });
+  fireEvent.click(button);
+  await flush();
+}
+
 async function flush(ms = 0): Promise<void> {
   await act(async () => {
     if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
@@ -242,8 +251,7 @@ describe("setup wizard end-to-end", () => {
     await click(/No, use defaults/i);
     await flush(300);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /^Skip$/i })).toBeTruthy());
-    await click(/^Skip$/i);
+    await continuePastNetworkSecurity();
     await flush(300);
 
     await waitFor(() => expect(screen.getByText(/No uninitialized git repositories/i)).toBeTruthy());
