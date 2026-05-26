@@ -1,0 +1,15 @@
+tags: [memory-lifecycle, memory, helper-agent, gobby, default]
+
+rules:
+  increment-parent-turn-seq:
+    description: "Increment per-parent monotonic turn counter on each turn_start (freshness guard B for memory-recall-helper)"
+    event: turn_start
+    enabled: true
+    priority: 1
+    when: >
+      not variables.get('is_spawned_agent')
+      and variables.get('parent_turn_seq') is not none
+    effects:
+      - type: set_variable
+        variable: parent_turn_seq
+        value: "{{ (variables.parent_turn_seq | int) + 1 }}"
