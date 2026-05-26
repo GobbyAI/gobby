@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "0.4.9"
+    tags:
+      - "ci-*"
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-branch-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-branch-ci:
+    name: Release Branch CI
+    runs-on: ubuntu-latest
+    env:
+      GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
+      GOBBY_POSTGRES_TEST_DB: gobby_test
+      GOBBY_POSTGRES_TEST_IMAGE: gobby-postgres-local:18-pgsearch
+      GOBBY_POSTGRES_TEST_PASSWORD: gobby_test
+      GOBBY_POSTGRES_TEST_PORT: "60892"
+      GOBBY_POSTGRES_TEST_USER: gobby_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load Postgres test image metadata
+        run: |
+          pg_search_version="$(jq -r '.pg_search_version' src/gobby/data/postgres-pgsearch/version.json)"
+          pg_search_sha256="$(jq -r '.pg_search_sha256' src/gobby/data/postgres-pgsearch/version.json)"
+          database_authority="${GOBBY_POSTGRES_TEST_USER}:${GOBBY_POSTGRES_TEST_PASSWORD}"
+          database_authority="${database_authority}@localhost:${GOBBY_POSTGRES_TEST_PORT}"
+          database_url="postgresql://${database_authority}/${GOBBY_POSTGRES_TEST_DB}"
+          test -n "$pg_search_version"
+          test -n "$pg_search_sha256"
+          {
+            echo "GOBBY_PG_SEARCH_VERSION=$pg_search_version"
+            echo "GOBBY_PG_SEARCH_SHA256=$pg_search_sha256"
+            echo "DATABASE_URL=$database_url"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Postgres test image
+        run: |
+          docker build \
+            --build-arg "PG_SEARCH_VERSION=${GOBBY_PG_SEARCH_VERSION}" \
+            --build-arg "PG_SEARCH_SHA256=${GOBBY_PG_SEARCH_SHA256}" \
+            -t "${GOBBY_POSTGRES_TEST_IMAGE}" \
+            src/gobby/data/postgres-pgsearch
+
+      - name: Smoke Postgres audit export helper
+        run: |
+          docker run --rm "${GOBBY_POSTGRES_TEST_IMAGE}" \
+            /usr/local/bin/pg_audit_export.sh --help
+
+      - name: Start Postgres test container
+        run: |
+          docker rm -f "${GOBBY_POSTGRES_TEST_CONTAINER}" >/dev/null 2>&1 || true
+          docker run -d --name "${GOBBY_POSTGRES_TEST_CONTAINER}" \
+            -e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}" \
+            -e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}" \
+            -e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}" \
+            -p "${GOBBY_POSTGRES_TEST_PORT}:5432" \
+            --tmpfs /var/lib/postgresql \
+            --health-cmd "pg_isready -U ${GOBBY_POSTGRES_TEST_USER}" \
+            --health-interval 2s \
+            --health-timeout 2s \
+            --health-retries 15 \
+            "${GOBBY_POSTGRES_TEST_IMAGE}" \
+            postgres \
+              -c shared_preload_libraries=pg_search,pgaudit \
+              -c pgaudit.log=write \
+              -c pgaudit.log_catalog=off \
+              -c logging_collector=on \
+              -c log_destination=stderr \
+              -c log_directory=/var/log/pgaudit \
+              -c log_filename=pgaudit-%Y-%m-%d_%H%M%S.log \
+              -c log_rotation_age=1d \
+              -c log_rotation_size=0 \
+              -c log_file_mode=0640 \
+              -c log_min_messages=log
+
+          for _ in $(seq 1 30); do
+            status="$(
+              docker inspect -f '{{.State.Health.Status}}' "${GOBBY_POSTGRES_TEST_CONTAINER}"
+            )"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs "${GOBBY_POSTGRES_TEST_CONTAINER}"
+          exit 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Python dependencies
+        run: uv sync --dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Run pre-push suite
+        run: ./pre-push-test.sh
+
+      - name: Build package
+        run: uv build
+
+      - name: Smoke installed wheel UI
+        run: |
+          wheel="$(find dist -maxdepth 1 -name 'gobby-*.whl' -print -quit)"
+          test -n "$wheel"
+          GOBBY_TEST_PROTECT=1 GOBBY_RUN_WHEEL_UI_SMOKE=1 GOBBY_WHEEL_PATH="$wheel" \
+            uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v
