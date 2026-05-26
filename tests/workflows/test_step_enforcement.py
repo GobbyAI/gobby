@@ -7,6 +7,7 @@ enforcement and step transitions via on_mcp_success handlers.
 import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -53,7 +54,7 @@ HELPER_BLOCKED_TOOLS = [
 
 def _check_agent_tool(tool_name: str, variables: dict[str, Any]) -> HookResponse | None:
     event = _make_event(data={"tool_name": tool_name})
-    return RuleEngine(None)._check_agent_tool_enforcement(event, "test-session", variables)
+    return RuleEngine(MagicMock())._check_agent_tool_enforcement(event, "test-session", variables)
 
 
 def _make_event(

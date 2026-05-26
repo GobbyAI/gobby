@@ -38,7 +38,7 @@ def test_enforce_safe_test_schema_allows_test_schema_under_test_protect(
 ) -> None:
     monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
 
-    _enforce_safe_test_schema("gobby_test_12345_master_abcd")
+    assert _enforce_safe_test_schema("gobby_test_12345_master_abcd") is None
 
 
 def test_configured_postgres_database_url_requires_test_protect(

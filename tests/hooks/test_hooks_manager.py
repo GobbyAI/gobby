@@ -1409,6 +1409,8 @@ class TestHookManagerWebhookDispatch:
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
         """Test that async webhook dispatch does nothing when disabled."""
+        from gobby.config.extensions import WebhookEndpointConfig
+
         manager = hook_manager_with_mocks
 
         event = HookEvent(
@@ -1420,10 +1422,30 @@ class TestHookManagerWebhookDispatch:
             machine_id="test-machine-id",
         )
 
-        # Disable webhooks
-        manager._webhook_dispatcher.config.enabled = False
+        endpoint = WebhookEndpointConfig(
+            name="disabled-async-webhook",
+            url="https://example.com/webhook",
+            events=["before_tool"],
+            can_block=False,
+            enabled=True,
+        )
 
-        manager._dispatch_webhooks_async(event)
+        manager._webhook_dispatcher.config.enabled = False
+        manager._webhook_dispatcher.config.endpoints = [endpoint]
+
+        with (
+            patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
+            patch.object(
+                manager._webhook_dispatcher,
+                "_dispatch_single",
+                new_callable=AsyncMock,
+            ) as dispatch_single,
+        ):
+            result = manager._dispatch_webhooks_async(event)
+
+        assert result is None
+        build_payload.assert_not_called()
+        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_no_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1444,7 +1466,19 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = []
 
-        manager._dispatch_webhooks_async(event)
+        with (
+            patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
+            patch.object(
+                manager._webhook_dispatcher,
+                "_dispatch_single",
+                new_callable=AsyncMock,
+            ) as dispatch_single,
+        ):
+            result = manager._dispatch_webhooks_async(event)
+
+        assert result is None
+        build_payload.assert_not_called()
+        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_with_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path

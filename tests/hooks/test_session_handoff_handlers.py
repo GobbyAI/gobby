@@ -391,7 +391,10 @@ class TestSessionStartHandoff:
         assert response.decision == "allow"
         assert "Parent session: session-5815" not in (response.context or "")
         assert "Build coordinator handoff" not in (response.context or "")
-        mock_sv_mgr.merge_variables.assert_not_called()
+        merged_payloads = [args[1] for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list]
+        assert all("handoff_source" not in payload for payload in merged_payloads)
+        assert all("claimed_tasks" not in payload for payload in merged_payloads)
+        assert all("task_claimed" not in payload for payload in merged_payloads)
         mock_dependencies["task_manager"].claim_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")

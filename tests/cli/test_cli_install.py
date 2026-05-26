@@ -29,6 +29,7 @@ pytestmark = pytest.mark.unit
 def _mock_ext_services_and_prompts():
     """Prevent real Docker service installers and interactive API-key prompts."""
     with (
+        patch("gobby.cli.install.run_daemon_setup"),
         patch("gobby.cli.install._run_qdrant_install"),
         patch("gobby.cli.install._run_falkordb_install"),
         patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),

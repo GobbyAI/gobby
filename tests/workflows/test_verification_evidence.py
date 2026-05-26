@@ -56,8 +56,8 @@ def test_append_verification_evidence_preserves_supported_metadata_fields() -> N
     assert result == [evidence]
 
 
-def test_validate_verification_evidence_rejects_unsupported_metadata_fields() -> None:
-    """Unsupported evidence metadata is rejected at the session-variable boundary."""
+def test_validate_verification_evidence_accepts_optional_scope() -> None:
+    """Supported evidence metadata is accepted at the session-variable boundary."""
     assert (
         validate_verification_evidence(
             {
@@ -67,7 +67,7 @@ def test_validate_verification_evidence_rejects_unsupported_metadata_fields() ->
                 "success": True,
             }
         )
-        == "verification evidence contains unsupported fields: scope"
+        is None
     )
 
 

@@ -570,17 +570,7 @@ class TestLoadConfig:
         default_path = temp_dir / ".gobby" / "bootstrap.yaml"
         default_path.parent.mkdir(parents=True, exist_ok=True)
         write_secure_bootstrap(default_path, yaml.dump({"daemon_port": 7777}))
-
-        # Patch expanduser to redirect ~/.gobby to temp_dir/.gobby
-        original_expanduser = Path.expanduser
-
-        def mock_expanduser(self):
-            path_str = str(self)
-            if path_str.startswith("~/.gobby"):
-                return temp_dir / ".gobby" / path_str[9:]  # Remove ~/.gobby/
-            return original_expanduser(self)
-
-        monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+        monkeypatch.setenv("GOBBY_HOME", str(default_path.parent))
 
         config = load_config(config_file=None)
         assert config.daemon_port == 7777

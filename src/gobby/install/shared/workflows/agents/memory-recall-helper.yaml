@@ -29,6 +29,10 @@ instructions: |
   monotonic turn counter at spawn time). Follow this process within your
   3-turn budget.
 
+  Lifecycle context: rules are authored against semantic `turn_start` and
+  `turn_end` events. Raw `before_agent`, `after_agent`, and `stop` events are
+  transport details; finish this helper explicitly with `end_agent_run`.
+
   1. Fetch the parent's session digest:
        gobby-sessions.get_session(session_id=<parent_session_id>)
      Read the `digest_markdown` field. It may be empty for fresh sessions —
@@ -126,4 +130,5 @@ blocked_tools:
   - Glob
   - mcp__gobby__set_variable
 
-blocked_mcp_tools: []
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
