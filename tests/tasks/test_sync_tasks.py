@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,9 +35,15 @@ def sample_project(hub_db):
     return project.to_dict()
 
 
-def _set_db_foreign_keys(db, enabled: bool) -> None:
-    if getattr(db, "dialect", "postgres") == "postgres":
-        db.execute(f"information_schema foreign_keys = {'ON' if enabled else 'OFF'}")
+def _insert_session(db, session_id: str, project_id: str) -> None:
+    db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (session_id, session_id, "test-machine", "test", project_id),
+    )
 
 
 class TestTaskSyncManager:
@@ -509,9 +516,7 @@ class TestClosedStateRoundTrip:
         assert data["due_date"] == "2026-01-20"
 
         # Delete task from DB to simulate fresh import
-        _set_db_foreign_keys(sync_manager.db, False)
         sync_manager.db.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
-        _set_db_foreign_keys(sync_manager.db, True)
         row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task.id,))
         assert row is None
 
@@ -522,8 +527,10 @@ class TestClosedStateRoundTrip:
         reimported = task_manager.get_task(task.id)
         assert reimported is not None
         assert is_task_closed(reimported)
-        # closed_at is normalized with microsecond precision during export
-        assert reimported.closed_at == "2026-01-15T10:00:00.000000+00:00"
+        assert reimported.closed_at is not None
+        assert datetime.fromisoformat(reimported.closed_at) == datetime.fromisoformat(
+            "2026-01-15T10:00:00+00:00"
+        )
         assert reimported.closed_reason == "completed"
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.labels == ["bug", "p0"]
@@ -544,8 +551,8 @@ class TestClosedStateRoundTrip:
         task = task_manager.create_task(sample_project["id"], "Session task")
 
         # Set session-local fields that should NOT be wiped by import
-        # Disable FK checks since session IDs reference sessions table
-        _set_db_foreign_keys(sync_manager.db, False)
+        _insert_session(sync_manager.db, "session-aaa", sample_project["id"])
+        _insert_session(sync_manager.db, "session-bbb", sample_project["id"])
         sync_manager.db.execute(
             """UPDATE tasks SET
                 assignee = 'session-uuid-123',
@@ -556,7 +563,6 @@ class TestClosedStateRoundTrip:
             WHERE id = ?""",
             (task.id,),
         )
-        _set_db_foreign_keys(sync_manager.db, True)
 
         # Create JSONL with newer timestamp to trigger UPDATE path
         jsonl_data = {

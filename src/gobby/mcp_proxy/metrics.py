@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETENTION_DAYS = 7
 
 
+def _date_value_to_string(value: Any) -> str:
+    """Normalize database DATE values across drivers."""
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)
+
+
 class ToolMetricsManager:
     """
     Manager for tracking tool call metrics.
@@ -230,7 +237,7 @@ class ToolMetricsManager:
                     "project_id": row["project_id"],
                     "server_name": row["server_name"],
                     "tool_name": row["tool_name"],
-                    "date": row["date"],
+                    "date": _date_value_to_string(row["date"]),
                     "call_count": call_count,
                     "success_count": row["success_count"],
                     "failure_count": row["failure_count"],

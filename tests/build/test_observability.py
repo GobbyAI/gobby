@@ -190,7 +190,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     blocked = _automated_task(temp_db, project_id, "Blocked")
     blocker = manager.create_task(project_id=project_id, title="Blocker")
     temp_db.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, 'blocks', datetime('now'))",
+        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, 'blocks', NOW())",
         (blocked.id, blocker.id),
     )
     no_stage = manager.create_task(project_id=project_id, title="No stage")

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # happens on-demand via pre-push hook, CLI, and MCP tools. JSONL import is explicit.
 
 
-def _parse_timestamp(ts: str) -> datetime:
+def _parse_timestamp(ts: str | datetime) -> datetime:
     """Parse ISO 8601 timestamp string to datetime.
 
     Handles both Z suffix and +HH:MM offset formats for compatibility
@@ -28,9 +28,12 @@ def _parse_timestamp(ts: str) -> datetime:
     Returns:
         Timezone-aware datetime object in UTC
     """
-    # Handle Z suffix for fromisoformat compatibility
-    parse_ts = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
-    dt = datetime.fromisoformat(parse_ts)
+    if isinstance(ts, datetime):
+        dt = ts
+    else:
+        # Handle Z suffix for fromisoformat compatibility
+        parse_ts = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+        dt = datetime.fromisoformat(parse_ts)
 
     # Ensure timezone is UTC
     if dt.tzinfo is None:
@@ -38,7 +41,7 @@ def _parse_timestamp(ts: str) -> datetime:
     return dt.astimezone(UTC)
 
 
-def _normalize_timestamp(ts: str | None) -> str | None:
+def _normalize_timestamp(ts: str | datetime | None) -> str | None:
     """Normalize timestamp to consistent RFC 3339 format.
 
     Ensures all timestamps have:
@@ -58,11 +61,21 @@ def _normalize_timestamp(ts: str | None) -> str | None:
         dt = _parse_timestamp(ts)
     except ValueError:
         # If parsing fails, return original (shouldn't happen with valid ISO 8601)
-        return ts
+        return ts.isoformat() if isinstance(ts, datetime) else ts
 
     # Format with consistent microseconds and +00:00 suffix
     base = dt.strftime("%Y-%m-%dT%H:%M:%S")
     return f"{base}.{dt.microsecond:06d}+00:00"
+
+
+def _normalize_date(value: str | date | datetime | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 class TaskSyncManager:
@@ -189,8 +202,8 @@ class TaskSyncManager:
                     "linear_issue_id": task.linear_issue_id,
                     "linear_team_id": task.linear_team_id,
                     # Scheduling fields
-                    "start_date": task.start_date,
-                    "due_date": task.due_date,
+                    "start_date": _normalize_date(task.start_date),
+                    "due_date": _normalize_date(task.due_date),
                     # Escalation fields (normalize timestamps)
                     "escalated_at": _normalize_timestamp(task.escalated_at),
                     "escalation_reason": task.escalation_reason,

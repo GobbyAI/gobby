@@ -406,7 +406,7 @@ def test_setup_hub_registry_accepts_project_id(hub_db) -> None:
     # Create a project in the database for foreign key constraint
     project_id = "test-project-123"
     db.execute(
-        "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())",
         (project_id, "Test Project", "/tmp/test", None),
     )
 

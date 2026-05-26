@@ -1,5 +1,7 @@
 """Tests for task validation utilities."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -11,8 +13,12 @@ from gobby.utils.validation import TaskValidator
 pytestmark = pytest.mark.integration
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
     from gobby.storage.projects import LocalProjectManager
+
+
+class _RollbackInvalidRows(Exception):
+    """Roll back deliberately invalid rows after validation assertions."""
 
 
 @pytest.fixture
@@ -30,6 +36,17 @@ def validator(task_manager: LocalTaskManager) -> TaskValidator:
 def _now_iso() -> str:
     """Get current timestamp in ISO format."""
     return datetime.now(UTC).isoformat()
+
+
+@contextmanager
+def _deferred_constraints_rollback(db: "HubDatabase") -> Iterator["Transaction"]:
+    try:
+        with db.transaction() as conn:
+            conn.execute("SET CONSTRAINTS ALL DEFERRED")
+            yield conn
+            raise _RollbackInvalidRows
+    except _RollbackInvalidRows:
+        pass
 
 
 class TestCheckOrphanDependencies:
@@ -92,17 +109,16 @@ class TestCheckOrphanDependencies:
             project_id=project.id,
         )
 
-        # Create orphan dependency (task_id doesn't exist) - disable FK to allow
-        task_manager.db.execute("information_schema foreign_keys = OFF")
-        task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
-            ("nonexistent-task-id", task1.id, "blocks", _now_iso()),
-        )
-        task_manager.db.execute("information_schema foreign_keys = ON")
+        # Defer FK checks so the validator can inspect intentionally invalid rows.
+        with _deferred_constraints_rollback(task_manager.db):
+            task_manager.db.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                ("nonexistent-task-id", task1.id, "blocks", _now_iso()),
+            )
 
-        result = validator.check_orphan_dependencies()
-        assert len(result) == 1
-        assert result[0]["task_id"] == "nonexistent-task-id"
+            result = validator.check_orphan_dependencies()
+            assert len(result) == 1
+            assert result[0]["task_id"] == "nonexistent-task-id"
 
     def test_detects_orphan_with_missing_depends_on(
         self,
@@ -122,17 +138,16 @@ class TestCheckOrphanDependencies:
             project_id=project.id,
         )
 
-        # Create orphan dependency (depends_on doesn't exist) - disable FK to allow
-        task_manager.db.execute("information_schema foreign_keys = OFF")
-        task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
-            (task1.id, "nonexistent-dep-id", "blocks", _now_iso()),
-        )
-        task_manager.db.execute("information_schema foreign_keys = ON")
+        # Defer FK checks so the validator can inspect intentionally invalid rows.
+        with _deferred_constraints_rollback(task_manager.db):
+            task_manager.db.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                (task1.id, "nonexistent-dep-id", "blocks", _now_iso()),
+            )
 
-        result = validator.check_orphan_dependencies()
-        assert len(result) == 1
-        assert result[0]["depends_on"] == "nonexistent-dep-id"
+            result = validator.check_orphan_dependencies()
+            assert len(result) == 1
+            assert result[0]["depends_on"] == "nonexistent-dep-id"
 
 
 class TestCheckInvalidProjects:
@@ -170,21 +185,20 @@ class TestCheckInvalidProjects:
         task_manager: LocalTaskManager,
     ) -> None:
         """Detects task with non-existent project_id."""
-        # Insert task directly with invalid project_id - disable FK to allow
-        task_manager.db.execute("information_schema foreign_keys = OFF")
-        task_manager.db.execute(
-            """
-            INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-            """,
-            ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
-        )
-        task_manager.db.execute("information_schema foreign_keys = ON")
+        # Defer FK checks so the validator can inspect intentionally invalid rows.
+        with _deferred_constraints_rollback(task_manager.db):
+            task_manager.db.execute(
+                """
+                INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NOW(), NOW())
+                """,
+                ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
+            )
 
-        result = validator.check_invalid_projects()
-        assert len(result) == 1
-        assert result[0]["id"] == "orphan-task"
-        assert result[0]["project_id"] == "nonexistent-project"
+            result = validator.check_invalid_projects()
+            assert len(result) == 1
+            assert result[0]["id"] == "orphan-task"
+            assert result[0]["project_id"] == "nonexistent-project"
 
 
 class TestCheckCycles:
@@ -279,23 +293,22 @@ class TestCleanOrphans:
 
         task1 = task_manager.create_task(title="Task 1", task_type="task", project_id=project.id)
 
-        # Create orphan dependencies - disable FK to allow
-        task_manager.db.execute("information_schema foreign_keys = OFF")
-        task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
-            ("nonexistent-1", task1.id, "blocks", _now_iso()),
-        )
-        task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
-            (task1.id, "nonexistent-2", "blocks", _now_iso()),
-        )
-        task_manager.db.execute("information_schema foreign_keys = ON")
+        with task_manager.db.transaction() as conn:
+            conn.execute("SET CONSTRAINTS ALL DEFERRED")
+            task_manager.db.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                ("nonexistent-1", task1.id, "blocks", _now_iso()),
+            )
+            task_manager.db.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                (task1.id, "nonexistent-2", "blocks", _now_iso()),
+            )
 
-        # Verify orphans exist
-        assert len(validator.check_orphan_dependencies()) == 2
+            # Verify orphans exist
+            assert len(validator.check_orphan_dependencies()) == 2
 
-        # Clean orphans
-        removed = validator.clean_orphans()
+            # Clean orphans before the deferred constraints are checked.
+            removed = validator.clean_orphans()
         assert removed == 2
 
         # Verify orphans are gone
@@ -337,27 +350,23 @@ class TestValidateAll:
         task_manager: LocalTaskManager,
     ) -> None:
         """Returns all issues found across validation checks."""
-        # Disable FK constraints to create orphan data
-        task_manager.db.execute("information_schema foreign_keys = OFF")
+        with _deferred_constraints_rollback(task_manager.db):
+            # Create task with invalid project
+            task_manager.db.execute(
+                """
+                INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NOW(), NOW())
+                """,
+                ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
+            )
 
-        # Create task with invalid project
-        task_manager.db.execute(
-            """
-            INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-            """,
-            ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
-        )
+            # Create orphan dependency (depends_on doesn't exist)
+            task_manager.db.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                ("orphan-task", "nonexistent-dep", "blocks", _now_iso()),
+            )
 
-        # Create orphan dependency (depends_on doesn't exist)
-        task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
-            ("orphan-task", "nonexistent-dep", "blocks", _now_iso()),
-        )
+            result = validator.validate_all()
 
-        task_manager.db.execute("information_schema foreign_keys = ON")
-
-        result = validator.validate_all()
-
-        assert len(result["invalid_projects"]) == 1
-        assert len(result["orphan_dependencies"]) == 1
+            assert len(result["invalid_projects"]) == 1
+            assert len(result["orphan_dependencies"]) == 1

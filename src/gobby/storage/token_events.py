@@ -343,7 +343,7 @@ class TokenEventStore:
             FROM token_events
             WHERE 1=1 {where_sql}
             GROUP BY model_family
-            ORDER BY input_tokens + output_tokens DESC
+            ORDER BY COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) DESC
             """,
             tuple(params),
         )

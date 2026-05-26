@@ -74,13 +74,11 @@ class TestCompleteIDGenerationFlow:
         """Test that each project has independent ID sequences."""
         # Create two projects
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
             ("proj-alpha", "Alpha Project"),
         )
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
             ("proj-beta", "Beta Project"),
         )
 

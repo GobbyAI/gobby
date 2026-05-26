@@ -359,8 +359,7 @@ def test_move_to_project(
 ) -> None:
     """Test moving a definition to project scope."""
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
         ("proj-1", "Test Project"),
     )
     row = manager.create(name="move-proj-test", definition_json=SAMPLE_DEFINITION)
@@ -394,8 +393,7 @@ def test_move_to_global(
 ) -> None:
     """Test moving a definition to global scope."""
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
         ("proj-1", "Test Project"),
     )
     row = manager.create(

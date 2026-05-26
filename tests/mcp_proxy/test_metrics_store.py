@@ -20,14 +20,14 @@ def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-1", "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-2", "Test Project 2", "/tmp/test2"),
     )
