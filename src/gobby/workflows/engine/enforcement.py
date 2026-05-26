@@ -164,13 +164,7 @@ class EnforcementMixin:
         tool_name = event.data.get("tool_name", "")
         agent_type = variables.get("_agent_type", "unknown")
 
-        # Discovery/infrastructure tools always pass
-        if tool_name.startswith("mcp__gobby__"):
-            mcp_suffix = tool_name[len("mcp__gobby__") :]
-            if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
-                return None
-
-        # Check native tool block-list
+        # Check native tool block-list first so explicit agent blocks override exemptions.
         if blocked_tools and tool_name in blocked_tools:
             return HookResponse(
                 decision="block",
@@ -179,6 +173,12 @@ class EnforcementMixin:
                     f"Tool '{tool_name}' is blocked for the '{agent_type}' agent."
                 ),
             )
+
+        # Discovery/infrastructure tools pass unless explicitly blocked above.
+        if tool_name.startswith("mcp__gobby__"):
+            mcp_suffix = tool_name[len("mcp__gobby__") :]
+            if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
+                return None
 
         # Check MCP tool restrictions (for call_tool)
         if blocked_mcp_tools and tool_name in (

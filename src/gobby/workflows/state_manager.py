@@ -4,7 +4,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 
 from .definitions import WorkflowInstance
 
@@ -211,7 +211,7 @@ class SessionVariableManager:
         if not updates:
             return True
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
                 "SELECT variables FROM session_variables WHERE session_id = ?",
                 (session_id,),
@@ -249,7 +249,7 @@ class SessionVariableManager:
         if not values:
             return True
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
                 "SELECT variables FROM session_variables WHERE session_id = ?",
                 (session_id,),
@@ -293,7 +293,7 @@ class SessionVariableManager:
             return True
 
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
                 "SELECT variables FROM session_variables WHERE session_id = ?",
                 (session_id,),

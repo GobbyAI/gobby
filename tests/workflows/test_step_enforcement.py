@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
@@ -38,6 +38,22 @@ def engine(db: "HubDatabase") -> RuleEngine:
 @pytest.fixture
 def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
+
+
+HELPER_BLOCKED_TOOLS = [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "mcp__gobby__set_variable",
+]
+
+
+def _check_agent_tool(tool_name: str, variables: dict[str, Any]) -> HookResponse | None:
+    event = _make_event(data={"tool_name": tool_name})
+    return RuleEngine(None)._check_agent_tool_enforcement(event, "test-session", variables)
 
 
 def _make_event(
@@ -170,6 +186,56 @@ def _setup_step_workflow(
         variables=dict(defn.variables),
     )
     instance_mgr.save_instance(instance)
+
+
+@pytest.mark.unit
+class TestAgentToolEnforcement:
+    """Tests for agent-level tool restrictions."""
+
+    def test_explicit_block_overrides_infra_exempt(self) -> None:
+        """Explicit blocked_tools entries should override infrastructure exemptions."""
+        variables: dict[str, Any] = {
+            "_agent_blocked_tools": ["mcp__gobby__set_variable"],
+            "_agent_type": "backend-developer",
+        }
+
+        response = _check_agent_tool("mcp__gobby__set_variable", variables)
+
+        assert response is not None
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "[agent-enforcement:backend-developer]" in response.reason
+        assert "Tool 'mcp__gobby__set_variable' is blocked" in response.reason
+
+    def test_infra_exempt_default_when_no_explicit_block(self) -> None:
+        """Infrastructure tools should remain allowed unless explicitly blocked."""
+        variables: dict[str, Any] = {
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": ["gobby-memory:create_memory"],
+            "_agent_type": "backend-developer",
+        }
+
+        response = _check_agent_tool("mcp__gobby__set_variable", variables)
+
+        assert response is None
+
+    def test_blocked_tools_overrides_infra_exempt_for_helper(self) -> None:
+        """The memory-recall helper can deny set_variable while keeping get_variable usable."""
+        variables: dict[str, Any] = {
+            # Mirrors the helper contract from plan section 1.4; that leaf owns YAML drift.
+            "_agent_blocked_tools": HELPER_BLOCKED_TOOLS,
+            "_agent_type": "memory-recall-helper",
+        }
+
+        denied = _check_agent_tool("mcp__gobby__set_variable", variables)
+        allowed = _check_agent_tool("mcp__gobby__get_variable", variables)
+
+        assert denied is not None
+        assert denied.decision == "block"
+        assert denied.reason is not None
+        assert "[agent-enforcement:memory-recall-helper]" in denied.reason
+        assert "Tool 'mcp__gobby__set_variable' is blocked" in denied.reason
+        assert allowed is None
 
 
 @pytest.mark.unit
